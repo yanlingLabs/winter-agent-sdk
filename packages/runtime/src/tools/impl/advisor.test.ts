@@ -321,6 +321,31 @@ describe("P7a: the engine's advisor wiring (D29/D30)", () => {
     expect(wire).not.toContain("sig-abc");
   });
 
+  test("M-3 (fix r1): Claude's opaque reasoning never reaches the reviewer either — `thinking` and `redacted_thinking`, key AND payload", async () => {
+    const { reviewer, seen } = recordingReviewer("openai/gpt-6-astra");
+    // The r1 review's own probe payloads, verbatim: before this fix both reached the wire while the
+    // original three markers were correctly stripped.
+    await runWith({
+      resolveReviewer: () => reviewer,
+      assistantText: 'plan line one\nthinking: "EEEE-THINK-FFFF"\nredacted_thinking: "GGGG-REDACT-HHHH"\nplan line two',
+    });
+    await getRegisteredTool(ADVISOR_TOOL_NAME)!.executor!.execute({}, makeCtx());
+    const wire = JSON.stringify(seen[0]);
+    expect(wire).not.toContain("EEEE-THINK-FFFF");
+    expect(wire).not.toContain("GGGG-REDACT-HHHH");
+    expect(wire).not.toContain("thinking");
+    // The surrounding review context still travels: the drop is per LINE, never the whole entry.
+    expect(wire).toContain("plan line one");
+    expect(wire).toContain("plan line two");
+  });
+
+  test("M-3 (fix r1): the marker list is checked at the assembler too, so the guard is not only an end-to-end accident", () => {
+    const { messages } = assembleReviewerMessages([
+      { role: "assistant", text: 'keep me\nthinking: "EEEE-THINK-FFFF"\nredacted_thinking: "GGGG-REDACT-HHHH"\nkeep me too' },
+    ]);
+    expect(messages[0]?.content).toBe("keep me\nkeep me too");
+  });
+
   test("the reviewer is asked with the session's LIVE model key, not a value captured at wiring time", async () => {
     const asked: Array<string | undefined> = [];
     const { reviewer } = recordingReviewer("openai/gpt-6-astra");

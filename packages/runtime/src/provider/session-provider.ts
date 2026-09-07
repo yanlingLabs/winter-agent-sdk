@@ -62,7 +62,7 @@ import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
 import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
 import { computeActiveSlotSet, resolveSlotToProvider, type SlotProviderResolution } from "./slots.ts";
-import { resolveAdvisorRoute } from "./advisor-route.ts";
+import { resolveAdvisorRoute, selectAdvisorCandidate } from "./advisor-route.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -185,6 +185,25 @@ export interface SessionProviderOptions {
    * D30's per-family default, which is exactly what a host that resolves no settings should get.
    */
   advisorModelSetting?: () => string | undefined;
+  /**
+   * P7a LANE B, fix r1 (review M-1): a monotonic number the wiring bumps whenever it LEARNS something
+   * about a provider's credential, so a memo taken on a cold view cannot outlive that view.
+   *
+   * WHY IT HAS TO EXIST. `production-wiring.ts`'s `credentialPresent` is a synchronous answer over an
+   * asynchronous fact: the session's own provider is `"present"` by construction, every other
+   * provider is `"unknown"` until a background probe lands, and nothing awaits those probes. The very
+   * first consumer is `reviewerResolves()` computing `init.tools`, which is what FIRES the prewarm --
+   * so the advisor's first resolution is necessarily cold, and a memo without this term pins that
+   * cold answer for the session's whole life.
+   *
+   * A VERSION rather than the credential view itself, for the same reason `settingsVersion` is a
+   * number: the memo compares it, and comparing a view by value would mean re-deriving the whole
+   * presence map on every capability check.
+   *
+   * ABSENT -> `0`, i.e. "nothing here ever learns anything", which is the truth for a caller that
+   * builds a wiring directly with a fixed credential store.
+   */
+  credentialEpoch?: () => number;
 }
 
 export interface SessionProviderWiring {
@@ -789,7 +808,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // cache here at all, and WS-06 §4's closing line ("the advisor and the auto-mode classifier are
   // separate routes and MUST NOT share a verdict cache") is structural rather than observed -- this
   // binding is local to this wiring and nothing else can reach it.
-  let reviewerPin: { key: string; reviewer: { provider: Provider; model: string } | undefined } | undefined;
+  let reviewerPin: { key: string; reviewer: { provider: Provider; model: string } | undefined; refusal?: string } | undefined;
 
   /**
    * The slot layer, for the advisor's own candidate.
@@ -833,11 +852,37 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     const optionModel = config.advisor?.model;
     const settingModel = opts.advisorModelSetting?.();
     // R6-G's "pinned at first use", and the hot-reload rule, in one comparison: the memo key is
-    // every input that could change the ANSWER, so a repeated call inside one settings version
-    // returns the same provider object and a changed setting (or a `set_model` across families)
-    // re-resolves at the next call -- which is the next quiescent boundary, never a restart.
-    const key = `${optionModel ?? ""} ${settingModel ?? ""} ${sessionModelKey}`;
-    if (reviewerPin !== undefined && reviewerPin.key === key) return reviewerPin.reviewer;
+    // every input that could change the ANSWER, so a repeated call inside one credential/settings
+    // view returns the same provider object and a changed input re-resolves at the next call --
+    // which is the next quiescent boundary, never a restart.
+    //
+    // FIX R1 (review I-1): the separators are the ESCAPE `\u0000`, never a raw 0x00 byte. Two raw
+    // NULs made this whole file `data` to `file(1)`: `grep` reported no matches for a name that was
+    // there and `git diff` reported no hunks for the lane's most-changed file, so a reviewer's search
+    // came back empty and looked like an answer. Byte-identical at runtime, and the repo already has
+    // a gate for exactly this class (provider-catalog's pipeline.test.ts) that does not yet scan
+    // `packages/runtime/src` -- widening it is a T6 follow-up, not this lane's.
+    //
+    // FIX R1 (review M-1): `credentialEpoch` is the FOURTH term, and it is the one that actually
+    // MOVES in production. `credentialPresent` answers `"present"` synchronously only for the
+    // session's OWN provider and `"unknown"` for every other, firing async probes it never awaits --
+    // and the first call is `reviewerResolves()` building `init.tools`, which necessarily precedes
+    // any probe landing. Without this term the cold answer was pinned for the session's whole life,
+    // so §4 step 3-i's subscription-first rule never governed the advisor in production: a user with
+    // a Codex subscription was billed per token on their API key for every advisor call. It failed
+    // SAFE (the chosen row was always credentialed, never a substitution onto an unauthorised one)
+    // and it was still never right.
+    //
+    // A VERSION rather than the view itself: the wiring bumps it when a probe RECORDS a result, so
+    // the memo re-forms exactly when the credential picture changed and never merely because time
+    // passed -- which is what keeps R6-G's pin a pin. ABSENT (a direct `buildSessionProvider` caller
+    // with no probe cache) -> `0`, and the memo behaves exactly as it did before this fix.
+    const credentialEpoch = opts.credentialEpoch?.() ?? 0;
+    const key = `${optionModel ?? ""}\u0000${settingModel ?? ""}\u0000${sessionModelKey}\u0000${credentialEpoch}`;
+    if (reviewerPin !== undefined && reviewerPin.key === key) {
+      if (reviewerPin.refusal !== undefined) throw new Error(reviewerPin.refusal);
+      return reviewerPin.reviewer;
+    }
     const route = resolveAdvisorRoute({
       catalog,
       sessionModelKey,
@@ -846,6 +891,27 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       resolveSlot: (requested) => advisorSlotResolve(requested, sessionModelKey),
     });
     let reviewer: { provider: Provider; model: string } | undefined;
+    // FIX R1 (review M-2): the REASON a stated reviewer did not resolve, carried rather than dropped.
+    //
+    // `ReviewerResolver` is pinned at `() => ResolvedReviewer | undefined` (the spine's own block) and
+    // `AdvisorRoute`'s refusal arm is pinned at `{ ok: false; reason: string }`, so neither a
+    // `{ ok:false, reason }` return nor an extra field on the route is available to carry it. The
+    // channel that IS available is the one `createAdvisorExecutor` was already built and TESTED for:
+    // a resolver that throws becomes `Error: advisor failed to resolve a reviewer model: <message>`
+    // with `isError: true` -- an ordinary tool error that never blocks the turn, exactly WS-06 §4's
+    // own posture -- and `reviewerResolves()` (engine.ts) already catches it, so the capability still
+    // reads "no reviewer" rather than failing the tool list.
+    //
+    // A plain `Error`, deliberately, NOT a `WinterProviderResolutionError`: that class's
+    // `ResolutionErrorCode` union is provider-runtime's and has no member for this, and inventing one
+    // is another package's edit. What the review asked for is the typed REASON reaching the user, and
+    // `advisor-route.ts` already produces it.
+    //
+    // `undefined` is therefore RESERVED for a genuine ABSENCE -- nothing states a candidate and this
+    // session has no model to derive one from. A refusal is a different fact from an absence, and
+    // before this fix both arrived as the same generic "advisor is unavailable" string: a user whose
+    // Anthropic credential had gone missing was told exactly what a user who configured nothing was.
+    let refusal: string | undefined;
     if (route.ok) {
       // The route chose a ROW; `registry.resolve` is still what turns that key into a `ResolvedModel`
       // (the adapter, the provider model id, the continuation domain). It is given the route's OWN
@@ -854,7 +920,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       // asking again under the session's id would be R6-K's `provider-mismatch` for a contradiction
       // nobody stated.
       const resolvedReviewer = resolveUnder(route.modelKey, route.providerId);
-      if (!(resolvedReviewer instanceof WinterProviderResolutionError)) {
+      if (resolvedReviewer instanceof WinterProviderResolutionError) {
+        // M-2's own arm: the route said WHICH ROW, and the registry then refused it. That reason is
+        // the real cause, and it is now reported beside the row it is about instead of being dropped
+        // on the floor while the user reads "no reviewer is resolvable".
+        refusal = `the advisor's reviewer resolved to ${route.modelKey} (${route.source}), which this session's registry then refused (${resolvedReviewer.code}): ${resolvedReviewer.message}`;
+      } else {
         // Ruling E-1 step (1): the advisor's OWN `authRef`, never the session's. Passed whenever the
         // host set one -- step (1) is unconditional in the rule; it MATTERS when the reviewer's
         // provider differs from the session's, which is the case where step (2) would otherwise hand
@@ -865,8 +936,16 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
         // reason `withoutStreaming` exists (its own header names this backend as its consumer).
         reviewer = { provider: withoutStreaming(built), model: resolvedReviewer.modelKey };
       }
+    } else if (selectAdvisorCandidate({ catalog, sessionModelKey, ...(optionModel !== undefined ? { optionModel } : {}), ...(settingModel !== undefined ? { settingModel } : {}) }) !== undefined) {
+      // A candidate WAS stated (or derived from the family) and did not resolve. The route's own
+      // message already names every row that would have served it and why each did not, so it rides
+      // through verbatim. Asked of `selectAdvisorCandidate` rather than read off the route because the
+      // pinned refusal arm carries a reason and nothing else -- and "nothing states a reviewer" and
+      // "the reviewer you named cannot be reached" are the two facts this branch has to tell apart.
+      refusal = route.reason;
     }
-    reviewerPin = { key, reviewer };
+    reviewerPin = { key, reviewer, ...(refusal !== undefined ? { refusal } : {}) };
+    if (refusal !== undefined) throw new Error(refusal);
     return reviewer;
   };
 

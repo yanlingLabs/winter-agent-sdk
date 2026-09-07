@@ -829,6 +829,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // `providerSettings` and `modelSlots` already are (R-6c-28's limitation included: this SDK
     // resolves settings once and the version moves when a HOST hands down a new view).
     advisorModelSetting: () => settingsGetter()?.advisor?.model,
+    // P7a LANE B, fix r1 (M-1): the credential-view version, so the advisor's memo cannot outlive the
+    // cold first view that `init.tools` necessarily takes. Forwarded through a closure for the same
+    // reason `resolveSlot` above is: the counter is declared BELOW and nothing in
+    // `buildSessionProvider`'s construction reads it -- `resolveReviewer` is defined there, never
+    // called there.
+    credentialEpoch: () => credentialEpochCounter,
     ...(opts.provider ?? {}),
   });
   if (providerWiring.resolutionError !== undefined) {
@@ -905,8 +911,16 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       return false; // a store that cannot answer is a store with no record to offer
     }
   };
+  // P7a LANE B, fix r1 (review M-1): the epoch the advisor's reviewer memo keys on. Bumped when this
+  // session LEARNS something about a provider's credential -- a value CHANGE or a first answer, never
+  // a re-confirmation -- so a reviewer resolved on the cold first view (which is every session: the
+  // first `credentialPresent` consumer is `init.tools`, and it is what fires the prewarm) is
+  // re-resolved once the probes land, and is otherwise left pinned exactly as R6-G requires.
+  let credentialEpochCounter = 0;
   /** Records a probe result. Called by the background refresh AND by `resolveChildProvider`, whose probe is already real and paid for. */
   const recordCredentialPresence = (providerId: string, present: boolean): void => {
+    const previous = credentialPresence.get(providerId);
+    if (previous === undefined || previous.present !== present) credentialEpochCounter += 1;
     credentialPresence.set(providerId, { present, at: Date.now() });
   };
   // M-4: a probe that lands after `dispose()` must change nothing. It cannot be CANCELLED (the store

@@ -112,7 +112,13 @@ export function selectAdvisorCandidate(input: Pick<AdvisorRouteInput, "catalog" 
   const setting = stated(input.settingModel);
   if (setting !== undefined) return { requested: setting, source: "setting", origin: "`settings.advisor.model`" };
 
-  const family = input.sessionModelKey !== undefined ? familyOfModelKey(input.catalog, input.sessionModelKey) : undefined;
+  // FIX R1: BLANK is absent, exactly as it is for the option and the setting above. An engine that
+  // has not yet installed an identity can hand down an empty `currentModel`, and reading "" as a
+  // stated own-model candidate turned a genuine ABSENCE ("nothing names a reviewer") into a REFUSAL
+  // ('"" is not a slot of the active family') -- two different facts, and the difference is exactly
+  // what M-2's `undefined`-vs-throw split now rests on.
+  const sessionModelKey = stated(input.sessionModelKey);
+  const family = sessionModelKey !== undefined ? familyOfModelKey(input.catalog, sessionModelKey) : undefined;
   if (family !== undefined) {
     const pinned = ADVISOR_FAMILY_DEFAULTS[family.id];
     if (pinned !== undefined) return { requested: pinned, source: "family-default", origin: `the ${family.id}-family default (D30)` };
@@ -123,7 +129,7 @@ export function selectAdvisorCandidate(input: Pick<AdvisorRouteInput, "catalog" 
   // session's OWN model. It goes through the resolver like every other candidate — a full catalog
   // key passes `resolveSlotToProvider`'s qualified-key door unfiltered, which is the same treatment
   // the session's own model gets everywhere else.
-  if (input.sessionModelKey !== undefined) return { requested: input.sessionModelKey, source: "own-model", origin: "the session's own model (this family curates no slots)" };
+  if (sessionModelKey !== undefined) return { requested: sessionModelKey, source: "own-model", origin: "the session's own model (this family curates no slots)" };
   return undefined;
 }
 

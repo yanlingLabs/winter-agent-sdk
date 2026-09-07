@@ -255,6 +255,11 @@ describe("D30 per-family defaults", () => {
     expect(route).toMatchObject({ ok: true, modelKey: "codex-oauth/gpt-6-astra" });
   });
 
+  test("fix r1: a BLANK session model key is an absence, not a candidate — `\"\"` never becomes a requested reviewer", () => {
+    expect(selectAdvisorCandidate({ catalog, sessionModelKey: "" })).toBeUndefined();
+    expect(selectAdvisorCandidate({ catalog, sessionModelKey: "   " })).toBeUndefined();
+  });
+
   test("no candidate at all (no option, no setting, no session model) is a typed refusal", () => {
     const route = resolveAdvisorRoute({ catalog, sessionModelKey: undefined, resolveSlot: slotResolverFor(undefined) });
     expect(route.ok).toBe(false);
