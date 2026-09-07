@@ -876,6 +876,13 @@ describe("WS-13c: model families and slots", () => {
     // would depend on that sort — and a family renamed or inserted would silently re-home rows.
     // Both halves are asserted: the stamp reproduces from the generated array, and nothing is
     // ambiguous in the first place.
+    //
+    // ONE THING THIS CASE CANNOT ACCOMMODATE, deliberately: a per-row `modelFamily` OVERRIDE in
+    // `overlay/models.json`. WS-13c §1 permits one and `stampFamilyFields` honours it, but an
+    // overridden row's family is by definition NOT what its matchers say — so the first assertion
+    // below would fail, reporting "the matchers are not disjoint" for a row where they are.
+    // No override exists today. Adding one means exempting that row HERE, in the same reviewed
+    // commit, rather than discovering this failure and mis-diagnosing it.
     for (const model of catalog.models) {
       expect([model.key, familyIdOf(model.canonicalModelId, catalog.families)]).toEqual([model.key, model.modelFamily]);
       const hits = catalog.families.filter((f) => f.matchers.some((m) => new RegExp(m.pattern).test(model.canonicalModelId)));
