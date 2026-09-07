@@ -12,7 +12,7 @@
 // construction; it has everything it needs to.
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type { SdkPluginConfig } from "@yanlinglabs/winter-agent-sdk";
+import type { BrandProfile, SdkPluginConfig } from "@yanlinglabs/winter-agent-sdk";
 import { parseSkillFile } from "../skills/frontmatter.ts";
 import { pluginNameError } from "../skills/frontmatter.ts";
 import { parseAgentDefinitionFile } from "../subagents/definitions.ts";
@@ -245,7 +245,7 @@ function metadataOf(manifest: PluginManifest | undefined): PluginMetadata {
  * FIRST OCCURRENCE WINS throughout: a repeated path is a `duplicate` rejection rather than a second
  * bundle, and every downstream derivation (bundle.ts) keeps the same direction.
  */
-export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opts?: { cwd?: string }): LoadPluginsResult {
+export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opts?: { cwd?: string; brand?: Pick<BrandProfile, "pluginManifestDir"> }): LoadPluginsResult {
   const bundles: PluginBundle[] = [];
   const rejected: RejectedPlugin[] = [];
   const seenRoots = new Set<string>();
@@ -276,7 +276,12 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       continue;
     }
 
-    const manifestResult = readPluginManifest(root);
+    // P7a fix r1 (Important-3): the ONE production reader of a plugin manifest. `readPluginManifest`
+    // and `pluginManifestDirs` derived from the profile, but nothing ever handed them one, so a
+    // reuser's `.acme-plugin/plugin.json` was never discovered -- only `.winter-plugin` and the
+    // Claude-mirroring `.claude-plugin`. A derivation nothing threads is exactly what the sweep gate
+    // cannot see.
+    const manifestResult = readPluginManifest(root, opts?.brand);
     if (manifestResult.error !== undefined) {
       rejected.push({ path: declaredPath, kind: "invalid-manifest", reason: manifestResult.error });
       continue;

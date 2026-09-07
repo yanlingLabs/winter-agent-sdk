@@ -25,9 +25,9 @@
 // comparison -- `/private/tmp/acme-<uid>` is a real shared directory and this test must not create
 // one; the directory-creating half runs under an `ACME_TMPDIR` pointed at a mkdtemp.
 import { test, expect, describe, afterEach } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { resolveBrand, WINTER_BRAND, envName, mcpToolName, type BrandProfile, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { activeWinterIdentity, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
@@ -328,6 +328,54 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     // The authored text is Winter's whoever runs it -- WS-11 §6.2 is about CATEGORIES, not names.
     expect(WINTER_CODE_PRESET).toBe(WINTER_CODE_PRESET.trim());
     expect(WINTER_CODE_PRESET.length).toBeGreaterThan(0);
+  });
+
+  test("P7a fix r1 (I-3): a plugin whose manifest lives in `.acme-plugin/` is DISCOVERED through the production path", async () => {
+    // `pluginManifestDirs(ACME)` below is a pure function and was green before this fix; the reader
+    // that matters is `loadPlugins` -> `readPluginManifest`, which was handed no brand at all. So
+    // this loads a REAL plugin directory through `buildProductionWiring` and reads the name back out
+    // of the init info -- a manifest that was not found makes the plugin fall back to its BASENAME
+    // (WS-11 §4's manifestless rule), which is exactly how the bug would have shown.
+    const acmeHome = tempDirNamed("p7a-acme-home-");
+    const cwd = tempDirNamed("p7a-cwd-");
+    const pluginRoot = tempDirNamed("p7a-plugin-");
+    mkdirSync(join(pluginRoot, ".acme-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".acme-plugin", "plugin.json"), JSON.stringify({ name: "named-by-its-acme-manifest", version: "1.0.0" }));
+
+    const config = acmeConfig({ cwd, plugins: [{ type: "local", path: pluginRoot }] });
+    await withWiring(config, { ACME_HOME: acmeHome }, (wiring) => {
+      const names = wiring.engineOptions.initPlugins.map((p) => p.name);
+      expect(names).toContain("named-by-its-acme-manifest");
+      // The basename is what a MISSED manifest would have produced.
+      expect(names).not.toContain(basename(pluginRoot));
+      expect(wiring.warnings.filter((w) => w.includes("was not loaded"))).toEqual([]);
+    });
+  });
+
+  test("P7a fix r1 (I-3): under the DEFAULT brand the same plugin is found in `.winter-plugin/`, and `.claude-plugin` is honoured under both", async () => {
+    const home = tempDirNamed("p7a-winter-home-");
+    const cwd = tempDirNamed("p7a-cwd-");
+    const nativeRoot = tempDirNamed("p7a-plugin-native-");
+    mkdirSync(join(nativeRoot, ".winter-plugin"), { recursive: true });
+    writeFileSync(join(nativeRoot, ".winter-plugin", "plugin.json"), JSON.stringify({ name: "named-by-its-winter-manifest", version: "1.0.0" }));
+    // The Claude-mirroring spelling is a DROP-IN obligation (WS-01 §5): a plugin authored for
+    // `@anthropic-ai/claude-agent-sdk` must keep loading after the package swap, under every brand.
+    const claudeRoot = tempDirNamed("p7a-plugin-claude-");
+    mkdirSync(join(claudeRoot, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(claudeRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "named-by-its-claude-manifest", version: "1.0.0" }));
+
+    const unbranded = { sessionId: "p7a-rebrand-default", cwd, model: "winter-test/echo", persistSession: false, plugins: [{ type: "local", path: nativeRoot }, { type: "local", path: claudeRoot }] } as RuntimeConfig;
+    await withWiring(unbranded, { WINTER_HOME: home }, (wiring) => {
+      const names = wiring.engineOptions.initPlugins.map((p) => p.name);
+      expect(names).toContain("named-by-its-winter-manifest");
+      expect(names).toContain("named-by-its-claude-manifest");
+    });
+
+    // ...and the Claude spelling still wins under the acme brand too.
+    const acmeHome = tempDirNamed("p7a-acme-home-");
+    await withWiring(acmeConfig({ cwd, plugins: [{ type: "local", path: claudeRoot }] }), { ACME_HOME: acmeHome }, (wiring) => {
+      expect(wiring.engineOptions.initPlugins.map((p) => p.name)).toContain("named-by-its-claude-manifest");
+    });
   });
 
   test("`.claude-plugin` stays literal beside the reuser's own manifest dir", () => {

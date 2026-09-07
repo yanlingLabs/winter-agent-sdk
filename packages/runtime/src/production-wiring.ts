@@ -564,7 +564,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const trustedWorkspace = defaultTrustSource(config).verdict(config.cwd).trusted;
 
   // (2) PLUGINS.
-  const plugins = loadPlugins(config.plugins, { cwd: config.cwd });
+  const plugins = loadPlugins(config.plugins, { cwd: config.cwd, brand });
   for (const rejection of plugins.rejected) {
     warnings.push(`plugin "${rejection.path}" was not loaded (${rejection.kind}): ${rejection.reason}`);
   }
