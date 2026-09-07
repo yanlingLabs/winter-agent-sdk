@@ -15,7 +15,10 @@ import type {
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
-import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ProviderToolSpec, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+// WS-13c §3 (P6.6): the pinned Claude names and the public active-set shape the Agent tool renders from.
+import { CLAUDE_RESERVED_SLOT_NAMES } from "@yanlinglabs/winter-provider-catalog";
+import type { ActiveSlotSet } from "@yanlinglabs/winter-agent-sdk";
 import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools, replaceExecutor, registerTool, unregisterToolForTest } from "./tools/registry.ts";
 import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
 import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
@@ -3866,4 +3869,165 @@ test("WS-13c: a wired `listModelFamilies` producer is what the handler answers w
   const reply = frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "fam2") as ControlResponseFrame | undefined;
   expect(reply?.ok).toBe(true);
   expect((reply as unknown as { payload: unknown }).payload).toEqual(listing);
+});
+
+// ================================================================================================
+// WS-13c §3 (P6.6 Lane A): the Agent tool's `model` enum and description lines are rendered from the
+// session's ACTIVE FAMILY -- and the registry's own descriptor is never touched.
+//
+// The active sets here are LITERALS rather than `computeActiveSlotSet` over a catalog fixture: what
+// this file owns is the ENGINE half (does it call the getter with the right model key, does it
+// re-render at the right boundary, does it clone) -- `provider/slots.test.ts` owns which slots a
+// catalog yields, and driving both from one fixture would let a change in either look like a
+// failure in the other.
+// ================================================================================================
+describe("WS-13c: the Agent tool per family", () => {
+  const slot = (name: string, canonicalModelId: string): { name: string; canonicalModelId: string; description: string; reason: string } => ({
+    name,
+    canonicalModelId,
+    description: `what ${name} is for`,
+    reason: `why ${name} is here`,
+  });
+  const GPT_SET: ActiveSlotSet = {
+    family: "gpt",
+    source: "family-default",
+    slots: [slot("astra", "gpt-6-astra"), slot("sol", "gpt-5.6-sol"), slot("terra", "gpt-5.6-terra"), slot("luna", "gpt-5.6-luna")],
+  };
+  const CLAUDE_SET: ActiveSlotSet = {
+    family: "claude",
+    source: "claude-pinned",
+    slots: [...CLAUDE_RESERVED_SLOT_NAMES].map((name) => slot(name, `claude-${name}-5`)),
+  };
+  const OWN_MODEL_SET: ActiveSlotSet = { family: "other", source: "own-model", slots: [slot("doubao-seed-2.0", "doubao-seed-2.0")] };
+  const agentEnumOf = (specs: ProviderToolSpec[]): string[] =>
+    (specs.find((s) => s.name === "Agent")!.inputSchema as unknown as { properties: { model: { enum: string[] } } }).properties.model.enum;
+
+  /** Every generation's advertised `tools`, in call order — what the model was actually shown. */
+  async function specsPerGeneration(opts: Record<string, unknown>, frames: WinterFrame[], betweenGenerations?: () => void): Promise<ProviderToolSpec[][]> {
+    const { host, runtime } = createInMemoryChannel();
+    const seen: ProviderToolSpec[][] = [];
+    const provider: Provider = {
+      async generate(req) {
+        seen.push([...(req.tools ?? [])]);
+        // A settings edit lands BETWEEN turns, which is where a real one lands too — the engine's
+        // own re-render point is the next `providerToolSpecs()`, one per generation.
+        betweenGenerations?.();
+        return { kind: "text", text: "ok" };
+      },
+    };
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor, ...opts });
+    for (const frame of frames) host.output.write(frame);
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    await done;
+    return seen;
+  }
+
+  async function advertisedSpecsFor(opts: Record<string, unknown> = {}): Promise<ProviderToolSpec[]> {
+    const perGeneration = await specsPerGeneration(opts, [{ type: "user", text: "hi" }]);
+    return perGeneration[0] ?? [];
+  }
+
+  test("WS13c-1: the Agent tool's model enum is rendered from the active family (gpt session)", async () => {
+    const specs = await advertisedSpecsFor({ activeSlotSet: () => GPT_SET });
+    const agent = specs.find((s) => s.name === "Agent")!;
+    expect(agentEnumOf(specs)).toEqual(["astra", "sol", "terra", "luna"]);
+    expect(agent.description).toContain("astra — gpt-6-astra:");
+    expect(agent.description).toContain("(why astra is here)");
+    // D25's "no false information" tripwire, on the wire: an OpenAI model is never shown a Claude name.
+    expect(agent.description).not.toContain("fable");
+    expect(agent.description).not.toContain("{{MODEL_SLOTS}}");
+  });
+
+  test("WS13c-2: a claude session advertises the pinned four and nothing else", async () => {
+    const specs = await advertisedSpecsFor({ activeSlotSet: () => CLAUDE_SET });
+    expect(agentEnumOf(specs)).toEqual([...CLAUDE_RESERVED_SLOT_NAMES]);
+    expect(specs.find((s) => s.name === "Agent")!.description).not.toContain("astra");
+  });
+
+  test("WS13c-1: a family with no curated slots advertises the session's own model as the single slot", async () => {
+    const specs = await advertisedSpecsFor({ activeSlotSet: () => OWN_MODEL_SET });
+    expect(agentEnumOf(specs)).toEqual(["doubao-seed-2.0"]);
+    expect(specs.find((s) => s.name === "Agent")!.description).toContain("doubao-seed-2.0 — doubao-seed-2.0:");
+  });
+
+  test("with NO activeSlotSet wired the descriptor's static enum stands and the marker block is stripped", async () => {
+    const specs = await advertisedSpecsFor();
+    const agent = specs.find((s) => s.name === "Agent")!;
+    expect(agentEnumOf(specs)).toEqual(["sonnet", "opus", "haiku", "fable"]);
+    expect(agent.description).not.toContain("{{MODEL_SLOTS}}");
+    expect(agent.description).not.toContain("Model options for this session");
+  });
+
+  test("an EMPTY active set keeps the static default rather than advertising an enum with nothing in it", async () => {
+    const specs = await advertisedSpecsFor({ activeSlotSet: () => ({ family: "other", source: "own-model", slots: [] }) as ActiveSlotSet });
+    expect(agentEnumOf(specs)).toEqual(["sonnet", "opus", "haiku", "fable"]);
+    expect(specs.find((s) => s.name === "Agent")!.description).not.toContain("{{MODEL_SLOTS}}");
+  });
+
+  test("the registry's own Agent descriptor is never mutated by rendering", async () => {
+    await advertisedSpecsFor({ activeSlotSet: () => GPT_SET });
+    const descriptor = getRegisteredTool("Agent")!.descriptor;
+    expect((descriptor.inputSchema as unknown as { properties: { model: { enum: string[] } } }).properties.model.enum).toEqual(["sonnet", "opus", "haiku", "fable"]);
+    expect(descriptor.description).toContain("{{MODEL_SLOTS}}");
+    // And a second session in the same process still sees the STATIC default, which is what a
+    // mutated shared descriptor would have destroyed.
+    expect(agentEnumOf(await advertisedSpecsFor())).toEqual(["sonnet", "opus", "haiku", "fable"]);
+  });
+
+  test("WS13c-3: a set_model across families re-renders at the quiescent boundary, with no restart", async () => {
+    const seenKeys: Array<string | undefined> = [];
+    const perGeneration = await specsPerGeneration(
+      {
+        activeSlotSet: (key: string | undefined) => {
+          seenKeys.push(key);
+          return key !== undefined && key.startsWith("anthropic/") ? CLAUDE_SET : OWN_MODEL_SET;
+        },
+      },
+      [
+        { type: "user", text: "one" },
+        { type: "control_request", requestId: "m1", subtype: "set_model", payload: { model: "anthropic/claude-opus-5" } },
+        { type: "user", text: "two" },
+      ],
+    );
+    expect(perGeneration).toHaveLength(2);
+    expect(agentEnumOf(perGeneration[0]!)).toEqual(["doubao-seed-2.0"]);
+    expect(agentEnumOf(perGeneration[1]!)).toEqual([...CLAUDE_RESERVED_SLOT_NAMES]);
+    // The getter is asked with the ENGINE's live model key, not the one the session started on.
+    expect(seenKeys).toEqual(["winter-test/echo", "anthropic/claude-opus-5"]);
+  });
+
+  test("WS13c-3: a settingsVersion bump re-renders the enum with no restart and no model change", async () => {
+    let version = 1;
+    const perGeneration = await specsPerGeneration(
+      { settingsVersion: () => version, activeSlotSet: () => (version === 1 ? GPT_SET : CLAUDE_SET) },
+      [
+        { type: "user", text: "one" },
+        { type: "user", text: "two" },
+      ],
+      () => {
+        version = 2;
+      },
+    );
+    expect(perGeneration).toHaveLength(2);
+    expect(agentEnumOf(perGeneration[0]!)).toEqual(["astra", "sol", "terra", "luna"]);
+    expect(agentEnumOf(perGeneration[1]!)).toEqual([...CLAUDE_RESERVED_SLOT_NAMES]);
+  });
+
+  test("the render is memoised: an unchanged model and settings version do not recompute it", async () => {
+    let calls = 0;
+    await specsPerGeneration(
+      {
+        activeSlotSet: () => {
+          calls += 1;
+          return GPT_SET;
+        },
+      },
+      [
+        { type: "user", text: "one" },
+        { type: "user", text: "two" },
+      ],
+    );
+    expect(calls).toBe(1);
+  });
 });

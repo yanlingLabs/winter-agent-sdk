@@ -23,6 +23,15 @@ import type { ActiveSlotSet, ModelSlotSetting, SlotView } from "@yanlinglabs/win
  */
 export const AGENT_MODEL_SLOTS_MARKER = "{{MODEL_SLOTS}}";
 export const AGENT_MODEL_SLOTS_BLOCK = `\n\nModel options for this session:\n${AGENT_MODEL_SLOTS_MARKER}`;
+/**
+ * The WS-06 canonical name of the one tool whose schema is rendered per family.
+ *
+ * Declared beside the marker for the same reason: the engine needs to recognise the descriptor and
+ * cannot import the descriptor (or the executor) module for a string without taking its
+ * registration side effects. `descriptors/agent.ts` and `tools/impl/agent.ts` both read it from
+ * here, so the name has one producer rather than three spellings that could drift.
+ */
+export const AGENT_TOOL_CANONICAL_NAME = "Agent";
 
 export interface ActiveSlotSetInput {
   catalog: WinterCatalog;

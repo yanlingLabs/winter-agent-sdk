@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, appendFileSync } from "node:fs";
 import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
+import { AGENT_TOOL_CANONICAL_NAME } from "../../provider/slots.ts";
 import "../descriptors/agent.ts"; // self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
 import { createBackgroundTask } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared background-task runtime TaskStop/TaskOutput are built on.
@@ -25,7 +26,10 @@ import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
 
-export const AGENT_TOOL_NAME = "Agent";
+// ONE PRODUCER for the name (P6.6): `provider/slots.ts` declares it, `descriptors/agent.ts`
+// registers under it, engine.ts recognises the descriptor by it, and this executor replaces the
+// executor under it. The export stays for every existing importer.
+export const AGENT_TOOL_NAME = AGENT_TOOL_CANONICAL_NAME;
 
 // R4-8 / WS-10 §17 Open Question 1 -- CLOSED by Phase 4 Task 8 (rider 22, RULING P4-J(d)):
 // `tools/descriptors/agent.ts` no longer advertises `name` in its own `inputSchema.properties`.

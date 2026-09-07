@@ -30,6 +30,8 @@ import {
   type WireStreamEvent,
   // WS-13c §7 (P6.6): the `list_model_families` control response's payload shape.
   type ModelFamilyListing,
+  // WS-13c §3 (P6.6): the active slot set the Agent tool's `model` schema is rendered from.
+  type ActiveSlotSet,
 } from "@yanlinglabs/winter-agent-sdk";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
@@ -51,6 +53,12 @@ import { PROVIDER_STATE_FILE_SUFFIX, type ContinuationLink, type ProviderStateRe
 // `store/continuation-attach.ts` imports nothing from here at all (its message shape is structural,
 // which is what keeps the `store/` -> `engine.ts` direction closed).
 import { createStreamFrameSink } from "./provider/stream-frames.ts";
+// WS-13c §3/§4 (P6.6 Lane A): the Agent tool's per-family `model` schema, and the slot -> provider
+// resolver a child spawn runs its requested model through. `slots.ts` has NO side effects, which is
+// why the two marker constants live there rather than in `tools/descriptors/agent.ts` — importing
+// the descriptor module for a string would register the Agent stub as a side effect of loading the
+// engine.
+import { AGENT_MODEL_SLOTS_BLOCK, AGENT_MODEL_SLOTS_MARKER, AGENT_TOOL_CANONICAL_NAME, renderAgentModelSchema, type SlotProviderResolution } from "./provider/slots.ts";
 import { attachContinuationChain } from "./store/continuation-attach.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -1138,6 +1146,44 @@ export interface EngineOptions {
    */
   listModelFamilies?: () => ModelFamilyListing;
   /**
+   * WS-13c §3 (P6.6): the session's ACTIVE SLOT SET, for the model key given.
+   *
+   * TAKES THE MODEL KEY rather than reading one, and that is the whole re-render mechanism (R13c-4).
+   * The wiring's own view of the session's model is the START model (`providerWiring.resolved`);
+   * `installIdentity` updates the ENGINE's `currentModel` and never writes back, so a getter that
+   * closed over the wiring's value would keep advertising the family the session started on after a
+   * `set_model` across families — the exact "false information" D25 forbids. The engine passes
+   * `currentProviderIdentity?.modelKey ?? currentModel` and memoises on `(that key, settingsVersion())`,
+   * so all three re-render points (session start, a `set_model` that lands, a `modelSlots` change)
+   * are one comparison made at the next `providerToolSpecs()` — which happens per turn, and a turn
+   * boundary IS the quiescent boundary R13c-4 names. No watcher, no restart.
+   *
+   * ABSENT -> the Agent descriptor keeps its STATIC pinned enum and its description's marker block is
+   * stripped, which is what every scripted double and every pre-P6.6 fixture sees.
+   */
+  activeSlotSet?: (currentModelKey: string | undefined) => ActiveSlotSet;
+  /**
+   * WS-13c §4 (P6.6): the slot -> provider resolver, for the model key given.
+   *
+   * Consulted for a CHILD's requested model (`AgentInput.model`, `AgentDefinition.model`,
+   * `WINTER_SUBAGENT_MODEL`, and the inherited `config.model`). A refusal is THROWN out of
+   * `spawnChild` so `tools/impl/agent.ts` reports it as the tool's own typed error — never a
+   * substitution onto some other model (WS-13 §9).
+   *
+   * ABSENT -> the pre-P6.6 chain, verbatim: the requested string goes on the child unresolved.
+   */
+  resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
+  /**
+   * WS-13c §5 (P6.6): a monotonically increasing number the WIRING bumps whenever the resolved
+   * settings view changes, so a `modelSlots`/`preferredProviders` edit re-renders the Agent tool at
+   * the next quiescent boundary with no restart (the hot-reload rule).
+   *
+   * A NUMBER rather than the settings object, deliberately: the memo compares it, and comparing a
+   * settings OBJECT by identity would re-render on every re-resolve that changed nothing while
+   * comparing it by value would mean serialising the whole cascade once per turn.
+   */
+  settingsVersion?: () => number;
+  /**
    * `account_info` is a WINTER-ONLY control subtype, disclosed.
    *
    * The pin carries `AccountInfo` on the `initialize`/`reinitialize` RESPONSE (`sdk.d.ts:3804`), and
@@ -1442,6 +1488,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     classifier,
     supportedModels,
     listModelFamilies,
+    activeSlotSet,
+    resolveSlot,
+    settingsVersion,
     accountInfo,
     resolveModelSwitch,
     fallbackModels,
@@ -4164,14 +4213,63 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    * `advertisedName` is the name the MODEL sees (the alias table's own resolution), never the
    * canonical one -- a schema keyed on a name the model was not shown is a tool it cannot call.
    */
+  /**
+   * WS-13c §3 (R13c-4): the active slot set's RENDER, memoised on the two things that can change it.
+   *
+   * The three re-render points are one comparison rather than three hooks: the model key covers
+   * session start AND every `installIdentity` (a `set_model` that lands, an interrupt, a fallback),
+   * `settingsVersion()` covers a `modelSlots`/`preferredProviders` edit. `providerToolSpecs()` runs
+   * once per generation, and a turn boundary IS the quiescent boundary R13c-4 applies a model change
+   * at — so nothing has to watch anything, and a mid-turn change cannot split one turn's advertised
+   * enum from the model that turn is running on.
+   */
+  let slotRenderMemo: { key: string | undefined; version: number; render: { enum: string[]; descriptionLines: string[] } } | undefined;
+  const currentAgentModelRender = (): { enum: string[]; descriptionLines: string[] } | undefined => {
+    if (activeSlotSet === undefined) return undefined;
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    const version = settingsVersion?.() ?? 0;
+    if (slotRenderMemo === undefined || slotRenderMemo.key !== key || slotRenderMemo.version !== version) {
+      slotRenderMemo = { key, version, render: renderAgentModelSchema(activeSlotSet(key)) };
+    }
+    return slotRenderMemo.render;
+  };
+
+  /**
+   * One advertised tool as the provider request carries it.
+   *
+   * THE REGISTRY'S DESCRIPTOR IS NEVER MUTATED. The registry is process-wide and its descriptors are
+   * shared by every session in the process; rendering the Agent enum in place would make one
+   * session's family the next session's default (and a child's parent's), permanently and
+   * invisibly. The clone is per call, and the STATIC descriptor keeps the pinned four as its own
+   * default -- which is also what a session with no `activeSlotSet` wired still advertises.
+   */
+  const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
+    if (descriptor.canonicalName !== AGENT_TOOL_CANONICAL_NAME) {
+      return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
+    }
+    const render = currentAgentModelRender();
+    // An EMPTY enum is not a render: a session with no effective model to derive a family from
+    // (`own-model` with no key) would otherwise advertise a `model` property whose enum admits
+    // nothing at all. The static default stands, and the marker block comes off so the description
+    // the model reads never contains the placeholder.
+    if (render === undefined || render.enum.length === 0) {
+      return { name: descriptor.advertisedName, description: descriptor.description.replace(AGENT_MODEL_SLOTS_BLOCK, ""), inputSchema: descriptor.inputSchema as Record<string, unknown> };
+    }
+    const inputSchema = structuredClone(descriptor.inputSchema) as Record<string, unknown>;
+    const properties = (inputSchema as { properties?: Record<string, unknown> }).properties;
+    const modelProperty = properties?.["model"];
+    if (typeof modelProperty === "object" && modelProperty !== null) (modelProperty as { enum?: string[] }).enum = [...render.enum];
+    return { name: descriptor.advertisedName, description: descriptor.description.replace(AGENT_MODEL_SLOTS_MARKER, render.descriptionLines.join("\n")), inputSchema };
+  };
+
   const providerToolSpecs = (): ProviderToolSpec[] => {
     const specs: ProviderToolSpec[] = [];
     for (const descriptor of advertisedPartition.eager) {
-      specs.push({ name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> });
+      specs.push(toolSpecFor(descriptor));
     }
     for (const descriptor of advertisedPartition.deferred) {
       if (!loadedToolSet.isLoaded(descriptor.canonicalName)) continue;
-      specs.push({ name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> });
+      specs.push(toolSpecFor(descriptor));
     }
     return specs;
   };

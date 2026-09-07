@@ -2,10 +2,11 @@
 // description). [WS-10] owns lifecycle/definition/model-resolution/fork semantics; T1 registers the
 // descriptor only. `resume`/`max_turns` are deliberately NOT input fields (see WS-06 §3.3).
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
+import { AGENT_MODEL_SLOTS_BLOCK, AGENT_TOOL_CANONICAL_NAME } from "../../provider/slots.ts";
 
 stub({
-  canonicalName: "Agent",
-  advertisedName: "Agent",
+  canonicalName: AGENT_TOOL_CANONICAL_NAME,
+  advertisedName: AGENT_TOOL_CANONICAL_NAME,
   source: "builtin",
   inputSchema: {
     type: "object",
@@ -13,6 +14,11 @@ stub({
       description: { type: "string" },
       prompt: { type: "string" },
       subagent_type: { type: "string" },
+      // WS-13c §3 (P6.6): the STATIC DEFAULT, and the pinned four are deliberately what it is. A
+      // session with an active slot set wired gets this property's `enum` re-rendered from that
+      // family (engine.ts's `toolSpecFor` clones the schema per turn -- this object is never
+      // mutated), and a session without one -- every scripted double, every pre-P6.6 fixture, and
+      // the Claude Agent SDK's own official tool -- keeps exactly the enum it always had.
       model: { type: "string", enum: ["sonnet", "opus", "haiku", "fable"] },
       run_in_background: { type: "boolean" },
       isolation: { type: "string", enum: ["worktree", "remote"] },
@@ -43,8 +49,13 @@ stub({
     },
     required: ["description", "prompt"],
   },
+  // WS-13c §3: the marker block is where the active family's one-line-per-slot listing goes
+  // (`<name> — <canonicalModelId>: <description> (<reason>)`). The engine substitutes it per turn on
+  // a CLONE, and STRIPS the whole block when no active slot set is wired -- so the static text a
+  // scripted double advertises never contains the placeholder.
   description:
-    "Starting a worker does not prompt; every child tool call passes the applicable tool set/permissions/hooks. Foreground/background is an invocation field + runtime policy, never a hardcoded default.",
+    "Starting a worker does not prompt; every child tool call passes the applicable tool set/permissions/hooks. Foreground/background is an invocation field + runtime policy, never a hardcoded default." +
+    AGENT_MODEL_SLOTS_BLOCK,
   exposure: "eager",
   permissionClass: "task",
   availability: ALWAYS_AVAILABLE,
