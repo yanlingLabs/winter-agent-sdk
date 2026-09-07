@@ -299,7 +299,7 @@ describe("R6-9 contract: selection (Lanes A / B / D / N)", () => {
   test("a resolution failure is a TYPED `WinterProviderResolutionError`, never a silent default", async () => {
     const { resolveSessionProvider } = await import("./selection.ts");
     const { WinterProviderResolutionError, createMemoryCredentialStore, createRegistry } = await import("@yanlinglabs/winter-provider-runtime");
-    const registry = createRegistry({ schemaVersion: 1, catalogVersion: "t", providers: [], models: [] } as never);
+    const registry = createRegistry({ schemaVersion: 2, families: [], catalogVersion: "t", providers: [], models: [] } as never);
     let threw: unknown;
     try {
       resolveSessionProvider({ sessionId: "s", cwd: "/tmp", model: "bare-id" } as never, { registry, credentials: createMemoryCredentialStore(), env: {} });
@@ -318,7 +318,8 @@ describe("R6-9 contract: selection (Lanes A / B / D / N)", () => {
     const { createMemoryCredentialStore, createRegistry } = await import("@yanlinglabs/winter-provider-runtime");
     const evidence = <T,>(value: T) => ({ value, source: "official-doc" as const, confidence: "verified" as const, observedAt: "2026-09-05" });
     const registry = createRegistry({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      families: [],
       catalogVersion: "cat-9",
       providers: [
         {

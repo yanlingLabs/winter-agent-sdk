@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadCatalog, scanForSecrets, validateCatalog } from "../index.ts";
+import { loadCatalog, scanForSecrets, stampFamilyFields, validateCatalog } from "../index.ts";
 import { UNKNOWN_CITATION_RE } from "../validate.ts";
 import type { WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
 import upstreamLayer from "../../generated/upstream-layer.json" with { type: "json" };
@@ -197,12 +197,18 @@ describe("standing floors", () => {
   });
 
   test("the UPSTREAM LAYER validates standalone — its cohort rows are all shadowed and would never be checked otherwise", () => {
+    // WS-13c: the layer's rows carry no `modelFamily`/`canonicalModelId` — deliberately, since the
+    // stamp treats a pre-existing value as an override it must never overwrite (merge.ts's
+    // `UnstampedModelDescriptor`). Stamped here with NO families, exactly as `mergeLayers` does for
+    // this same check: every row lands in `other`, and family assignment stays the merged catalog's
+    // own gate rather than a claim the layer alone could not satisfy.
     const standalone = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       catalogVersion: catalog.catalogVersion,
       upstream: catalog.upstream,
       providers: upstreamLayer.providers,
-      models: upstreamLayer.models,
+      models: stampFamilyFields(upstreamLayer.models as unknown as Array<{ upstreamId: string }>, []),
+      families: [],
     };
     const result = validateCatalog(standalone);
     expect(result.ok ? [] : result.errors).toEqual([]);

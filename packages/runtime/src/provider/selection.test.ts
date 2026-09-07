@@ -7,6 +7,7 @@ import { test, expect, describe } from "bun:test";
 import type { ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
 import { WinterProviderResolutionError, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { canonicalModelIdOf } from "@yanlinglabs/winter-provider-catalog";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { createProviderContext, createSelectionRegistry, redactCredentialRef, resolveSessionProvider, resolveStallTimeoutMs, WINTER_TEST_NAMESPACE } from "./selection.ts";
 import { DEFAULT_PROVIDER_STALL_TIMEOUT_MS } from "@yanlinglabs/winter-agent-sdk";
@@ -48,6 +49,10 @@ function catalog(): WinterCatalog {
     upstreamId,
     displayName: key,
     aliases,
+    // WS-13c: derived exactly as the pipeline derives them, so a consumer of this fixture reads the
+    // real normaliser's answer rather than a hand-picked string. No families here, so `other`.
+    canonicalModelId: canonicalModelIdOf(upstreamId),
+    modelFamily: "other",
     status: "candidate" as const,
     // T10: `evidence(...)`, not a bare number. `WinterModelDescriptor.contextWindow` is a
     // `CapabilityEvidence<number>`, and this fixture's bare number is exactly why selection's own
@@ -59,7 +64,8 @@ function catalog(): WinterCatalog {
     upstream: { project: "winter", commit: "" },
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "test-1",
     providers: [provider("openai", "openai-responses"), provider("anthropic", "anthropic-messages")],
     models: [

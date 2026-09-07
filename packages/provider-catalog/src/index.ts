@@ -8,11 +8,16 @@ export type {
   CatalogValidationResult,
   EvidenceConfidence,
   EvidenceSource,
+  // WS-13c §1/§2 (P6.6 spine): the family layer's data shapes.
+  FamilySlot,
+  ModelFamilyDescriptor,
   ModelPricing,
   ModelStatus,
   ProviderAuthKind,
   ProviderProtocol,
   ReasoningCapabilities,
+  SlotBasis,
+  SlotStatus,
   ToolCalling,
   WinterCatalog,
   WinterModelDescriptor,
@@ -20,6 +25,26 @@ export type {
 } from "./types.ts";
 
 export { CATALOG_VOCABULARIES, scanForSecrets, validateCatalog } from "./validate.ts";
+
+// WS-13c §1–§3 (P6.6 spine): the pure family helpers. Every lane IMPORTS these — the normaliser, the
+// matcher fallback and the slot-name acceptance rule each have exactly one implementation, because a
+// second copy of "which family is this" is how the Agent tool's enum and the resolver start
+// disagreeing about the same model.
+export {
+  CLAUDE_FAMILY_ID,
+  CLAUDE_RESERVED_SLOT_NAMES,
+  CURRENCY_RE,
+  FAMILY_ID_RE,
+  OTHER_FAMILY_ID,
+  SLOT_NAME_RE,
+  canonicalModelIdOf,
+  familyIdOf,
+  familyOfModelKey,
+  resolveSlotName,
+  rowsForCanonicalId,
+  stampFamilyFields,
+} from "./families.ts";
+export type { SlotNameResolution } from "./families.ts";
 
 import type { WinterCatalog } from "./types.ts";
 import { validateCatalog } from "./validate.ts";

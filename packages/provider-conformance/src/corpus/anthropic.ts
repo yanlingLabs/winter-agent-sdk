@@ -15,6 +15,7 @@
 // dependencies expose only their frozen barrels (`exports: { ".": ... }`), and neither barrel can
 // gain an entry for a lane's adapter without editing a frozen file.
 import type { ReasoningCapabilities, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { createRegistry, createMemoryCredentialStore, discoverModels } from "@yanlinglabs/winter-provider-runtime";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import { createAnthropicMessagesAdapter } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
@@ -38,8 +39,13 @@ const evidence = <T>(value: T): { value: T; source: "upstream-static"; confidenc
   observedAt: "2026-09-05T00:00:00Z",
 });
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 function model(over: Partial<WinterModelDescriptor> & { key: string; upstreamId: string }): WinterModelDescriptor {
-  return {
+  return stampRow({
     providerId: "anthropic",
     displayName: over.key,
     aliases: [],
@@ -51,7 +57,7 @@ function model(over: Partial<WinterModelDescriptor> & { key: string; upstreamId:
     unsupportedParameters: [],
     status: "candidate",
     ...over,
-  };
+  });
 }
 
 /** The reasoning block the catalogued Anthropic rows share, mirroring the seed row's own evidence. */
@@ -123,7 +129,8 @@ export function testAnthropicCatalog(): WinterCatalog {
     }),
   ];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-lane-b-fixture",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [

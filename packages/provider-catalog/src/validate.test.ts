@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_VOCABULARIES, loadCatalog, scanForSecrets, validateCatalog } from "./index.ts";
+import { CATALOG_VOCABULARIES, CLAUDE_RESERVED_SLOT_NAMES, loadCatalog, scanForSecrets, stampFamilyFields, validateCatalog } from "./index.ts";
 import catalogSchema from "../schema/catalog.schema.json" with { type: "json" };
-import type { CatalogValidationError, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
+import type { CatalogValidationError, FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
 
 // A minimal, VALID catalog every negative case mutates one field of. Building the negatives by
 // mutation (rather than by hand-writing each broken document) is what keeps a test from passing
@@ -28,8 +28,11 @@ function baseProvider(over: Partial<WinterProviderDescriptor> = {}): WinterProvi
   };
 }
 
-function baseModel(over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor {
-  return {
+// WS-13c: the two derived family fields are stamped by the SAME `stampFamilyFields` the pipeline
+// uses, never hand-typed — a fixture that spelled them itself would be a second implementation of
+// the normaliser, and the first thing to drift away from the real one.
+function baseModel(over: Partial<WinterModelDescriptor> = {}, families: readonly ModelFamilyDescriptor[] = []): WinterModelDescriptor {
+  const row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId"> & { modelFamily?: string; canonicalModelId?: string } = {
     key: "acme/m1",
     providerId: "acme",
     upstreamId: "m1",
@@ -44,17 +47,56 @@ function baseModel(over: Partial<WinterModelDescriptor> = {}): WinterModelDescri
     status: "candidate",
     ...over,
   };
+  return stampFamilyFields([row], families)[0]!;
 }
 
 function baseCatalog(over: Partial<WinterCatalog> = {}): WinterCatalog {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     catalogVersion: "0.0.0-test",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [baseProvider()],
     models: [baseModel()],
+    // EMPTY by default, and every pre-WS-13c case keeps it that way. `families` is required but a
+    // family is not: the validator only pins the `claude` reservation when a `claude` family is
+    // actually present, because the upstream layer's own standalone check and every fixture below
+    // legitimately carry none.
+    families: [],
     ...over,
   };
+}
+
+/**
+ * A catalog WITH families — the WS-13c cases' fixture, and the only one whose model rows exist to
+ * satisfy slots.
+ *
+ * Separate from `baseCatalog()` rather than folded into it: `slot-model-missing` makes every slot a
+ * claim about the `models` array, and dozens of existing negative cases replace `models` wholesale.
+ * Putting families on the shared base would have made those cases fail for a second, unrelated
+ * reason — the exact defect `expectRejected`'s needle argument exists to catch.
+ */
+function validCatalog(): WinterCatalog {
+  const slot = (name: string, canonicalModelId: string): FamilySlot => ({
+    name, canonicalModelId, description: `the ${name} option`, reason: `it holds the ${name} position`, basis: "winter-curated", citation: "spec:WS-13c §9", status: "candidate",
+  });
+  const families: ModelFamilyDescriptor[] = [
+    {
+      id: "claude", displayName: "Claude", vendor: "Anthropic", vendorProviders: ["acme"],
+      matchers: [{ pattern: "^claude-", note: "" }], status: "candidate", citation: "spec:WS-13c §9",
+      slots: CLAUDE_RESERVED_SLOT_NAMES.map((n) => slot(n, `claude-${n}-5`)),
+    },
+    {
+      id: "gpt", displayName: "GPT", vendor: "OpenAI", vendorProviders: ["acme"],
+      matchers: [{ pattern: "^gpt-(?!oss)", note: "" }], status: "candidate", citation: "spec:WS-13c §9",
+      slots: [slot("astra", "gpt-6-astra"), slot("luna", "gpt-5.6-luna")],
+    },
+  ];
+  const models = [
+    ...CLAUDE_RESERVED_SLOT_NAMES.map((n) => baseModel({ key: `acme/claude-${n}-5`, upstreamId: `claude-${n}-5`, displayName: `Claude ${n} 5` }, families)),
+    baseModel({ key: "acme/gpt-6-astra", upstreamId: "gpt-6-astra", displayName: "GPT-6 Astra" }, families),
+    baseModel({ key: "acme/gpt-5.6-luna", upstreamId: "gpt-5.6-luna", displayName: "GPT-5.6 Luna" }, families),
+  ];
+  return baseCatalog({ models, families });
 }
 
 /** Asserts the catalog is rejected AND that at least one message mentions `needle` — a rejection for the wrong reason is not a pass. */
@@ -277,7 +319,7 @@ describe("scanForSecrets — descriptors never contain secrets (WS-13 §6, R6-10
 describe("the COMMITTED catalog", () => {
   test("loadCatalog() resolves the bundled JSON module (never a filesystem read) and it validates", () => {
     const catalog = loadCatalog();
-    expect(catalog.schemaVersion).toBe(1);
+    expect(catalog.schemaVersion).toBe(2);
     expect(catalog.providers.length).toBeGreaterThan(0);
     expect(catalog.models.length).toBeGreaterThan(0);
   });

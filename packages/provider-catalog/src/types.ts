@@ -106,12 +106,94 @@ export interface ModelPricing {
   cacheWritePerMTokUsd?: number;
 }
 
+/**
+ * WS-13c §2: where a slot's ranking and its description came from.
+ *
+ * `user-ruling` carries the user's own framing verbatim (or a faithful one-sentence condensation
+ * that keeps the user's key phrase); `vendor-doc` cites the vendor's model page; `winter-curated` is
+ * Winter's own editorial judgement and enters `candidate` until the user reviews it (§9).
+ */
+export type SlotBasis = "user-ruling" | "vendor-doc" | "winter-curated";
+
+/** A slot's promotion state, mirroring `ModelStatus`'s two reviewed values (WS-13c §2/§9). */
+export type SlotStatus = "candidate" | "supported";
+
+/**
+ * One ranked option in a family's lineup (WS-13c §2).
+ *
+ * POSITION IN THE ARRAY IS THE OPTION ORDER, NOT A STRENGTH CLAIM (D26): the Gemini case is the
+ * whole reason the two text fields are required and separate — 3.8 Flash is documented as the
+ * strongest while 3.1 Pro still leads the list on breadth. `description` says what it is good for
+ * and `reason` says why it holds this position; neither may carry a currency amount, because pricing
+ * lives on model rows with its own evidence wrapper and a price copied into prose is a price nobody
+ * can audit or update.
+ */
+export interface FamilySlot {
+  /** The facing enum token people know (`astra`, `flash`, `grok-4.6`). Matches `^[a-z0-9][a-z0-9.-]{0,31}$`; never a version number alone. */
+  name: string;
+  /** Resolves to at least one model row's `canonicalModelId` — the integrity suite refuses a slot on a missing row, so no id is invented into `generated/`. */
+  canonicalModelId: string;
+  /** Pins a serving provider id (WS-13c §4 step 4). Optional; it must survive the credential/enablement filter or the slot is unservable. */
+  provider?: string;
+  /** What this option is for. No currency amounts. */
+  description: string;
+  /** Why it holds this position in the lineup. */
+  reason: string;
+  basis: SlotBasis;
+  citation: string;
+  status: SlotStatus;
+}
+
+/**
+ * A vendor lineup, independent of the provider that serves it (WS-13c §1).
+ *
+ * `matchers` are anchored RegExp SOURCES evaluated over `canonicalModelId`, first match wins. They
+ * are authored DISJOINT (`^gpt-(?!oss)` beside `^gpt-oss-`) so the pipeline's sort-by-id can never
+ * change a row's stamp; `catalog-integrity.test.ts` asserts that order independence over the real
+ * catalog rather than trusting the authoring.
+ *
+ * `vendorProviders` is ORDERED and is step 3-i of slot resolution: the vendor's own rows first, a
+ * configured SUBSCRIPTION row before a token row of the same vendor.
+ */
+export interface ModelFamilyDescriptor {
+  /** `^[a-z0-9][a-z0-9-]{0,31}$`. `other` is the reserved id for a row no matcher claims. */
+  id: string;
+  displayName: string;
+  vendor: string;
+  /** Ordered provider ids, subscription row before token row of the same vendor (WS-13c §4 step 3-i). */
+  vendorProviders: string[];
+  /** Anchored RegExp sources over `canonicalModelId`; first match wins. Authored disjoint. */
+  matchers: Array<{ pattern: string; note: string }>;
+  /** 0..4, unique names. A family with zero slots is legal — it is listed under "more options" only. */
+  slots: FamilySlot[];
+  status: "candidate" | "supported";
+  citation: string;
+}
+
 export interface WinterModelDescriptor {
   /** The stable Winter key, `<providerId>/<model>` (WS-13 §8.3). Globally unique across the catalog. */
   key: string;
   providerId: string;
   /** The provider-local id sent on the wire. Unique within a provider, and never assumed unique across providers. */
   upstreamId: string;
+  /**
+   * WS-13c §1: the family id this row's model belongs to, or `"other"` when no matcher claims it.
+   *
+   * DERIVED AT BUILD by `stampFamilyFields`; an overlay row MAY set it as an override, and the
+   * stamper never overwrites a value that is already there. Never `WinterProviderDescriptor.family`,
+   * which is the ADAPTER family and keeps its own meaning (R13c-1).
+   */
+  modelFamily: string;
+  /**
+   * WS-13c §1: the vendor's model identity with the provider's spelling removed, so
+   * `deepseek/deepseek-v4-pro`, `vertex/DeepSeek-V4-Pro` and `qwen-cloud/deepseek-v4-pro` are ONE
+   * canonical model.
+   *
+   * DERIVED AT BUILD by `stampFamilyFields` (via `canonicalModelIdOf`); an overlay row MAY set it as
+   * an override, which is how `kimi-coding/k3` — whose coding-plan id is just `k3` — reaches the
+   * same canonical model as `moonshot/kimi-k3`.
+   */
+  canonicalModelId: string;
   displayName: string;
   aliases: string[];
   endpoints: Array<"chat" | "responses" | "embeddings" | "image" | "audio" | "video">;
@@ -245,12 +327,15 @@ export interface WinterProviderDescriptor {
 export type AdmissionTier = "fetched-document" | "pinned-upstream" | "spec-ruling" | "local" | "audit";
 
 export interface WinterCatalog {
-  schemaVersion: 1;
+  /** 2 since WS-13c: every model row carries `modelFamily`/`canonicalModelId` and the document carries `families`. */
+  schemaVersion: 2;
   catalogVersion: string;
   /** The upstream pin the generated layer came from. All-empty on the hand-authored SEED (`catalogVersion: "0.0.0-seed"`) — that emptiness is what says "not extracted". */
   upstream: { tag: string; tagObject: string; commit: string; extractorVersion: string; overlayVersion: string };
   providers: WinterProviderDescriptor[];
   models: WinterModelDescriptor[];
+  /** WS-13c §1: the vendor lineups, generated from `overlay/families.json` and sorted by `id`. May be empty (a layer validated standalone has no families). */
+  families: ModelFamilyDescriptor[];
 }
 
 /**

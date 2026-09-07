@@ -12,6 +12,7 @@
 //   - a `functionCall` arrives COMPLETE in one part, so `tool-call-fragmented` is a recorded SKIP
 //     with a reason -- a fact about the family, never a case quietly declined.
 import type { ReasoningCapabilities, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { createMemoryCredentialStore, createRegistry, discoverModels } from "@yanlinglabs/winter-provider-runtime";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import { createGoogleGenerateContentAdapter } from "../../../provider-runtime/src/adapters/google/index.ts";
@@ -27,8 +28,13 @@ const evidence = <T>(value: T): { value: T; source: "upstream-static"; confidenc
   observedAt: "2026-09-05T00:00:00Z",
 });
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 function model(over: Partial<WinterModelDescriptor> & { key: string; upstreamId: string }): WinterModelDescriptor {
-  return {
+  return stampRow({
     providerId: "google",
     displayName: over.key,
     aliases: [],
@@ -40,7 +46,7 @@ function model(over: Partial<WinterModelDescriptor> & { key: string; upstreamId:
     unsupportedParameters: [],
     status: "candidate",
     ...over,
-  };
+  });
 }
 
 /**
@@ -94,7 +100,8 @@ export const GOOGLE_MODELS = {
 export function testGoogleCatalog(): WinterCatalog {
   const reasoningIds = [GOOGLE_MODELS.main, GOOGLE_MODELS.full, GOOGLE_MODELS.multiTool, GOOGLE_MODELS.dropBeforeFinish, GOOGLE_MODELS.usage, GOOGLE_MODELS.replay, GOOGLE_MODELS.refusal, GOOGLE_MODELS.splitUsage, GOOGLE_MODELS.signedThought, GOOGLE_MODELS.lateUsageDefault];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-lane-b-fixture",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [

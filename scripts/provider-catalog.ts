@@ -20,11 +20,16 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { validateCatalog } from "../packages/provider-catalog/src/validate.ts";
-import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "../packages/provider-catalog/src/types.ts";
+// WS-13c §1: the family stamp is the SAME function `mergeLayers` calls — one implementation of
+// "which family is this", two assemblers, and a pipeline test that pins them byte-identical.
+import { stampFamilyFields } from "../packages/provider-catalog/src/families.ts";
+import type { ModelFamilyDescriptor, WinterCatalog, WinterProviderDescriptor } from "../packages/provider-catalog/src/types.ts";
+import type { UnstampedModelDescriptor } from "../packages/provider-catalog/src/extract/merge.ts";
 
 const PKG = new URL("../packages/provider-catalog/", import.meta.url);
 const OVERLAY_PROVIDERS = fileURLToPath(new URL("overlay/providers.json", PKG));
 const OVERLAY_MODELS = fileURLToPath(new URL("overlay/models.json", PKG));
+const OVERLAY_FAMILIES = fileURLToPath(new URL("overlay/families.json", PKG));
 const UPSTREAM_LAYER = fileURLToPath(new URL("generated/upstream-layer.json", PKG));
 const UPSTREAM_PIN = fileURLToPath(new URL("UPSTREAM.json", PKG));
 const OUT_CATALOG = fileURLToPath(new URL("generated/catalog.json", PKG));
@@ -51,7 +56,7 @@ function readJson(path: string): unknown {
 }
 
 /** Strips the `$comment` documentation keys the hand-authored layers carry (they are for the human editing the file, never catalog data). */
-function stripComments<T>(value: T): T {
+export function stripComments<T>(value: T): T {
   if (Array.isArray(value)) return value.map((v) => stripComments(v)) as unknown as T;
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
@@ -71,13 +76,18 @@ export interface BuildResult {
 
 export function buildCatalog(): BuildResult {
   const overlayProviders = stripComments(readJson(OVERLAY_PROVIDERS) as { providers: WinterProviderDescriptor[] }).providers;
-  const overlayModels = stripComments(readJson(OVERLAY_MODELS) as { models: WinterModelDescriptor[] }).models;
+  const overlayModels = stripComments(readJson(OVERLAY_MODELS) as { models: UnstampedModelDescriptor[] }).models;
+  // WS-13c §1 layer 3: the FAMILIES overlay, hand-authored and reviewed like the other two. Absent
+  // is legal and means "no families" — every row then stamps `other`, which the validator accepts.
+  const overlayFamilies = existsSync(OVERLAY_FAMILIES)
+    ? stripComments(readJson(OVERLAY_FAMILIES) as { families?: ModelFamilyDescriptor[] }).families ?? []
+    : [];
 
   let upstreamProviders: WinterProviderDescriptor[] = [];
-  let upstreamModels: WinterModelDescriptor[] = [];
+  let upstreamModels: UnstampedModelDescriptor[] = [];
   let rejections: RejectionRow[] = [];
   if (existsSync(UPSTREAM_LAYER)) {
-    const layer = stripComments(readJson(UPSTREAM_LAYER) as { providers?: WinterProviderDescriptor[]; models?: WinterModelDescriptor[]; rejections?: RejectionRow[] });
+    const layer = stripComments(readJson(UPSTREAM_LAYER) as { providers?: WinterProviderDescriptor[]; models?: UnstampedModelDescriptor[]; rejections?: RejectionRow[] });
     upstreamProviders = layer.providers ?? [];
     upstreamModels = layer.models ?? [];
     rejections = layer.rejections ?? [];
@@ -94,16 +104,22 @@ export function buildCatalog(): BuildResult {
   const models = [...upstreamModels.filter((m) => !overlayModelKeys.has(m.key)), ...overlayModels];
 
   // Deterministic order — the byte-identical-regeneration test needs one canonical ordering, and
-  // "whatever order the layers happened to be written in" is not one.
+  // "whatever order the layers happened to be written in" is not one. Families sort by `id` for the
+  // same reason; their MATCHERS are authored disjoint (WS-13c §1) precisely so that this sort can
+  // never change a row's stamp, and `catalog-integrity.test.ts` asserts that over the real catalog.
   providers.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   models.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const families = [...overlayFamilies].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const catalog: WinterCatalog = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     catalogVersion: pin.commit === "" ? SEED_CATALOG_VERSION : `${pin.tag}+${pin.extractorVersion}`,
     upstream: pin,
     providers,
-    models,
+    // WS-13c §1: `modelFamily`/`canonicalModelId` are DERIVED here, at assembly, and never authored
+    // per row — except as an explicit overlay override, which the stamper leaves alone.
+    models: stampFamilyFields(models, families),
+    families,
   };
   return { catalog, rejections };
 }

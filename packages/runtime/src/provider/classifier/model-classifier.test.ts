@@ -17,6 +17,7 @@ import type { ActionEnvelope } from "../../permissions/auto/envelope.ts";
 import type { ClassifierContext } from "../../permissions/auto/engine.ts";
 import { normalizeAutoModeConfig } from "../../permissions/auto/config.ts";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
 const ENVELOPE: ActionEnvelope = {
   toolName: "Bash",
@@ -263,7 +264,12 @@ describe("the verdict schema itself", () => {
 });
 
 describe("selectClassifierRoute (R6-14)", () => {
-  const descriptor = (over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor => ({
+  // WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+  // pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+  // `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+  const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
+  const descriptor = (over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor => stampRow({
     key: "p/m",
     providerId: "p",
     upstreamId: "m",

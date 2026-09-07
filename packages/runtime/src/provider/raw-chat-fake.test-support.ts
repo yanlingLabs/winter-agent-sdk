@@ -8,6 +8,7 @@
 // records the `authorization` header only so a fixture can assert WHICH key arrived.
 import { serve } from "bun";
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
 export interface RawChatRequest {
   path: string;
@@ -128,8 +129,13 @@ export interface ChatModelInit {
   contextWindow?: number;
 }
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 export function chatModel(init: ChatModelInit): WinterModelDescriptor {
-  return {
+  return stampRow({
     key: init.key,
     providerId: init.providerId,
     upstreamId: init.upstreamId,
@@ -148,12 +154,13 @@ export function chatModel(init: ChatModelInit): WinterModelDescriptor {
     ...(init.pricing !== undefined ? { pricing: evidence(init.pricing) } : {}),
     unsupportedParameters: [],
     status: "supported",
-  } as WinterModelDescriptor;
+  } as Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">);
 }
 
 export function chatCatalog(providers: WinterProviderDescriptor[], models: WinterModelDescriptor[]): WinterCatalog {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-fixe-fixture",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers,
