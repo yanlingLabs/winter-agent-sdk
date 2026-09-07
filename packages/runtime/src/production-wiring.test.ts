@@ -19,6 +19,10 @@ import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } fro
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "./testing.ts";
 import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermissions } from "./production-wiring.ts";
+// WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
+// rather than letting the production composite reach the developer's real Keychain.
+import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { loadCatalog, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 
 let home: string;
@@ -743,6 +747,11 @@ describe("WS-13b R6b-7: the settings file reaches provider selection", () => {
 // touches the Keychain, the network, or a real `~/.winter`.
 // ================================================================================================
 describe("WS-13c: the wiring's model-family surface", () => {
+  // THE CREDENTIAL STORE IS ALWAYS INJECTED. The slot resolver's credential view probes providers
+  // through `CredentialStore.get`, and the production store's first member is the Keychain -- so a
+  // slot resolution in a test with the default store would read the developer's real Keychain, which
+  // this file's own header forbids. An empty in-memory store is the hermetic equivalent.
+  const hermetic = { credentials: createMemoryCredentialStore() };
   const localSession = (sessionId: string): RuntimeConfig =>
     ({
       sessionId,
@@ -758,6 +767,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
       config: { sessionId: "s-slots-double", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] } as RuntimeConfig,
       env: {},
       winterHome: home,
+      provider: hermetic,
     });
     try {
       expect(wiring.engineOptions.activeSlotSet).toBeUndefined();
@@ -770,7 +780,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
   });
 
   test("a catalog-resolved session gets the whole surface, and the active set follows the model key it is asked with", async () => {
-    const wiring = await buildProductionWiring({ config: localSession("s-slots-local"), env: {}, winterHome: home });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-local"), env: {}, winterHome: home, provider: hermetic });
     try {
       const activeSlotSet = wiring.engineOptions.activeSlotSet!;
       // No family claims a bare `llama3.1-8b` (the normaliser deliberately invents no hyphen), so the
@@ -789,7 +799,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
   });
 
   test("the resolver reaches the real catalog: `opus` from a non-claude session resolves into the claude family's vendor row", async () => {
-    const wiring = await buildProductionWiring({ config: localSession("s-slots-resolve"), env: {}, winterHome: home });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-resolve"), env: {}, winterHome: home, provider: hermetic });
     try {
       const resolveSlot = wiring.engineOptions.resolveSlot!;
       const opus = resolveSlot("opus", undefined);
@@ -805,7 +815,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
 
   test("a disabled provider is skipped and named -- the settings cascade reaches the slot resolver", async () => {
     writeSettings(join(home), { providers: { anthropic: { enabled: false } } });
-    const wiring = await buildProductionWiring({ config: localSession("s-slots-disabled"), env: {}, winterHome: home });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-disabled"), env: {}, winterHome: home, provider: hermetic });
     try {
       const opus = wiring.engineOptions.resolveSlot!("opus", undefined);
       // Other providers serve `claude-opus-5` too, so this is not unservable -- it is a DIFFERENT
@@ -821,7 +831,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
     // admission-tier tie-break picks is catalog data another task may repoint, but "a preferred
     // provider outranks whatever the tier order would have chosen" is the rule.
     writeSettings(join(home), { providers: { anthropic: { enabled: false } } });
-    const unpreferred = await buildProductionWiring({ config: localSession("s-slots-unpreferred"), env: {}, winterHome: home });
+    const unpreferred = await buildProductionWiring({ config: localSession("s-slots-unpreferred"), env: {}, winterHome: home, provider: hermetic });
     let byTier: string | undefined;
     try {
       const r = unpreferred.engineOptions.resolveSlot!("opus", undefined);
@@ -835,7 +845,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
     const other = "tabitoken";
     expect(other).not.toBe(byTier);
     writeSettings(join(home), { providers: { anthropic: { enabled: false } }, preferredProviders: [other] });
-    const preferred = await buildProductionWiring({ config: localSession("s-slots-preferred"), env: {}, winterHome: home });
+    const preferred = await buildProductionWiring({ config: localSession("s-slots-preferred"), env: {}, winterHome: home, provider: hermetic });
     try {
       expect(preferred.engineOptions.resolveSlot!("opus", undefined)).toMatchObject({ ok: true, providerId: other });
     } finally {
@@ -844,7 +854,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
   });
 
   test("an unknown name is a typed refusal, never a substitution onto the session's own model", async () => {
-    const wiring = await buildProductionWiring({ config: localSession("s-slots-unknown"), env: {}, winterHome: home });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-unknown"), env: {}, winterHome: home, provider: hermetic });
     try {
       expect(wiring.engineOptions.resolveSlot!("definitely-not-a-slot", undefined)).toMatchObject({ ok: false, code: "unknown-slot" });
       // `flash` is held by gemini, deepseek and glm in the shipped overlay.
@@ -855,7 +865,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
   });
 
   test("`list_model_families` answers with the session's OWN active set", async () => {
-    const wiring = await buildProductionWiring({ config: localSession("s-slots-listing"), env: {}, winterHome: home });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-listing"), env: {}, winterHome: home, provider: hermetic });
     try {
       // Lane C owns `families`; what Lane A's wiring is accountable for is that the ACTIVE set the
       // listing carries is this session's, computed from the same getter the Agent tool renders from.
@@ -866,8 +876,33 @@ describe("WS-13c: the wiring's model-family surface", () => {
     }
   });
 
+  test("the credential view learns from the child-provider probe, and a slot nothing can serve becomes slot-unservable", async () => {
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-warm"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      const resolveSlot = wiring.engineOptions.resolveSlot!;
+      // COLD: nothing has been probed, so the credential view answers optimistically and §4's vendor
+      // rule leads. An optimistic `true` is never a substitution -- it orders, and the credential is
+      // verified again downstream.
+      expect(resolveSlot("opus", undefined)).toMatchObject({ ok: true, providerId: "anthropic" });
+      // Each `resolveChildProvider` call makes a REAL, awaited probe and records its answer, which is
+      // exactly how the synchronous view becomes accurate without a startup Keychain sweep.
+      const rows = rowsForCanonicalId(loadCatalog(), "claude-opus-5");
+      expect(rows.length).toBeGreaterThan(1);
+      for (const row of rows) await wiring.childFactoryOptions.resolveChildProvider!(row.key);
+      // WARM: the empty store holds no record for any of them, so the slot is unservable and every
+      // row that WOULD have served it is named with the reason it did not.
+      const warm = resolveSlot("opus", undefined);
+      expect(warm).toMatchObject({ ok: false, code: "slot-unservable" });
+      expect(!warm.ok && warm.wouldServe.map((w) => w.providerId).sort()).toEqual(rows.map((r) => r.providerId).sort());
+      expect(!warm.ok && warm.wouldServe.every((w) => w.why === "no credential configured")).toBe(true);
+      expect(!warm.ok && warm.message).toContain("claude-opus-5");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("settingsVersion is stable while the resolved settings view is", async () => {
-    const wiring = await buildProductionWiring({ config: localSession("s-slots-version"), env: {}, winterHome: home });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-version"), env: {}, winterHome: home, provider: hermetic });
     try {
       const settingsVersion = wiring.engineOptions.settingsVersion!;
       expect(settingsVersion()).toBe(settingsVersion());
