@@ -352,6 +352,21 @@ test("WS-06 §6 obligation 5 (D29): advisor is a bare NATIVE name with an identi
   expect(getRegisteredTool(`mcp__${WINTER_SERVER_NAME}__advisor`)).toBeUndefined();
   // The schema is still the pinned empty one -- the rename changed the identity, never the shape.
   expect(descriptor!.inputSchema).toEqual({ type: "object", properties: {} });
+  // P7a LANE B: WS-06 §4's OWN result shape, pinned beside the input schema it was missing a twin
+  // for. `{ advice, model, truncated? }` -- advice text, the RESOLVED REVIEWER MODEL ID (the catalog
+  // key the route chose, which is the only way a caller can tell which model reviewed it), and
+  // whether history was clipped. `advice` and `model` are REQUIRED; `truncated` is present only when
+  // something was actually clipped (tools/impl/advisor.ts omits it otherwise, and its own tests pin
+  // both directions).
+  expect(descriptor!.outputSchema).toEqual({
+    type: "object",
+    properties: { advice: { type: "string" }, model: { type: "string" }, truncated: { type: "boolean" } },
+    required: ["advice", "model"],
+  });
+  // §4's availability row: the tool is gated on a reviewer being resolvable in the session's
+  // provider catalog, which since P7a is a DERIVED fact (engine.ts computes the token from
+  // `resolveReviewer`) rather than a token a host had to know to supply.
+  expect(descriptor!.capabilityRequirements).toEqual(["winter.reviewer-model"]);
 
   // advisor's own availability gates it behind capabilityRequirements: ["winter.reviewer-model"]
   // (advisor.ts) -- supplied here on every call so the loop proves "identical ACROSS MODES", not

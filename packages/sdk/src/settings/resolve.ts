@@ -143,8 +143,9 @@ function withoutOverlayNeverKeys(values: Settings): Settings {
 }
 
 /**
- * P6.6 Lane B (WS-13c §5, D27, RULING R13c-7): `modelSlots`/`preferredProviders`, honoured from the
- * PROJECT tier only when the workspace is trusted.
+ * P6.6 Lane B (WS-13c §5, D27, RULING R13c-7) + P7a Lane B (D30): `modelSlots`,
+ * `preferredProviders` and `advisor`, honoured from the PROJECT tier only when the workspace is
+ * trusted.
  *
  * A sibling of `OVERLAY_NEVER_KEYS`/`withoutOverlayNeverKeys` in SHAPE (named, dropped from the
  * project tier's contribution before the merge, reported on that tier's `error`) but NOT a member of
@@ -158,13 +159,20 @@ function withoutOverlayNeverKeys(values: Settings): Settings {
  * A PROJECT settings file mapping `cheap` to a model the repo's author prefers is choosing what the
  * user's agent spends and which vendor sees the traffic -- the same self-grant shape RULING P5-A
  * closes for permissions, arriving through a settings key instead of a permission rule.
+ *
+ * `advisor` (P7a, D30) joins the SAME list rather than getting a gate of its own, because it is the
+ * identical argument with a higher price: `settings.advisor.model` names the model the advisor sends
+ * THIS SESSION'S OWN CONVERSATION AND TOOL HISTORY to. A cloned repository that could set it would
+ * not merely be choosing what the user spends — it would be choosing where the user's transcript
+ * goes, unprompted, on a tool the model may call by itself. One list, one filter, one error message:
+ * a second gate that had to be kept in step with this one is how the two would drift.
  */
-const MODEL_SLOT_KEYS: readonly string[] = ["modelSlots", "preferredProviders"] as const;
+const MODEL_SLOT_KEYS: readonly string[] = ["modelSlots", "preferredProviders", "advisor"] as const;
 
 function describeUntrustedModelSlotKeys(values: Settings): string | undefined {
   const present = MODEL_SLOT_KEYS.filter((key) => (values as Record<string, unknown>)[key] !== undefined);
   if (present.length === 0) return undefined;
-  return `${present.map((k) => `"${k}"`).join(", ")} ${present.length === 1 ? "is" : "are"} ignored from the project tier (untrusted workspace, WS-13c R13c-7): a repository may not choose which models the agent uses; declare the workspace trusted, or set ${present.length === 1 ? "it" : "them"} in your user settings`;
+  return `${present.map((k) => `"${k}"`).join(", ")} ${present.length === 1 ? "is" : "are"} ignored from the project tier (untrusted workspace, WS-13c R13c-7 / D30): a repository may not choose which models the agent uses, nor which model the advisor sends this session's conversation to; declare the workspace trusted, or set ${present.length === 1 ? "it" : "them"} in your user settings`;
 }
 
 function withoutUntrustedModelSlotKeys(values: Settings): Settings {
