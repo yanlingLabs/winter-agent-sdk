@@ -200,13 +200,14 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     expect(getRegisteredTool(acmeSend)).toBeUndefined();
   });
 
-  test("the shared temp root is `/private/tmp/acme-<uid>` -- computed as a STRING, never created", () => {
-    // `/private/tmp` is shared between every user on the machine and this suite must not mkdir into
-    // it (D18's own reason for the uid suffix). So the default-base derivation is asserted as the
-    // string it would produce, and the directory-creating half runs under `ACME_TMPDIR` below.
+  test("the shared temp root is `<realpath of /tmp>/acme-<uid>` -- computed as a STRING, never created", () => {
+    // `/tmp` (`/private/tmp` on macOS, `/tmp` itself on Linux -- hence the realpath on BOTH sides) is
+    // shared between every user on the machine and this suite must not mkdir into it (D18's own
+    // reason for the uid suffix). So the default-base derivation is asserted as the string it would
+    // produce, and the directory-creating half runs under `ACME_TMPDIR` below.
     const uid = process.getuid!();
     expect(resolveTempBase({}, ACME)).toBe("/tmp");
-    expect(join(realpathSync(resolveTempBase({}, ACME)), `${ACME.tempRootName}-${uid}`)).toBe(`/private/tmp/acme-${uid}`);
+    expect(join(realpathSync(resolveTempBase({}, ACME)), `${ACME.tempRootName}-${uid}`)).toBe(join(realpathSync("/tmp"), `acme-${uid}`));
 
     // The real function, under a mkdtemp base named by the brand's OWN env variable.
     const base = tempDirNamed("p7a-acme-tmp-");
