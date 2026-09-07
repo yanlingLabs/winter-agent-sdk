@@ -937,6 +937,42 @@ describe("WS-13c: the wiring's model-family surface", () => {
     }
   });
 
+  // WS-13c §5 / D25 "for now": a Claude session ignores custom slots, and the ignore is RECORDED --
+  // a user who configured four options and is shown the pinned four deserves to be told why.
+  test("a claude session ignores custom slots and RECORDS the ignore through the warnings channel", async () => {
+    writeSettings(join(home), { modelSlots: [{ name: "master", model: "gpt-6-astra" }] });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-slots-pinned", cwd, model: "anthropic/claude-opus-5", winterHome: home, settingSources: ["user"], provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" } } } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+      provider: hermetic,
+    });
+    try {
+      const active = wiring.engineOptions.activeSlotSet!(undefined);
+      expect(active).toMatchObject({ family: "claude", source: "claude-pinned" });
+      expect(active.slots.map((s) => s.name)).toEqual(["fable", "opus", "sonnet", "haiku"]);
+      expect(active.slots.map((s) => s.name)).not.toContain("master");
+      expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(1);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a NON-claude session honours the same custom set, and no ignore is recorded", async () => {
+    writeSettings(join(home), { modelSlots: [{ name: "master", model: "gpt-6-astra" }] });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-custom"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      const active = wiring.engineOptions.activeSlotSet!(undefined);
+      expect(active).toMatchObject({ source: "custom" });
+      expect(active.slots.map((s) => s.name)).toEqual(["master"]);
+      expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(0);
+      // ...and the facing name resolves through §4 like any other slot.
+      expect(wiring.engineOptions.resolveSlot!("master", undefined)).toMatchObject({ ok: true, canonicalModelId: "gpt-6-astra" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("settingsVersion is stable while the resolved settings view is", async () => {
     const wiring = await buildProductionWiring({ config: localSession("s-slots-version"), env: {}, winterHome: home, provider: hermetic });
     try {

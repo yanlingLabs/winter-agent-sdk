@@ -508,6 +508,13 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // session. Narrowed from the wire's `Record<string, unknown>` (it arrives as JSON).
     ...(isPlainSettings(config.managedSettings) ? { managedSettings: config.managedSettings as Settings } : {}),
     ...(isPlainSettings(config.serverManagedSettings) ? { serverManagedSettings: config.serverManagedSettings as Settings } : {}),
+    // WS-13c §5 / R-6c-16: the host-declared workspace-trust bit (RULING P5-A), which is what gates
+    // an untrusted PROJECT tier's `modelSlots`/`preferredProviders`. It had no producer in
+    // production, so the gate was unreachable in a live session -- a cloned repository's
+    // `.winter/settings.json` could have mapped `cheap` to the most expensive model in the catalog.
+    // Passed here rather than derived a second time: `defaultTrustSource(config)` (below, and in
+    // engine.ts) reads exactly this field, so the two cannot disagree.
+    ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
   });
   const effective = resolved.effective;
   assertEffectiveSettings(effective, resolved);
