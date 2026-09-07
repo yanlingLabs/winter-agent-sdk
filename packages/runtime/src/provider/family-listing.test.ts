@@ -122,18 +122,23 @@ const catalog: WinterCatalog = {
 };
 
 describe("buildModelFamilyListing", () => {
-  test("families carry their slots and every model grouped by canonical id with per-row servable flags", () => {
+  test("families carry their slots and every model grouped by canonical id with per-row servable states", () => {
+    // P7a: `servable` is the TRI-STATE `ModelRowServable`, not a boolean. This seam's own predicate
+    // is still two-valued, so it renders exactly two of the three states and never `"unknown"` --
+    // asserted here as the LITERAL strings, because `"absent"` is truthy and a test written against
+    // truthiness would pass against a listing that had silently stopped distinguishing them.
     const listing = buildModelFamilyListing({ catalog, active: undefined, servable: (p) => p === "openai" });
     const gpt = listing.families.find((f) => f.id === "gpt")!;
     expect(gpt.slots.map((s) => s.name)).toEqual(["astra", "sol", "terra", "luna"]);
     const astra = gpt.models.find((m) => m.canonicalModelId === "gpt-6-astra")!;
     expect(astra.rows.map((r) => [r.providerId, r.servable])).toEqual(
       expect.arrayContaining([
-        ["openai", true],
-        ["codex-oauth", false],
-        ["openrouter", false],
+        ["openai", "present"],
+        ["codex-oauth", "absent"],
+        ["openrouter", "absent"],
       ]),
     );
+    expect(astra.rows.some((r) => r.servable === "unknown")).toBe(false);
   });
 
   test("blocked and deprecated rows are omitted; families are sorted by id; other is last", () => {

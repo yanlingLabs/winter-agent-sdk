@@ -859,7 +859,7 @@ test("listModelFamilies(): resolves the listing the runtime answers over the lis
         displayName: "GPT",
         vendor: "OpenAI",
         slots: [{ name: "astra", canonicalModelId: "gpt-6-astra", description: "d", reason: "r", resolvesTo: { providerId: "openai", key: "openai/gpt-6-astra" } }],
-        models: [{ canonicalModelId: "gpt-6-astra", displayName: "GPT-6 Astra", rows: [{ key: "openai/gpt-6-astra", providerId: "openai", status: "candidate", pricingBasis: "token", servable: true }] }],
+        models: [{ canonicalModelId: "gpt-6-astra", displayName: "GPT-6 Astra", rows: [{ key: "openai/gpt-6-astra", providerId: "openai", status: "candidate", pricingBasis: "token", servable: "present" }] }],
       },
     ],
   };

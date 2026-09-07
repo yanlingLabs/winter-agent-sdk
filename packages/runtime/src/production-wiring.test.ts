@@ -1129,9 +1129,12 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(rows.length).toBeGreaterThan(100);
       // Honest by default: `unknown` is not `servable`. Before this, a cold first paint claimed every
       // row in the catalog was servable with an empty credential store.
-      expect(rows.some((r) => r.providerId === "codex-oauth" && r.servable)).toBe(false);
-      expect(rows.filter((r) => r.servable).every((r) => r.providerId === "openai")).toBe(true);
-      expect(rows.some((r) => r.providerId === "openai" && r.servable)).toBe(true);
+      // P7a: `servable` is the tri-state `ModelRowServable`. Compared against the LITERAL "present"
+      // rather than for truthiness -- `"absent"` is a truthy string, so the pre-P7a truthiness form
+      // would now pass for every row and assert nothing at all.
+      expect(rows.some((r) => r.providerId === "codex-oauth" && r.servable === "present")).toBe(false);
+      expect(rows.filter((r) => r.servable === "present").every((r) => r.providerId === "openai")).toBe(true);
+      expect(rows.some((r) => r.providerId === "openai" && r.servable === "present")).toBe(true);
     } finally {
       wiring.dispose();
     }

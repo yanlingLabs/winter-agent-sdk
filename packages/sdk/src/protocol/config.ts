@@ -543,6 +543,24 @@ export interface ProviderConnectionConfig {
   deployment?: string;
   apiVersion?: string;
   local?: boolean;
+  /**
+   * P7a carry (Lane D): WHERE this connection's `baseUrl` came from, which is what the endpoint
+   * policy actually needs to know.
+   *
+   * `"reviewed"` — the catalog's own generated/reviewed endpoint, COPIED into the profile by the
+   * runtime's `connectionFrom`. `"user"` — a host- or user-entered endpoint.
+   *
+   * WHY IT EXISTS. The two are byte-identical strings by the time they reach the profile, and the
+   * policy has been forced to treat both as user endpoints because it could not tell them apart —
+   * which silently downgrades every multi-provider row (whose reviewed endpoint is always copied)
+   * out of the privileged-header path in production while adapter fixtures, which pass a generated
+   * base URL directly, keep passing. Recording the ORIGIN is what lets the policy answer honestly.
+   *
+   * ABSENT means unknown, and unknown must be treated as `"user"` — the conservative reading. The
+   * evaluation rules are Lane D's (`provider-runtime/src/endpoint-policy.ts`); the spine declares
+   * the field so producer and consumer can land in either order.
+   */
+  endpointOrigin?: "reviewed" | "user";
 }
 
 /**
@@ -675,6 +693,26 @@ export interface ActiveSlotSet {
 }
 
 /**
+ * P7a carry (Lane D): whether this session can currently SERVE a catalog row — a TRI-STATE, not a
+ * boolean.
+ *
+ * `"present"` a credential is configured for the row's provider and the provider is not disabled.
+ * `"absent"`  we know there is none.
+ * `"unknown"` nobody has probed this provider yet, so the honest answer is "we do not know".
+ *
+ * WHY THE BOOLEAN WAS WRONG. A boolean has to collapse `unknown` onto one of the other two, and
+ * both collapses lie: `false` tells a model switcher a perfectly usable row is unavailable, and
+ * `true` (the shape the cold first paint originally shipped) claimed every row in a 604-model
+ * catalog was servable against an empty credential store. A host renders three states differently —
+ * available, unavailable, and "sign in to find out" — so the type carries three.
+ *
+ * PUBLIC-SHAPE CHANGE, declared at the spine and made TRUTHFUL by Lane D: until Lane D's
+ * credential-view work lands, `family-listing.ts` maps its existing boolean to `"present"`/
+ * `"absent"` and never emits `"unknown"`. Consumers must therefore already handle all three.
+ */
+export type ModelRowServable = "present" | "absent" | "unknown";
+
+/**
  * `Query.listModelFamilies()`'s answer (WS-13c §7): the active set first, then everything behind
  * "more options".
  *
@@ -691,7 +729,7 @@ export interface ModelFamilyListing {
     models: Array<{
       canonicalModelId: string;
       displayName: string;
-      rows: Array<{ key: string; providerId: string; status: string; pricingBasis: string; servable: boolean }>;
+      rows: Array<{ key: string; providerId: string; status: string; pricingBasis: string; servable: ModelRowServable }>;
     }>;
   }>;
 }

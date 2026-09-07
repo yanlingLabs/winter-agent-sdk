@@ -39,7 +39,7 @@
       },
       "scope": "llm",
       "identityHeaders": {
-        "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk"
+        "Client-Agent": "<product>:<version>:https://github.com/yanlingLabs/winter-agent-sdk"
       }
     },
     {

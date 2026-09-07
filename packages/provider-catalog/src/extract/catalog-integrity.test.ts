@@ -632,14 +632,20 @@ describe("WS-13b §2: the widened catalog", () => {
     // `provider-conformance/src/corpus/cross-vendor-headers.test.ts`, "aihorde sends its declared
     // identity header, with `<version>` substituted".
     const aihorde = byId.get("aihorde");
-    expect(aihorde?.identityHeaders).toEqual({ "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk" });
+    // P7a (D19): the product token is the `<product>` PLACEHOLDER now, not Winter's literal name —
+    // substituted at request time with the running brand's `packageName`, so a reuser's identity
+    // header names the reuser. A row that hard-coded Winter's name would put OUR identity on THEIR
+    // request, in the one field whose whole purpose is honest identity.
+    expect(aihorde?.identityHeaders).toEqual({ "Client-Agent": "<product>:<version>:https://github.com/yanlingLabs/winter-agent-sdk" });
     expect(aihorde?.admission.citation).toContain("Client-Agent");
-    // Every declared identity header names WINTER, on every row that has one. `validateCatalog`
-    // refuses anything else; this is the assertion over the SHIPPED artifact.
+    // Every declared identity header names THE PRODUCT, on every row that has one — the `<product>`
+    // placeholder (which resolves to whatever brand is running) or, for a row written before the
+    // profile existed, Winter's own literal token. `validateCatalog` refuses anything else; this is
+    // the assertion over the SHIPPED artifact.
     for (const provider of catalog.providers) {
       for (const [name, value] of Object.entries(provider.identityHeaders ?? {})) {
         expect([provider.id, name]).toEqual([provider.id, "Client-Agent"]);
-        expect([provider.id, value.startsWith("winter-agent-sdk")]).toEqual([provider.id, true]);
+        expect([provider.id, value.startsWith("<product>") || value.startsWith("winter-agent-sdk")]).toEqual([provider.id, true]);
       }
     }
   });

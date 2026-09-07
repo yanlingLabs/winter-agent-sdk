@@ -192,6 +192,26 @@ export interface Settings {
    */
   preferredProviders?: string[];
   /**
+   * WINTER-DEFINED (D30, WS-06 §4's advisor amendment, disclosed): which model the ADVISOR consults.
+   *
+   * `model` names a slot name, a canonical model id or a catalog key, resolved through WS-13c §4 —
+   * the same path the session model takes, so it obeys credentials, `providers.<id>.enabled` and the
+   * vendor-first order, and an unresolvable value is a typed refusal rather than a substitution.
+   *
+   * SAME TIERS AS `modelSlots`, deliberately: the user tier and the TRUSTED project tier only. The
+   * advisor sends this session's conversation to whatever this names, so a cloned repository that
+   * could set it would be choosing where the user's transcript goes — the identical argument that
+   * gates `modelSlots`, with a higher price for getting it wrong.
+   *
+   * HOT (a Global Constraint of this phase): it takes effect at the next quiescent boundary through
+   * the live settings getter, never at a restart. Unset means the per-family default (D30: a gpt
+   * session -> `astra`, a claude session -> `fable`, any other family -> its slot 1, a family with
+   * no slots -> the session's own model). `Options.advisor.model` outranks it.
+   *
+   * DECLARED AT P7a'S SPINE; the resolution and the trust gate are Lane B's.
+   */
+  advisor?: { model?: string };
+  /**
    * DERIVED provenance — written by `resolve.ts` / the runtime, NEVER read from a settings file.
    *
    * It records WHY a `modelSlots` set did not take effect, so a host can say so instead of showing

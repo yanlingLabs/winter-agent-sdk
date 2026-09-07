@@ -17,7 +17,7 @@ export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE } from "./o
 export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig, ModelInfo, AccountInfo } from "./protocol/config.ts";
 // WS-13c §7 (P6.6): the model-family / slot public shapes. `Query.listModelFamilies()` returns
 // `ModelFamilyListing`; `ModelSlotSetting` is what `settings.modelSlots` holds.
-export type { SlotView, ActiveSlotSet, ModelFamilyListing, ModelSlotSetting } from "./protocol/config.ts";
+export type { SlotView, ActiveSlotSet, ModelFamilyListing, ModelSlotSetting, ModelRowServable } from "./protocol/config.ts";
 export type { SdkPluginConfig, SystemPromptOption, SystemPromptPreset, OutputFormat, JsonSchemaOutputFormat, SkillsOption, RewindFilesResult, RewindFilesRequest, InitPluginInfo } from "./protocol/config.ts";
 // Phase 4 Task 2 (WS-09 derived-shapes item (a)/(d)): the HOST-facing MCP config union + subagent
 // definition shape a program writing `Options.mcpServers`/`Options.agents` types against — see

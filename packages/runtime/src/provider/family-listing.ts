@@ -12,7 +12,7 @@
 // and no slots, rather than crashing a read-only view.
 import type { FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { OTHER_FAMILY_ID } from "@yanlinglabs/winter-provider-catalog";
-import type { ActiveSlotSet, ModelFamilyListing, SlotView } from "@yanlinglabs/winter-agent-sdk";
+import type { ActiveSlotSet, ModelFamilyListing, ModelRowServable, SlotView } from "@yanlinglabs/winter-agent-sdk";
 
 export interface FamilyListingInput {
   catalog: WinterCatalog;
@@ -97,7 +97,13 @@ export function buildModelFamilyListing(input: FamilyListingInput): ModelFamilyL
         providerId: row.providerId,
         status: row.status,
         pricingBasis: pricingBasisOf(row.providerId),
-        servable: servable(row.providerId),
+        // P7a spine: the row type is a TRI-STATE now (`ModelRowServable`). This mapping is a
+        // FAITHFUL RENDERING of what this seam currently knows and nothing more -- the `servable`
+        // predicate is still a boolean, so it can only ever say "present" or "absent", and this
+        // listing never emits `"unknown"`. Lane D replaces the predicate with the three-valued
+        // credential view; changing THIS line without changing the predicate would only invent a
+        // third state out of the same two bits.
+        servable: (servable(row.providerId) ? "present" : "absent") satisfies ModelRowServable as ModelRowServable,
       })),
     }));
     return {
