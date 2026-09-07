@@ -795,7 +795,7 @@ const MODEL_FAMILIES_ROWS: ConformanceRow[] = [
     bullet: "`listModelFamilies()` shape, `active.source`, and `servable` tracking credentials and `providers.<id>.enabled`",
     status: "new",
     citations: [
-      { file: `${RUNTIME}/provider/family-listing.test.ts`, testName: "families carry their slots and every model grouped by canonical id with per-row servable flags" },
+      { file: `${RUNTIME}/provider/family-listing.test.ts`, testName: "families carry their slots and every model grouped by canonical id with per-row servable states" },
       { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-7: `list_model_families` reports the family the session is CURRENTLY on, not the one it started on" },
       { file: `${SDK}/query.test.ts`, testName: "listModelFamilies(): resolves the listing the runtime answers over the list_model_families control request" },
       { file: `${RUNTIME}/production-wiring.test.ts`, testName: "R-6c-27: a cold listing reports `servable: false` for a provider nobody has probed, and true for the session's own" },
