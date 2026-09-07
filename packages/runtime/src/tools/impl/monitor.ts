@@ -23,7 +23,7 @@ import "../descriptors/monitor.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
 import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailableError } from "../../sandbox/spawn.ts";
-import { SandboxConfigError, resolveNetworkPosture } from "../../sandbox/profile.ts";
+import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
 import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -149,8 +149,10 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   denyWritePaths?: string[];
   denyReadPaths?: string[];
   home: string;
-  /** Phase 5 fix wave, I1: the resolved `~/.winter` root, distinct from the OS home above. */
+  /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;
+  /** P7a (D19): the session's brand -- the dot-dir names the seatbelt fences. */
+  brand?: SandboxBrand;
   /**
    * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort, threaded to `runCommand`'s
    * already-existing process-group kill. Monitor's command half shares Bash's spawn mechanism, so it
@@ -167,6 +169,7 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
     ...computeMonitorDenyPaths(ctx),
     home: ctx.home,
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+    ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
 }

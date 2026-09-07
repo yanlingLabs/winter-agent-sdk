@@ -10,13 +10,21 @@
 // header) -- every carried rule below is copied for its BEHAVIOR, not reinvented: the mktemp
 // direct-children allowance, the three control-plane filename denies (literal-per-root +
 // any-depth case-folded regex), and the canonicalize-with-graceful-fallback discipline all reproduce
-// Norma's hard-won fixes verbatim, renamed `.norma` -> `.winter` per WS-01 §2.4. New at cutover
+// Norma's hard-won fixes verbatim, renamed to the brand's own dot-dir per WS-01 §2.4. New at cutover
 // (WS-12 §5.3, not present in Norma): `denyWrite`/`denyRead` layers driven by §2's `SandboxSettings`
 // (Norma only ever took a fixed roots list), and the workflow-worker profile is exported from here
 // too (WS-12 §5.2 "carries over for the workflow subprocess") even though no caller wires a real
 // workflow worker to it yet in this phase -- WS-11 is a later phase; this ships the tested
 // mechanism now, exactly as T1 shipped `buildAdvertisedSet` before anything called it.
 import { join } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+
+/**
+ * P7a (D19): the two dot-dir names the seatbelt fences. `homeDirName` anchors the winter root under
+ * the OS home (the run-dir read deny, the backups write deny, the provider-state read deny);
+ * `projectDirName` anchors the per-writable-root control plane (WS-12 §5.2's carve-out).
+ */
+export type SandboxBrand = Pick<BrandProfile, "homeDirName" | "projectDirName">;
 import { resolveRealTarget } from "../permissions/paths.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -197,9 +205,9 @@ export interface SeatbeltProfileInput {
    */
   darwinUserTempDir?: string;
   /**
-   * WS-12 §2: "the sole baseline read denial is `<home>/.winter/run`, enforced via profile deny
-   * rules layered over allow-read." The daemon's own runtime dir (control socket, PID/lock files) --
-   * a bash-invoked `cat ~/.winter/run/core.sock` or similar never passes through a read-tool's own
+   * WS-12 §2: "the sole baseline read denial is `<home>/<homeDirName>/run`, enforced via profile
+   * deny rules layered over allow-read." The daemon's own runtime dir (control socket, PID/lock
+   * files) -- a bash-invoked `cat ~/<homeDirName>/run/core.sock` never passes through a read-tool's own
    * permission fence at all (reads are otherwise deliberately unrestricted, per this product's own
    * tool-surface design), so the seatbelt profile is the only enforcement point left. Omitted
    * entirely -> no baseline deny is emitted, still a correct (if less defended) profile -- mirrors
@@ -210,11 +218,11 @@ export interface SeatbeltProfileInput {
    */
   home?: string;
   /**
-   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root (`WINTER_HOME` when set), when it differs
-   * from `<home>/.winter`.
+   * Phase 5 fix wave, I1: the RESOLVED winter root (`<PREFIX>HOME` when set), when it differs
+   * from `<home>/<homeDirName>`.
    *
-   * `home` above is the OS home and this module appends the literal `.winter` to it -- correct only
-   * when the resolved root is literally named `.winter`. Under a `WINTER_HOME` pointing anywhere
+   * `home` above is the OS home and this module appends `brand.homeDirName` to it -- correct only
+   * when the resolved root is literally named that. Under a `<PREFIX>HOME` pointing anywhere
    * else, the run read-deny and the backups write-deny both landed on a directory that does not
    * exist while the real one stayed open.
    *
@@ -223,36 +231,46 @@ export interface SeatbeltProfileInput {
    * cost nothing.
    */
   winterHome?: string;
+  /**
+   * P7a (D19): the brand whose dot-dir and project dot-dir this profile fences.
+   *
+   * Every winter-owned path segment below is `brand.homeDirName` (the root under the OS home) or
+   * `brand.projectDirName` (the per-writable-root control plane). Omitted = `WINTER_BRAND`, so a
+   * caller that threads none emits byte-identical SBPL -- which is what the carried WS-12 §5.2 deny
+   * corpus and the darwin deny suite assert.
+   */
+  brand?: SandboxBrand;
 }
 
 /**
  * Build a macOS Seatbelt (SBPL) profile: deny-by-default, read anywhere (minus configured
- * denyRead layers and, when `home` is given, the WS-12 §2 baseline `<home>/.winter/run` denial --
+ * denyRead layers and, when `home` is given, the WS-12 §2 baseline `<home>/<homeDirName>/run` denial --
  * see `SeatbeltProfileInput.home`'s own header), write only under the given roots (minus configured
  * denyWrite layers), network denied unless explicitly allowed.
  *
  * WS-12 §5.2 (verbatim carry, Winter-renamed): EVERY writable root (cwd + each of `writableRoots`)
- * additionally gets an explicit `(deny file-write* (literal "<root>/.winter/<file>"))` line, for
+ * additionally gets an explicit `(deny file-write* (literal "<root>/<projectDir>/<file>"))` line, for
  * each of `permissions.local.json`/`settings.json`/`settings.local.json`, unconditionally, with no
- * opt-in flag to forget -- a bash-invoked `echo x > .winter/permissions.local.json` never passes
+ * opt-in flag to forget -- a bash-invoked `echo x > <projectDir>/permissions.local.json` never passes
  * through a write/edit TOOL's own permission fence at all, so the seatbelt is the only enforcement
  * point left for a shell-invoked write to the permission/settings control plane. SBPL evaluates a
  * profile's rules for a given operation in FILE ORDER, last-match-wins (verified against real
  * sandbox-exec) -- placing these denies AFTER the `(allow file-write* (subpath ...))` block carves
  * out exactly these files from an otherwise-writable subpath, without touching a sibling file or an
- * entire OTHER subdirectory like `.winter/memory/` (the MEMDIR).
+ * entire OTHER subdirectory like the MEMDIR.
  *
  * A companion `(deny file-write* (regex ...))` per filename, placed after the per-root literals,
  * closes the NESTED-store hole a literal-only deny misses: a broad `writableRoots` entry makes a
- * nested `<root>/projB/.winter/settings.json` writable too, with no literal deny naming that exact
+ * nested `<root>/projB/<projectDir>/settings.json` writable too, with no literal deny naming that exact
  * path. Case-folded per character (see the module-level regex constants' own comment).
  */
 export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
+  const brand = input.brand ?? WINTER_BRAND;
   const roots = [input.cwd, ...(input.writableRoots ?? [])].map(canon);
   const writeRules = roots.map((r) => `  (subpath "${sbplString(r)}")`).join("\n");
 
   const denyRulesFileRules = roots
-    .flatMap((r) => CONTROL_PLANE_FILES.map((f) => `(deny file-write* (literal "${sbplString(canon(join(r, ".winter", f)))}"))`))
+    .flatMap((r) => CONTROL_PLANE_FILES.map((f) => `(deny file-write* (literal "${sbplString(canon(join(r, brand.projectDirName, f)))}"))`))
     .join("\n");
   const denyRulesFileRegex = `(deny file-write* (regex #"${RULES_FILE_REGEX}"))`;
   const denySettingsFileRegex = `(deny file-write* (regex #"${SETTINGS_FILE_REGEX}"))`;
@@ -268,7 +286,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const denyWriteRules = (input.denyWritePaths ?? []).map((p) => `(deny file-write* (subpath "${sbplString(canon(p))}"))`).join("\n");
   const denyReadRules = (input.denyReadPaths ?? []).map((p) => `(deny file-read* (subpath "${sbplString(canon(p))}"))`).join("\n");
 
-  // WS-12 §2: "the sole baseline read denial is <home>/.winter/run" -- a subpath deny (not a
+  // WS-12 §2: "the sole baseline read denial is <home>/<homeDirName>/run" -- a subpath deny (not a
   // filename literal/regex like the control-plane carve-outs above): the WHOLE directory tree is
   // off-limits, not one specific filename within it. Placed AFTER the user-configured denyReadRules
   // (this file's own placement convention: a carried/baseline protection sits after user config, so
@@ -276,20 +294,20 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // DENY rules of possibly-overlapping scope, unlike an allow/deny pair, relative order does not
   // change which paths end up denied; this ordering is for readability/convention, not correctness.
   const denyRunDirRule = [
-    input.home ? `(deny file-read* (subpath "${sbplString(canon(join(input.home, ".winter", "run")))}"))` : "",
-    // I1: the resolved root's own run directory, when it is not `<home>/.winter`.
-    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", ".winter")) ? `(deny file-read* (subpath "${sbplString(canon(join(input.winterHome, "run")))}"))` : "",
+    input.home ? `(deny file-read* (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "run")))}"))` : "",
+    // I1: the resolved root's own run directory, when it is not `<home>/<homeDirName>`.
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-read* (subpath "${sbplString(canon(join(input.winterHome, "run")))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");
 
-  // T8 rider 25 (SECURITY): the checkpoint BACKUP STORE, write-side. `<home>/.winter/backups/`
+  // T8 rider 25 (SECURITY): the checkpoint BACKUP STORE, write-side. `<home>/<homeDirName>/backups/`
   // holds the pre-image bytes a `rewind_files` writes back over the user's own files, plus the
   // `index.jsonl` that says which files those bytes go to. The managed permission floor
   // (engine.ts's buildBaselineDenyRules) binds a Write/Edit/NotebookEdit TOOL call -- but a
-  // bash-invoked `echo x >> ~/.winter/backups/<s>/index.jsonl` never passes through a write tool's
+  // bash-invoked `echo x >> ~/<homeDirName>/backups/<s>/index.jsonl` never passes through a write tool's
   // fence at all, so the seatbelt is the only enforcement point left. Exactly the reasoning WS-12
-  // §5.2's control-plane carve-out already records for `.winter/permissions.local.json`, applied to
+  // §5.2's control-plane carve-out already records for the project `permissions.local.json`, applied to
   // a store whose whole purpose is to be replayed over the user's files later.
   //
   // A `(subpath ...)` deny, like the run-dir read deny above and unlike the control-plane
@@ -298,28 +316,28 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // otherwise `(deny default)` already covers it, and an unconditional deny costs nothing.
   // Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecars, READ-side.
   //
-  // A bash-invoked `cat ~/.winter/projects/<key>/sess-1.provider-state.jsonl` never passes through a
+  // A bash-invoked `cat ~/<homeDirName>/projects/<key>/sess-1.provider-state.jsonl` never passes through a
   // read TOOL's permission fence at all -- reads are otherwise deliberately unrestricted in this
   // product -- so the seatbelt is the only enforcement point left for a shell-invoked read of the one
   // file that holds opaque provider state. Exactly the reasoning WS-12 §2 already records for
-  // `<home>/.winter/run`, applied to a file whose whole purpose is to hold what the model must not see.
+  // the run directory, applied to a file whose whole purpose is to hold what the model must not see.
   //
   // A REGEX ON THE FILENAME UNDER THE PROJECTS ROOT, never a `(subpath ...)` deny of the projects tree
   // -- a subpath deny would also block `cat`-ing a transcript, regressing the model-facing `.output`
   // stub contract that M13's own read-side scoping decision exists to preserve.
   const denyProviderStateReadRule = [
-    input.home ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(join(input.home, ".winter"))))}"))` : "",
-    // The RESOLVED root's own projects directory, when it is not `<home>/.winter` (Phase 5 fix wave I1).
-    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", ".winter")) ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(input.winterHome)))}"))` : "",
+    input.home ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(join(input.home, brand.homeDirName))))}"))` : "",
+    // The RESOLVED root's own projects directory, when it is not `<home>/<homeDirName>` (Phase 5 fix wave I1).
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(input.winterHome)))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");
 
   const denyBackupsDirRule = [
-    input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, ".winter", "backups")))}"))` : "",
+    input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "backups")))}"))` : "",
     // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
     // RESOLVED root's `backups/`, which is what `checkpoint/sink.ts` has always used.
-    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", ".winter")) ? `(deny file-write* (subpath "${sbplString(canon(join(input.winterHome, "backups")))}"))` : "",
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-write* (subpath "${sbplString(canon(join(input.winterHome, "backups")))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");
@@ -332,7 +350,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // shape the deny suite's own "outside the fence" assertions build two levels down in this same
   // directory. Placed BEFORE the control-plane denies so SBPL's last-match-wins keeps those denies
   // structurally overriding (no control-plane file can be a direct child of this dir anyway --
-  // they all sit under a `.winter/` component -- but the ordering makes that structural rather than
+  // they all sit under the project dot-dir -- but the ordering makes that structural rather than
   // incidental).
   const allowDarwinTempFiles = input.darwinUserTempDir
     ? `(allow file-write* (regex #"^${sbplRegexLiteral(input.darwinUserTempDir)}/[^/]+$"))`
@@ -394,8 +412,8 @@ ${denySettingsLocalFileRegex}
  *   - deny process-fork AND allow process-exec ONLY for the self binary.
  *
  * Part B item 2 (fix wave, P3 close-out) -- THE READ-AXIS CARRY IS NOW CLOSED (Phase 5 Task 3,
- * R5-5: "the P3 worker seatbelt profile PLUS the ledgered `~/.winter/run` deny"). `opts.home`, when
- * supplied, emits the same baseline `<home>/.winter/run` read-deny rule the ordinary Bash profile
+ * R5-5: "the P3 worker seatbelt profile PLUS the ledgered run-directory deny"). `opts.home`, when
+ * supplied, emits the same baseline `<home>/<homeDirName>/run` read-deny rule the ordinary Bash profile
  * carries (buildSeatbeltProfile's own `home` field), making this profile a strict superset of that
  * one's denials on every axis.
  *
@@ -415,18 +433,19 @@ ${denySettingsLocalFileRegex}
  * /bin/sh etc. Note the operation is `process-fork` (no star) -- `process-fork*` is an unbound
  * variable that fails to load.
  */
-export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts: { home: string | undefined; winterHome?: string }): string {
+export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts: { home: string | undefined; winterHome?: string; brand?: SandboxBrand }): string {
+  const brand = opts.brand ?? WINTER_BRAND;
   const self = canon(selfExecPath);
   // Placed with the other denies (below), after `(allow file-read*)`, so SBPL's last-match-wins makes
   // it actually bind -- emitted before the blanket read-allow it would be dead text.
-  // Phase 5 fix wave, I1: BOTH anchors. `opts.home` is the OS home and this appends the literal
-  // `.winter`; `opts.winterHome` is the RESOLVED root, which is where a real session's run directory
-  // actually is when `WINTER_HOME` points anywhere else. Emitted together for the reason
+  // Phase 5 fix wave, I1: BOTH anchors. `opts.home` is the OS home and this appends
+  // `brand.homeDirName`; `opts.winterHome` is the RESOLVED root, which is where a real session's run
+  // directory actually is when `<PREFIX>HOME` points anywhere else. Emitted together for the reason
   // `SeatbeltProfileInput.winterHome` states: two denies of overlapping scope cost nothing, and
   // swapping would unprotect every default-home session.
   const denyRunDirRule = [
-    opts.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, ".winter", "run")))}"))` : "",
-    opts.winterHome !== undefined && canon(opts.winterHome) !== canon(join(opts.home ?? "", ".winter"))
+    opts.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, brand.homeDirName, "run")))}"))` : "",
+    opts.winterHome !== undefined && canon(opts.winterHome) !== canon(join(opts.home ?? "", brand.homeDirName))
       ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.winterHome, "run")))}"))`
       : "",
   ].join("");

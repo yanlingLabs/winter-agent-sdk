@@ -399,14 +399,9 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   "packages/provider-runtime/src/identity.ts",
   // --- packages/runtime (Lane A unless another lane's ownership row names the file) -------------
   "packages/runtime/src/engine.ts",
-  "packages/runtime/src/permissions/edit-recognition.ts",
-  "packages/runtime/src/permissions/evaluator.ts",  // comment-only
-  "packages/runtime/src/permissions/protected.ts",
-  "packages/runtime/src/permissions/ruleset.ts",  // comment-only
   "packages/runtime/src/production-wiring.ts",  // comment-only
   "packages/runtime/src/provider/credential-api.ts",  // comment-only
   "packages/runtime/src/provider/keychain-store.ts",  // comment-only
-  "packages/runtime/src/sandbox/profile.ts",
   "packages/runtime/src/testing.ts",
   "packages/runtime/src/tools/descriptors/cron-create.ts",  // comment-only
   "packages/runtime/src/tools/descriptors/enter-worktree.ts",  // comment-only

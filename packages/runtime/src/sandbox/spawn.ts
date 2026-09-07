@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import {
   buildSeatbeltProfile,
+  type SandboxBrand,
   canonicalizePath,
   resolveNetworkPosture,
   type SandboxSettings,
@@ -177,14 +178,16 @@ export interface RunCommandOptions {
   denyReadPaths?: string[];
   /**
    * WS-12 §2: the caller's `ctx.home`, threaded straight through to `buildSeatbeltProfile`'s own
-   * `home` field for the baseline `<home>/.winter/run` read denial -- see that field's own header
+   * `home` field for the baseline `<home>/<homeDirName>/run` read denial -- see that field's own header
    * for why this module (rather than profile.ts) is where a real `ctx.home` value gets plugged in.
    * Omitted -> no baseline deny is emitted, same graceful-degradation posture as every other
    * optional profile input here.
    */
   home?: string;
-  /** Phase 5 fix wave, I1: the resolved `~/.winter` root -- see `SeatbeltProfileInput.winterHome`. */
+  /** Phase 5 fix wave, I1: the resolved winter root -- see `SeatbeltProfileInput.winterHome`. */
   winterHome?: string;
+  /** P7a (D19): the session's brand -- the dot-dir names the profile fences. Omitted = `WINTER_BRAND`. */
+  brand?: SandboxBrand;
 }
 
 export interface RunCommandResult {
@@ -236,8 +239,9 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),
       // Phase 5 fix wave, I1: the RESOLVED winter root, so the run/backups denies land where a
-      // session's own storage actually is under a custom `WINTER_HOME`.
+      // session's own storage actually is under a custom `<PREFIX>HOME`.
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
+      ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
     });
     spawnFile = REAL_SANDBOX_EXEC_PATH;
     spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];

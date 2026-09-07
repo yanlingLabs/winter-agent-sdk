@@ -488,7 +488,7 @@ export function resolveRules(
       // WS-07 §3.2: project ALLOW rules require workspace trust; project deny/ask "restrict and
       // apply without it" — so the trust gate applies to the allow behavior only, never deny/ask.
       // RULING P5-D (Phase 5 Task 3, from derived-shapes-p5 capture (1)): the gate is PROJECT-TIER ONLY.
-      // P2-H extended it to `local` on the reasoning that `.winter/settings.local.json` is
+      // P2-H extended it to `local` on the reasoning that a project `settings.local.json` is
       // repo-committable and therefore carries the same untrusted-clone self-grant risk. Capture (1)
       // ran the discriminator against the pinned runtime and it does not: trust there is a per-tier
       // filter in which project-tier permissive rules never widen, while LOCAL and USER permissive
