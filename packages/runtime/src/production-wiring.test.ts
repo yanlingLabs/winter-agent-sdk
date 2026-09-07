@@ -941,7 +941,48 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(child?.identity).toMatchObject({ providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5" });
       expect(child).not.toHaveProperty("refused");
       // ...and a child naming the parent's NEW model is "the same as the parent": no second adapter.
-      expect(await resolveChildProvider("anthropic/claude-opus-5")).toBeUndefined();
+      // P6.6 fix wave (whole-branch Important-1): a DISTINGUISHABLE shape, not `undefined`. The two
+      // facts `undefined` used to carry -- "resolves onto what the parent is running" and "does not
+      // resolve at all" -- are what made `resume()` refuse a servable child; the identity travels so
+      // the resume side can tell them apart and check the resolved provider against the recorded one.
+      const sameAsParent = await resolveChildProvider("anthropic/claude-opus-5");
+      expect(sameAsParent).toMatchObject({ sameAsParent: true, identity: { providerId: "anthropic", modelKey: "anthropic/claude-opus-5" } });
+      expect(sameAsParent).not.toHaveProperty("provider"); // the parent's own adapter IS the answer
+      expect(sameAsParent).not.toHaveProperty("refused");
+      // An UNRESOLVABLE model keeps `undefined` all to itself -- the whole point of the split.
+      expect(await resolveChildProvider("no-such-provider/no-such-model")).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // P6.6 fix wave (whole-branch Important-1, probe P-D) through the REAL wiring: a gpt parent spawns
+  // a cross-family `sonnet` child, then `set_model`s onto the CHILD'S OWN key. The resolver must
+  // report "same as the parent" naming anthropic -- the child's own recorded provider -- so the
+  // resume proceeds instead of being refused with "anthropic no longer serves anthropic/claude-sonnet-5".
+  test("P-D: after the parent switches onto a cross-family child's OWN key, the resolver names that child's provider rather than answering `undefined`", async () => {
+    const wiring = await buildProductionWiring({
+      config: gptSession("s-slots-same-key"),
+      env: {},
+      winterHome: home,
+      provider: { credentials: createMemoryCredentialStore([[providerCredentialRef({ providerId: "anthropic", accountId: "default" }), { kind: "api-key", key: "fixture" }]]) },
+    });
+    try {
+      const resolveChildProvider = wiring.childFactoryOptions.resolveChildProvider!;
+      // AT SPAWN: the parent is on `openai/gpt-6-astra`; the `sonnet` child resolves onto its own
+      // anthropic adapter (a full resolution -- a second provider really is built).
+      const atSpawn = await resolveChildProvider("anthropic/claude-sonnet-5");
+      expect(atSpawn).toMatchObject({ identity: { providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5" } });
+      expect(atSpawn).toHaveProperty("provider");
+      expect(atSpawn).not.toHaveProperty("sameAsParent");
+      // THE SWITCH: the engine reports its live key once per generation -- this is that call.
+      wiring.engineOptions.activeSlotSet!("anthropic/claude-sonnet-5");
+      // ON RESUME: the same recorded key now IS the parent's key. The answer names anthropic, which
+      // is what the child was recorded against, so `resume()`'s recorded-vs-resolved guard passes and
+      // the child is served on its own provider.
+      const onResume = await resolveChildProvider("anthropic/claude-sonnet-5");
+      expect(onResume).toMatchObject({ sameAsParent: true, identity: { providerId: "anthropic" } });
+      expect(onResume).toBeDefined();
     } finally {
       wiring.dispose();
     }
@@ -978,6 +1019,54 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(0);
       // ...and the facing name resolves through §4 like any other slot.
       expect(wiring.engineOptions.resolveSlot!("master", undefined)).toMatchObject({ ok: true, canonicalModelId: "gpt-6-astra" });
+      // ...and nothing is recorded as ignored: a VALID set is not an invalid one (Important-2's guard
+      // must not fire on the happy path).
+      expect(wiring.warnings.filter((w) => w.includes("modelSlotsIgnored"))).toHaveLength(0);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // WS-13c §5: "An invalid set is ignored whole and RECORDED with the failing entry." P6.6 fix wave
+  // (whole-branch Important-2, probe P-I): it WAS ignored whole and recorded nowhere -- the
+  // `"invalid"` member of the `modelSlotsIgnored` union had no producer in either layer, so a user
+  // whose slot name failed the grammar saw the family default lineup and was told nothing.
+  test("an INVALID custom set is ignored whole AND recorded through the warnings channel, quoting the failing entry", async () => {
+    // Capital `M` fails the slot-name grammar (`^[a-z0-9][a-z0-9.-]{0,31}$`), so the whole set goes.
+    // A catalogued gpt session, so the fallback is the FAMILY's lineup (an uncatalogued own-model
+    // session would fall back to `own-model` and prove nothing about the family default).
+    writeSettings(join(home), { modelSlots: [{ name: "Master", model: "gpt-6-astra" }] });
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-invalid"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      // Ignored WHOLE: the family's own lineup, never a partial set built from the valid entries.
+      const active = wiring.engineOptions.activeSlotSet!(undefined);
+      expect(active.source).toBe("family-default");
+      expect(active.slots.map((s) => s.name)).not.toContain("Master");
+      // RECORDED: one warning, naming the provenance and quoting the validator's own reason so the
+      // user can see WHICH entry failed and why.
+      const recorded = wiring.warnings.filter((w) => w.includes('modelSlotsIgnored: "invalid"'));
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!).toContain("Master");
+      expect(recorded[0]!).toContain("slot name grammar");
+      // ...and NOT the claude-pinned record: this session is not on a Claude model, and the two
+      // blocks must stay exclusive.
+      expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(0);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a VALID set on a claude session records `claude-pinned` and NOT `invalid` -- the two records never both fire", async () => {
+    writeSettings(join(home), { modelSlots: [{ name: "master", model: "gpt-6-astra" }] });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-slots-pinned-only", cwd, model: "anthropic/claude-opus-5", winterHome: home, settingSources: ["user"], provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" } } } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+      provider: hermetic,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(1);
+      expect(wiring.warnings.filter((w) => w.includes('modelSlotsIgnored: "invalid"'))).toHaveLength(0);
     } finally {
       wiring.dispose();
     }
@@ -1001,6 +1090,31 @@ describe("WS-13c: the wiring's model-family surface", () => {
     try {
       expect(wiring.engineOptions.activeSlotSet!(undefined)).toMatchObject({ family: "gpt", source: "family-default" });
       expect(wiring.engineOptions.resolveSlot!("astra", undefined)).toMatchObject({ ok: true, providerId: "openai", modelKey: "openai/gpt-6-astra" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // P6.6 fix wave (whole-branch Minor-4, probe P-A) on the SHIPPED catalog -- not a fixture. Three of
+  // the four options a `gpt` session advertises resolved to rows with `pricing: null`, so a turn on
+  // them reported no cost at all: `priceUsage` returned `undefined` and `maxBudgetUsd` was inert.
+  // R-6c-24's "a turn after a cross-provider switch is still priced" fix was correct; the `undefined`
+  // was purely missing row evidence, and this asserts the evidence is there now.
+  test("Minor-4: the gpt family's `sol`/`terra`/`luna` rows are PRICED on the shipped catalog, so a turn on them reports a cost", async () => {
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-priced"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      const oneMillionEach = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+      // Published standard short-context rates per 1M tokens, retrieved 2026-09-06: input + output.
+      for (const [key, expected] of [
+        ["openai/gpt-5.6-luna", 0.2 + 1.2],
+        ["openai/gpt-5.6-terra", 2 + 12],
+        ["openai/gpt-5.6-sol", 4 + 20],
+      ] as const) {
+        const priced = wiring.providerWiring.priceUsage(key, oneMillionEach);
+        expect(priced).toBeDefined();
+        expect(priced).toMatchObject({ costBasis: "list", canonicalModel: key });
+        expect(priced!.costUsd).toBeCloseTo(expected, 6);
+      }
     } finally {
       wiring.dispose();
     }

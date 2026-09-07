@@ -29405,6 +29405,17 @@
         "efforts": [],
         "continuation": "opaque-provider-state"
       },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.2,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.02
+        },
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-5.6-luna, standard tier, short context: input $0.20, cached input $0.02, output $1.20 per 1M tokens (retrieved 2026-09-06). Long context: $0.40 / $0.04 / $1.80. No cache-write rate is published for this model, so that key is absent.",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "gpt-5.6-luna",
@@ -29484,6 +29495,17 @@
         "efforts": [],
         "continuation": "opaque-provider-state"
       },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 4,
+          "outputPerMTokUsd": 20,
+          "cacheReadPerMTokUsd": 0.4
+        },
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-5.6-sol, standard tier, short context: input $4.00, cached input $0.40, output $20.00 per 1M tokens (retrieved 2026-09-06). Long context: $8.00 / $0.80 / $30.00. No cache-write rate is published for this model, so that key is absent.",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "gpt-5.6-sol",
@@ -29562,6 +29584,17 @@
         },
         "efforts": [],
         "continuation": "opaque-provider-state"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2,
+          "outputPerMTokUsd": 12,
+          "cacheReadPerMTokUsd": 0.2
+        },
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-5.6-terra, standard tier, short context: input $2.00, cached input $0.20, output $12.00 per 1M tokens (retrieved 2026-09-06). Long context: $4.00 / $0.40 / $18.00. No cache-write rate is published for this model, so that key is absent.",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",

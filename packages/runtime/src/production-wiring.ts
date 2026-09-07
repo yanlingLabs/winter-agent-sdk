@@ -959,9 +959,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     const raw = settingsGetter()?.modelSlots;
     if (raw === undefined) return undefined;
     const validated = validateModelSlots(raw, modelSlotsLookup);
-    // `ok: false` is "no custom slots" here rather than a warning: the provenance record
-    // (`modelSlotsIgnored: "invalid"` / `"untrusted-project"`) belongs to the settings cascade, which
-    // sees WHICH tier the set came from -- this module sees only the resolved value.
+    // `ok: false` is "no custom slots" HERE -- this is a hot getter, called on every render, and a
+    // warning pushed from it would repeat once per generation. The user-facing record is emitted
+    // ONCE at session start, beside the `claude-pinned` block below; the TIER-scoped half
+    // (`modelSlotsIgnored: "untrusted-project"`) stays the settings cascade's, which is the only
+    // layer that sees which tier the set came from.
     return validated.ok ? validated.slots : undefined;
   };
 
@@ -1054,6 +1056,31 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     );
   }
 
+  // WS-13c §5: "An invalid set is ignored whole and RECORDED with the failing entry." P6.6 fix wave
+  // (whole-branch Important-2): it was ignored whole and recorded NOWHERE -- each layer deferred the
+  // record to the other. This module read the validator's verdict and treated `ok: false` as "no
+  // custom slots"; `resolve.ts` deliberately does not validate (validation is the runtime's job, and
+  // the cascade cannot see a value's VALIDITY, only its tier), so the `"invalid"` member of the
+  // `modelSlotsIgnored` union had no producer anywhere. A user who configured four options, sees the
+  // default lineup and is told nothing cannot tell a typo from a bug.
+  //
+  // Mirrors the `claude-pinned` block above exactly: evaluated ONCE, at session start, from a fresh
+  // read rather than from `customSlots()` (whose whole point is that it collapses an invalid set to
+  // `undefined`, which is indistinguishable here from no set at all). The two are naturally
+  // exclusive -- `claude-pinned` fires only when the set is VALID and the session is Claude -- so a
+  // session never collects both.
+  if (slotSurfaceLive) {
+    const rawModelSlots = settingsGetter()?.modelSlots;
+    if (rawModelSlots !== undefined) {
+      const validated = validateModelSlots(rawModelSlots, modelSlotsLookup);
+      if (!validated.ok) {
+        warnings.push(
+          `settings: \`modelSlots\` is configured but the set is invalid, so it was ignored whole and the family's default lineup is in use (modelSlotsIgnored: "invalid") -- ${validated.reason}`,
+        );
+      }
+    }
+  }
+
   const settingsRules = buildSettingsRuleSeed(resolved, {
     // NEW-3: the two conditions `PolicyStateStore`'s bypass gate throws on, so the seed never hands
     // the engine a mode the engine will refuse. Passed rather than re-derived inside the seed
@@ -1100,12 +1127,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             resolveSlot,
             settingsVersion,
             // TAKES THE MODEL KEY (assignable to the spine's `() => ModelFamilyListing`, so no
-            // spine type changes). The spine's handler calls it with no argument today, which means
-            // a listing served after a cross-family `set_model` reports the START model's active set
-            // -- §7's switcher would list the family the session has left. The one-line spine fix is
-            // owed and recorded in this task's report: widen the option to
-            // `(currentModelKey?: string) => ModelFamilyListing` and call it with
-            // `currentProviderIdentity?.modelKey ?? currentModel`. This side is already correct.
+            // spine type changes). The engine's own handler passes the session's LIVE key
+            // (`listModelFamilies?.(currentProviderIdentity?.modelKey ?? currentModel)`, engine.ts),
+            // so a listing served after a cross-family `set_model` reports the family the session is
+            // actually on rather than the one it started on. The argument stays OPTIONAL: a host
+            // holding the spine's narrower `() => ModelFamilyListing` type still calls it with none,
+            // and falls back to the wiring's own last-known key below.
             listModelFamilies: (currentModelKey?: string): ModelFamilyListing => {
               prewarmActiveVendorProviders(currentModelKey);
               return buildModelFamilyListing({
@@ -1194,9 +1221,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
           ...(config.compactionThreshold !== undefined ? { compactionThreshold: config.compactionThreshold } : {}),
         }),
       // R6-17: the per-child provider. Resolved through the SESSION's own registry, so a child's
-      // `AgentDefinition.model` reaches the same catalog the parent did -- and returns `undefined`
-      // when the model resolves to what the parent is already running, so the common case builds no
-      // second adapter and every pre-P6 child is byte-identical.
+      // `AgentDefinition.model` reaches the same catalog the parent did -- and returns
+      // `{ sameAsParent: true, identity }` when the model resolves to what the parent is already
+      // running, so the common case builds no second adapter and every pre-P6 child is byte-identical.
+      // `undefined` is reserved, strictly, for "unresolvable / no catalog to resolve against": see
+      // `ChildProviderResolution` for why overloading one answer with both facts made `resume()`
+      // refuse a perfectly servable child (P6.6 fix wave, whole-branch Important-1).
       resolveChildProvider: async (model: string) => {
         const registry = providerWiring.registry;
         // WS-13c (Lane D investigation §1.6): the LIVE parent, not the session-start snapshot. A
@@ -1212,7 +1242,28 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         // one outcome a child that explicitly named another provider must not get.
         const resolvedChild = model.includes("/") ? registry.resolve({ model }) : registry.resolve({ model, provider: { providerId: parent.providerId } });
         if (resolvedChild instanceof WinterProviderResolutionError) return undefined;
-        if (resolvedChild.modelKey === parent.modelKey) return undefined;
+        if (resolvedChild.modelKey === parent.modelKey) {
+          // P6.6 fix wave (whole-branch Important-1): the DISTINGUISHABLE "same as the parent"
+          // answer. The parent's adapter is the answer, so none is built here -- but the identity it
+          // resolved TO travels with it, which is what lets `resume()` tell "the parent has moved
+          // onto this child's own model key" (the child is servable; proceed) apart from "this
+          // child's model no longer resolves anywhere" (refuse). No credential probe: this is the
+          // model the parent is running RIGHT NOW on material the session already holds, and a probe
+          // whose answer is "yes, obviously" is a store read bought for nothing. `authRefKind` is
+          // therefore genuinely unknown here and is omitted rather than guessed.
+          return {
+            sameAsParent: true,
+            identity: {
+              providerId: resolvedChild.providerId,
+              modelKey: resolvedChild.modelKey,
+              family: String(resolvedChild.adapter.family),
+              ...(resolvedChild.continuationDomain !== undefined ? { continuationDomain: resolvedChild.continuationDomain } : {}),
+              adapterId: resolvedChild.adapterId,
+              adapterVersion: resolvedChild.adapter.version,
+              catalogVersion: resolvedChild.catalogVersion,
+            },
+          };
+        }
         // RULING E-1 (whole-branch C-1, probe P1a): a child on ANOTHER provider gets that provider's
         // OWN material -- never the parent's `authRef`, never the parent's user `baseUrl`. When the
         // rule lands on the target provider's keychain record, its EXISTENCE is probed here, before
