@@ -24,6 +24,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
       - run: pnpm install
 
       # --- the gates: the exact verification sequence ci.yml's `build` and `official-fixture-compile`
@@ -48,6 +50,35 @@ jobs:
       # A hit here (a forbidden directory, a credentials-shaped file, an identity mismatch) fails
       # this step and the workflow stops -- `pnpm publish` below never runs. ---
       - run: bun run release:pack
+
+      # --- R-7a-16 (fix round 1): the install-from-tarball smoke, BLOCKING here on purpose --
+      # WS-02 §9 item 3 ("a dry-run pack + install-from-tarball smoke test (Node 18 and Bun) gates
+      # every publish") is a PUBLISH gate first and a per-push CI convenience second. ci.yml's own
+      # Node 18 leg (`pack-smoke-node18`) is ADVISORY (continue-on-error) because a hard-red job on
+      # every push would turn main's CI red the moment this branch merges, before the compiled-emit
+      # build step this finding calls for has landed (spine-owned manifest work, this phase's fix
+      # wave). NONE of that reasoning applies here: this job only ever runs on a `v*` tag push or a
+      # deliberate workflow_dispatch, and "the packages ship raw TypeScript Node cannot import" is
+      # exactly the condition under which a publish MUST fail -- so both legs below are BLOCKING,
+      # with no `continue-on-error` on the job or on either step. ---
+      - name: install every packed tarball into one throwaway project (outside the workspace, --offline)
+        run: |
+          set -e
+          probe=$(mktemp -d)
+          cd "$probe"
+          npm init -y >/dev/null
+          npm install --offline "$GITHUB_WORKSPACE"/dist/packages/*.tgz
+          echo "PROBE_DIR=$probe" >> "$GITHUB_ENV"
+      - name: import under Node 18 (BLOCKING -- a publish must fail until the compiled emit exists)
+        working-directory: ${{ env.PROBE_DIR }}
+        run: |
+          node -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("node: winter-agent-sdk import OK"))'
+          node -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("node: winter-conformance/trace import OK"); })'
+      - name: import under Bun (same installed tree, BLOCKING)
+        working-directory: ${{ env.PROBE_DIR }}
+        run: |
+          bun -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("bun: winter-agent-sdk import OK"))'
+          bun -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("bun: winter-conformance/trace import OK"); })'
 
       # version:bump / version:sync are DELIBERATELY not run here. WS-02 §9 item 2 says "every
       # publish is preceded by version:bump + version:sync", but that is the OPERATOR'S own action

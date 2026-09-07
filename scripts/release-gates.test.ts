@@ -107,40 +107,119 @@ describe("release.yml is the ONLY workflow allowed to publish", () => {
   });
 });
 
-describe("ci.yml's pack-smoke job (WS-02 §9 item 3)", () => {
-  test("the job exists and runs on ci.yml's own top-level trigger (every push/PR), not a release tag", () => {
-    const doc = Bun.YAML.parse(CI_YML) as { on: unknown; jobs: Record<string, unknown> };
+// Shared shape for the handful of tests below that need to inspect `continue-on-error` and `with`
+// at both the job and step level.
+interface WorkflowStep {
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, unknown>;
+  ["continue-on-error"]?: boolean;
+}
+interface WorkflowJob {
+  steps: WorkflowStep[];
+  ["continue-on-error"]?: boolean;
+}
+interface WorkflowDoc {
+  on: unknown;
+  jobs: Record<string, WorkflowJob>;
+}
+
+describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-7a-16, fix round 1)", () => {
+  test("both jobs exist and run on ci.yml's own top-level trigger (every push/PR), not a release tag", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
     expect(doc.jobs).toHaveProperty("pack-smoke");
+    expect(doc.jobs).toHaveProperty("pack-smoke-node18");
     expect(doc.on).toEqual(["push", "pull_request"]);
   });
 
-  test("it runs release:pack strictly before it tries to install any tarball", () => {
-    const doc = Bun.YAML.parse(CI_YML) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
-    const runValues = doc.jobs["pack-smoke"]!.steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
-    const packIndex = runValues.findIndex((r) => r.includes("release:pack"));
-    // Word-boundary-anchored: "pnpm install" (an EARLIER step) contains "npm install" as a bare
-    // substring ("pnpm" = "p" + "npm") -- a plain `.includes("npm install")` matches THAT step
-    // first and reports the wrong index (caught by this test itself while writing it).
-    const installIndex = runValues.findIndex((r) => /(^|\s)npm install\b/.test(r));
-    expect(packIndex).toBeGreaterThanOrEqual(0);
-    expect(installIndex).toBeGreaterThan(packIndex);
+  test("R-7a-16: pack-smoke-node18 is ADVISORY -- `continue-on-error: true` at the JOB level", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    expect(doc.jobs["pack-smoke-node18"]?.["continue-on-error"]).toBe(true);
   });
 
-  test("it pins Node 18 explicitly and exercises both `node -e` and `bun -e`", () => {
-    expect(CI_YML).toContain("node-version: 18");
-    expect(CI_YML).toContain("node -e");
-    expect(CI_YML).toContain("bun -e");
+  test("R-7a-16: pack-smoke (the Bun leg) stays BLOCKING -- no continue-on-error on the job or on any of its steps", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const job = doc.jobs["pack-smoke"]!;
+    expect(job["continue-on-error"]).toBeUndefined();
+    for (const step of job.steps) expect(step["continue-on-error"]).toBeUndefined();
   });
 
-  test("both the sdk bare import and the conformance/trace subpath import are checked under EACH runtime", () => {
-    const doc = Bun.YAML.parse(CI_YML) as { jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }> };
-    const steps = doc.jobs["pack-smoke"]!.steps;
-    const nodeStep = steps.find((s) => s.name === "import under Node 18");
-    const bunStep = steps.find((s) => s.name?.startsWith("import under Bun"));
-    expect(nodeStep?.run).toContain("@yanlinglabs/winter-agent-sdk");
-    expect(nodeStep?.run).toContain("@yanlinglabs/winter-conformance/trace");
+  test("EACH job runs release:pack strictly before it tries to install any tarball", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    for (const jobId of ["pack-smoke", "pack-smoke-node18"] as const) {
+      const runValues = doc.jobs[jobId]!.steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
+      const packIndex = runValues.findIndex((r) => r.includes("release:pack"));
+      // Word-boundary-anchored: "pnpm install" (an EARLIER step) contains "npm install" as a bare
+      // substring ("pnpm" = "p" + "npm") -- a plain `.includes("npm install")` matches THAT step
+      // first and reports the wrong index (caught by this test itself while writing it).
+      const installIndex = runValues.findIndex((r) => /(^|\s)npm install\b/.test(r));
+      expect(packIndex).toBeGreaterThanOrEqual(0);
+      expect(installIndex).toBeGreaterThan(packIndex);
+    }
+  });
+
+  test("pack-smoke-node18 pins Node 18 explicitly and runs `node -e`; pack-smoke has NO setup-node and runs `bun -e`", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const node18Job = doc.jobs["pack-smoke-node18"]!;
+    const setupNode = node18Job.steps.find((s) => s.uses?.startsWith("actions/setup-node"));
+    expect(setupNode?.with).toEqual({ "node-version": 18 });
+    expect(node18Job.steps.some((s) => s.run?.includes("node -e"))).toBe(true);
+
+    const bunJob = doc.jobs["pack-smoke"]!;
+    expect(bunJob.steps.some((s) => s.uses?.startsWith("actions/setup-node"))).toBe(false);
+    expect(bunJob.steps.some((s) => s.run?.includes("bun -e"))).toBe(true);
+  });
+
+  test("both required imports (sdk bare, conformance/trace subpath) are checked in EACH job", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const node18Step = doc.jobs["pack-smoke-node18"]!.steps.find((s) => s.run?.includes("node -e"));
+    const bunStep = doc.jobs["pack-smoke"]!.steps.find((s) => s.run?.includes("bun -e"));
+    expect(node18Step?.run).toContain("@yanlinglabs/winter-agent-sdk");
+    expect(node18Step?.run).toContain("@yanlinglabs/winter-conformance/trace");
     expect(bunStep?.run).toContain("@yanlinglabs/winter-agent-sdk");
     expect(bunStep?.run).toContain("@yanlinglabs/winter-conformance/trace");
+  });
+
+  test("the advisory job's own step name documents WHY, by name, citing R-7a-16", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const names = doc.jobs["pack-smoke-node18"]!.steps.map((s) => s.name).filter((n): n is string => typeof n === "string");
+    expect(names.some((n) => n.toLowerCase().includes("advisory") && n.includes("R-7a-16"))).toBe(true);
+  });
+});
+
+describe("release.yml's own Node 18 smoke (R-7a-16): stays BLOCKING, unlike ci.yml's advisory leg", () => {
+  test("the publish job has no job-level continue-on-error", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    expect(Object.values(doc.jobs)[0]?.["continue-on-error"]).toBeUndefined();
+  });
+
+  test("no step in the publish job sets continue-on-error -- including the Node 18 smoke steps specifically", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    for (const step of Object.values(doc.jobs)[0]!.steps) expect(step["continue-on-error"]).toBeUndefined();
+  });
+
+  test("it runs a Node 18 install-and-import smoke, pinned via actions/setup-node, strictly before publish", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const steps = Object.values(doc.jobs)[0]!.steps;
+    const setupNode = steps.find((s) => s.uses?.startsWith("actions/setup-node"));
+    expect(setupNode?.with).toEqual({ "node-version": 18 });
+
+    const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
+    const nodeSmokeIndex = runValues.findIndex((r) => r.includes("node -e") && r.includes("@yanlinglabs/winter-agent-sdk"));
+    const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
+    expect(nodeSmokeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(nodeSmokeIndex);
+  });
+
+  test("the Bun leg runs too (WS-02 §9 item 3 names both runtimes), also strictly before publish", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const steps = Object.values(doc.jobs)[0]!.steps;
+    const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
+    const bunSmokeIndex = runValues.findIndex((r) => r.includes("bun -e") && r.includes("@yanlinglabs/winter-agent-sdk"));
+    const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
+    expect(bunSmokeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(bunSmokeIndex);
   });
 });
 
