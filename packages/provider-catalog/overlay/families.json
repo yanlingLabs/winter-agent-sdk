@@ -132,8 +132,8 @@
           "canonicalModelId": "gemini-3.1-flash-lite",
           "description": "the cheap implementer.",
           "reason": "Third: cost.",
-          "basis": "user-ruling",
-          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1)",
           "status": "candidate"
         }
       ],
@@ -196,8 +196,8 @@
           "canonicalModelId": "glm-4.7-flash",
           "description": "the fast, cheap implementer.",
           "reason": "Second: cost.",
-          "basis": "user-ruling",
-          "citation": "spec:WS-13c §0 D-GLM (user: \"5.3 and 5.3 flash … strong/flash\") via §9; points at `glm-4.7-flash` until the owed `zai/glm-5.3-flash` row is verified (P6.6 Task 1b)",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling NAME — user: \"5.3 and 5.3 flash … strong/flash\", §0 2026-09-06 — winter-curated text, same provenance as the sibling `strong` slot; R-6c-11, fix r1 I-1); points at `glm-4.7-flash` until the owed `zai/glm-5.3-flash` row is verified (P6.6 Task 1b)",
           "status": "candidate"
         }
       ],
@@ -339,10 +339,10 @@
       "displayName": "Kimi",
       "vendor": "Moonshot AI",
       "vendorProviders": [
-        "moonshot",
-        "kimi-coding"
+        "kimi-coding",
+        "moonshot"
       ],
-      "$comment": "The coding plan spells its ids differently from the platform (`k3`, not `kimi-k3`), which is what the per-row `canonicalModelId` override in overlay/models.json exists for — without it `kimi-coding/k3` would be its own canonical model and the `k3` slot would not see it.",
+      "$comment": "The coding plan spells its ids differently from the platform (`k3`, not `kimi-k3`), which is what the per-row `canonicalModelId` override in overlay/models.json exists for — without it `kimi-coding/k3` would be its own canonical model and the `k3` slot would not see it. VENDORPROVIDERS DIVERGE FROM §9's PRINTED LIST, deliberately (controller ruling R-6c-15, fix r1): §9 prints `moonshot, kimi-coding`, but §4 step 3-i requires a configured SUBSCRIPTION row before a token row of the same vendor, and in this catalog `kimi-coding` is `pricingBasis: subscription` while `moonshot` is `token` — kimi was the only family where the two disagreed (`gpt` and `grok` already put the subscription first). §9 is amended by the controller; a §9<->overlay diff must read this row as the ruling, not as drift.",
       "matchers": [
         {
           "pattern": "^kimi-|^k[0-9](?:\\.|$)",
