@@ -37,9 +37,13 @@
 //      the pinned package ephemerally by name, which WS-02 §6 requires), and a tarball scan that
 //      flagged every mention would fail on Lane C's own shipped code, not on a real leak.
 //   4. credentials-shaped FILES by name — `.env`, `*.pem`/`*.key`/`*.p12`/`*.pfx`, `id_rsa`-shaped
-//      key files, `credentials.json`, a bare `.npmrc`. Filename-based rather than content-grepping
-//      for secret-looking strings, because this repository's own legitimate test fixtures construct
-//      PEM-armored text at runtime and DOCUMENT the PKCS#1/PKCS#8 header strings in comments (see
+//      key files, any *-`credentials.json` variant (dot- or otherwise-prefixed, unanchored — review
+//      r1 Important-3), a bare `.npmrc`, PLUS a second, independent case-insensitive `credential`
+//      substring net on the basename (any extension except recognised source/doc ones — `.ts`/`.js`/
+//      `.md`/etc. — which this repo's own legitimate `credentials.ts` modules would otherwise trip).
+//      Filename-based rather than content-grepping for secret-looking strings, because this
+//      repository's own legitimate test fixtures construct PEM-armored text at runtime and DOCUMENT
+//      the PKCS#1/PKCS#8 header strings in comments (see
 //      `packages/provider-runtime/src/adapters/google/jwt-rs256.ts`) — a content scan for
 //      "-----BEGIN...KEY-----" would false-positive on that comment, not catch a real secret.
 //   5. package identity — every `package.json` found inside the tarball must declare a name under
@@ -182,7 +186,22 @@ async function extractTarball(tarballPath: string, destDir: string): Promise<voi
 
 const FORBIDDEN_DIR_SEGMENTS = new Set(["compat", "node_modules", ".git"]);
 const ANTHROPIC_ARTIFACT_SEGMENTS = new Set(["claude-agent-sdk", "sdk.mjs"]);
-const CREDENTIAL_FILENAME_RE = /^\.env(\..+)?$|\.(pem|key|p12|pfx)$|^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$|^credentials\.json$|^\.npmrc$/i;
+// review r1 Important-3: the `credentials.json` alternative is UNANCHORED at the start (no leading
+// `^`) so a dot- or otherwise-prefixed variant (`.credentials.json`, `aws.credentials.json`,
+// `.aws-credentials.json`) still matches -- confirmed empirically: all three literally END in
+// "credentials.json", which the old `^credentials\.json$` anchor refused. The old exact-name-only
+// form let every prefixed variant through (Finding 3's planted-file case, `.credentials.json`, was
+// invisible to it).
+const CREDENTIAL_FILENAME_RE = /^\.env(\..+)?$|\.(pem|key|p12|pfx)$|^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$|credentials\.json$|^\.npmrc$/i;
+// A SECOND, independent, broader net: any basename containing "credential" at all, case-insensitive
+// -- EXCLUDING recognised source/doc extensions. Without that exclusion this false-positives on
+// real, legitimate files this exact repo ships (e.g. `packages/provider-runtime/src/credentials/
+// credentials.ts`, `adapters/bedrock/credentials.ts` -- confirmed empirically before adding this
+// rule): a source file whose NAME describes credential-handling LOGIC is not a credential-shaped
+// FILE. A `.json`/`.yaml`/`.txt`/extension-less file (or anything else) containing "credential" is
+// still caught -- only recognised code/doc extensions are exempted.
+const CREDENTIAL_SUBSTRING_RE = /credential/i;
+const NON_CREDENTIAL_SOURCE_EXTENSIONS_RE = /\.(ts|tsx|js|jsx|mjs|cjs|md)$/i;
 
 /** Every file under `dir` (recursive), as paths relative to `dir` using "/" separators regardless of platform. */
 function walkFiles(dir: string, base: string = dir): string[] {
@@ -219,7 +238,9 @@ export function scanExtractedPackage(expectedName: string, packageRoot: string):
     if (ANTHROPIC_ARTIFACT_SEGMENTS.has(name.toLowerCase()) || segments.some((s) => ANTHROPIC_ARTIFACT_SEGMENTS.has(s.toLowerCase()))) {
       violations.push(`${expectedName}: an embedded Anthropic artifact name ("${name}") shipped at ${relPath}`);
     }
-    if (CREDENTIAL_FILENAME_RE.test(name)) violations.push(`${expectedName}: a credentials-shaped file shipped at ${relPath}`);
+    if (CREDENTIAL_FILENAME_RE.test(name) || (CREDENTIAL_SUBSTRING_RE.test(name) && !NON_CREDENTIAL_SOURCE_EXTENSIONS_RE.test(name))) {
+      violations.push(`${expectedName}: a credentials-shaped file shipped at ${relPath}`);
+    }
 
     if (name === "package.json") {
       const full = join(packageRoot, ...relPath.split("/"));

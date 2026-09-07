@@ -124,6 +124,33 @@ describe("scanExtractedPackage: a synthetic dirty fixture proves the scan has te
       rmSync(clean, { recursive: true, force: true });
     }
   });
+
+  // review r1 Important-3: the exact reviewer's own probe, reproduced. `.credentials.json` (a
+  // dot-prefixed variant) was invisible to the old `^credentials\.json$` anchor -- the sibling
+  // `compat/anthropic/leftover.json` plant proved the harness itself was sound, so the miss was a
+  // real regex gap, not a test artifact.
+  test("credentials-shaped filenames: dot- and prefix-variants are caught, and legitimate source files named `credentials.ts` are NOT false-flagged", () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-release-pack-credentials-"));
+    try {
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "@yanlinglabs/winter-provider-runtime", version: "0.0.1" }));
+      writeFileSync(join(dir, ".credentials.json"), "{}"); // the reviewer's exact planted-file case
+      writeFileSync(join(dir, "aws.credentials.json"), "{}");
+      writeFileSync(join(dir, ".aws-credentials.json"), "{}");
+      mkdirSync(join(dir, "src", "credentials"), { recursive: true });
+      writeFileSync(join(dir, "src", "credentials", "credentials.ts"), "export const ok = true;\n"); // a REAL, legitimate module -- must NOT be flagged
+      writeFileSync(join(dir, "src", "credentials", "credentials.test.ts"), "export const ok = true;\n");
+
+      const { violations } = scanExtractedPackage("@yanlinglabs/winter-provider-runtime", dir);
+      const credentialViolations = violations.filter((v) => v.includes("credentials-shaped"));
+      expect(credentialViolations.some((v) => v.includes(".credentials.json") && !v.includes("aws"))).toBe(true);
+      expect(credentialViolations.some((v) => v.includes("aws.credentials.json"))).toBe(true);
+      expect(credentialViolations.some((v) => v.includes(".aws-credentials.json"))).toBe(true);
+      expect(credentialViolations.some((v) => v.includes("credentials.ts"))).toBe(false);
+      expect(credentialViolations).toHaveLength(3); // exactly the three planted JSON variants, nothing else
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step 1's own test)", () => {
