@@ -8300,6 +8300,139 @@
       "modelFamily": "claude"
     },
     {
+      "key": "anthropic/claude-fable-5-1",
+      "providerId": "anthropic",
+      "upstreamId": "claude-fable-5-1",
+      "displayName": "Claude Fable 5.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table, \"Context window\": \"1M tokens\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table, \"Max output\": \"128K tokens\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"All current models support text and image input, text output, multilingual capabilities, vision, and tool use\" (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — same sentence as inputModalities (\"...text output...\"), retrieved 2026-09-07",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"...and tool use\" listed among the capabilities every current model supports (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "same basis as toolCalling",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"Thinking\": \"Adaptive (always on)\", \"Default effort\": \"high\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1, applied per anthropic/claude-opus-5's own evidence — the Messages API returns a readable thinking summary, never the raw chain, for every current Claude model",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "derived-shapes-p6.md item (c), applied per anthropic/claude-opus-5's own evidence — ThinkingAdaptive/ThinkingEnabled `display`; a Messages API mechanic shared by every current Claude model, not specific to this page",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary, applied per anthropic/claude-opus-5's own evidence — a thinking block's signature arrives across signature_delta events, so the complete replayable block exists only at content_block_stop",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "anthropic/claude-fable-5-1"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves, applied per anthropic/claude-opus-5's own evidence. Own-state acceptance: a Claude model's own thinking blocks are replayed to it unchanged, in order, with signatures intact. Why the domain is NARROW: prior thinking/redacted_thinking blocks are tied to the model that produced them, so \"same provider\" is not automatically \"same continuation domain\" — the domain is this model alone.",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 10,
+          "outputPerMTokUsd": 50,
+          "cacheReadPerMTokUsd": 0.25
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table: \"$10 / input MTok, $50 / output MTok\" for Claude Fable 5.1; cache read = 2.5% of the base input price per the page's own footnote (\"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\") = $0.25/MTok (retrieved 2026-09-07). Cache-write, batch and long-context rates live on the separate Pricing page (platform.claude.com/docs/en/about-claude/pricing), which is outside this task's allowed page set, so they are NOT set here rather than guessed.",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5.1",
+      "modelFamily": "claude"
+    },
+    {
       "key": "anthropic/claude-haiku-4-5-20251001",
       "providerId": "anthropic",
       "upstreamId": "claude-haiku-4-5-20251001",
@@ -19416,6 +19549,60 @@
       "modelFamily": "gemini"
     },
     {
+      "key": "google/gemini-3.5-flash-lite",
+      "providerId": "google",
+      "upstreamId": "gemini-3.5-flash-lite",
+      "displayName": "Gemini 3.5 Flash-Lite",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "ADDED (P6.6 Task 1b fix r1/r1b, I-4): carried forward from google/gemini-3.1-flash-lite's own catalogued contextWindow (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), the immediately-prior Flash-Lite release. https://ai.google.dev/gemini-api/docs/models publishes no per-model token limits, only links to a per-model detail page outside this task's allowed page set — which is why the `lite` slot itself does NOT resolve to this row (see the row's `$comment`); this inferred value is recorded so the row is not blank, and so a future repoint need not re-derive it.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "google/gemini-3.1-flash-lite's own catalogued inputModalities (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), carried forward for the newer Flash-Lite release; https://ai.google.dev/gemini-api/docs/models names no per-model modality table (retrieved 2026-09-07)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "google/gemini-3.1-flash-lite's own catalogued toolCalling (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), carried forward; https://ai.google.dev/gemini-api/docs/models does not itself state a toolCalling flag for gemini-3.5-flash-lite (retrieved 2026-09-07)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "same basis as toolCalling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.5-flash-lite",
+      "modelFamily": "gemini"
+    },
+    {
       "key": "google/gemini-3.7-flash",
       "providerId": "google",
       "upstreamId": "gemini-3.7-flash",
@@ -19467,6 +19654,60 @@
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "gemini-3.7-flash",
+      "modelFamily": "gemini"
+    },
+    {
+      "key": "google/gemini-3.8-flash",
+      "providerId": "google",
+      "upstreamId": "gemini-3.8-flash",
+      "displayName": "Gemini 3.8 Flash",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "ADDED (P6.6 Task 1b fix r1/r1b, I-4): carried forward from google/gemini-3.7-flash's own catalogued contextWindow (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), the immediately-prior Flash release. https://ai.google.dev/gemini-api/docs/models publishes no per-model token limits, only links to a per-model detail page outside this task's allowed page set — which is why the `flash` slot itself does NOT resolve to this row (see the row's `$comment`); this inferred value is recorded so the row is not blank, and so a future repoint need not re-derive it.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "google/gemini-3.7-flash's own catalogued inputModalities (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), carried forward for the immediately-next Flash release; https://ai.google.dev/gemini-api/docs/models names no per-model modality table (retrieved 2026-09-07)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "google/gemini-3.7-flash's own catalogued toolCalling (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), carried forward; https://ai.google.dev/gemini-api/docs/models describes gemini-3.8-flash as engineered for \"autonomous agents\" but does not itself state a toolCalling flag (retrieved 2026-09-07)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "same basis as toolCalling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.8-flash",
       "modelFamily": "gemini"
     },
     {
@@ -36678,9 +36919,9 @@
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "DOWNGRADED (P6.6 Task 1b fix r1, I-3): cites xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6 — but that capture's own table (model | context window | default? | backend) records no modality data at all, and docs.x.ai/docs/models has no per-model modality column either (re-checked 2026-09-07). The capture's own text for this model — \"yes (default, and for web search / image description / session summary)\" — is a hint the client sends this model images to describe, in tension with `[\"text\"]`; flagged for a live probe rather than flipped on a hint.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
       },
       "outputModalities": {
         "value": [
@@ -36694,16 +36935,16 @@
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "DOWNGRADED (P6.6 Task 1b fix r1, I-2): this row's original citation named https://docs.x.ai/docs/models for \"xAI documents agentic tool calling on the Grok 4.x line\", but two independently-worded re-checks of that exact page (2026-09-07) find no function/tool-calling statement anywhere on it — only \"To incorporate realtime data with your request, enable server-side search tools (Web Search / X Search).\" The value is carried forward on general-API grounds (every modern Grok API in practice supports function calling), not on a page statement that exists.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/docs/models",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "same basis and same caveat as toolCalling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -36747,9 +36988,9 @@
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "DOWNGRADED (P6.6 Task 1b fix r1, I-3): cites xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6 — but that capture's own table (model | context window | default? | backend) records no modality data at all, and docs.x.ai/docs/models has no per-model modality column either (re-checked 2026-09-07). The capture's own text for this model — \"yes (default, and for web search / image description / session summary)\" — is a hint the client sends this model images to describe, in tension with `[\"text\"]`; flagged for a live probe rather than flipped on a hint.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
       },
       "outputModalities": {
         "value": [
@@ -36763,16 +37004,16 @@
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "DOWNGRADED (P6.6 Task 1b fix r1, I-2): this row's original citation named https://docs.x.ai/docs/models for \"xAI documents agentic tool calling on the Grok 4.x line\", but two independently-worded re-checks of that exact page (2026-09-07) find no function/tool-calling statement anywhere on it — only \"To incorporate realtime data with your request, enable server-side search tools (Web Search / X Search).\" The value is carried forward on general-API grounds (every modern Grok API in practice supports function calling), not on a page statement that exists.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/docs/models",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "same basis and same caveat as toolCalling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -36932,6 +37173,94 @@
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "grok-4.3",
+      "modelFamily": "grok"
+    },
+    {
+      "key": "xai/grok-4.6",
+      "providerId": "xai",
+      "upstreamId": "grok-4.6",
+      "displayName": "Grok 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 500000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models — grok-4.6 lists a 500k context window in the Text API models/pricing table (retrieved 2026-09-07); matches xai-oauth/grok-4.6's own independently-sourced figure",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "DOWNGRADED (P6.6 Task 1b fix r1, I-3): same basis as the xai-oauth/grok-4.6 sibling row (identical vendor model) — xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6 — but that capture's own table records no modality data at all, and https://docs.x.ai/docs/models has no per-model modality column either (re-checked 2026-09-07). The capture's own text for this model — \"yes (default, and for web search / image description / session summary)\" — is a hint the client sends this model images to describe, in tension with `[\"text\"]`; flagged for a live probe rather than flipped on a hint.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: the artifact declares no output modality, so `text` is Winter's inference for a chat registry, NOT a vendor statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "Inherited from xai-oauth/grok-4.6's own admission for the identical vendor model (that row cites https://docs.x.ai/docs/models for this claim). This task's own read of that exact page (2026-09-07), asked directly whether it documents tool/function calling for the Grok 4.x line, did NOT find such a statement — the page mentions only server-side search tools (Web Search / X Search), not general tool calling. Carried forward rather than dropped (every modern Grok API in practice supports function calling, and the sibling row already ships this claim for the same model), but downgraded to `confidence: \"inferred\"` since this task could not independently confirm it; the citation gap is on the pre-existing sibling row, not manufactured fresh here — flagged in the P6.6 report.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "same basis and same caveat as toolCalling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models — the Text API pricing table publishes a distinct \"Cached input / 1M tokens\" rate for grok-4.6 ($0.50, <200k tier), which a model without prompt caching would not have (same basis anthropic/claude-opus-5 uses for its own `promptCaching`) (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6 — same basis as the xai-oauth/grok-4.6 sibling row; https://docs.x.ai/docs/models mentions no effort-level vocabulary for grok-4.6 (retrieved 2026-09-07)",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2,
+          "outputPerMTokUsd": 6,
+          "cacheReadPerMTokUsd": 0.5
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models — Text API pricing table, headers \"Model | Context | Input / 1M tokens | Cached input / 1M tokens | Output / 1M tokens\": grok-4.6 (<200k prompt tokens) row reads $2.00 input / $0.50 cached input / $6.00 output per 1M tokens (retrieved 2026-09-07; ADDED in P6.6 Task 1b fix r1, I-1 — the cached-input column was on the page at authoring and was missed). The table also lists a >=200k tier at $4.00 input / $1.00 cached input / $12.00 output; `ModelPricing` carries one rate per direction, so the STANDARD (<200k) tier is recorded and the estimator UNDER-counts long-context turns on this row — same disclosed gap as openai/gpt-6-astra's long-context tier.",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "grok-4.6",
       "modelFamily": "grok"
     },
     {
@@ -38245,11 +38574,11 @@
       "slots": [
         {
           "name": "fable",
-          "canonicalModelId": "claude-fable-5",
+          "canonicalModelId": "claude-fable-5.1",
           "description": "the most capable Claude model, for the hardest reasoning and the most open-ended agentic work; the highest price.",
           "reason": "First because it is the strongest.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); points at `claude-fable-5` until the owed `claude-fable-5-1` row is verified (P6.6 Task 1b)",
+          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); VERIFIED on https://docs.anthropic.com/en/docs/about-claude/models (redirects to https://platform.claude.com/docs/en/docs/about-claude/models, retrieved 2026-09-07) — repointed from `claude-fable-5` to the owed `anthropic/claude-fable-5-1` row (P6.6 Task 1b), whose own canonicalModelId post-normaliser is `claude-fable-5.1`, not the un-normalised `claude-fable-5-1`",
           "status": "candidate"
         },
         {
@@ -38350,7 +38679,7 @@
           "description": "Google's strongest current model by its own documentation; fast agentic coding.",
           "reason": "Second: strength.",
           "basis": "vendor-doc",
-          "citation": "spec:WS-13c §9 — vendor-doc basis; the vendor model page citation lands with the owed `google/gemini-3.8-flash` row (P6.6 Task 1b), which this slot then points at",
+          "citation": "spec:WS-13c §9 — vendor-doc basis; the id IS verified on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07), which lists `gemini-3.8-flash` as \"New Stable\" and \"Our most intelligent Flash model\" ahead of `gemini-3.7-flash`, and the owed `google/gemini-3.8-flash` row is authored — but per task-1b review r1's I-4 and the controller's binding ruling, the page states NO per-model context-window number (it is an index that links to a page outside this task's allowed set), so the slot stays on `gemini-3.7-flash` rather than repoint to a row whose context window would have to be inferred. `google/gemini-3.8-flash` remains in the catalog, servable outside this slot, with an inferred `contextWindow` disclosed on the row itself; repointing here is a one-line change if a future ruling accepts that inference for the slot",
           "status": "candidate"
         },
         {
@@ -38359,7 +38688,7 @@
           "description": "the cheap implementer.",
           "reason": "Third: cost.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1)",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1); a newer id IS found and verified on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07) per the spine review's addendum (controller item 2) — `gemini-3.5-flash-lite` sits ahead of `gemini-3.1-flash-lite` in the page's own newest-first listing order and carries the higher minor version number, both Stable (page states no release dates or supersession; softened per task-1b review r1 M-3) — and the owed `google/gemini-3.5-flash-lite` row is authored, but per review r1's I-4 and the controller's binding ruling the page states NO per-model context-window number for it, so the slot stays on `gemini-3.1-flash-lite` rather than repoint to a row whose context window would have to be inferred. `google/gemini-3.5-flash-lite` remains in the catalog, servable outside this slot, with an inferred `contextWindow` disclosed on the row itself; repointing here is a one-line change if a future ruling accepts that inference for the slot",
           "status": "candidate"
         }
       ],
@@ -38543,7 +38872,7 @@
           "description": "the stronger Grok, for reasoning-heavy work.",
           "reason": "First: strength.",
           "basis": "user-ruling",
-          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9; served today by `xai-oauth`, with the owed `xai/grok-4.6` row still to be verified (P6.6 Task 1b). NOT pinned to a provider — §4's ordering decides.",
+          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9; served by `xai-oauth` from the start, and now also by the token-priced `xai` provider — VERIFIED on https://docs.x.ai/docs/models (retrieved 2026-09-07), which lists `grok-4.6` in its plain Text API pricing table (P6.6 Task 1b's owed `xai/grok-4.6` row). The canonicalModelId does not change — both rows already shared `grok-4.6` — so this is a servability widening, not a repoint. NOT pinned to a provider — §4's ordering decides.",
           "status": "candidate"
         },
         {
