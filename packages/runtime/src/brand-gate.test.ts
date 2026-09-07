@@ -393,71 +393,8 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   // --- packages/provider-catalog (Lane D owns validate.ts's rules) ------------------------------
   "packages/provider-catalog/src/validate.ts",
   // --- packages/provider-runtime (Lane A: identity.ts's body, the codex originator, the keychain service) 
-  "packages/provider-runtime/src/adapters/openai/codex-config.ts",
-  "packages/provider-runtime/src/adapters/openai/xai-oauth.ts",
-  "packages/provider-runtime/src/continuity/handoff.ts",
-  "packages/provider-runtime/src/identity.ts",
   // --- packages/runtime (Lane A unless another lane's ownership row names the file) -------------
-  "packages/runtime/src/commands/resolver.ts",  // comment-only
-  "packages/runtime/src/commands/seam.ts",  // comment-only
-  "packages/runtime/src/context/memory.ts",  // comment-only
-  "packages/runtime/src/context/minimal-prompt.ts",  // comment-only
-  "packages/runtime/src/context/output-styles.ts",
-  "packages/runtime/src/context/plan-mode.ts",  // comment-only
-  "packages/runtime/src/context/seam.ts",  // comment-only
-  "packages/runtime/src/context/winter-code-preset.ts",
-  "packages/runtime/src/context/winter-md.ts",
-  "packages/runtime/src/engine.ts",
-  "packages/runtime/src/hooks/registry.ts",  // comment-only
-  "packages/runtime/src/main.ts",  // comment-only
-  "packages/runtime/src/mcp/lifecycle.ts",  // comment-only
-  "packages/runtime/src/paths/project-dir-name.ts",
-  "packages/runtime/src/paths/temp.ts",
-  "packages/runtime/src/permissions/edit-recognition.ts",
-  "packages/runtime/src/permissions/evaluator.ts",  // comment-only
-  "packages/runtime/src/permissions/protected.ts",
-  "packages/runtime/src/permissions/ruleset.ts",  // comment-only
-  "packages/runtime/src/plugins/bundle.ts",  // comment-only
-  "packages/runtime/src/plugins/loader.ts",  // comment-only
-  "packages/runtime/src/plugins/manifest.ts",
-  "packages/runtime/src/production-wiring.ts",  // comment-only
-  "packages/runtime/src/provider/credential-api.ts",  // comment-only
-  "packages/runtime/src/provider/keychain-store.ts",  // comment-only
-  "packages/runtime/src/sandbox/profile.ts",
-  "packages/runtime/src/settings/loaders/mcp-config.ts",
-  "packages/runtime/src/skills/frontmatter.ts",  // comment-only
-  "packages/runtime/src/skills/loader.ts",
-  "packages/runtime/src/skills/option.ts",  // comment-only
-  "packages/runtime/src/skills/permission-rules.ts",  // comment-only
-  "packages/runtime/src/skills/store.ts",
-  "packages/runtime/src/subagents/definitions.ts",
-  "packages/runtime/src/subagents/limits.ts",
-  "packages/runtime/src/subagents/policy.ts",
-  "packages/runtime/src/subagents/watchdog.ts",
-  "packages/runtime/src/subagents/workspace.ts",
-  "packages/runtime/src/testing.ts",
-  "packages/runtime/src/tools/descriptors/cron-create.ts",  // comment-only
-  "packages/runtime/src/tools/descriptors/enter-worktree.ts",  // comment-only
-  "packages/runtime/src/tools/descriptors/winter-list-agents.ts",
-  "packages/runtime/src/tools/descriptors/winter-send-message.ts",
-  "packages/runtime/src/tools/descriptors/workflow.ts",  // comment-only
-  "packages/runtime/src/tools/impl/agent.ts",  // comment-only
-  "packages/runtime/src/tools/impl/cron.ts",
-  "packages/runtime/src/tools/impl/enter-worktree.ts",
-  "packages/runtime/src/tools/impl/list-agents.ts",
-  "packages/runtime/src/tools/impl/send-message.ts",
-  "packages/runtime/src/tools/registry.ts",  // comment-only
-  "packages/runtime/src/toolsearch/aliases.ts",
-  "packages/runtime/src/workflows/bridge.ts",  // comment-only
-  "packages/runtime/src/workflows/host-registry.ts",  // comment-only
-  "packages/runtime/src/workflows/meta.ts",  // comment-only
-  "packages/runtime/src/workflows/runtime.ts",  // comment-only
-  "packages/runtime/src/workflows/script-api.ts",  // comment-only
-  "packages/runtime/src/workflows/store.ts",
-  "packages/runtime/src/workflows/subprocess-entry.ts",  // comment-only
   // --- scripts (Lane A) -------------------------------------------------------------------------
-  "scripts/differential.ts",  // comment-only
-  "scripts/verify-provider-live.ts",
 ];
 
 describe("P7a (D19): the brand sweep gate", () => {

@@ -1,6 +1,6 @@
 // WS-06 §3.5 "Workflow" -- implement-now, captured, verbatim schema. D8 exact parity ([WS-11]);
 // Norma's sandboxed-subprocess runtime is the vehicle. `name` resolves built-ins or filesystem
-// workflows under `.winter/workflows` (WS-01 §2.4).
+// workflows under `<projectDir>/workflows` (WS-01 §2.4).
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 
 stub({

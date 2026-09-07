@@ -32,6 +32,12 @@ import {
   type ModelFamilyListing,
   // WS-13c §3 (P6.6): the active slot set the Agent tool's `model` schema is rendered from.
   type ActiveSlotSet,
+  // P7a (D19): the brand profile. `WINTER_BRAND` is the reading for a config with no `brand` on the
+  // wire (a host driving `runEngine` directly); `envName` is the ONLY way this file spells a
+  // product env name.
+  WINTER_BRAND,
+  envName,
+  type BrandProfile,
 } from "@yanlinglabs/winter-agent-sdk";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
@@ -1015,7 +1021,7 @@ export interface EngineOptions {
   // ABSENT reproduces pre-P5 behaviour byte-for-byte, exactly like the five seams above.
 
   /**
-   * The resolved `~/.winter` root for THIS session (`config.winterHome ?? resolveWinterHome(env)`).
+   * The resolved winter root for THIS session (`config.winterHome ?? resolveWinterHome(env, brand)`).
    * Passed rather than re-derived so this file and `store/dialect.ts` can never disagree about where
    * a session lives -- and because `dialect.ts` imports types from this module, so the reverse import
    * would be circular. Consumed by the workflow session registration below.
@@ -1032,7 +1038,7 @@ export interface EngineOptions {
   extraHookEntries?: readonly SourcedHookEntry[];
   /**
    * MCP server sources beyond the host's own `config.mcpServers`: the settings tiers,
-   * `.winter/mcp.json`, and plugin manifests. Appended AFTER the explicit source, so an explicitly
+   * the project `mcp.json`, and plugin manifests. Appended AFTER the explicit source, so an explicitly
    * configured server still wins; `resolveMcpServerSources` owns precedence, duplicate names, the
    * reserved `winter` name and the project-origin trust gate, exactly as before.
    *
@@ -1317,22 +1323,22 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
 // `source: "managed"` is what makes these bind under `bypassPermissions` too: stage 2's deny lookup
 // runs before stage 4's bypass auto-allow, and `allowManagedPermissionRulesOnly` narrows the pool to
 // exactly this source rather than dropping it.
-export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRuleEntry[] {
+export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick<BrandProfile, "homeDirName">): SourcedRuleEntry[] {
   // --- Phase 5 fix wave, I1: the floors follow the RESOLVED winter home --------------------------
   //
-  // Every entry below is written `~/.winter/...`, and `~` resolves through `permissionHome =
+  // Every entry below is written under Winter's own dot-dir, and `~` resolves through `permissionHome =
   // homedir()` (permissions/paths.ts). The checkpoint SINK resolves its root with
   // `resolveWinterHome(env)` and `workflows/store.ts` persists under `<winterHome>/projects/...` --
-  // so under a `WINTER_HOME` whose basename is not `.winter`, the fences and the things they exist to
+  // so under a `<PREFIX>HOME` whose basename is not the brand's own dot-dir, the fences and the things they exist to
   // fence pointed at DIFFERENT directories, and the M13 transcript floor and the rider-25 backups
   // floor were both silently absent in a documented, common configuration.
   //
-  // ADDED, NEVER SWAPPED. The `~/.winter/...` entries stay exactly as they were: the user tier, the
+  // ADDED, NEVER SWAPPED. Those default-home entries stay exactly as they were: the user tier, the
   // carried seatbelt corpus and every default-home session still assume the literal default, and a
   // swap would unprotect all of them to protect one. A resolved root that IS the default emits no
   // duplicate (the two anchors coincide and the dedupe below drops the second).
   const absolute: SourcedRuleEntry[] = [];
-  if (resolvedWinterHome !== undefined && resolve(resolvedWinterHome) !== resolve(join(homedir(), ".winter"))) {
+  if (resolvedWinterHome !== undefined && resolve(resolvedWinterHome) !== resolve(join(homedir(), (brand ?? WINTER_BRAND).homeDirName))) {
     // `//`-ANCHORED, not a bare absolute path. WS-07 §3.1's own grammar (permissions/paths.ts's
     // `resolveAnchor`) reads a SINGLE leading `/` as "relative to the rule's own settings-file
     // directory", which is `undefined` for an engine-seeded rule and therefore makes the whole rule
@@ -1360,21 +1366,28 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
       }
     }
   }
+  // P7a (D19): the DEFAULT-HOME anchor is `~/<brand.homeDirName>`, not a literal. Byte-identical
+  // under `WINTER_BRAND` (its `homeDirName` is the very segment these strings carried, and the
+  // rule-string tests pin them), and correct for a reuser: a floor naming somebody else's product directory protects
+  // nothing, while the reuser's own transcripts, backups and run socket would sit unfenced. The
+  // resolved-root branch above still emits its twin whenever `<PREFIX>HOME` points somewhere else,
+  // and it emits nothing when the two coincide (the dedupe below drops the duplicate).
+  const homeAnchor = `~/${(brand ?? WINTER_BRAND).homeDirName}`;
   return [
     ...absolute,
     // The daemon's own runtime directory -- sockets, pidfiles, credentials-adjacent state.
-    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
-    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
-    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run" }, "deny", "managed"),
-    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
-    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run" }, "deny", "managed"),
-    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Read", ruleContent: `${homeAnchor}/run` }, "deny", "managed"),
+    sourceRule({ toolName: "Read", ruleContent: `${homeAnchor}/run/**` }, "deny", "managed"),
+    sourceRule({ toolName: "Glob", ruleContent: `${homeAnchor}/run` }, "deny", "managed"),
+    sourceRule({ toolName: "Glob", ruleContent: `${homeAnchor}/run/**` }, "deny", "managed"),
+    sourceRule({ toolName: "Grep", ruleContent: `${homeAnchor}/run` }, "deny", "managed"),
+    sourceRule({ toolName: "Grep", ruleContent: `${homeAnchor}/run/**` }, "deny", "managed"),
 
     // --- Whole-branch review M13 (fix wave follow-up item 7): durable session state is READ-ONLY ---
     //
     // `~/.winter/projects/**` holds every session's own durable history: the JSONL transcript a
     // session and each of its children resume from, the `.meta.json` roster sidecars, and the
-    // provider-state sidecars. `permissions/protected.ts` already protects `.winter/**` WRITES in
+    // provider-state sidecars. `permissions/protected.ts` already protects the dot-dir's WRITES in
     // prompting modes -- but `resolveProtectedWrite` returns `allow` under `bypassPermissions` (WS-07
     // §6.7's matrix, verbatim), and WS-07 §11 FORCES bypass on every descendant of a bypass parent.
     // So a forced-bypass child could rewrite the very transcript its own `resume()` rebuilds from,
@@ -1403,12 +1416,12 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
     //
     // Two entries per tool for the same reason as `~/.winter/run` above: the bare pattern covers the
     // directory itself, `/**` covers its contents.
-    sourceRule({ toolName: "Write", ruleContent: "~/.winter/projects" }, "deny", "managed"),
-    sourceRule({ toolName: "Write", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
-    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects" }, "deny", "managed"),
-    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
-    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/projects" }, "deny", "managed"),
-    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/projects` }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/projects/**` }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/projects` }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/projects/**` }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/projects` }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/projects/**` }, "deny", "managed"),
 
     // --- Phase 5 Task 8 rider 25 (SECURITY): the checkpoint BACKUP STORE is write-denied too ------
     //
@@ -1417,10 +1430,10 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
     // are attacker-useful: writing the index names an arbitrary path for the next rewind to write or
     // DELETE; writing a blob chooses the bytes that land on a path the session legitimately tracked.
     //
-    // The M13 reasoning applies verbatim -- `permissions/protected.ts` protects `.winter/**` writes,
+    // The M13 reasoning applies verbatim -- `permissions/protected.ts` protects the dot-dir's writes,
     // but `resolveProtectedWrite` returns `allow` under `bypassPermissions` (WS-07 §6.7's matrix) and
     // WS-07 §11 FORCES bypass on every descendant of a bypass parent -- plus one this block does not
-    // have: `protected.ts` matches the literal directory NAME `.winter`, so a `WINTER_HOME` pointing
+    // have: `protected.ts` matches the brand's directory NAME, so a `<PREFIX>HOME` pointing
     // at a differently-named root was never covered there at all. A `managed` deny binds where the
     // protected-write check does not, because stage 2's deny lookup runs before stage 4's bypass
     // auto-allow, and `findFileDenyBlockingEdit` extends it to Bash-shaped writes.
@@ -1430,12 +1443,12 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
     // model could already read in place -- denying reads would buy nothing and regress nothing.
     // `checkpoint/rewind.ts` carries the complementary half: a record naming a path outside the
     // session's own writable roots is refused even if the index says otherwise.
-    sourceRule({ toolName: "Write", ruleContent: "~/.winter/backups" }, "deny", "managed"),
-    sourceRule({ toolName: "Write", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
-    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/backups" }, "deny", "managed"),
-    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
-    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/backups" }, "deny", "managed"),
-    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/backups` }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/backups/**` }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/backups` }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/backups/**` }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/backups` }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/backups/**` }, "deny", "managed"),
 
     // --- Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecars are READ-DENIED -----------
     //
@@ -1454,7 +1467,7 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
     //
     // The write side needs nothing new: the M13 block above already denies Write/Edit/NotebookEdit
     // across all of `~/.winter/projects/**`, which contains these files.
-    ...PROVIDER_STATE_DENY_TOOLS.flatMap((tool) => providerStateDenyPatterns("~/.winter/projects").map((pattern) => sourceRule({ toolName: tool, ruleContent: pattern }, "deny", "managed"))),
+    ...PROVIDER_STATE_DENY_TOOLS.flatMap((tool) => providerStateDenyPatterns(`${homeAnchor}/projects`).map((pattern) => sourceRule({ toolName: tool, ruleContent: pattern }, "deny", "managed"))),
   ];
 }
 
@@ -1582,7 +1595,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // be necessary (not merely defensive): Ruling P2-D's "a bare `~`-anchored segment reaches any
   // depth on deny" special case (paths.ts's own `isSingleSegmentDirectoryPattern`) is scoped to a
   // pattern with EXACTLY ONE segment after the anchor (`~/secrets`, paths.test.ts's own fixture) --
-  // `.winter/run` is TWO segments, so it does NOT qualify and instead compiles through the general,
+  // the run directory is TWO segments, so it does NOT qualify and instead compiles through the general,
   // exact-match-only glob path (a first draft of this fix used only the bare pattern and a RED test
   // caught it immediately: it matched the literal `~/.winter/run` path but NOT anything nested
   // beneath it, e.g. `~/.winter/run/core.sock`). The bare entry covers the path itself; `/**`
@@ -1604,8 +1617,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // I1: the same resolved root every other fence in this run uses. `wiredWinterHome` is what
   // `production-wiring.ts` computed (`config.winterHome ?? resolveWinterHome(env)`); the fallback
   // keeps a host that drives `runEngine` directly on exactly its pre-fix behaviour.
+  // P7a (D19): this run's brand. `production-wiring.ts` owns the ONE fallback for a session it
+  // builds; a host driving `runEngine` directly (and every hand-built test config) has no `brand`
+  // on the wire, and Winter's own profile is the correct reading for those -- see that module's
+  // own note on why the fallback is not repeated at each reader.
+  const sessionBrand = config.brand ?? WINTER_BRAND;
   const resolvedWinterHome = wiredWinterHome ?? config.winterHome;
-  const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome);
+  const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
   // called "not wired into the engine by this task (that is a later task's job)". Runs the SAME
@@ -2128,6 +2146,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // I1: the resolved root, so the P5-B carve-out and its stage-2 deny skip name the SAME
       // directory `workflows/store.ts` persists to.
       ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+      // P7a (D19): the protected-path floor's own dot-dir and instructions file.
+      brand: sessionBrand,
       // B-H1(a) / WS-12 §1: "will this exact Bash call run under the OS sandbox, with
       // `autoAllowBashIfSandboxed` on?" -- the three facts the evaluator cannot see, answered here.
       bashRunsSandboxed: bashRunsSandboxed,
@@ -2364,13 +2384,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       cachedSessionTempPaths = sessionTempDir({
         tempProjectKey: compatibilityKeys(config.cwd).tempProjectKey,
         backendUuid: config.sessionId,
+        brand: sessionBrand,
       });
     }
     return cachedSessionTempPaths;
   }
 
   // Phase 4 Task 3 (MUST 5, WS-10 §3.1/§3.5): the STRUCTURAL model precedence chain --
-  // WINTER_SUBAGENT_MODEL -> per-invocation -> definition -> session, "inherit" meaning "continue
+  // <PREFIX>SUBAGENT_MODEL -> per-invocation -> definition -> session, "inherit" meaning "continue
   // resolving," a fork ignoring an override BY CONTRACT. Real alias resolution against a provider
   // catalog (org `availableModels` substitution, an unresolvable-alias typed error) is WS-13/Lane
   // C's own deeper scope -- no such catalog exists in this codebase yet, so this chain operates on
@@ -2380,7 +2401,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // needing to know about that layer at all).
   function resolveChildModel(req: SpawnChildRequest): string {
     if (req.fork === true) return config.model; // WS-10 §3.5: fork ignores a model override by contract
-    const envModel = (engineEnv ?? process.env)["WINTER_SUBAGENT_MODEL"];
+    // P7a (D19): the env NAME derives from the session's prefix and is read HERE, per spawn -- never
+    // spelled and never at module load (brand-gate rules 9 and 10).
+    const envModel = (engineEnv ?? process.env)[envName(sessionBrand, "SUBAGENT_MODEL")];
     if (envModel !== undefined && envModel !== "" && envModel !== "inherit") return envModel;
     if (req.model !== undefined && req.model !== "inherit") return req.model;
     const defModel = req.definition?.model;
@@ -2810,6 +2833,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       readState: createSessionReadState({ cwd: config.cwd }),
       getTempDir: () => resolveSessionTempPaths().root,
       sandboxSettings: config.sandbox ?? DEFAULT_SANDBOX_SETTINGS,
+      // P7a (D19): every tool executor that names a Winter-owned surface (the project dot-dir a
+      // worktree/cron file lives under, the seatbelt's own fences) reads it from here.
+      brand: sessionBrand,
       // M11 (fix wave follow-up 6): the SAME `trustedWorkspace` constant the permission evaluator's
       // EvaluationContext and the hook registry already read -- one producer, three consumers, so a
       // P5 trust signal cannot reach two of them and miss the third.
@@ -2933,7 +2959,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // deliberately the narrow structural type `{request(...)}` precisely so `bridge` satisfies it with
   // zero adaptation from inside this closure. main.ts could never build one.
   //
-  // SOURCE SCOPE (RULING P4-F): Options-level `mcpServers` only -- the `.winter/mcp.json`,
+  // SOURCE SCOPE (RULING P4-F): Options-level `mcpServers` only -- the project `mcp.json`,
   // settings-declared, and plugin-contributed loaders are WS-11/Phase 5's, and no loader for any of
   // them exists anywhere in this codebase (Lane A verified this by search before building
   // `resolveMcpServerSources` as a pure function over already-supplied sources). Phase 4 ships the
@@ -2978,7 +3004,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // "I own the MCP stack" and the engine dials nothing.
   if (mcpServerStateSource === undefined && mcpControlSeam === undefined) {
     // Phase 5 Task 8 (Lane S's "What T8 must wire" item 4): the explicit host source FIRST, then the
-    // settings tiers, `.winter/mcp.json`, and plugin manifests -- assembled by `production-wiring.ts`
+    // settings tiers, the project `mcp.json`, and plugin manifests -- assembled by `production-wiring.ts`
     // in that order and appended here. `resolveMcpServerSources` breaks a within-origin tie by array
     // order, so the ordering inside `extraMcpServerSources` is load-bearing and lives with the code
     // that documents it. RULING P4-F's "Options-level `mcpServers` only" scope is what this closes.
@@ -3130,7 +3156,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // seam instance, shared so the workflow's `agent({schema})` uses one compiled-validator cache).
   //
   // `resolveAgentType` mirrors `tools/impl/agent.ts:296` exactly, INCLUDING its `home: permissionHome`
-  // -- the OS home, never `winterHome`, because `loadAgentDefinitions` joins `.winter/agents` itself.
+  // -- the OS home, never `winterHome`, because `loadAgentDefinitions` joins the dot-dir's `agents/` itself.
   // Handing it the resolved winter root would silently find an empty user tier. (Fix-wave item 6 is
   // the deliberate, separate change that moves BOTH call sites onto the resolved root; doing it here
   // alone would make the Workflow tool and the Agent tool disagree about which definitions exist.)
@@ -3158,7 +3184,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     disposeWorkflowSession = registerWorkflowSession({
       sessionId: config.sessionId,
       winterHome: workflowWinterHome,
-      projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env),
+      brand: sessionBrand,
+      projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env, sessionBrand),
       sessionTempDir: resolveSessionTempPaths().root,
       structured: structuredOutput,
       accountant: contextAccountant,
@@ -3171,6 +3198,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       resolveAgentType: (agentType, ctx) =>
         loadAgentDefinitions({
           home: permissionHome,
+          brand: sessionBrand,
           cwd: ctx.cwd,
           trustedWorkspace: ctx.trustedWorkspace,
           ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
@@ -3265,7 +3293,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   const sessionCapabilities = resolveLiveSessionCapabilities();
   // Phase 4 Task 8 (rider 3, WS-09 §10 / RULING P4-E): the Winter branch's own canonical alias pair.
   // WS-10 §15 names it verbatim -- [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
-  // built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those
+  // built-ins at the standing server's own send_message/list_agents entries. On the WINTER branch those
   // canonical names are real, registered descriptors (descriptors/winter-*.ts, `deferred: true` at
   // the source) backed by the SAME executor objects as the native names, so WS-09 §10's
   // "the model normally sees ONE SendMessage" is a Winter-branch obligation that holds whether or not
@@ -3276,7 +3304,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // identity, on the argument that folding it in would silently stop `disallowedTools:
   // ["SendMessage"]` from matching. The whole-branch review found the split's own escape hatch
   // (CRITICAL C2): suppression keyed on the NATIVE name being advertised, so denying the native
-  // DISABLED suppression and `mcp__winter__send_message` surfaced eager, executing the same executor
+  // DISABLED suppression and the canonical twin surfaced eager, executing the same executor
   // with no deny rule and no hook matcher matching it. The argument was right about the hazard and
   // wrong about the remedy -- the fix is not to withhold identity mapping but to make it
   // BIDIRECTIONAL and strictest-of (`resolvePermissionIdentity`, toolsearch/aliases.ts): a rule
@@ -3289,7 +3317,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // load-first predicate (P4-E, unamended).
   //
   // Host entries win on collision (a host that redirects `SendMessage` somewhere else means it).
-  const suppressionAliasTable: Record<string, string> = effectiveAliasTable(config.toolAliases);
+  const suppressionAliasTable: Record<string, string> = effectiveAliasTable(config.toolAliases, sessionBrand);
   // Phase 4 Task 8 (rider 5) -- the init.tools-vs-live-mode freeze, INVESTIGATED and recorded rather
   // than "fixed", because there is nothing here to fix without a protocol addition.
   //
@@ -3339,6 +3367,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     partitionAdvertisedTools(advertisedCfg, deferralActivation),
     suppressionAliasTable,
     config.disallowedTools,
+    sessionBrand,
   );
   currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
   // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the execution-boundary "load ≠ permission" check --
@@ -3353,7 +3382,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // refusal and the advertised set from ever disagreeing about why a name is missing.
   function aliasExclusionLive(toolName: string): string | undefined {
     const live = partitionAdvertisedTools({ ...advertisedCfg, mode: policyStateStore.getState().mode }, deferralActivation);
-    const exclusion = aliasExclusionReasons(live, suppressionAliasTable, config.disallowedTools).get(toolName);
+    const exclusion = aliasExclusionReasons(live, suppressionAliasTable, config.disallowedTools, sessionBrand).get(toolName);
     // ONLY the twin-of-an-excluded-native direction is refused here. The other direction (a source
     // whose alias TARGET is bare-denied) deliberately falls through to the permission pipeline,
     // where a real rule denies it -- that produces a `permission_denied` frame and a
@@ -4602,7 +4631,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    */
   function announceLossyTransfer(from: ContinuityEndpoint, to: ContinuityEndpoint, reason: "set_model" | "interrupt" | "fallback"): void {
     const lastSource = [...messages].reverse().find((m) => m.role === "assistant" && m.origin?.modelKey === from.modelKey && m.uuid !== undefined);
-    const handoff = buildPortableHandoff(messages, sessionChain, from);
+    // P7a fix r1 (Minor-2): the session's OWN instructions basename, ADDED to the §2.8 exclusion
+    // list. The declared option had no producer, so a reuser's `ACME.md` could reach a handoff's
+    // tool facts while the four names on that list -- Winter's own included -- were blocked.
+    const handoff = buildPortableHandoff(messages, sessionChain, from, { instructionsFile: sessionBrand.instructionsFile });
     const summaryAvailable = lastSource?.uuid !== undefined && sessionChain.get(lastSource.uuid)?.summary !== undefined;
     const classification = classifySwitch(from, to, {
       summaryAvailable,
@@ -4749,7 +4781,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // cannot be a tool. (3) Anything else -- not a command, or a `/name` no resolver claims -- is used
     // verbatim; an unknown command is never an error and never a dropped turn.
     //
-    // The built-in is recognised FIRST, so a `.winter/commands/compact.md` in an untrusted clone
+    // The built-in is recognised FIRST, so a project `commands/compact.md` in an untrusted clone
     // cannot shadow a built-in with real engine-side power (the same self-grant shape P5-A closes on
     // the settings side). The resolver is only ever offered a `/name` the engine did not claim.
     const builtinCommand = resolveBuiltinCommand(userFrame.text);
@@ -5163,13 +5195,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             findMatchingRuleEntry(evalCtxForIdentity.policy.rules, { toolName: candidate, input: permissionInput, toolUseId: call.id }, behavior, evalCtxForIdentity) !==
             undefined;
           const permissionCall: PermissionCall = {
-            toolName: resolvePermissionIdentity(call.name, config.toolAliases, {
-              deniedByRule: probeRule("deny"),
-              askedByRule: probeRule("ask"),
-              hookScoped: (candidate: string): boolean =>
-                (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
-              allowedByRule: probeRule("allow"),
-            }),
+            toolName: resolvePermissionIdentity(
+              call.name,
+              config.toolAliases,
+              {
+                deniedByRule: probeRule("deny"),
+                askedByRule: probeRule("ask"),
+                hookScoped: (candidate: string): boolean =>
+                  (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
+                allowedByRule: probeRule("allow"),
+              },
+              sessionBrand,
+            ),
             input: permissionInput,
             toolUseId: call.id,
             // Phase 4 Task 3 (MUST 9): the identical agentID a child engine's own hook stage/audit

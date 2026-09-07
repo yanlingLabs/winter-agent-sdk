@@ -1,8 +1,14 @@
-// WS-09 §10 / WS-10 §15 -- the CANONICAL `mcp__winter__send_message` entry on the standing Winter
-// server (`winter`), created by Phase 4 Task 8 (rider 15). Lane D's own report named this as one of
-// its two genuine cross-lane NEEDS_CONTEXT items: "canonical mcp__winter__send_message /
-// mcp__winter__list_agents descriptors don't exist anywhere in this repo", and creating one is
-// descriptor-authoring territory a lane may not enter.
+// WS-09 §10 / WS-10 §15 -- the CANONICAL `send_message` entry on the standing Winter server,
+// created by Phase 4 Task 8 (rider 15). Lane D's own report named this as one of its two genuine
+// cross-lane NEEDS_CONTEXT items: "canonical standing-server send_message / list_agents descriptors
+// don't exist anywhere in this repo", and creating one is descriptor-authoring territory a lane may
+// not enter.
+//
+// P7a (D19): the name registered here is Winter's own (`mcpToolName(WINTER_BRAND, ...)`), because a
+// descriptor file runs at MODULE LOAD, before any session's brand exists. A branded session renames
+// this entry at wiring time -- `rebrandStandingServerTools` (tools/registry.ts), called once by
+// `production-wiring.ts` and disposed with the session -- so the registered spelling and
+// `toolsearch/aliases.ts`'s alias TARGET are always the same string.
 //
 // WHY IT EXISTS AT ALL: WS-10 §15 names this exact pair as the redirect target
 // [WS-14]'s official-branch `toolAliases` wiring points `SendMessage`/`ListAgents` at. For that
@@ -14,7 +20,7 @@
 // can never diverge behaviourally.
 //
 // `deferred: true` AT THE SOURCE (RULING P4-E, verbatim, and the controller's own mid-task
-// instruction to Lane D): "the canonical `mcp__winter__*` entry stays deferred and is declared
+// instruction to Lane D): "the canonical standing-server entry stays deferred and is declared
 // `deferred: true` at its source". Declaring it eager and merely suppressing it at the partition
 // layer would produce a real visibility/gating mismatch -- it would vanish from the advertised
 // listing (looking deferred) while still resolving EAGER at the execution boundary
@@ -42,11 +48,14 @@
 // short-circuits `source: "builtin"` to "eager"
 // unconditionally ("core built-ins... never deferred through the public surface"), so a builtin-
 // sourced canonical entry could never be deferred at all.
+import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
 import { stub } from "./_shared.ts";
 
+const NAME = mcpToolName(WINTER_BRAND, "send_message");
+
 stub({
-  canonicalName: "mcp__winter__send_message",
-  advertisedName: "mcp__winter__send_message",
+  canonicalName: NAME,
+  advertisedName: NAME,
   source: "mcp",
   // Byte-mirrors descriptors/send-message.ts's own inputSchema (WS-10 §10.1's pinned shape).
   inputSchema: {

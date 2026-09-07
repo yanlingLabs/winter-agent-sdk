@@ -4,7 +4,7 @@
 // CLI's own default is deliberate: an SDK caller who configured no prompt gets an agent that knows
 // how to call tools and nothing else, so their own instructions are the only voice in the room.
 // Anything beyond tool-calling mechanics -- tone, task posture, memory, environment -- belongs to
-// the `winter_code` preset, which a caller has to ask for.
+// the authored product preset, which a caller has to ask for.
 //
 // RULING R5-16 puts the only copy of this text HERE, never in the engine: with no assembler
 // registered the engine sends no system prompt at all and authors no fallback. Two copies of an

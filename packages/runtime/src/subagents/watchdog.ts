@@ -1,3 +1,4 @@
+import { WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 // WS-10 §6, RULING R4-9: the progress-stall watchdog. Parity target is Norma's shipped
 // `packages/core/src/agent/subagents.ts` (WS-10 §6's own citation): a progress-INACTIVITY watchdog,
 // on by default at 600_000ms, that aborts with a typed "stalled: no progress" error -- distinct from
@@ -6,16 +7,19 @@
 // child-engine.ts pokes this on every frame it reads back from a running child, resetting the clock;
 // the watchdog only ever fires after a full timeoutMs window with ZERO such pokes.
 export class ChildStalledError extends Error {
-  constructor(public readonly timeoutMs: number) {
-    super(`winter: subagent stalled -- no progress (no frame or tool activity) for ${timeoutMs}ms (WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS)`);
+  constructor(
+    public readonly timeoutMs: number,
+    varName: string = envName(WINTER_BRAND, "ASYNC_AGENT_STALL_TIMEOUT_MS"),
+  ) {
+    super(`winter: subagent stalled -- no progress (no frame or tool activity) for ${timeoutMs}ms (${varName})`);
     this.name = "ChildStalledError";
   }
 }
 
 const DEFAULT_STALL_TIMEOUT_MS = 600_000;
 
-export function resolveStallTimeoutMs(env: Record<string, string | undefined> = process.env): number {
-  const raw = env["WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS"];
+export function resolveStallTimeoutMs(env: Record<string, string | undefined> = process.env, brand?: Pick<BrandProfile, "envPrefix">): number {
+  const raw = env[envName(brand ?? WINTER_BRAND, "ASYNC_AGENT_STALL_TIMEOUT_MS")];
   if (raw === undefined || raw === "") return DEFAULT_STALL_TIMEOUT_MS;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_STALL_TIMEOUT_MS;

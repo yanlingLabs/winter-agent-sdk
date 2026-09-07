@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SpawnedRuntimeProcess, RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
+import { encodeFrame, splitFrames, WINTER_BRAND, envName } from "@yanlinglabs/winter-agent-sdk";
 import { Queue } from "./protocol/channel.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
@@ -78,8 +78,8 @@ for (const name of ["test_tool", "long_task", "mystery_tool"]) {
 
 // inMemoryProcess is a TESTING-ONLY entry point (winter-agent-runtime/testing — never used by real
 // production code; main.ts is the real entrypoint) — so unlike main.ts's resolveProductionWinterHome,
-// which correctly falls all the way back to the real user's ~/.winter, this resolver must NEVER
-// reach that fallback: `config.winterHome` wins if set; otherwise a non-blank `env.WINTER_HOME`
+// which correctly falls all the way back to the real user's home, this resolver must NEVER
+// reach that fallback: `config.winterHome` wins if set; otherwise a non-blank `<PREFIX>HOME`
 // (the HARD CONSTRAINT's injection point — see transport-equivalence.test.ts's spawnHook and
 // scripts/differential.ts, which relies on omitting BOTH to land here); otherwise a fresh per-call
 // mkdtemp. It never even LOOKS at process.env, let alone falls through to resolveWinterHome's
@@ -87,7 +87,8 @@ for (const name of ["test_tool", "long_task", "mystery_tool"]) {
 // construction, including test files this task never had to touch.
 function resolveInMemoryWinterHome(config: RuntimeConfig, env: Record<string, string | undefined> | undefined): string {
   if (config.winterHome !== undefined) return config.winterHome;
-  const override = env?.WINTER_HOME;
+  // P7a (D19): the env NAME derives from the session's own prefix, read here rather than spelled.
+  const override = env?.[envName(config.brand ?? WINTER_BRAND, "HOME")];
   if (override !== undefined && override.trim() !== "") return override;
   return mkdtempSync(join(tmpdir(), "winter-inmemory-"));
 }
@@ -132,12 +133,12 @@ export function inMemoryProcess(
   // Phase 5 fix wave (B-low): ONE root per virtual process, minted at most once.
   //
   // `resolveInMemoryWinterHome` mkdtemps a FRESH directory whenever neither `config.winterHome` nor
-  // `env.WINTER_HOME` is set -- and it was called three times per session: once for
+  // the brand's own `<PREFIX>HOME` is set -- and it was called three times per session: once for
   // `resolveEngineSession`, once for the child store, once for `buildProductionWiring`. So in the
   // default case (which is most tests, and every `scripts/differential.ts` run) a session's own
   // transcript, its children's transcripts and the settings/skills/plugins its wiring discovered all
   // lived under three DIFFERENT roots. Wasteful is the smaller half; the real cost is that the
-  // wiring read a `.winter` tree that was not the one anything wrote to, so no in-memory test could
+  // wiring read a settings tree that was not the one anything wrote to, so no in-memory test could
   // ever observe a settings file affecting a transcript, and a child could not be found under its
   // parent's root.
   //
@@ -252,7 +253,7 @@ export function inMemoryProcess(
       });
       // Lane Y addendum, item 3 (the B-low half): the SAME warnings main.ts emits, on the same
       // prefix, down this leg's own stderr pipe. It dropped every one of them on the floor before,
-      // so a malformed `.winter/mcp.json`, a plugin that would not load or a broken skill was
+      // so a malformed project `mcp.json`, a plugin that would not load or a broken skill was
       // invisible on exactly the leg the differential and equivalence suites run -- the place a
       // Winter developer meets it first. NOT the frame sink: stdout is the frame stream exclusively
       // (WS-04 §2/§6).

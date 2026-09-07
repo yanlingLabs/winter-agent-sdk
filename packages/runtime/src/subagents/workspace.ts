@@ -1,3 +1,4 @@
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 // WS-10 §8: filesystem isolation -- a `Workspace {root, isolationType, cleanupPolicy}` abstraction
 // (report §106's own "orchestration never learns git details"). `isolation: "worktree"` REUSES Lane
 // E-of-P3's own git plumbing (tools/impl/enter-worktree.ts: runGit/listWorktrees) -- READ-ONLY per
@@ -25,12 +26,12 @@ export interface Workspace {
 
 export type CreateWorkspaceResult = { ok: true; workspace: Workspace } | { ok: false; error: string };
 
-// `agentId` names the worktree directory (`.winter/worktrees/agent-<agentId>`) so concurrent
-// children never collide on one path -- mirrors EnterWorktree's own `.winter/worktrees/<name>`
+// `agentId` names the worktree directory (`<projectDir>/worktrees/agent-<agentId>`) so concurrent
+// children never collide on one path -- mirrors EnterWorktree's own `<projectDir>/worktrees/<name>`
 // convention (WS-01 §2.4) with the child's own identity as the name, never a model-supplied string
 // (a child's own isolation worktree is not named BY the model the way EnterWorktree's `name` input
 // is).
-export async function createWorkspace(opts: { parentCwd: string; isolation?: "worktree"; agentId: string }): Promise<CreateWorkspaceResult> {
+export async function createWorkspace(opts: { parentCwd: string; isolation?: "worktree"; agentId: string; brand?: Pick<BrandProfile, "projectDirName"> }): Promise<CreateWorkspaceResult> {
   if (opts.isolation === undefined) {
     return { ok: true, workspace: { root: opts.parentCwd, isolationType: "normal", cleanupPolicy: "keep" } };
   }
@@ -40,7 +41,7 @@ export async function createWorkspace(opts: { parentCwd: string; isolation?: "wo
     return { ok: false, error: `isolation:"worktree" requires the session's cwd to be inside a git repository (${opts.parentCwd} is not: ${repoCheck.stderr})` };
   }
 
-  const worktreesDir = join(opts.parentCwd, ".winter", "worktrees");
+  const worktreesDir = join(opts.parentCwd, (opts.brand ?? WINTER_BRAND).projectDirName, "worktrees");
   const target = join(worktreesDir, `agent-${opts.agentId}`);
   mkdirSync(worktreesDir, { recursive: true });
 

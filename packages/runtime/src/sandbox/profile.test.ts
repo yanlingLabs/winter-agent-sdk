@@ -12,7 +12,9 @@ import {
   resolveNetworkPosture,
   SandboxConfigError,
   DEFAULT_SANDBOX_SETTINGS,
+  caseFoldSegment,
 } from "./profile.ts";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 
 function realTmp(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-sb-")));
@@ -154,6 +156,94 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     const regexDenyCount = [...p.matchAll(/\(deny file-write\* \(regex/g)].length;
     expect(regexDenyCount).toBe(3);
     expect(p).not.toContain("|"); // SBPL alternation marker never appears anywhere
+  });
+
+  // --- P7a fix r1 (Important-1) ------------------------------------------------------------------
+  //
+  // THE WHOLE-PROFILE BYTE DIFF the fix round was asked for. Transcribed from the profile `cd5fa4b`
+  // rendered for this exact input, BEFORE the three any-depth control-plane regexes stopped being
+  // hard-coded. A derivation that changed one character of the default profile fails here with the
+  // offending line, rather than somewhere downstream in the darwin deny suite.
+  test("the ENTIRE rendered profile is byte-identical to the pre-derivation build under the default brand", () => {
+    const EXPECTED = [
+    "(version 1)",
+    "(deny default)",
+    "(allow process-exec)",
+    "(allow process-fork)",
+    "(allow signal (target self))",
+    "(allow sysctl-read)",
+    "(allow mach-lookup",
+    "  (global-name \"com.apple.system.notification_center\")",
+    "  (global-name \"com.apple.system.logger\")",
+    "  (global-name \"com.apple.CoreServices.coreservicesd\")",
+    "  (global-name \"com.apple.bsd.dirhelper\"))",
+    "(allow file-read*)",
+    "",
+    "(deny file-read* (subpath \"/Users/x/.winter/run\"))",
+    "(deny file-read* (subpath \"/Users/x/custom-root/run\"))",
+    "(deny file-read* (regex #\"^/Users/x/\\.winter/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/.*\\.[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]-[Ss][Tt][Aa][Tt][Ee]\\.[Jj][Ss][Oo][Nn][Ll]$\"))",
+    "(deny file-read* (regex #\"^/Users/x/custom-root/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/.*\\.[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]-[Ss][Tt][Aa][Tt][Ee]\\.[Jj][Ss][Oo][Nn][Ll]$\"))",
+    "(allow file-write*",
+    "  (subpath \"/work\")",
+    "  (subpath \"/work/a\"))",
+    "",
+    "(allow file-write-data (path \"/dev/null\") (path \"/dev/stdout\") (path \"/dev/stderr\") (path \"/dev/dtracehelper\"))",
+    "(allow file-write* (regex #\"^/var/folders/xx/T/[^/]+$\"))",
+    "(deny network*)",
+    "(deny file-write* (subpath \"/Users/x/.winter/backups\"))",
+    "(deny file-write* (subpath \"/Users/x/custom-root/backups\"))",
+    "(deny file-write* (literal \"/work/.winter/permissions.local.json\"))",
+    "(deny file-write* (literal \"/work/.winter/settings.json\"))",
+    "(deny file-write* (literal \"/work/.winter/settings.local.json\"))",
+    "(deny file-write* (literal \"/work/a/.winter/permissions.local.json\"))",
+    "(deny file-write* (literal \"/work/a/.winter/settings.json\"))",
+    "(deny file-write* (literal \"/work/a/.winter/settings.local.json\"))",
+    "(deny file-write* (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\\.[Ll][Oo][Cc][Aa][Ll]\\.[Jj][Ss][Oo][Nn]$\"))",
+    "(deny file-write* (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\\.[Jj][Ss][Oo][Nn]$\"))",
+    "(deny file-write* (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\\.[Ll][Oo][Cc][Aa][Ll]\\.[Jj][Ss][Oo][Nn]$\"))",
+    "",
+    ].join("\n");
+    const input = { cwd: "/work", writableRoots: ["/work/a"], allowNetwork: false, home: "/Users/x", winterHome: "/Users/x/custom-root", darwinUserTempDir: "/var/folders/xx/T" };
+    expect(buildSeatbeltProfile({ ...input })).toBe(EXPECTED);
+    // ...and stating the brand EXPLICITLY changes nothing: `WINTER_BRAND` is what the omitted
+    // parameter already resolves to.
+    expect(buildSeatbeltProfile({ ...input, brand: WINTER_BRAND })).toBe(EXPECTED);
+  });
+
+  //
+  // The test immediately above is the BYTE-IDENTITY pin for the default brand: it spells the three
+  // rendered regexes out in full, and it passed unchanged when the hard-coded `[Ww][Ii][Nn][Tt][Ee][Rr]`
+  // became `caseFoldSegment(brand.projectDirName)`. These are the other half.
+  test("the any-depth control-plane regexes are DERIVED: under a brand they fence the brand's dot-dir and nothing else", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, brand: { homeDirName: ".acme", projectDirName: ".acme" } });
+    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Aa][Cc][Mm][Ee]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
+    // Winter's own token is GONE -- the fence follows the session's product rather than accumulating.
+    expect(p).not.toContain("[Ww][Ii][Nn][Tt][Ee][Rr]");
+    // Still three, still never merged by alternation (WS-12 §5.2 is categorical).
+    expect([...p.matchAll(/\(deny file-write\* \(regex/g)].length).toBe(3);
+    expect(p).not.toContain("|");
+  });
+
+  test("a brand that SPLITS homeDirName and projectDirName gets BOTH fenced -- a control-plane file exists under each", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, brand: { homeDirName: ".acme", projectDirName: ".acme-proj" } });
+    expect(p).toContain(String.raw`/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$`);
+    expect(p).toContain(String.raw`/\.[Aa][Cc][Mm][Ee]-[Pp][Rr][Oo][Jj]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$`);
+    // Two distinct names -> two sets of three. Winter's own profile makes them one string, which is
+    // why the default renders exactly three and is byte-identical.
+    expect([...p.matchAll(/\(deny file-write\* \(regex/g)].length).toBe(6);
+  });
+
+  test("caseFoldSegment escapes every regex metacharacter and folds only letters", () => {
+    // `.` MUST be escaped or the class matches any character -- which would turn the fence into a
+    // wildcard rather than a tightening. `-` is literal outside a character class and is left alone,
+    // matching `sbplRegexLiteral`'s own escape set.
+    expect(caseFoldSegment(".winter")).toBe(String.raw`\.[Ww][Ii][Nn][Tt][Ee][Rr]`);
+    expect(caseFoldSegment(".acme-proj")).toBe(String.raw`\.[Aa][Cc][Mm][Ee]-[Pp][Rr][Oo][Jj]`);
+    expect(caseFoldSegment("winter")).toBe("[Ww][Ii][Nn][Tt][Ee][Rr]");
+    // A digit is neither folded nor escaped; a metacharacter is escaped rather than passed through.
+    expect(caseFoldSegment("a1$b")).toBe(String.raw`[Aa]1\$[Bb]`);
   });
 
   test("empty writableRoots ([]) carves out cwd's own control-plane files exactly once each", () => {

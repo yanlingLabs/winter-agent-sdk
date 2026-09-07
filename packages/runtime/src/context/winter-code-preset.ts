@@ -1,4 +1,4 @@
-// Phase 5 Lane C (task 6) -- the `winter_code` preset (WS-11 §6.2, Ruling R5-9).
+// Phase 5 Lane C (task 6) -- the authored product preset, named `brand.presetName` (WS-11 §6.2, Ruling R5-9).
 //
 // INDEPENDENTLY AUTHORED, BY CONSTRUCTION. The vendor's own preset is observable for a pinned run
 // and proprietary; copying it is prohibited (WS-11 §6.2). The text in `presets/winter-code.md` was
@@ -10,14 +10,19 @@
 // agent behave the way the category demands), never textual, which is exactly what §6.2 asks for.
 //
 // THE ALIAS, AND WHERE IT IS RESOLVED. The pinned `systemPrompt` union carries the CLOSED literal
-// `preset: 'claude_code'` (derived-shapes-p5 item (c)); Winter's native spelling is `winter_code`
-// (WS-01 §6). Task 2 deliberately did NOT widen the union type -- widening it would make Winter's
-// own `Options` reject a value the pinned SDK accepts and vice versa, breaking drop-in status. So
-// the alias is resolved HERE, at runtime, where `RuntimeConfig.systemPrompt` is interpreted: that
-// value arrives as JSON over `--config-json`, so `"winter_code"` can reach this code at runtime
-// even though it cannot be written against the pinned type. `isWinterCodePreset` is the one place
-// either spelling is recognised; nothing else in the runtime compares that literal.
-import type { SystemPromptPreset } from "@yanlinglabs/winter-agent-sdk";
+// `preset: 'claude_code'` (derived-shapes-p5 item (c)) -- a Claude-MIRRORING literal that stays
+// fixed (WS-01 §5); the native spelling is `brand.presetName` (WS-01 §6). Task 2 deliberately did
+// NOT widen the union type -- widening it would make Winter's own `Options` reject a value the
+// pinned SDK accepts and vice versa, breaking drop-in status. So the alias is resolved HERE, at
+// runtime, where `RuntimeConfig.systemPrompt` is interpreted: that value arrives as JSON over
+// `--config-json`, so the native spelling can reach this code at runtime even though it cannot be
+// written against the pinned type. `isWinterCodePreset` is the one place either spelling is
+// recognised; nothing else in the runtime compares that literal.
+//
+// P7a (D19): the preset TEXT is unchanged by a rebrand -- only its NAME follows the profile. The
+// version stamp below deliberately keeps Winter's own token: it attributes WHICH authored text a
+// conformance run compared, and that text is Winter's whoever is running it.
+import { WINTER_BRAND, type BrandProfile, type SystemPromptPreset } from "@yanlinglabs/winter-agent-sdk";
 import presetText from "./presets/winter-code.md" with { type: "text" };
 
 /**
@@ -40,19 +45,24 @@ export const WINTER_CODE_PRESET_CATEGORIES: readonly string[] = [
  * conformance run can say WHICH authored preset it compared, and so a behaviour change is
  * attributable to a prompt revision rather than to a model.
  */
-export const WINTER_CODE_PRESET_VERSION = "winter_code@1";
+export const WINTER_CODE_PRESET_VERSION = `${WINTER_BRAND.presetName}@1`;
 
 /** The authored preset text. Trailing whitespace trimmed once, here, so no caller has to. */
 export const WINTER_CODE_PRESET: string = presetText.trim();
 
 /**
- * Both accepted spellings of the preset. The pinned `claude_code` is a compatibility alias in
- * Winter's direction of travel; `winter_code` is the native one (WS-01 §6).
+ * Both accepted spellings of the preset for a given brand. `claude_code` is the Claude-mirroring
+ * compatibility alias (WS-01 §5, never rebranded); `brand.presetName` is the native one (WS-01 §6).
  */
-export const WINTER_CODE_PRESET_NAMES: readonly string[] = ["claude_code", "winter_code"] as const;
+export function winterCodePresetNames(brand?: Pick<BrandProfile, "presetName">): readonly string[] {
+  return ["claude_code", (brand ?? WINTER_BRAND).presetName];
+}
 
-export function isWinterCodePreset(preset: string): boolean {
-  return WINTER_CODE_PRESET_NAMES.includes(preset);
+/** The default profile's pair, for every caller that has not threaded a brand. */
+export const WINTER_CODE_PRESET_NAMES: readonly string[] = winterCodePresetNames();
+
+export function isWinterCodePreset(preset: string, brand?: Pick<BrandProfile, "presetName">): boolean {
+  return winterCodePresetNames(brand).includes(preset);
 }
 
 /**

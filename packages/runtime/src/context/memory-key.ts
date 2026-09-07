@@ -13,7 +13,7 @@
 // drift the first time the sanitiser changed. This module adds only the two things that helper
 // does not do: the P1-N directory-name override, and memoisation.
 //
-// DISCLOSED WIDENING OF P1-N. `resolveProjectDirName`'s own doc says WINTER_PROJECT_DIR_NAME
+// DISCLOSED WIDENING OF P1-N. `resolveProjectDirName`'s own doc says the project-dir-name override
 // overrides "ONLY the persistent transcript-project directory name". The task-6 brief directs the
 // memory key through the same helper, which makes the override relocate memory too. That is
 // coherent -- both are the `<projectKey>` segment of `<home>/projects/<projectKey>/...`, so a

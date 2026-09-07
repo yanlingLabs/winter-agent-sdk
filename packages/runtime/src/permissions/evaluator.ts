@@ -51,7 +51,10 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
 // field mapping (see that module's own header for why it lives there, not here).
 import { recognizeEditOperation, fileRulePathField, shellCommandOf } from "./edit-recognition.ts";
-import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut } from "./protected.ts";
+import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, type ProtectedBrand } from "./protected.ts";
+// P7a fix r1 (Important-2): the reading for an evaluation context that carries no brand -- every
+// hand-built one in this package's tests, and a host driving the evaluator directly.
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 // Task 12 (WS-07 §10.1 step 2 / §6.5): the two auto/config.ts primitives evaluator.ts's own `auto`
 // mode arm and plan's classifier borrow need. This is the ONLY dependency evaluator.ts takes on
 // the auto/ package — the concrete AutoEngine implementation (auto/engine.ts) is never imported
@@ -302,18 +305,25 @@ export interface EvaluationContext {
    * is stateless and holds no session, while the skill index is per-session state
    * (`skills/runtime.ts`'s registry, keyed `agentId ?? sessionId`). engine.ts supplies it; a direct
    * caller may omit it, and a `Skill(...)` rule then matches on the literal name alone -- correct,
-   * just blind to the `.winter:<name>` alias a project skill also answers to.
+   * just blind to the `<projectDir>:<name>` alias a project skill also answers to.
    */
   skillIdentities?: (skillName: string) => readonly string[];
   /**
-   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root, DISTINCT from `home` (the OS home) above.
+   * Phase 5 fix wave, I1: the RESOLVED winter root, DISTINCT from `home` (the OS home) above.
    *
-   * Two consumers, both of which were silently wrong under a `WINTER_HOME` whose basename is not
-   * `.winter`: the P5-B workflow-script carve-out (which must name the directory
+   * Two consumers, both of which were silently wrong under a `<PREFIX>HOME` whose basename is not
+   * the brand's own dot-dir: the P5-B workflow-script carve-out (which must name the directory
    * `workflows/store.ts` actually persists to) and `isProtectedWrite`'s own carve-out check.
-   * Absent = the pre-fix behaviour, `<home>/.winter/...` only.
+   * Absent = the pre-fix behaviour, `<home>/<homeDirName>/...` only.
    */
   winterHome?: string;
+  /**
+   * P7a (D19): the session's brand -- the protected-path floor's own dot-dir and instructions file.
+   *
+   * Optional, `WINTER_BRAND` when absent, so every hand-built evaluation context in this package's
+   * tests keeps exactly today's verdicts.
+   */
+  brand?: ProtectedBrand;
   /**
    * Phase 5 fix wave, B-H1(a): "will this exact call run under the OS sandbox, with
    * `autoAllowBashIfSandboxed` on?" -- WS-12 §1's composition MUST, which had no consumer at all.
@@ -458,7 +468,7 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 // findReadDenyBlockingEdit/auto/envelope.ts's resolveCandidatePaths), so this is a pure widening,
 // never a new requirement on a caller that didn't already have one.
 export function extractCandidateWritePaths(call: PermissionCall, ctx: EvaluationContext): string[] {
-  const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot });
+  const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
   return recognized ? recognized.paths : [];
 }
 
@@ -477,7 +487,7 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
     // deny/ask elsewhere in this phase.
     return extractCandidateWritePaths(call, ctx).some((p) => {
       const absPath = resolve(ctx.cwd, p);
-      return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home })).denyIfEither;
+      return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home, ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}), ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) })).denyIfEither;
     });
   },
   isCriticalRemoval(call, ctx) {
@@ -691,9 +701,20 @@ function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext)
   if (entry.behavior !== "deny" || entry.source !== "managed") return false;
   const content = entry.ruleValue.ruleContent;
   if (typeof content !== "string") return false;
-  if (content === "~/.winter/projects" || content.startsWith("~/.winter/projects/")) return true;
+  // P7a fix r1 (Important-2): the HOME-ANCHORED form, derived rather than spelled.
+  //
+  // `buildBaselineDenyRules` emits `~/<brand.homeDirName>/projects` + `/**`, and under a rebrand
+  // with `<PREFIX>HOME` unset the resolved-root twin below is NOT emitted at all (the two anchors
+  // coincide and the dedupe drops it). So a literal `~/.winter/projects` here matched NO baseline
+  // entry for a branded session: the managed deny was never skipped, and WS-11 §1.3's documented
+  // edit-then-rerun loop -- write the persisted workflow script, re-invoke with `{scriptPath}` --
+  // was denied outright. It failed CLOSED, so a break rather than a hole; it still silently removed
+  // a documented capability under exactly the feature this lane ships. Byte-identical under the
+  // default brand: `WINTER_BRAND.homeDirName` IS the segment the literal spelled.
+  const homeAnchor = `~/${(ctx.brand ?? WINTER_BRAND).homeDirName}/projects`;
+  if (content === homeAnchor || content.startsWith(`${homeAnchor}/`)) return true;
   // Phase 5 fix wave, I1: the RESOLVED-root twin of the same baseline deny. `buildBaselineDenyRules`
-  // now emits `//<winterHome>/projects/**` alongside the `~/.winter/...` form, and the P5-B carve-out
+  // now emits `//<winterHome>/projects/**` alongside the home-anchored form, and the P5-B carve-out
   // has to skip BOTH or the new floor closes the one subtree WS-11 §1.3 requires to stay
   // model-writable -- the documented edit-then-rerun loop, broken as collateral damage.
   // `//`-anchored (paths.ts's filesystem-root form), which is why the literal below carries it.
@@ -705,7 +726,7 @@ function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext)
 function callIsEntirelyWorkflowScriptWrite(call: PermissionCall, ctx: EvaluationContext): boolean {
   const paths = extractCandidateWritePaths(call, ctx);
   if (paths.length === 0) return false;
-  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home, ctx.winterHome));
+  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home, ctx.winterHome, ctx.brand));
 }
 
 /** The `skip` predicate the stage-2 deny lookup passes, or `undefined` when this call earns no carve-out at all. */
@@ -813,7 +834,7 @@ function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolea
 // member -- it is conditionally write-shaped (see the dedicated check below): `durable:true` writes
 // a real file (`<sessionRoot>/.winter/scheduled_tasks.json`, RULING P3-K's own edit-recognition.ts
 // case) and must fall through to the ordinary write pipeline ("prompts like any write," caught
-// upstream by `isProtectedWrite`'s own `.winter` coverage before this arm is ever reached); a
+// upstream by `isProtectedWrite`'s own dot-dir coverage before this arm is ever reached); a
 // non-durable CronCreate never touches the filesystem at all and belongs in this silent-allow set
 // exactly like its siblings. TaskOutput joins only after I5's traversal-guard fix landed (fix wave,
 // same commit sequence) -- an unvalidated task_id could otherwise read arbitrary files silently.
@@ -830,7 +851,7 @@ function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolea
 // completely unaffected by this widening. Durable CronCreate is NOT part of this widening -- it was
 // always the named EXCEPTION above, not a class member, and its own write-shaped treatment (via the
 // SAME tool-agnostic, mode-position-agnostic `isProtectedWrite` standing exception every other
-// `.winter/` write gets) is deliberately UNCHANGED by this ruling; see this file's own P3-K-2 test
+// a winter-owned write gets) is deliberately UNCHANGED by this ruling; see this file's own P3-K-2 test
 // block for the full per-mode proof, including auto's pre-existing (Task 12) classifier-routing for
 // ITS OWN mustPrompt outcome, which durable CronCreate now has explicit coverage under too.
 //
@@ -949,7 +970,7 @@ function isPlanWriteShaped(call: PermissionCall): boolean {
   // directly via the flag alone (no ctx/sessionRoot needed for THIS yes/no classification question,
   // unlike the exact write-PATH evaluator.ts's extractCandidateWritePaths needs for protected/deny
   // purposes). In practice this branch is likely unreachable in evaluateModeStage's own `plan` arm:
-  // the target is always under `.winter/`, which `isProtectedWrite` ALREADY intercepts,
+  // the target is always under the brand's dot-dir, which `isProtectedWrite` ALREADY intercepts,
   // unconditionally, before evaluateModeStage ever reaches its per-mode arms -- kept anyway per the
   // ruling's own literal text and as a documented belt-and-suspenders, not dead weight to prune.
   if (call.toolName === "CronCreate") return call.input["durable"] === true;
@@ -1028,7 +1049,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // exception already intercepted before this arm was ever reached anyway.
     if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
     // RULING P3-K: sessionRoot threaded through for CronCreate(durable) -- in practice unreachable
-    // here (isProtectedWrite's own `.winter` coverage always intercepts it first, above), kept for
+    // here (isProtectedWrite's own dot-dir coverage always intercepts it first, above), kept for
     // consistency with every other recognizeEditOperation call site in this file.
     // I2 (fix wave, P3 close-out): Monitor is EXCLUDED from this arm's auto-approve outcome on
     // purpose -- the review's own I2 text scopes the fix to closing the bypass/allow-rule hole
@@ -1037,7 +1058,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // "Monitor"` gates the ALLOW outcome only -- recognizeEditOperation itself still runs on Monitor
     // (feeding protected/critical/plan-write detection above and in isPlanWriteShaped, which IS what
     // I2 asked for); only the acceptEdits/auto-mode SILENT ALLOW stays Bash-only.
-    const recognized = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot }) : null;
+    const recognized = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
     if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
       // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
       // — it falls through to "unresolved" below, same as an unrecognized command.
@@ -1109,7 +1130,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
   // I2 (fix wave, P3 close-out): Monitor excluded from THIS arm's auto-approve outcome too -- see
   // the acceptEdits arm's own identical comment, above, for the full rationale.
-  const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot }) : null;
+  const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
   if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx))) {
     return { kind: "allow" };
   }

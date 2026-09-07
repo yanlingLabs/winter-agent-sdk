@@ -13,10 +13,10 @@
 // 2. THE SEATBELT, WITH `home`. T3's fix round made `buildWorkflowWorkerSeatbeltProfile`'s second
 //    argument REQUIRED (`opts: { home: string | undefined }`) precisely so that "Lane W's spawner
 //    must remember to pass it" is a compile error rather than a silent gap -- omitting it used to
-//    drop the `~/.winter/run` read-deny with nothing to notice. `buildWorkerSpawn` is still the ONE
+//    drop the run-directory read-deny with nothing to notice. `buildWorkerSpawn` is still the ONE
 //    place a worker command becomes a spawn, so the value is threaded through exactly one call site.
 import { fileURLToPath } from "node:url";
-import { buildWorkflowWorkerSeatbeltProfile } from "../sandbox/profile.ts";
+import { buildWorkflowWorkerSeatbeltProfile, type SandboxBrand } from "../sandbox/profile.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
 // The argv contract lives with the ENTRY that reads it (subprocess-entry.ts), never in main.ts --
 // see that module's own header for why main.ts cannot be imported at all. Re-exported here so a
@@ -61,23 +61,30 @@ export function resolveWorkerCommand(opts: ResolveWorkerCommandOptions = {}): Wo
 export interface BuildWorkerSpawnOptions {
   command: WorkerCommand;
   /**
-   * The session's WINTER HOME. Supplying it is what emits the `~/.winter/run` read-deny (R5-5);
+   * The session's WINTER HOME. Supplying it is what emits the run-directory read-deny (R5-5);
    * `undefined` opts out EXPLICITLY, which is the only way to opt out now that the profile builder's
    * own argument is required. Every production call site passes a real value, and worker.test.ts pins
    * the difference between the two profiles.
    */
   home?: string;
   /**
-   * The RESOLVED Winter home (fix wave I1, the resolved-home class): when it is not `<home>/.winter`,
-   * the profile ALSO denies `<winterHome>/run` -- a `WINTER_HOME` pointing at a differently-named root
-   * is otherwise unprotected. Both anchors are emitted; overlapping denies cost nothing.
+   * The RESOLVED Winter home (fix wave I1, the resolved-home class): when it is not
+   * `<home>/<homeDirName>`, the profile ALSO denies `<winterHome>/run` -- a `<PREFIX>HOME` pointing
+   * at a differently-named root is otherwise unprotected. Both anchors are emitted; overlapping
+   * denies cost nothing.
    */
   winterHome?: string;
+  /** P7a (D19): the session's brand -- the dot-dir names the worker profile fences. */
+  brand?: SandboxBrand;
 }
 
 /** The actual `(file, args)` to spawn: sandbox-exec wrapping the worker command under the tight profile. */
 export function buildWorkerSpawn(opts: BuildWorkerSpawnOptions): WorkerCommand {
-  const profile = buildWorkflowWorkerSeatbeltProfile(opts.command.file, { home: opts.home, ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}) });
+  const profile = buildWorkflowWorkerSeatbeltProfile(opts.command.file, {
+    home: opts.home,
+    ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
+    ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
+  });
   return { file: SANDBOX_EXEC_PATH, args: ["-p", profile, opts.command.file, ...opts.command.args] };
 }
 

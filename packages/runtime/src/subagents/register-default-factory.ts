@@ -153,6 +153,10 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(config.hooks !== undefined ? { parentHooks: config.hooks } : {}),
       ...(config.includeHookEvents !== undefined ? { parentIncludeHookEvents: config.includeHookEvents } : {}),
       ...(config.sandbox !== undefined ? { parentSandbox: config.sandbox } : {}),
+      // P7a (D19): the session's resolved brand travels to every descendant. `config.brand` is
+      // always present on a config `query()` built; absent only for the hand-built configs this
+      // repository's tests use, where the child correctly keeps Winter's own names.
+      ...(config.brand !== undefined ? { parentBrand: config.brand } : {}),
       // Phase 5 Task 8: see this interface's own fields for why each is a real gap.
       ...(opts.systemPromptAssembler !== undefined ? { systemPromptAssembler: opts.systemPromptAssembler } : {}),
       ...(opts.skillRuntime !== undefined ? { skillRuntime: opts.skillRuntime } : {}),

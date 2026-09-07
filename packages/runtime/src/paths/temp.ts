@@ -4,7 +4,14 @@ import { join } from "node:path";
 // home.ts moved to the sdk package (Task 10, WS-05 §6) — isUnset is the one piece of it this
 // runtime-private module still needs; reused from there rather than re-implemented, preserving
 // the "one shared blank-env-value rule" this file's own resolveTempBase comment documents.
-import { isUnset } from "@yanlinglabs/winter-agent-sdk";
+import { isUnset, WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+
+// P7a (D19): the two brand fields this module needs, as a `Pick` rather than the whole profile --
+// the same shape (and the same reason) as the sdk's `HomeBrand`: a caller holding a partially
+// threaded config, or a test, can call these without constructing a full profile. `brand` defaults
+// to `WINTER_BRAND` at every entry point below, so a caller that has not threaded one yet keeps
+// exactly today's behaviour.
+export type TempBrand = Pick<BrandProfile, "envPrefix" | "tempRootName">;
 
 export class WinterPathsError extends Error {
   constructor(message: string) {
@@ -64,11 +71,15 @@ function ensureValidatedDir(path: string): void {
   chmodSync(path, 0o700); // idempotent self-heal — this whole chain is Winter-owned
 }
 
-// WINTER_TMPDIR || "/tmp" (blank = unset, same rule as WINTER_HOME — see home.ts's isUnset).
+// `<PREFIX>TMPDIR` || "/tmp" (blank = unset, same rule as `<PREFIX>HOME` — see home.ts's isUnset).
 // Exported so the DEFAULT can be asserted as a pure string decision in tests, never by actually
-// creating directories under the real, shared /tmp/winter-<uid> chain.
-export function resolveTempBase(env?: Record<string, string | undefined>): string {
-  const override = (env ?? process.env).WINTER_TMPDIR;
+// creating directories under the real, shared /tmp/<tempRootName>-<uid> chain.
+//
+// P7a (D19): THE ENV NAME IS DERIVED, NEVER SPELLED, and it is read INSIDE this function — the
+// brand arrives with `--config-json`, so a module-load read would bake in Winter's own prefix for a
+// reuser and could never be corrected (brand-gate rules 9 and 10 pin both halves of that).
+export function resolveTempBase(env?: Record<string, string | undefined>, brand?: Pick<BrandProfile, "envPrefix">): string {
+  const override = (env ?? process.env)[envName(brand ?? WINTER_BRAND, "TMPDIR")];
   return isUnset(override) ? "/tmp" : (override as string);
 }
 
@@ -76,6 +87,8 @@ export interface SessionTempDirOptions {
   tempProjectKey: string;
   backendUuid: string;
   env?: Record<string, string | undefined>;
+  /** P7a (D19): the session's resolved brand. Omitted = `WINTER_BRAND`, i.e. today's names. */
+  brand?: TempBrand;
 }
 
 export interface SessionTempDirPaths {
@@ -84,10 +97,11 @@ export interface SessionTempDirPaths {
   tasks: string;
 }
 
-// D18: ${realpath(WINTER_TMPDIR|/tmp)}/winter-<uid>/winter-<uid>/<tempProjectKey>/<backendUuid>/
-// — the OUTER "winter-<uid>" is the shared per-user root (the value handed to a spawned
+// D18: ${realpath(<PREFIX>TMPDIR|/tmp)}/<root>-<uid>/<root>-<uid>/<tempProjectKey>/<backendUuid>/,
+// where <root> is `brand.tempRootName`
+// — the OUTER "<root>-<uid>" is the shared per-user root (the value handed to a spawned
 // official-branch child as CLAUDE_CODE_TMPDIR, whose own hard-coded sibling becomes claude-<uid>
-// alongside it); the INNER "winter-<uid>" is Winter's own engine directory, following the
+// alongside it); the INNER "<root>-<uid>" is Winter's own engine directory, following the
 // identical <engine>-<uid>/<key>/<uuid> shape as that sibling. Only the base is realpath'd (macOS
 // /tmp -> /private/tmp) — done ONCE, up front, before composing the rest of the chain; every level
 // beneath it is created/validated by ensureValidatedDir above, never realpath'd again. scratchpad/
@@ -98,10 +112,11 @@ export function sessionTempDir(opts: SessionTempDirOptions): SessionTempDirPaths
   assertSafeSegment(opts.tempProjectKey, "tempProjectKey");
   assertSafeSegment(opts.backendUuid, "backendUuid");
 
-  const base = realpathSync(resolveTempBase(opts.env));
+  const brand = opts.brand ?? WINTER_BRAND;
+  const base = realpathSync(resolveTempBase(opts.env, brand));
   const uid = realUid();
-  const sharedRoot = join(base, `winter-${uid}`);
-  const engineDir = join(sharedRoot, `winter-${uid}`);
+  const sharedRoot = join(base, `${brand.tempRootName}-${uid}`);
+  const engineDir = join(sharedRoot, `${brand.tempRootName}-${uid}`);
   const projectDir = join(engineDir, opts.tempProjectKey);
   const sessionDir = join(projectDir, opts.backendUuid);
   const scratchpad = join(sessionDir, "scratchpad");

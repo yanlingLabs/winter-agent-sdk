@@ -217,7 +217,7 @@ try {
   });
   const provider = wiring.providerWiring.provider;
   // Non-fatal, and STDERR only: stdout is the frame stream exclusively (WS-04 §2/§6). A malformed
-  // `.winter/mcp.json`, a plugin that would not load, or a `skills` entry naming something unknown
+  // the project `mcp.json`, a plugin that would not load, or a `skills` entry naming something unknown
   // must be visible to an operator without taking the session down.
   for (const warning of wiring.warnings) process.stderr.write(`winter: ${warning}\n`);
   registerDefaultChildEngineFactory({

@@ -1,10 +1,10 @@
-// Phase 5 Lane S (WS-11 §2.4, RULING R5-14): the FILESYSTEM `CommandResolver` -- `.winter/commands/
-// <name>.md` and `.winter/skills/<name>/SKILL.md` both create `/name`.
+// Phase 5 Lane S (WS-11 §2.4, RULING R5-14): the FILESYSTEM `CommandResolver` -- a project
+// `commands/<name>.md` and a project `skills/<name>/SKILL.md` both create `/name`.
 //
 // THREE THINGS THE SPINE ALREADY DECIDED, restated so this file is not read as re-deciding them
 // (commands/seam.ts):
 //   1. The ENGINE recognises its own built-ins FIRST. Only an unclaimed `/name` reaches here, so a
-//      `.winter/commands/compact.md` in an untrusted clone can never shadow `/compact`. This file
+//      a checked-in `commands/compact.md` in an untrusted clone can never shadow `/compact`. This file
 //      never produces the `builtin` arm.
 //   2. `$ARGUMENTS` substitution is THIS resolver's job. `expand.text` is the FULLY expanded prompt;
 //      the engine substitutes nothing, so a half-implementation cannot be papered over downstream.
@@ -36,7 +36,7 @@
 // one-line change in tools/impl/skill.ts and the two doors converge.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { isUserInvocable, type SkillOverrides } from "../skills/listing.ts";
 import { projectSkillRoots } from "../skills/loader.ts";
 import type { SkillIndex } from "../skills/store.ts";
@@ -64,8 +64,10 @@ export interface PluginCommandContribution {
 
 export interface FilesystemCommandResolverOptions {
   cwd: string;
-  /** The RESOLVED `~/.winter` root (`WINTER_HOME` when set) -- see `SkillIndexOptions.winterHome` for why this is not called `home`. */
+  /** The RESOLVED winter root (`<PREFIX>HOME` when set) -- see `SkillIndexOptions.winterHome` for why this is not called `home`. */
   winterHome: string;
+  /** P7a (D19): the session's brand -- the project dot-dir the project tier walks. Omitted = `WINTER_BRAND`. */
+  brand?: Pick<BrandProfile, "projectDirName"> | undefined;
   settingSources?: SettingSource[] | undefined;
   /** The session's skill index. Skills create `/name` too (WS-11 §2.4) and WIN an overlap. */
   skills?: SkillIndex | undefined;
@@ -131,7 +133,7 @@ function scanCommandDir(dir: string, source: SlashCommandOrigin): CommandFile[] 
     const stem = basename(file, ".md");
     // WHOLE-BRANCH MINOR m2: a command file's stem is a NAMESPACE, not just a label. Plugin commands
     // are `<plugin>:<name>`, and enumeration is skills -> project/user FILES -> plugin with
-    // first-wins -- so a checked-in `.winter/commands/acme:ship.md` reached the map before the
+    // first-wins -- so a checked-in project `commands/acme:ship.md` reached the map before the
     // operator's own installed `acme` plugin and took its qualified name. `/acme:ship` then ran text
     // from a cloned repository under the identity of software the user chose to install. P5-H's
     // shadowing inversion, arriving through the plugin dimension.
@@ -242,7 +244,7 @@ export class FilesystemCommandResolver implements CommandResolver {
     if (sourcesAllow(this.opts.settingSources, "project")) {
       // Same parent-walk as the skills project tier, so `/name` and a skill of the same name are
       // discovered over the identical directory set (skills/loader.ts owns the walk).
-      for (const skillRoot of projectSkillRoots(cwd)) {
+      for (const skillRoot of projectSkillRoots(cwd, this.opts.brand)) {
         found.push(...scanCommandDir(join(skillRoot, "..", "commands"), "project"));
       }
     }
@@ -283,7 +285,7 @@ export class FilesystemCommandResolver implements CommandResolver {
       // EVERY IDENTITY, not just the primary name (fix round 2, Medium A). `skills.list()` returns
       // primary names only; the `.winter:<skill>` aliases live in the index's own name map, which the
       // pre-enumeration `resolve()` reached through `get()`. Seeding only primaries silently dropped
-      // `/.winter:review` -- and worse, left the qualified name UNCLAIMED, so a plugin NAMED `.winter`
+      // `/<projectDir>:review` -- and worse, left the qualified name UNCLAIMED, so a plugin named after the project dot-dir
       // contributing a command `review` answered it with a command file: the P5-H inversion this
       // resolver exists to prevent, re-opened in the alias dimension. An alias claims its name here
       // for exactly the same reason a primary does.

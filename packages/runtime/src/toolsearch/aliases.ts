@@ -24,6 +24,10 @@
 // directly (never going through a name at all) is untouched by it -- `disallowedTools` remains the
 // thing that actually closes that second door (WS-09 §10, same verdict).
 import { getRegisteredTool, isBareDenied, type AdvertisedPartition, type ToolDescriptor } from "../tools/registry.ts";
+import { WINTER_BRAND, mcpToolName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+
+/** The one brand field this module needs: the standing server's name. */
+export type AliasBrand = Pick<BrandProfile, "mcpServerName">;
 
 // The Winter branch's own canonical alias pair, declared ONCE (it moved here from a `const` inside
 // engine.ts's `runEngine` when RULING P4-E was amended): it is now read by THREE consumers -- the
@@ -33,18 +37,34 @@ import { getRegisteredTool, isBareDenied, type AdvertisedPartition, type ToolDes
 // producer/consumer drift class R4-2 exists to catch.
 //
 // WS-10 §15 names this pair verbatim: [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
-// built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those
-// canonical names are real, registered descriptors (descriptors/winter-*.ts, `deferred: true` at the
-// source) backed by the SAME executor objects as the native names.
-export const WINTER_CANONICAL_ALIASES: Readonly<Record<string, string>> = {
-  SendMessage: "mcp__winter__send_message",
-  ListAgents: "mcp__winter__list_agents",
+// built-ins at the standing server's own `send_message`/`list_agents` entries. On the WINTER branch
+// those canonical names are real, registered descriptors (descriptors/winter-*.ts, `deferred: true`
+// at the source) backed by the SAME executor objects as the native names.
+//
+// P7a (D19): the SERVER SEGMENT is `brand.mcpServerName`, so this is a pair of SUFFIXES plus a
+// function, not a frozen table. The registry's own copies move with it -- `rebrandStandingServerTools`
+// (tools/registry.ts) renames the two registered twins to the same spelling this table produces, so
+// the alias target is always a tool that actually exists.
+export const WINTER_CANONICAL_ALIAS_SUFFIXES: Readonly<Record<string, string>> = {
+  SendMessage: "send_message",
+  ListAgents: "list_agents",
 };
 
-// The effective table for a session: the Winter-branch defaults with the HOST's own
+/** The branch's own canonical pair for a given brand. */
+export function canonicalAliases(brand?: AliasBrand): Record<string, string> {
+  const b = brand ?? WINTER_BRAND;
+  const out: Record<string, string> = {};
+  for (const [native, suffix] of Object.entries(WINTER_CANONICAL_ALIAS_SUFFIXES)) out[native] = mcpToolName(b, suffix);
+  return out;
+}
+
+/** The default profile's pair, for every caller that has not threaded a brand. */
+export const WINTER_CANONICAL_ALIASES: Readonly<Record<string, string>> = canonicalAliases();
+
+// The effective table for a session: the branch defaults with the HOST's own
 // `Options.toolAliases` layered on top (a host that redirects `SendMessage` somewhere else means it).
-export function effectiveAliasTable(hostAliases: Record<string, string> | undefined): Record<string, string> {
-  return { ...WINTER_CANONICAL_ALIASES, ...(hostAliases ?? {}) };
+export function effectiveAliasTable(hostAliases: Record<string, string> | undefined, brand?: AliasBrand): Record<string, string> {
+  return { ...canonicalAliases(brand), ...(hostAliases ?? {}) };
 }
 
 export function resolveToolAlias(name: string, toolAliases: Record<string, string> | undefined): string {
@@ -56,13 +76,13 @@ export function resolveToolAlias(name: string, toolAliases: Record<string, strin
   return target !== undefined ? target : name;
 }
 
-// WS-09 §10 "Duplicate suppression": "when a built-in is aliased to a canonical `mcp__winter__*`
+// WS-09 §10 "Duplicate suppression": "when a built-in is aliased to a canonical standing-server
 // entry, Winter defers the duplicate canonical MCP entries where supported so the model normally
 // sees ONE SendMessage and ONE ListAgents... on the Winter branch the registry advertises the
 // built-in-compatible name directly and keeps the canonical entry deferred."
 //
 // Reads `toolAliases` as {modelFacingName -> canonicalTargetName} (the exact direction
-// `Options.toolAliases` itself uses, e.g. `{SendMessage: "mcp__winter__send_message"}`,
+// `Options.toolAliases` itself uses, e.g. `{SendMessage: <the standing server's send_message>}`,
 // derived-shapes-p4.md item (c)). For every entry whose SOURCE name is advertised somewhere in this
 // partition (eager or deferred -- i.e. the model already has, or can already discover, that native
 // spelling) AND whose TARGET name is currently sitting in `eager`, this moves the target descriptor
@@ -86,8 +106,9 @@ export function suppressAliasedDuplicates(
   partition: AdvertisedPartition,
   toolAliases: Record<string, string> | undefined,
   disallowedTools?: readonly string[],
+  brand?: AliasBrand,
 ): AdvertisedPartition {
-  const base = hideAliasExcludedTwins(partition, toolAliases, disallowedTools);
+  const base = hideAliasExcludedTwins(partition, toolAliases, disallowedTools, brand);
   if (!toolAliases) return base;
 
   const allAdvertisedNames = new Set([...base.eager, ...base.deferred].map((d) => d.canonicalName));
@@ -114,7 +135,7 @@ export function suppressAliasedDuplicates(
 // this session EXCLUDES must not be reachable under a second spelling. `suppressAliasedDuplicates`
 // alone could never enforce it -- it keys on the source being advertised, so `disallowedTools:
 // ["SendMessage"]` (which unadvertises the source) silently DISABLED suppression and let
-// `mcp__winter__send_message` -- the identical executor object under the canonical spelling -- resolve
+// the canonical twin -- the identical executor object under the server-qualified spelling -- resolve
 // EAGER into `system/init.tools`, callable with no deny rule and no hook matcher matching it.
 //
 // Two directions, deliberately asymmetric in their trigger:
@@ -132,7 +153,7 @@ export function suppressAliasedDuplicates(
 //       source stayed advertised -- the model was offered a tool every call to which is refused.
 //       Restricted to a BARE DENY rather than "excluded for any reason" on purpose: the native and
 //       its twin do not carry identical availability axes (`SendMessage` requires
-//       `winter.subagents`, `mcp__winter__send_message` requires `winter.global-messaging`), so a
+//       `winter.subagents`, its canonical twin requires `winter.global-messaging`), so a
 //       symmetric "any exclusion" rule here would let one family's capability gate silently take
 //       out the other family's tool.
 // The names this pass takes away, and WHY -- factored out of `hideAliasExcludedTwins` (NEW-5,
@@ -154,8 +175,9 @@ export function aliasExclusionReasons(
   partition: AdvertisedPartition,
   hostAliases: Record<string, string> | undefined,
   disallowedTools: readonly string[] | undefined,
+  brand?: AliasBrand,
 ): Map<string, AliasExclusion> {
-  const table = effectiveAliasTable(hostAliases);
+  const table = effectiveAliasTable(hostAliases, brand);
   const advertised = new Set([...partition.eager, ...partition.deferred].map((d) => d.canonicalName));
   const reasons = new Map<string, AliasExclusion>();
   for (const [source, target] of Object.entries(table)) {
@@ -177,8 +199,9 @@ export function hideAliasExcludedTwins(
   partition: AdvertisedPartition,
   hostAliases: Record<string, string> | undefined,
   disallowedTools: readonly string[] | undefined,
+  brand?: AliasBrand,
 ): AdvertisedPartition {
-  const toHide = new Set(aliasExclusionReasons(partition, hostAliases, disallowedTools).keys());
+  const toHide = new Set(aliasExclusionReasons(partition, hostAliases, disallowedTools, brand).keys());
   if (toHide.size === 0) return partition;
 
   const eager: ToolDescriptor[] = [];
@@ -206,8 +229,8 @@ export function hideAliasExcludedTwins(
 //
 // Single-hop by construction, exactly as `resolveToolAlias` is: a resolved name is a destination,
 // never a further key to look up, so a two-entry loop `{A:'B', B:'A'}` terminates here too.
-export function aliasPermissionIdentities(name: string, hostAliases: Record<string, string> | undefined): string[] {
-  const table = effectiveAliasTable(hostAliases);
+export function aliasPermissionIdentities(name: string, hostAliases: Record<string, string> | undefined, brand?: AliasBrand): string[] {
+  const table = effectiveAliasTable(hostAliases, brand);
   const primary = resolveToolAlias(name, hostAliases);
   const out = [primary];
   const push = (candidate: string | undefined): void => {
@@ -243,8 +266,8 @@ export interface AliasIdentityProbes {
 // probe slotted between ask and allow so "hooks match both spellings" (the amendment, verbatim)
 // holds without a hook ever being able to loosen a rule-derived outcome. When nothing matches on any
 // identity, the primary wins and behaviour is unchanged.
-export function resolvePermissionIdentity(name: string, hostAliases: Record<string, string> | undefined, probes: AliasIdentityProbes): string {
-  const identities = aliasPermissionIdentities(name, hostAliases);
+export function resolvePermissionIdentity(name: string, hostAliases: Record<string, string> | undefined, probes: AliasIdentityProbes, brand?: AliasBrand): string {
+  const identities = aliasPermissionIdentities(name, hostAliases, brand);
   if (identities.length === 1) return identities[0]!;
   for (const probe of [probes.deniedByRule, probes.askedByRule, probes.hookScoped, probes.allowedByRule]) {
     for (const identity of identities) {

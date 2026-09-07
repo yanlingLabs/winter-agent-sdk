@@ -12,10 +12,11 @@ import "../descriptors/winter-send-message.ts"; // rider 15: the canonical alias
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { validateToField } from "../../messaging/addressing.ts";
 import { getMessagingRuntime, sendMessage, type CallerContext } from "../../messaging/router.ts";
+import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
 
 export const SEND_MESSAGE_TOOL_NAME = "SendMessage";
 
-// CLOSED by Phase 4 Task 8 (rider 15): the canonical `mcp__winter__send_message` duplicate
+// CLOSED by Phase 4 Task 8 (rider 15): the canonical standing-server duplicate
 // WS-10 §15/WS-14 name now exists -- `descriptors/winter-send-message.ts`, declared `deferred: true`
 // AT THE SOURCE exactly as the controller's own mid-task note required, with this file's own
 // executor installed under it (see the bottom of this file).
@@ -111,5 +112,5 @@ replaceExecutor(SEND_MESSAGE_TOOL_NAME, sendMessageExecutor);
 // name's executor is the implementation" is satisfied structurally: both names ARE the same
 // executor, so nothing needs to redirect. The descriptor (descriptors/winter-send-message.ts,
 // `deferred: true` at the source) is what keeps the model from normally seeing both.
-export const WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME = "mcp__winter__send_message";
+export const WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME = mcpToolName(WINTER_BRAND, "send_message");
 replaceExecutor(WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME, sendMessageExecutor);
