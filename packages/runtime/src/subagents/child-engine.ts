@@ -533,15 +533,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           ? `${deps.winterHome}/projects/${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`
           : `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`; // a store exists but this factory has no winterHome to resolve an absolute path -- a relative store key, not directly readable by path, but still a meaningful identifier for a caller holding the same store object
 
-    // WS-13c §8: widened LOCALLY to the real shape `modelEffort` already is -- `ChildSessionRecord`
-    // (child-handle.ts, spine-frozen) still declares `model` as the pre-P6.6 inline shape
-    // (`{requestedModel?; effectiveModel; requestedEffort?; effectiveEffort}`), never re-pointed at
-    // `RecordedModelEffort` when the spine added `effectiveProvider`/`slot` to THAT type. A plain
-    // `ChildSessionRecord` annotation here would make `record.model.effectiveProvider` a compile
-    // error despite the value genuinely carrying it (this lane's own report flags the mismatch for
-    // the controller to align at merge). The intersection is still a `ChildSessionRecord`
-    // structurally -- `ChildHandle.record` below needs no cast.
-    const record: ChildSessionRecord & { model: RecordedModelEffort } = {
+    // WS-13c §8: `ChildSessionRecord.model` IS `RecordedModelEffort` (R-6c-20), so `effectiveProvider`/`slot` type-check without a local widening.
+    const record: ChildSessionRecord = {
       id: agentId,
       parentSessionId: runCtx.parentSessionId,
       parentToolUseId: req.parentToolUseId,

@@ -12,6 +12,7 @@
 // builds a child by calling `runEngine()` again with a synthetic input/output pair, and needs
 // something to bridge that pair to the ACTUAL host connection this run owns.
 import type { ActiveSlotSet, ControlResponseFrame, McpServerConfigForProcessTransport, OutputFormat, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { RecordedModelEffort } from "./resolution.ts";
 import type { McpServerStateSource } from "../mcp/state.ts"; // type-only -- see this file's own header; no runtime cycle
 import type { McpControlSeam } from "../mcp/control-seam.ts"; // type-only
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
@@ -29,7 +30,8 @@ export interface ChildSessionRecord {
   transcript: string;
   status: ChildStatus;
   runtime: "winter-agent";
-  model: { requestedModel?: string; effectiveModel: string; requestedEffort?: string; effectiveEffort: string };
+  /** R-6c-20: the record's model block IS `RecordedModelEffort` (`effectiveProvider`/`slot` included) — one declaration, no local intersection. */
+  model: RecordedModelEffort;
   permission: { effectiveMode: PermissionMode; parentPolicyHash: string; parentPolicyVersion: number };
   name?: string;
 }
