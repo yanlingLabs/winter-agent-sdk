@@ -10,6 +10,7 @@ import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { PermissionMode, PermissionResult, PermissionRequestPayload, HookInvocationPayload, HookInput, HookJSONOutput } from "./permissions/types.ts";
+import type { ModelFamilyListing } from "./protocol/config.ts";
 // Phase 5 Task 2: the P5 session-option constants (see this file's own P5 block at the bottom).
 import {
   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
@@ -805,6 +806,82 @@ test("interrupt(): sends a real control request and resolves on ack; drain seman
 
   expect(seen).toEqual(["system", "result"]);
   await interruptPromise; // already resolved during the loop above; surfaces any rejection here
+});
+
+// --- WS-13c §7 (P6.6 Lane C): Query.listModelFamilies() -----------------------------------------
+//
+// A scripted double answering ONE CLIENT-initiated control request — the mirror image of
+// recordingProcessWithControlRequest above (which scripts a RUNTIME-initiated one). Here query.ts's
+// own sendControlRequest is the requester, so the double must wait for the matching stdin write,
+// read the requestId back out of it, and answer with a control_response frame of its own.
+//
+// The hand-built minimal "system"/"init" data frame is transport.test.ts's own systemFrame()
+// precedent, rebuilt here rather than imported: recordingProcess() above never emits one (only the
+// low-level init handshake), so a test that fires its control call on `msg.type === "system"` —
+// the same fire-inside-the-loop-without-awaiting pattern setPermissionMode()/interrupt() use above,
+// to avoid the self-deadlock their own comments call out — needs a double that actually sends one.
+function scriptedProcessAnsweringControlRequest(subtype: string, payload: unknown): SpawnedRuntimeProcess {
+  let resolveRequestId!: (requestId: string) => void;
+  const gotRequest = new Promise<string>((resolve) => {
+    resolveRequestId = resolve;
+  });
+  return {
+    stdin: {
+      write(chunk: string) {
+        for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+          const frame = JSON.parse(line) as { type: string; subtype?: string; requestId?: string };
+          if (frame.type === "control_request" && frame.subtype === subtype) resolveRequestId(frame.requestId!);
+        }
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "winter-test/echo", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "data", message: { type: "system", subtype: "init", session_id: "s", cwd: "/x", model: "winter-test/echo", permissionMode: "default", tools: [] } });
+      const requestId = await gotRequest;
+      yield encodeFrame({ type: "control_response", requestId, ok: true, payload });
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+}
+
+test("listModelFamilies(): resolves the listing the runtime answers over the list_model_families control request", async () => {
+  const listing: ModelFamilyListing = {
+    active: { family: "gpt", source: "family-default", slots: [{ name: "astra", canonicalModelId: "gpt-6-astra", description: "d", reason: "r" }] },
+    families: [
+      {
+        id: "gpt",
+        displayName: "GPT",
+        vendor: "OpenAI",
+        slots: [{ name: "astra", canonicalModelId: "gpt-6-astra", description: "d", reason: "r", resolvesTo: { providerId: "openai", key: "openai/gpt-6-astra" } }],
+        models: [{ canonicalModelId: "gpt-6-astra", displayName: "GPT-6 Astra", rows: [{ key: "openai/gpt-6-astra", providerId: "openai", status: "candidate", pricingBasis: "token", servable: true }] }],
+      },
+    ],
+  };
+  const proc = scriptedProcessAnsweringControlRequest("list_model_families", listing);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  let resultPromise: Promise<ModelFamilyListing> | undefined;
+  for await (const msg of gen) {
+    // Fired, NOT awaited, here — same reasoning as setPermissionMode()/interrupt() above: awaiting
+    // inline would suspend the very read loop that has to keep running to deliver the ack.
+    if (msg.type === "system" && resultPromise === undefined) resultPromise = gen.listModelFamilies();
+  }
+  expect(await resultPromise).toEqual(listing);
+});
+
+test("listModelFamilies(): a malformed control-response payload degrades to { active: undefined, families: [] }, never a throw", async () => {
+  const proc = scriptedProcessAnsweringControlRequest("list_model_families", { nonsense: true });
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  let resultPromise: Promise<ModelFamilyListing> | undefined;
+  for await (const msg of gen) {
+    if (msg.type === "system" && resultPromise === undefined) resultPromise = gen.listModelFamilies();
+  }
+  expect(await resultPromise).toEqual({ active: undefined, families: [] });
 });
 
 // --- Task 8 (WS-07 §7): canUseTool end-to-end -------------------------------------------------
