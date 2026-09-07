@@ -80,7 +80,23 @@ const DEFAULT_MAX_CHARS = 20_000;
 // provider inlines one as literal text this source happens to forward verbatim, this still strips it
 // instead of silently starting to leak it. Full alignment with compaction's own redaction rules is a
 // P5 obligation (RULING R3-3) -- this is the floor, not the ceiling.
-const OPAQUE_MARKERS = ["encrypted_content", "reasoning_item", "signature"] as const;
+//
+// FIX R1 (review M-3): `thinking` and `redacted_thinking` JOIN the list. The r1 probe fed both to a
+// scripted reviewer as literal transcript text and both reached the wire verbatim, payload included
+// (`EEEE-THINK-FFFF`, `GGGG-REDACT-HHHH`), while the original three were correctly stripped. WS-06
+// §4's constraint reads "provider-opaque state", not "these three keys", and `redacted_thinking.data`
+// is opaque by name.
+//
+// THE COST IS REAL AND ACCEPTED, and it is worth stating rather than discovering later: "thinking" is
+// an ordinary English word, so a review line that merely USES it ("I was thinking about the schema")
+// is now dropped along with the ones that carry a key. That is this function's declared posture --
+// drop the whole line, never partially redact, fail toward the reviewer seeing less -- and the price
+// is one line of context in an advisory channel against a class of leak the transcript has no other
+// guard for. `providerMessageContentToText` (engine.ts) already summarises a real `thinking` block by
+// LENGTH rather than reproducing it, so the structured path leaks nothing today either way; this is
+// the belt for the text path, where a provider that inlines one as prose would otherwise walk
+// straight through.
+const OPAQUE_MARKERS = ["encrypted_content", "reasoning_item", "signature", "thinking", "redacted_thinking"] as const;
 
 function stripOpaqueMarkers(text: string): string {
   // Line-oriented and conservative: a whole line mentioning a marker key is DROPPED, never partially

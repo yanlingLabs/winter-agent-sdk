@@ -1,5 +1,8 @@
 import { describe, test, expect } from "bun:test";
-import type { Provider, ProviderTurn } from "../../engine.ts";
+import type { Provider, ProviderMessage, ProviderTurn } from "../../engine.ts";
+import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { runEngine } from "../../engine.ts";
+import { createInMemoryChannel } from "../../protocol/channel.ts";
 import { createSessionReadState } from "../read-state.ts";
 import { getRegisteredTool, type ToolExecutionContext } from "../registry.ts";
 import {
@@ -214,5 +217,147 @@ describe("assembleReviewerMessages (the transcript assembler)", () => {
     const result = await executor.execute({}, makeCtx());
     const parsed = JSON.parse(result.output);
     expect(parsed.truncated).toBe(true);
+  });
+});
+
+// ================================================================================================
+// P7a LANE B (D29/D30): the advisor with a REAL reviewer behind it.
+//
+// Everything above ran against hand-built `ResolvedReviewer`s, which is all P3 had: `engine.ts`
+// passed `resolveReviewer: () => undefined`, so the tool answered "no reviewer" in every real
+// session no matter how the catalog was configured. These tests drive the ENGINE's own wiring — a
+// resolver on `EngineOptions`, the run's own `messages` as the transcript — and assert the two
+// things the wire contract names: the result reports the reviewer's CATALOG KEY, and the transcript
+// that reaches the reviewer carries no provider-opaque state.
+// ================================================================================================
+describe("P7a: the engine's advisor wiring (D29/D30)", () => {
+  /** Records exactly what the reviewer was asked, so the transcript claim is about the wire and not about intent. */
+  function recordingReviewer(model: string): { reviewer: ResolvedReviewer; seen: ProviderMessage[][] } {
+    const seen: ProviderMessage[][] = [];
+    return {
+      seen,
+      reviewer: {
+        model,
+        provider: {
+          async generate(input) {
+            seen.push(input.messages as ProviderMessage[]);
+            return { kind: "text", text: "the reviewer's advice" } satisfies ProviderTurn;
+          },
+        },
+      },
+    };
+  }
+
+  /** Runs one turn on a scripted provider, with the advisor's reviewer wired the way production wires it. */
+  async function runWith(opts: { resolveReviewer?: (currentModelKey?: string) => ResolvedReviewer | undefined; capabilities?: string[]; assistantText?: string }): Promise<{ tools: string[] }> {
+    const { host, runtime } = createInMemoryChannel();
+    let turns = 0;
+    const done = runEngine({
+      config: {
+        sessionId: "advisor-p7a",
+        cwd: process.cwd(),
+        model: "winter-test/echo",
+        ...(opts.capabilities !== undefined ? { capabilities: opts.capabilities } : {}),
+      } as RuntimeConfig,
+      input: runtime.input,
+      output: runtime.output,
+      provider: {
+        async generate() {
+          turns += 1;
+          return { kind: "text", text: opts.assistantText ?? `turn ${turns}` } satisfies ProviderTurn;
+        },
+      },
+      ...(opts.resolveReviewer !== undefined ? { resolveReviewer: opts.resolveReviewer } : {}),
+    });
+    host.output.write({ type: "user", text: "please review the plan" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames: unknown[] = [];
+    for await (const f of host.input) frames.push(f);
+    await done;
+    const init = frames.find((f) => (f as { type?: string }).type === "init") as { tools: string[] } | undefined;
+    return { tools: init?.tools ?? [] };
+  }
+
+  test("WS-06 §4's availability predicate: `advisor` is advertised because a reviewer RESOLVES, with no host capability supplied", async () => {
+    const { reviewer } = recordingReviewer("openai/gpt-6-astra");
+    const withReviewer = await runWith({ resolveReviewer: () => reviewer });
+    expect(withReviewer.tools).toContain(ADVISOR_TOOL_NAME);
+    // The negative control, same session shape: a resolver that answers `undefined` is a session
+    // with no reviewer, and the tool is not advertised. (This is the state EVERY session was in
+    // before P7a, because `engine.ts` hardcoded exactly this resolver.)
+    const withoutReviewer = await runWith({ resolveReviewer: () => undefined });
+    expect(withoutReviewer.tools).not.toContain(ADVISOR_TOOL_NAME);
+  });
+
+  test("the tool's result carries the REVIEWER'S CATALOG KEY, and the advice the reviewer actually returned", async () => {
+    const { reviewer } = recordingReviewer("codex-oauth/gpt-6-astra");
+    await runWith({ resolveReviewer: () => reviewer });
+    // The executor the run installed is the one the model would have called.
+    const result = await getRegisteredTool(ADVISOR_TOOL_NAME)!.executor!.execute({}, makeCtx());
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.output)).toEqual({ advice: "the reviewer's advice", model: "codex-oauth/gpt-6-astra" });
+  });
+
+  test("the transcript that REACHES the reviewer is this run's own history, and carries no provider-opaque state", async () => {
+    const { reviewer, seen } = recordingReviewer("openai/gpt-6-astra");
+    // The assistant turn carries text shaped like the three opaque keys. WS-06 §4 / RULING R3-3: a
+    // review channel must never forward them, and the engine's own `messages` is where they would
+    // arrive from if a provider ever inlined one as literal text.
+    await runWith({
+      resolveReviewer: () => reviewer,
+      assistantText: "here is my plan\nencrypted_content: AAAA-OPAQUE-BBBB\nreasoning_item: {\"itemJson\":\"...\"}\nsignature: sig-abc\nand that is the plan",
+    });
+    await getRegisteredTool(ADVISOR_TOOL_NAME)!.executor!.execute({}, makeCtx());
+    expect(seen).toHaveLength(1);
+    const wire = JSON.stringify(seen[0]);
+    // The run's real history reached the reviewer...
+    expect(wire).toContain("please review the plan");
+    expect(wire).toContain("here is my plan");
+    // ...with every opaque-shaped line dropped, key AND value.
+    expect(wire).not.toContain("encrypted_content");
+    expect(wire).not.toContain("AAAA-OPAQUE-BBBB");
+    expect(wire).not.toContain("reasoning_item");
+    expect(wire).not.toContain("signature");
+    expect(wire).not.toContain("sig-abc");
+  });
+
+  test("M-3 (fix r1): Claude's opaque reasoning never reaches the reviewer either — `thinking` and `redacted_thinking`, key AND payload", async () => {
+    const { reviewer, seen } = recordingReviewer("openai/gpt-6-astra");
+    // The r1 review's own probe payloads, verbatim: before this fix both reached the wire while the
+    // original three markers were correctly stripped.
+    await runWith({
+      resolveReviewer: () => reviewer,
+      assistantText: 'plan line one\nthinking: "EEEE-THINK-FFFF"\nredacted_thinking: "GGGG-REDACT-HHHH"\nplan line two',
+    });
+    await getRegisteredTool(ADVISOR_TOOL_NAME)!.executor!.execute({}, makeCtx());
+    const wire = JSON.stringify(seen[0]);
+    expect(wire).not.toContain("EEEE-THINK-FFFF");
+    expect(wire).not.toContain("GGGG-REDACT-HHHH");
+    expect(wire).not.toContain("thinking");
+    // The surrounding review context still travels: the drop is per LINE, never the whole entry.
+    expect(wire).toContain("plan line one");
+    expect(wire).toContain("plan line two");
+  });
+
+  test("M-3 (fix r1): the marker list is checked at the assembler too, so the guard is not only an end-to-end accident", () => {
+    const { messages } = assembleReviewerMessages([
+      { role: "assistant", text: 'keep me\nthinking: "EEEE-THINK-FFFF"\nredacted_thinking: "GGGG-REDACT-HHHH"\nkeep me too' },
+    ]);
+    expect(messages[0]?.content).toBe("keep me\nkeep me too");
+  });
+
+  test("the reviewer is asked with the session's LIVE model key, not a value captured at wiring time", async () => {
+    const asked: Array<string | undefined> = [];
+    const { reviewer } = recordingReviewer("openai/gpt-6-astra");
+    await runWith({
+      resolveReviewer: (currentModelKey) => {
+        asked.push(currentModelKey);
+        return reviewer;
+      },
+    });
+    await getRegisteredTool(ADVISOR_TOOL_NAME)!.executor!.execute({}, makeCtx());
+    // Asked at least twice — once for the capability, once for the call — and always with a key.
+    expect(asked.length).toBeGreaterThan(1);
+    expect(asked.every((k) => k === "winter-test/echo")).toBe(true);
   });
 });
