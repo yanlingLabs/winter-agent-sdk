@@ -501,35 +501,53 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     const resolvedFrom = registry.resolve({ model: origin.modelKey, provider: { providerId: origin.providerId } });
     return resolvedFrom instanceof WinterProviderResolutionError ? "" : String(resolvedFrom.adapter.family);
   };
-  const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
-    // WS-13c §4 step 6: a BARE name may be a slot (`luna`, `opus`, a custom slot's facing name) or a
-    // canonical id, and the slot resolver is what turns either into a concrete row. Only a bare name
-    // — a qualified key already names its provider, and reading it as a slot would be a second,
-    // competing interpretation of the same string.
-    let target = model;
-    let slotProviderId: string | undefined;
-    if (!model.includes("/") && opts.resolveSlot !== undefined) {
-      const slot = opts.resolveSlot(model, from?.modelKey ?? config.model);
-      // A typed refusal is the ANSWER, not a reason to fall through to `registry.resolve`: falling
-      // through would report `unknown-model` for a name that is really "two families call a model
-      // `flash`" or "nothing you have configured serves it", which is strictly less true.
-      if (!slot.ok) return { refused: true, code: slot.code, message: slot.message };
-      target = slot.modelKey;
-      slotProviderId = slot.providerId;
-    }
-    // A SLOT'S OWN PROVIDER, not the session's. The slot resolver has ALREADY made the provider
-    // decision (§4's ordering, under this session's credentials and enable settings), so passing the
-    // session's id beside a cross-provider key would hit R6-K's `provider-mismatch` — a refusal for
-    // a contradiction the caller never stated. WS-13c §5 makes cross-family sets explicitly legal,
-    // so this is the case R6-K's rule was never written about, and the two agree: the key and the
-    // provider id given here always name the same provider, so nothing is being reinterpreted.
-    const providerId = slotProviderId ?? sessionProviderId();
-    const result = registry.resolve({
+  /**
+   * `registry.resolve` for one target under one provider, with this session's `allowUnlisted`.
+   *
+   * A SLOT'S OWN PROVIDER, not the session's, is what the slot branch passes: the slot resolver has
+   * ALREADY made the provider decision (§4's ordering, under this session's credentials and enable
+   * settings), so passing the session's id beside a cross-provider key would hit R6-K's
+   * `provider-mismatch` — a refusal for a contradiction the caller never stated. WS-13c §5 makes
+   * cross-family sets explicitly legal, so this is the case R6-K's rule was never written about, and
+   * the two agree: the key and the provider id given there always name the same provider.
+   */
+  const resolveUnder = (target: string, providerId: string | undefined): ResolvedModel | WinterProviderResolutionError =>
+    registry.resolve({
       model: target,
       ...(providerId !== undefined || config.provider?.allowUnlisted !== undefined
         ? { provider: { ...(providerId !== undefined ? { providerId } : {}), ...(config.provider?.allowUnlisted !== undefined ? { allowUnlisted: config.provider.allowUnlisted } : {}) } }
         : {}),
     });
+
+  const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
+    // WS-13c §4 step 6: a BARE name may be a slot (`luna`, `opus`, a custom slot's facing name), a
+    // canonical id, or a name only the session's own provider knows (an alias, a provider-local id).
+    // Only a bare name reaches the slot layer at all — a qualified key already names its provider,
+    // and reading it as a slot would be a second, competing interpretation of one string.
+    //
+    // PRECEDENCE, and it is where §4 step 6 and R6-K meet:
+    //   - a real SLOT NAME (`viaSlotName`) wins outright. That is the whole feature: `luna` from a
+    //     Claude session must reach the OpenAI row that serves it.
+    //   - `ambiguous-slot-name` / `slot-unservable` are ANSWERS, not reasons to try something else.
+    //     Falling through would report `unknown-model` for a name that really means "two families
+    //     call a model `flash`" or "nothing you have configured serves it" — and, worse, could
+    //     resolve the ambiguous name onto whichever model the session's provider happens to spell
+    //     that way, which is the substitution WS-13 §9 forbids.
+    //   - everything else — a bare canonical id, or a name the slot layer does not know — keeps
+    //     R6-K's session-namespace-FIRST rule verbatim, and only falls to the slot layer's answer
+    //     when the session's own provider has nothing. Without that order, `set_model` on a bare id
+    //     the session's provider holds would silently move the session to another provider's row.
+    let result: ResolvedModel | WinterProviderResolutionError;
+    const slot = !model.includes("/") && opts.resolveSlot !== undefined ? opts.resolveSlot(model, from?.modelKey ?? config.model) : undefined;
+    if (slot !== undefined && !slot.ok && slot.code !== "unknown-slot") {
+      return { refused: true, code: slot.code, message: slot.message };
+    }
+    if (slot !== undefined && slot.ok && slot.viaSlotName) {
+      result = resolveUnder(slot.modelKey, slot.providerId);
+    } else {
+      const own = resolveUnder(model, sessionProviderId());
+      result = own instanceof WinterProviderResolutionError && slot?.ok === true ? resolveUnder(slot.modelKey, slot.providerId) : own;
+    }
     if (result instanceof WinterProviderResolutionError) return { refused: true, code: result.code, message: result.message };
     // WS-13b R6b-7: the SECOND door into a provider. Read through the getter, so a settings change
     // between the session's start and this switch is honoured with no restart and nothing rebuilt.

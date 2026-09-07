@@ -871,6 +871,9 @@ describe("WS-13c: the wiring's model-family surface", () => {
       // listing carries is this session's, computed from the same getter the Agent tool renders from.
       const listing = wiring.engineOptions.listModelFamilies!();
       expect(listing.active).toEqual(wiring.engineOptions.activeSlotSet!(undefined));
+      // The producer already accepts the live model key, so the listing follows a cross-family
+      // switch the moment the spine's handler passes one (see this task's report).
+      expect(wiring.engineOptions.listModelFamilies!("anthropic/claude-opus-5").active).toMatchObject({ family: "claude", source: "claude-pinned" });
     } finally {
       wiring.dispose();
     }

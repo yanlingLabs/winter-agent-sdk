@@ -408,8 +408,14 @@ export interface ProductionWiring {
     resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
     /** WS-13c §5: bumps when the resolved settings view changes, so a `modelSlots` edit re-renders with no restart. */
     settingsVersion?: () => number;
-    /** WS-13c §7: the `list_model_families` control handler's source. */
-    listModelFamilies?: () => ModelFamilyListing;
+    /**
+     * WS-13c §7: the `list_model_families` control handler's source.
+     *
+     * The parameter is Lane A's; the spine's `EngineOptions.listModelFamilies` is `() => …`, which
+     * this is assignable to. See the producer for the one-line spine fix that makes the engine
+     * actually pass the live key.
+     */
+    listModelFamilies?: (currentModelKey?: string) => ModelFamilyListing;
     systemPromptAssembler: SystemPromptAssembler;
     commandResolver: FilesystemCommandResolver;
     compactionController: CompactionController;
@@ -1018,10 +1024,17 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             activeSlotSet,
             resolveSlot,
             settingsVersion,
-            listModelFamilies: (): ModelFamilyListing =>
+            // TAKES THE MODEL KEY (assignable to the spine's `() => ModelFamilyListing`, so no
+            // spine type changes). The spine's handler calls it with no argument today, which means
+            // a listing served after a cross-family `set_model` reports the START model's active set
+            // -- §7's switcher would list the family the session has left. The one-line spine fix is
+            // owed and recorded in this task's report: widen the option to
+            // `(currentModelKey?: string) => ModelFamilyListing` and call it with
+            // `currentProviderIdentity?.modelKey ?? currentModel`. This side is already correct.
+            listModelFamilies: (currentModelKey?: string): ModelFamilyListing =>
               buildModelFamilyListing({
                 catalog: slotCatalog,
-                active: activeSlotSet(undefined),
+                active: activeSlotSet(currentModelKey),
                 servable: (providerId) => credentialPresent(providerId) && providerEnabled(providerId),
                 // THE SAME §4 ORDERING the resolver uses, expressed as a one-slot custom set rather
                 // than re-derived: a listing that showed a different first row than a `set_model`

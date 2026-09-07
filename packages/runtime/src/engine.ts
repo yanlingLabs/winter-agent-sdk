@@ -2372,8 +2372,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    */
   function resolveChildSlot(req: SpawnChildRequest): Pick<ChildInheritance, "model" | "slot"> {
     const requested = resolveChildModel(req);
+    // R6-17'S RULE IS UNTOUCHED FOR EVERY NON-SLOT VALUE, and these two guards are what keep it that
+    // way. A session configured the pinned Claude-SDK way -- a BARE model id plus a configured
+    // `provider.providerId`, which R6-K explicitly supports -- has a `config.model` that is also a
+    // canonical id in the catalog. Without the guards, every DEFAULT child (no `model` on the
+    // request at all) would be re-resolved through §4, whose step 3-i puts the vendor's SUBSCRIPTION
+    // row first: the child would inherit a key qualified for a provider the parent never named,
+    // `resolveChildProvider` would probe that provider's own keychain record, and the spawn would
+    // either be refused outright or run on a different bill. WS-13c §3 is explicit that
+    // `AgentInput.model` is slot names only -- everything else keeps the semantics it had.
+    //
+    // (a) inheriting the PARENT's own model is not a slot request, whatever that string looks like
+    //     (this also covers `req.fork`, whose model is `config.model` by contract);
+    if (requested === config.model) return { model: requested };
     const resolution = resolveSlot?.(requested, currentProviderIdentity?.modelKey ?? currentModel);
     if (resolution === undefined) return { model: requested };
+    // (b) a BARE id that the resolver did not recognise as a slot name (a canonical id, an alias, a
+    //     provider-local id) keeps R6-17's "a bare id resolves against the parent's provider"
+    //     downstream. A qualified key still passes through -- the resolver returns it verbatim.
+    if (resolution.ok && !resolution.viaSlotName && !requested.includes("/")) return { model: requested };
     if (!resolution.ok) {
       // `unknown-slot` is WS-01 §6's unresolvable-alias case under a new name; the registry's own
       // vocabulary already has a member for it, and inventing a second spelling would split one

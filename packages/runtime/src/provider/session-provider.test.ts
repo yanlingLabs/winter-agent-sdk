@@ -1000,10 +1000,15 @@ describe("WS-13c: set_model by slot name", () => {
     [
       testProvider({ id: "anthropic", adapterId: "winter.openai-responses", family: "openai", api: "https://anthropic.example" }),
       testProvider({ id: "openai", adapterId: "winter.openai-responses", family: "openai", api: "https://openai.example" }),
+      // The vendor's SUBSCRIPTION row, which §4 step 3-i puts FIRST inside the vendor group -- so a
+      // bare `gpt-5.6-luna` routed through the slot layer would land here rather than on the
+      // session's own provider. That is what the R6-K precedence test below exists to prevent.
+      { ...testProvider({ id: "codex-oauth", adapterId: "winter.openai-responses", family: "openai", api: "https://codex.example" }), pricingBasis: "subscription" as const },
     ],
     [
       inFamilies(testModel({ key: "anthropic/claude-opus-5", providerId: "anthropic", upstreamId: "claude-opus-5" })),
       inFamilies(testModel({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna" })),
+      inFamilies(testModel({ key: "codex-oauth/gpt-5.6-luna", providerId: "codex-oauth", upstreamId: "gpt-5.6-luna" })),
     ],
     FAMILIES,
   );
@@ -1028,10 +1033,14 @@ describe("WS-13c: set_model by slot name", () => {
       resolveSlot: resolveSlot(hasCredential),
     });
 
-  test("a claude session's `set_model luna` resolves to the openai row that serves it — across providers, with no provider-mismatch", () => {
-    const out = wiringFor("anthropic/claude-opus-5", "anthropic").resolveModelSwitch("luna", undefined);
-    expect("refused" in out).toBe(false);
-    expect(!("refused" in out) && out.identity).toMatchObject({ providerId: "openai", modelKey: "openai/gpt-5.6-luna" });
+  test("a claude session's `set_model luna` resolves across providers, subscription row first, with no provider-mismatch", () => {
+    const claudeSession = wiringFor("anthropic/claude-opus-5", "anthropic");
+    // §4 step 3-i: within the gpt family's vendor group, the SUBSCRIPTION row leads.
+    expect(claudeSession.resolveModelSwitch("luna", undefined)).toMatchObject({ identity: { providerId: "codex-oauth", modelKey: "codex-oauth/gpt-5.6-luna" } });
+    // ...and with no codex credential it is the token row, still across providers and still not a
+    // `provider-mismatch` -- which is what a session-provider-qualified resolve would have produced.
+    const noCodex = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => p !== "codex-oauth");
+    expect(noCodex.resolveModelSwitch("luna", undefined)).toMatchObject({ identity: { providerId: "openai", modelKey: "openai/gpt-5.6-luna" } });
   });
 
   test("a gpt session's `set_model flash` is an ambiguous-slot-name refusal naming both families", () => {
@@ -1042,7 +1051,7 @@ describe("WS-13c: set_model by slot name", () => {
   });
 
   test("a slot nothing configured can serve is a slot-unservable refusal, never a switch onto something else", () => {
-    const out = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => p !== "openai").resolveModelSwitch("luna", undefined);
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => p !== "openai" && p !== "codex-oauth").resolveModelSwitch("luna", undefined);
     expect(out).toMatchObject({ refused: true, code: "slot-unservable" });
     expect("refused" in out && out.message).toContain("openai/gpt-5.6-luna");
   });
@@ -1062,6 +1071,24 @@ describe("WS-13c: set_model by slot name", () => {
     const out = wiring.resolveModelSwitch("opus", { providerId: "openai", modelKey: "openai/gpt-5.6-luna", family: "openai" });
     expect("refused" in out).toBe(false);
     expect(!("refused" in out) && out.identity.modelKey).toBe("anthropic/claude-opus-5");
+  });
+
+  // R6-K's session-namespace-FIRST rule survives P6.6 for every bare name that is not a slot. Without
+  // this, `set_model("gpt-5.6-luna")` from the openai session would walk to `codex-oauth` -- §4 step
+  // 3-i's subscription-first rule applied to a string the caller never meant as a slot -- moving the
+  // session to another provider, another credential and another bill, silently.
+  test("a bare CANONICAL ID the session's own provider holds stays on the session's provider", () => {
+    const out = wiringFor("openai/gpt-5.6-luna", "openai").resolveModelSwitch("gpt-5.6-luna", undefined);
+    expect("refused" in out).toBe(false);
+    expect(!("refused" in out) && out.identity).toMatchObject({ providerId: "openai", modelKey: "openai/gpt-5.6-luna" });
+  });
+
+  test("a bare canonical id the session's provider does NOT hold still falls to the slot layer's answer (§4 step 6)", () => {
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic").resolveModelSwitch("gpt-5.6-luna", undefined);
+    expect("refused" in out).toBe(false);
+    // The subscription row leads the vendor group -- this IS §4's ordering, reached because the
+    // session's own provider had nothing by that name.
+    expect(!("refused" in out) && out.identity.providerId).toBe("codex-oauth");
   });
 
   test("with NO resolveSlot wired, a bare name is exactly what it was before P6.6", () => {

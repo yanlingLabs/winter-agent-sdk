@@ -4080,8 +4080,9 @@ describe("WS-13c: a child spawned by slot name", () => {
         { kind: "tool_use", calls: [{ id: "slot-spawn", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "slot-spawn", prompt: "go", runInBackground: false, ...input } }] },
         { kind: "text", text: "done" },
       ]);
-      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
-      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, ...opts });
+      const { config: configOverride, ...engineOpts } = opts as { config?: RuntimeConfig } & Record<string, unknown>;
+      const config = configOverride ?? baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, ...engineOpts });
       host.output.write({ type: "user", text: "go" });
       host.output.write({ type: "control_request", requestId: "end-slot", subtype: "end_input", payload: undefined });
       const frames = await drain(host.input);
@@ -4184,6 +4185,36 @@ describe("WS-13c: a child spawned by slot name", () => {
     const { calls } = await spawnWith({ definition: { description: "d", prompt: "p", model: "astra" } }, { resolveSlot: slotResolver(() => true) });
     expect(calls[0]!.inherit.model).toBe("openai/gpt-6-astra");
     expect(calls[0]!.inherit.slot).toEqual({ family: "gpt", name: "astra", source: "family-default" });
+  });
+
+  // THE R6-17 REGRESSION GUARD. A session configured the pinned Claude-SDK way -- a BARE model id
+  // plus a configured provider -- has a `config.model` that is also a canonical id in the catalog.
+  // Routing that through §4 would hand every DEFAULT child a key qualified for a provider the parent
+  // never named (the vendor's subscription row leads §4 step 3-i), so `resolveChildProvider` would
+  // probe another provider's keychain record and either refuse every default spawn or run the child
+  // on a different bill. R6-17's rule is that a bare id resolves against the PARENT's provider.
+  test("a BARE parent model is inherited verbatim -- never re-routed to another provider by the resolver", async () => {
+    const bareResolver = (requested: string): SlotProviderResolution =>
+      requested === "gpt-6-astra"
+        ? { ok: true, modelKey: "codex-oauth/gpt-6-astra", providerId: "codex-oauth", canonicalModelId: "gpt-6-astra", slot: { family: "gpt", name: requested, source: "family-default" }, viaSlotName: false }
+        : { ok: false, code: "unknown-slot", message: "no", wouldServe: [] };
+    const { calls } = await spawnWith({}, { resolveSlot: bareResolver, config: baseConfig({ model: "gpt-6-astra", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }) });
+    expect(calls[0]!.inherit.model).toBe("gpt-6-astra");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
+  });
+
+  test("a BARE canonical id named explicitly is inherited verbatim too -- only a SLOT name re-provisions a child", async () => {
+    const bareResolver = (requested: string): SlotProviderResolution => ({
+      ok: true,
+      modelKey: `codex-oauth/${requested}`,
+      providerId: "codex-oauth",
+      canonicalModelId: requested,
+      slot: { family: "gpt", name: requested, source: "family-default" },
+      viaSlotName: false,
+    });
+    const { calls } = await spawnWith({ model: "gpt-5.6-luna" }, { resolveSlot: bareResolver });
+    expect(calls[0]!.inherit.model).toBe("gpt-5.6-luna");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
   });
 
   test("with NO resolveSlot wired the pre-P6.6 chain is byte-identical: the string goes on the child unresolved", async () => {
