@@ -22,6 +22,7 @@ import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermission
 // WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
 // rather than letting the production composite reach the developer's real Keychain.
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { providerCredentialRef } from "./provider/credential-api.ts";
 import { loadCatalog, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 
@@ -899,6 +900,38 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(!warm.ok && warm.wouldServe.map((w) => w.providerId).sort()).toEqual(rows.map((r) => r.providerId).sort());
       expect(!warm.ok && warm.wouldServe.every((w) => w.why === "no credential configured")).toBe(true);
       expect(!warm.ok && warm.message).toContain("claude-opus-5");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // Lane D's investigation §1.6: `resolveChildProvider` judged a child against the SESSION-START
+  // model. After a mid-session `set_model` to another provider, a child naming the parent's NEW model
+  // by its bare id was resolved under the OLD provider -- so it either failed to resolve (and silently
+  // ran on the parent's provider) or was refused. The wiring now records the live key the engine
+  // hands it every turn, which is what makes the comparison current.
+  test("a child's bare model id is judged against the LIVE parent model, not the session-start one", async () => {
+    const wiring = await buildProductionWiring({
+      config: localSession("s-slots-live-parent"),
+      env: {},
+      winterHome: home,
+      // A real record for anthropic, so the cross-provider child is not refused for a missing key --
+      // the point under test is WHICH provider it resolved under.
+      provider: { credentials: createMemoryCredentialStore([[providerCredentialRef({ providerId: "anthropic", accountId: "default" }), { kind: "api-key", key: "fixture" }]]) },
+    });
+    try {
+      const resolveChildProvider = wiring.childFactoryOptions.resolveChildProvider!;
+      // BEFORE the switch: a bare `claude-opus-5` is resolved under the session's own provider
+      // (`ollama-local`), which does not hold it -- R6-17's rule, unchanged.
+      expect(await resolveChildProvider("claude-opus-5")).toBeUndefined();
+      // The engine reports its live model key once per generation; this is exactly that call.
+      wiring.engineOptions.activeSlotSet!("anthropic/claude-opus-5");
+      // AFTER: the same bare id resolves under the model the session is actually on, with no refusal.
+      const child = await resolveChildProvider("claude-sonnet-5");
+      expect(child?.identity).toMatchObject({ providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5" });
+      expect(child).not.toHaveProperty("refused");
+      // ...and a child naming the parent's NEW model is "the same as the parent": no second adapter.
+      expect(await resolveChildProvider("anthropic/claude-opus-5")).toBeUndefined();
     } finally {
       wiring.dispose();
     }

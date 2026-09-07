@@ -926,14 +926,43 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     return validated.ok ? validated.slots : undefined;
   };
 
-  const activeSlotSet = (currentModelKey: string | undefined): ActiveSlotSet =>
-    computeActiveSlotSet({
+  /**
+   * THE SESSION'S LIVE MODEL KEY, as last reported by the engine.
+   *
+   * The wiring cannot see `set_model`: `providerWiring.resolved` is the SESSION-START snapshot and
+   * `installIdentity` never writes back. But the engine passes its live key
+   * (`currentProviderIdentity?.modelKey ?? currentModel`) into `activeSlotSet` once per generation
+   * and into `resolveSlot` at every spawn, so recording it here gives every other consumer in this
+   * module the same live value with no new seam and no watcher.
+   *
+   * Closes the staleness Lane D's investigation found in `resolveChildProvider` (its report §1.6):
+   * that function judged a child's bare model id against the start snapshot, so after a mid-session
+   * `set_model` a child naming the parent's NEW model was resolved under the OLD provider.
+   */
+  let liveEngineModelKey: string | undefined;
+  const rememberEngineModelKey = (currentModelKey: string | undefined): void => {
+    if (currentModelKey !== undefined && currentModelKey.length > 0) liveEngineModelKey = currentModelKey;
+  };
+  /** The parent identity a child is judged against: the LIVE model, falling back to the start snapshot. */
+  const liveParentIdentity = (): { providerId: string; modelKey: string } | undefined => {
+    const startSnapshot = providerWiring.resolved !== undefined ? { providerId: providerWiring.resolved.providerId, modelKey: providerWiring.resolved.modelKey } : undefined;
+    if (liveEngineModelKey === undefined || liveEngineModelKey === startSnapshot?.modelKey) return startSnapshot;
+    const resolvedLive = providerWiring.registry.resolve({ model: liveEngineModelKey });
+    // An `allowUnlisted` pass-through key may not be in the catalog at all; the start snapshot is the
+    // honest fallback rather than a provider id guessed from the string.
+    return resolvedLive instanceof WinterProviderResolutionError ? startSnapshot : { providerId: resolvedLive.providerId, modelKey: resolvedLive.modelKey };
+  };
+
+  const activeSlotSet = (currentModelKey: string | undefined): ActiveSlotSet => {
+    rememberEngineModelKey(currentModelKey);
+    return computeActiveSlotSet({
       catalog: slotCatalog,
       // The ENGINE's live key wins; the wiring's own `resolved` is only the START model, and falling
       // back to it after a `set_model` would advertise the family the session began on.
       currentModelKey: currentModelKey ?? providerWiring.resolved?.modelKey ?? config.model,
       customSlots: customSlots(),
     });
+  };
 
   const resolveSlot = (requested: string, currentModelKey: string | undefined): SlotProviderResolution => {
     const custom = customSlots();
@@ -1116,7 +1145,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // second adapter and every pre-P6 child is byte-identical.
       resolveChildProvider: async (model: string) => {
         const registry = providerWiring.registry;
-        const parent = providerWiring.resolved;
+        // WS-13c (Lane D investigation §1.6): the LIVE parent, not the session-start snapshot. A
+        // mid-session `set_model` moves the session's model and provider; judging a child's bare id
+        // against the model the session STARTED on resolved it under the old provider (and made
+        // "same as the parent" compare against a model the parent had left), so a child naming the
+        // parent's new model was either mis-provisioned or refused.
+        const parent = liveParentIdentity();
         if (parent === undefined) return undefined; // a scripted double has no catalog to resolve against
         // R6-17 verbatim: a BARE id resolves against the PARENT's provider; a QUALIFIED
         // `<providerId>/<model>` key names its own. Passing the parent's id alongside a qualified key
