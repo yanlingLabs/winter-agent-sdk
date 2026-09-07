@@ -28,7 +28,7 @@ import { describe, expect, test } from "bun:test";
 import { serve } from "bun";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
+import { loadCatalog, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import { buildSessionProvider, connectionForProvider, generatedConnectionForProvider } from "./session-provider.ts";
 
@@ -174,6 +174,35 @@ describe("P7a: `connectionFrom` records WHERE the baseUrl came from", () => {
     const row = catalog.providers.find((p) => p.id === "reviewedrow")!;
     const supplied = connectionForProvider(configFor("reviewedrow", { baseUrl: "https://operator.example/v1", endpointOrigin: "reviewed" }), catalog, row);
     expect(supplied?.endpointOrigin).toBe("user");
+  });
+
+  // --- THE SHIPPED ROWS, not a fixture ------------------------------------------------------------
+  //
+  // Closing WS-13b §10's M-1 partial changes live behaviour on ~156 catalog rows, and the twelve
+  // LOCAL runners are the largest part of that blast radius: a host is likeliest to have set a proxy
+  // `user-agent` on one of their profiles, and their `http://127.0.0.1:…` endpoint is a COPIED
+  // reviewed one, so that header is now dropped and the privileged set now applies. The cases above
+  // prove the rule on synthetic rows whose only nod to the cohort is `modelDiscovery: "local"` — a
+  // fixture cannot fail when a future catalog edit moves a real local row off the shared adapter or
+  // changes its discovery mode. These name shipped ids and read the shipped catalog.
+  test("the SHIPPED `ollama-local` row is stamped `reviewed` and `local` — the local cohort is the M-1 closure's largest blast radius", () => {
+    const real = loadCatalog();
+    const row = real.providers.find((p) => p.id === "ollama-local")!;
+    expect(row).toBeDefined();
+    const connection = connectionForProvider(configFor("ollama-local"), real, row);
+    expect(connection).toEqual({ baseUrl: row.defaultEndpoints["api"] as string, endpointOrigin: "reviewed", local: true });
+  });
+
+  test("the SHIPPED `deepseek-anthropic` row is stamped `reviewed` too — an Anthropic-dialect sibling, not a local runner", () => {
+    // The other half of the ~156: a non-local, multi-provider row on the Anthropic family, whose
+    // reviewed endpoint the runtime copies for exactly the same reason. `local` is absent here
+    // (`modelDiscovery` is not `"local"`), so this case also pins that the two stamps are
+    // independent -- `endpointOrigin` is about PROVENANCE, `local` about the address.
+    const real = loadCatalog();
+    const row = real.providers.find((p) => p.id === "deepseek-anthropic")!;
+    expect(row).toBeDefined();
+    const connection = connectionForProvider(configFor("deepseek-anthropic"), real, row);
+    expect(connection).toEqual({ baseUrl: row.defaultEndpoints["api"] as string, endpointOrigin: "reviewed" });
   });
 
   test("a row on a SINGLE-provider adapter still gets no baseUrl at all — the copy rule is unchanged", () => {
