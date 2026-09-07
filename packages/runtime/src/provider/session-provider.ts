@@ -61,6 +61,7 @@ import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } fr
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
 import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
+import type { SlotProviderResolution } from "./slots.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -158,6 +159,18 @@ export interface SessionProviderOptions {
    * a disable that held only at start would be exactly such a walk-around.
    */
   providerSettings?: () => Record<string, { enabled: boolean }> | undefined;
+  /**
+   * WS-13c §4 step 6 (P6.6): the slot resolver, so `set_model` accepts a SLOT NAME.
+   *
+   * Consulted only for a BARE name — a qualified `<providerId>/<model>` key is already an
+   * unambiguous statement and goes straight to R6-K's own rules, unchanged. A refusal is returned as
+   * the seam's typed refusal and becomes the control response, exactly like `provider-mismatch`:
+   * never a parked switch, never a substitution.
+   *
+   * ABSENT -> `set_model` keeps its pre-P6.6 shape verbatim (every scripted double, every pre-P6.6
+   * fixture, and the reserved `winter-test/<name>` namespace, for which the wiring withholds it).
+   */
+  resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
 }
 
 export interface SessionProviderWiring {
@@ -415,6 +428,16 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
    * vendor A's key on the wire to vendor B's endpoint -- and this function is the closed door.
    */
   const describeTargetMaterial = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): TargetMaterial => {
+    // DELIBERATELY KEYED TO THE CONFIG-MATERIAL PROVIDER, NOT THE LIVE ONE (R-6c-24). `sessionProvider`
+    // is assigned at selection and never follows a `set_model`, and that is CORRECT here: this
+    // function answers "whose credential and connection may this target use", and
+    // `config.provider.authRef` / the user's `connection` were configured for the provider the
+    // session STARTED on. Making it follow the installed switch would reintroduce Ruling E-1's
+    // probe-P1 bug -- after anthropic -> a `luna` slot switch, an OpenAI row would compare equal,
+    // take `source: "session"`, and put anthropic's inline key and base URL on the wire to OpenAI.
+    // The live provider matters at the SWITCH SEAM (which id a bare name is looked up under) and in
+    // pricing; both read it from `from`/the qualified key instead. Do not "fix" this to match them.
+    //
     // `resolving`: the session's own model, never cross-provider (see the state's own comment).
     // `unknown`: FAIL CLOSED -- cross-provider, so the target gets its own record or a typed refusal.
     // `{ known }`: the ordinary comparison.
@@ -488,14 +511,65 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     const resolvedFrom = registry.resolve({ model: origin.modelKey, provider: { providerId: origin.providerId } });
     return resolvedFrom instanceof WinterProviderResolutionError ? "" : String(resolvedFrom.adapter.family);
   };
-  const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
-    const providerId = sessionProviderId();
-    const result = registry.resolve({
-      model,
+  /**
+   * `registry.resolve` for one target under one provider, with this session's `allowUnlisted`.
+   *
+   * A SLOT'S OWN PROVIDER, not the session's, is what the slot branch passes: the slot resolver has
+   * ALREADY made the provider decision (§4's ordering, under this session's credentials and enable
+   * settings), so passing the session's id beside a cross-provider key would hit R6-K's
+   * `provider-mismatch` — a refusal for a contradiction the caller never stated. WS-13c §5 makes
+   * cross-family sets explicitly legal, so this is the case R6-K's rule was never written about, and
+   * the two agree: the key and the provider id given there always name the same provider.
+   */
+  const resolveUnder = (target: string, providerId: string | undefined): ResolvedModel | WinterProviderResolutionError =>
+    registry.resolve({
+      model: target,
       ...(providerId !== undefined || config.provider?.allowUnlisted !== undefined
         ? { provider: { ...(providerId !== undefined ? { providerId } : {}), ...(config.provider?.allowUnlisted !== undefined ? { allowUnlisted: config.provider.allowUnlisted } : {}) } }
         : {}),
     });
+
+  const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
+    // WS-13c §4 step 6: a BARE name may be a slot (`luna`, `opus`, a custom slot's facing name), a
+    // canonical id, or a name only the session's own provider knows (an alias, a provider-local id).
+    // Only a bare name reaches the slot layer at all — a qualified key already names its provider,
+    // and reading it as a slot would be a second, competing interpretation of one string.
+    //
+    // PRECEDENCE, and it is where §4 step 6 and R6-K meet:
+    //   - a real SLOT NAME (`viaSlotName`) wins outright. That is the whole feature: `luna` from a
+    //     Claude session must reach the OpenAI row that serves it.
+    //   - `ambiguous-slot-name` / `slot-unservable` are ANSWERS, not reasons to try something else.
+    //     Falling through would report `unknown-model` for a name that really means "two families
+    //     call a model `flash`" or "nothing you have configured serves it" — and, worse, could
+    //     resolve the ambiguous name onto whichever model the session's provider happens to spell
+    //     that way, which is the substitution WS-13 §9 forbids.
+    //   - everything else — a bare canonical id, or a name the slot layer does not know — keeps
+    //     R6-K's session-namespace-FIRST rule verbatim, and only falls to the slot layer's answer
+    //     when the session's own provider has nothing. Without that order, `set_model` on a bare id
+    //     the session's provider holds would silently move the session to another provider's row.
+    let result: ResolvedModel | WinterProviderResolutionError;
+    const slot = !model.includes("/") && opts.resolveSlot !== undefined ? opts.resolveSlot(model, from?.modelKey ?? config.model) : undefined;
+    if (slot !== undefined && !slot.ok && slot.code !== "unknown-slot") {
+      return { refused: true, code: slot.code, message: slot.message };
+    }
+    if (slot !== undefined && slot.ok && slot.viaSlotName) {
+      result = resolveUnder(slot.modelKey, slot.providerId);
+    } else {
+      // R-6c-24, and the split is the whole point. A BARE name is looked up under the provider the
+      // session is LIVE on (`from` is `currentOrigin()`, built from `currentProviderIdentity`), because
+      // `sessionProviderId()` is a session-START snapshot that `installIdentity` never updates: after
+      // a cross-provider slot switch it made the session's own current model's bare id miss, fall to
+      // §4, and move the session again -- another provider, another credential, another bill.
+      //
+      // A QUALIFIED key keeps asking `sessionProviderId()`, and that is not an oversight: R6-K's
+      // `provider-mismatch` is a statement about the CONFIG-MATERIAL provider (see
+      // `describeTargetMaterial`). Reading `from` there would refuse two legitimate callers -- a
+      // switch BACK to the session's own provider after a slot switch, and the engine's resume
+      // comparison, which passes a PERSISTED `from` beside a qualified key precisely to compare them.
+      const lookupProviderId = model.includes("/") ? sessionProviderId() : (from?.providerId ?? sessionProviderId());
+      const own = resolveUnder(model, lookupProviderId);
+      result = own instanceof WinterProviderResolutionError && slot?.ok === true ? resolveUnder(slot.modelKey, slot.providerId) : own;
+    }
     if (result instanceof WinterProviderResolutionError) return { refused: true, code: result.code, message: result.message };
     // WS-13b R6b-7: the SECOND door into a provider. Read through the getter, so a settings change
     // between the session's start and this switch is honoured with no restart and nothing rebuilt.
@@ -527,7 +601,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // `undefined` here -- no field is invented for it. `contextWindow`/`maxOutputTokens` come from the
   // descriptor when known and are otherwise omitted, exactly as the R6-H amendment states.
   const priceUsage = (modelKey: string, usage: ProviderUsage): PricedUsage | undefined => {
-    const providerId = sessionProviderId();
+    // R-6c-24: a `/`-BEARING KEY IS RESOLVED WITHOUT A PROVIDER ID -- it self-qualifies. The engine
+    // always prices the live, qualified key (`currentProviderIdentity.modelKey`), and pairing that
+    // with the session-START `sessionProviderId()` made every turn after a cross-provider switch
+    // resolve to nothing and report NO COST AT ALL. A bare key still needs the session's provider to
+    // mean anything, so it keeps it.
+    const providerId = modelKey.includes("/") ? undefined : sessionProviderId();
     const result = registry.resolve({ model: modelKey, ...(providerId !== undefined ? { provider: { providerId } } : {}) });
     if (result instanceof WinterProviderResolutionError || result.descriptor === undefined) return undefined;
     // WS-13b §1: R6-H prices a turn from the model row's `pricing` evidence -- which, for a

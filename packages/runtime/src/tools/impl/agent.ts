@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, appendFileSync } from "node:fs";
 import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
+import { AGENT_TOOL_CANONICAL_NAME } from "../../provider/slots.ts";
 import "../descriptors/agent.ts"; // self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
 import { createBackgroundTask } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared background-task runtime TaskStop/TaskOutput are built on.
@@ -25,7 +26,10 @@ import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
 
-export const AGENT_TOOL_NAME = "Agent";
+// ONE PRODUCER for the name (P6.6): `provider/slots.ts` declares it, `descriptors/agent.ts`
+// registers under it, engine.ts recognises the descriptor by it, and this executor replaces the
+// executor under it. The export stays for every existing importer.
+export const AGENT_TOOL_NAME = AGENT_TOOL_CANONICAL_NAME;
 
 // R4-8 / WS-10 §17 Open Question 1 -- CLOSED by Phase 4 Task 8 (rider 22, RULING P4-J(d)):
 // `tools/descriptors/agent.ts` no longer advertises `name` in its own `inputSchema.properties`.
@@ -352,11 +356,19 @@ export const agentExecutor: ToolExecutor = {
       handle = await ctx.session.spawnChild(req);
     } catch (err) {
       // Catches every synchronous/asynchronous failure spawnChild can produce: depth/concurrency
-      // limits (limits.ts), an unresolvable model alias (resolution.ts), a workspace-creation
-      // failure (workspace.ts, e.g. isolation:"worktree" outside a git repo), or "no child engine
-      // factory is registered" (Disclosed Gap #1, child-engine.ts's own header) -- one legible tool
-      // error, never an uncaught throw out of this executor.
-      return { output: `Error: subagent spawn failed -- ${err instanceof Error ? err.message : String(err)}`, isError: true };
+      // limits (limits.ts), an unresolvable model alias (resolution.ts), a slot that nothing this
+      // session has can serve (WS-13c §4 step 5), a workspace-creation failure (workspace.ts, e.g.
+      // isolation:"worktree" outside a git repo), or "no child engine factory is registered"
+      // (Disclosed Gap #1, child-engine.ts's own header) -- one legible tool error, never an
+      // uncaught throw out of this executor.
+      //
+      // WS-13c §3/§4 (P6.6): the CODE joins the text when the error carries one. A typed refusal
+      // whose code is dropped reads to the model as an unexplained failure, and `slot-unservable`
+      // (nothing serves it) versus `ambiguous-slot-name` (two families use that name) are two
+      // different things for the model to do next -- pick another slot, or name the family's own.
+      const code = typeof (err as { code?: unknown } | null)?.code === "string" ? (err as { code: string }).code : undefined;
+      const message = err instanceof Error ? err.message : String(err);
+      return { output: `Error: subagent spawn failed -- ${code !== undefined ? `${code}: ` : ""}${message}`, isError: true };
     }
 
     if (!fgbg.background) {

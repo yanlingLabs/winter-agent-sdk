@@ -30,6 +30,8 @@ import {
   type WireStreamEvent,
   // WS-13c §7 (P6.6): the `list_model_families` control response's payload shape.
   type ModelFamilyListing,
+  // WS-13c §3 (P6.6): the active slot set the Agent tool's `model` schema is rendered from.
+  type ActiveSlotSet,
 } from "@yanlinglabs/winter-agent-sdk";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
@@ -40,7 +42,7 @@ import {
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
+import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -51,6 +53,12 @@ import { PROVIDER_STATE_FILE_SUFFIX, type ContinuationLink, type ProviderStateRe
 // `store/continuation-attach.ts` imports nothing from here at all (its message shape is structural,
 // which is what keeps the `store/` -> `engine.ts` direction closed).
 import { createStreamFrameSink } from "./provider/stream-frames.ts";
+// WS-13c §3/§4 (P6.6 Lane A): the Agent tool's per-family `model` schema, and the slot -> provider
+// resolver a child spawn runs its requested model through. `slots.ts` has NO side effects, which is
+// why the two marker constants live there rather than in `tools/descriptors/agent.ts` — importing
+// the descriptor module for a string would register the Agent stub as a side effect of loading the
+// engine.
+import { AGENT_MODEL_SLOTS_BLOCK, AGENT_MODEL_SLOTS_MARKER, AGENT_TOOL_CANONICAL_NAME, renderAgentModelSchema, type SlotProviderResolution } from "./provider/slots.ts";
 import { attachContinuationChain } from "./store/continuation-attach.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -1127,6 +1135,11 @@ export interface EngineOptions {
    * WS-13c §7 (P6.6): the session's MODEL FAMILY listing — the active slot set plus every family
    * behind "more options".
    *
+   * TAKES THE LIVE MODEL KEY (R-6c-21), for the same reason `activeSlotSet` does: the wiring's own
+   * view of the session's model is the START model, so a listing computed without the key reports
+   * the family a session has already switched away from. Optional, so a producer that ignores it
+   * still satisfies the type.
+   *
    * A function from the WIRING for the same reason `supportedModels` is: the listing needs the
    * catalog, the session's effective model AND the credential/enablement view, none of which the
    * engine has. Absent -> the handler answers `{ active: undefined, families: [] }`, the honest
@@ -1136,7 +1149,53 @@ export interface EngineOptions {
    * Winter-only and disclosed: `Query.supportedModels()` keeps its pinned `ModelInfo[]` shape
    * unchanged, and this is a separate surface rather than a widening of it.
    */
-  listModelFamilies?: () => ModelFamilyListing;
+  listModelFamilies?: (currentModelKey?: string) => ModelFamilyListing;
+  /**
+   * WS-13c §3 (P6.6): the session's ACTIVE SLOT SET, for the model key given.
+   *
+   * TAKES THE MODEL KEY rather than reading one, and that is the whole re-render mechanism (R13c-4).
+   * The wiring's own view of the session's model is the START model (`providerWiring.resolved`);
+   * `installIdentity` updates the ENGINE's `currentModel` and never writes back, so a getter that
+   * closed over the wiring's value would keep advertising the family the session started on after a
+   * `set_model` across families — the exact "false information" D25 forbids. The engine passes
+   * `currentProviderIdentity?.modelKey ?? currentModel` and memoises on `(that key, settingsVersion())`,
+   * so all three re-render points (session start, a `set_model` that lands, a `modelSlots` change)
+   * are one comparison made at the next `providerToolSpecs()` — which happens per turn, and a turn
+   * boundary IS the quiescent boundary R13c-4 names.
+   *
+   * WHAT THIS DOES AND DOES NOT GUARANTEE (R-6c-28). The ENGINE half needs no watcher and no restart:
+   * whenever `settingsVersion()` changes, the next turn re-renders. What no part of this SDK does yet
+   * is RE-RESOLVE the settings cascade mid-session — `production-wiring.ts` resolves once and hands
+   * down a live getter, exactly as R6b-7's `providerSettings` has since WS-13b — so today the version
+   * only moves when a HOST hands down a new resolved view. Until P8's host integration does that, a
+   * `modelSlots` edit to a file is not seen by a running session. Plumbed, not yet reachable.
+   *
+   * ABSENT -> the Agent descriptor keeps its STATIC pinned enum and its description's marker block is
+   * stripped, which is what every scripted double and every pre-P6.6 fixture sees.
+   */
+  activeSlotSet?: (currentModelKey: string | undefined) => ActiveSlotSet;
+  /**
+   * WS-13c §4 (P6.6): the slot -> provider resolver, for the model key given.
+   *
+   * Consulted for a CHILD's requested model (`AgentInput.model`, `AgentDefinition.model`,
+   * `WINTER_SUBAGENT_MODEL`, and the inherited `config.model`). A refusal is THROWN out of
+   * `spawnChild` so `tools/impl/agent.ts` reports it as the tool's own typed error — never a
+   * substitution onto some other model (WS-13 §9).
+   *
+   * ABSENT -> the pre-P6.6 chain, verbatim: the requested string goes on the child unresolved.
+   */
+  resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
+  /**
+   * WS-13c §5 (P6.6): a monotonically increasing number the WIRING bumps whenever the resolved
+   * settings view changes, so a `modelSlots`/`preferredProviders` change re-renders the Agent tool at
+   * the next quiescent boundary. See `activeSlotSet` for what "the resolved view changes" requires
+   * today (a host handing one down) and what it does not (a watcher in this SDK).
+   *
+   * A NUMBER rather than the settings object, deliberately: the memo compares it, and comparing a
+   * settings OBJECT by identity would re-render on every re-resolve that changed nothing while
+   * comparing it by value would mean serialising the whole cascade once per turn.
+   */
+  settingsVersion?: () => number;
   /**
    * `account_info` is a WINTER-ONLY control subtype, disclosed.
    *
@@ -1442,6 +1501,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     classifier,
     supportedModels,
     listModelFamilies,
+    activeSlotSet,
+    resolveSlot,
+    settingsVersion,
     accountInfo,
     resolveModelSwitch,
     fallbackModels,
@@ -2309,7 +2371,64 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // registered ChildEngineDeps.spawn(). A fork copies live state (messages, by value); a
   // definition-backed (or bare) child gets the definition's own restrictions where declared, falling
   // back to this session's own current pool otherwise.
+  /**
+   * WS-13c §3/§4: the child's requested model, run through the slot resolver.
+   *
+   * THE REFUSAL IS THROWN, not swallowed and not substituted. `spawnChild` already funnels every
+   * throw into `tools/impl/agent.ts`'s one legible tool error (the unresolvable-alias path), so a
+   * `slot-unservable`/`ambiguous-slot-name` reaches the MODEL as a typed error naming what would
+   * have served it -- which is the whole point of §4 step 5. Falling back to the parent's model
+   * would be exactly the silent substitution WS-13 §9 forbids.
+   *
+   * NO RESOLVER WIRED -> the pre-P6.6 chain verbatim: the requested string goes on the child
+   * unresolved, which is what every scripted double and every pre-P6.6 fixture drives.
+   */
+  function resolveChildSlot(req: SpawnChildRequest): Pick<ChildInheritance, "model" | "slot"> {
+    const requested = resolveChildModel(req);
+    // R6-17'S RULE IS UNTOUCHED FOR EVERY NON-SLOT VALUE, and these two guards are what keep it that
+    // way. A session configured the pinned Claude-SDK way -- a BARE model id plus a configured
+    // `provider.providerId`, which R6-K explicitly supports -- has a `config.model` that is also a
+    // canonical id in the catalog. Without the guards, every DEFAULT child (no `model` on the
+    // request at all) would be re-resolved through §4, whose step 3-i puts the vendor's SUBSCRIPTION
+    // row first: the child would inherit a key qualified for a provider the parent never named,
+    // `resolveChildProvider` would probe that provider's own keychain record, and the spawn would
+    // either be refused outright or run on a different bill. WS-13c §3 is explicit that
+    // `AgentInput.model` is slot names only -- everything else keeps the semantics it had.
+    //
+    // (a) inheriting the PARENT's own model is not a slot request, whatever that string looks like
+    //     (this also covers `req.fork`, whose model is `config.model` by contract);
+    if (requested === config.model) return { model: requested };
+    const resolution = resolveSlot?.(requested, currentProviderIdentity?.modelKey ?? currentModel);
+    if (resolution === undefined) return { model: requested };
+    // (b) a BARE id that the resolver did not recognise as a slot name (a canonical id, an alias, a
+    //     provider-local id) keeps R6-17's "a bare id resolves against the parent's provider"
+    //     downstream. A qualified key still passes through -- the resolver returns it verbatim.
+    if (resolution.ok && !resolution.viaSlotName && !requested.includes("/")) return { model: requested };
+    if (!resolution.ok) {
+      // (c) `unknown-slot` IS NOT AN ERROR HERE — it is "the slot layer has nothing to say", and the
+      //     registry is still the authority. `rowsForCanonicalId` matches `canonicalModelId` only,
+      //     while `registry.resolve` also matches a row's `key`, its `upstreamId` and every entry in
+      //     `row.aliases` — so a real, resolvable id the slot layer cannot see (Anthropic's own dated
+      //     `claude-haiku-4-5-20251001`, whose row normalises to the dotted form; any alias) would be
+      //     refused for a spawn that worked before P6.6. WS-13c §3(e) says an unknown name is "the
+      //     EXISTING unresolvable-alias error" (WS-01 §6) — and the existing one is raised downstream,
+      //     after the registry has had its say, not pre-empted by a canonical-id lookup. This mirrors
+      //     `set_model`'s own precedence exactly (`session-provider.ts`).
+      if (resolution.code === "unknown-slot") return { model: requested };
+      throw new WinterProviderResolutionError(resolution.code, resolution.message);
+    }
+    // `slot` is recorded ONLY when the request actually named a slot. A full catalog key or a
+    // canonical id passes through the resolver too (an `AgentDefinition.model`, `WINTER_SUBAGENT_MODEL`,
+    // or the inherited `config.model`), and stamping the active family's name on those would make
+    // every pre-P6.6 spawn claim a slot nobody asked for -- §3 says "the slot the request named, IF
+    // it named one".
+    return { model: resolution.modelKey, ...(resolution.viaSlotName ? { slot: resolution.slot } : {}) };
+  }
+
   function buildChildInheritance(req: SpawnChildRequest): ChildInheritance {
+    // FIRST, before any policy/tool work: a refused slot must be a cheap, side-effect-free rejection,
+    // matching this spec family's own posture (WS-10 §6, child-engine.ts's depth/concurrency check).
+    const childSlot = resolveChildSlot(req);
     const parentState = policyStateStore.getState();
     const requestedMode = req.definition?.permissionMode;
     const validMode = requestedMode !== undefined && isPermissionMode(requestedMode) ? requestedMode : undefined;
@@ -2353,7 +2472,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // An intersection is also the only reading consistent with WS-10 §2 ("AgentDefinition.tools
       // RESTRICTS availability"): a restriction that can widen is not a restriction.
       tools: req.definition?.tools !== undefined ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name)) : [...currentAdvertisedCanonicalNames],
-      model: resolveChildModel(req),
+      // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
+      // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
+      // `WINTER_SUBAGENT_MODEL`, the inherited `config.model` -- passes through exactly as before.
+      ...childSlot,
       // WS-10 §3.2: AgentInput/SpawnChildRequest carry no effort field at all; definition effort
       // overrides the session's own. No session-level effort CONCEPT is surfaced on RuntimeConfig
       // anywhere in this codebase yet (a genuine WS-13/provider-layer gap, disclosed rather than
@@ -3514,7 +3636,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           // WS-13c §7: Winter-only, payload-free. The producer is wired by production-wiring.ts (Lane A) from Lane C's builder.
           if (cf.subtype === "list_model_families") {
-            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: listModelFamilies?.() ?? { active: undefined, families: [] } });
+            // R-6c-21: the LIVE model key, exactly as `providerToolSpecs()` reads it. Called bare, the
+            // producer fell back to the session's START model, so §7's switcher listed the family the
+            // session had already left -- the same "false information" D25 forbids on the enum.
+            output.write({
+              type: "control_response",
+              requestId: cf.requestId,
+              ok: true,
+              payload: listModelFamilies?.(currentProviderIdentity?.modelKey ?? currentModel) ?? { active: undefined, families: [] },
+            });
             continue;
           }
           // Winter-only, disclosed — see `EngineOptions.accountInfo` for why the pin's own surface
@@ -4164,14 +4294,63 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    * `advertisedName` is the name the MODEL sees (the alias table's own resolution), never the
    * canonical one -- a schema keyed on a name the model was not shown is a tool it cannot call.
    */
+  /**
+   * WS-13c §3 (R13c-4): the active slot set's RENDER, memoised on the two things that can change it.
+   *
+   * The three re-render points are one comparison rather than three hooks: the model key covers
+   * session start AND every `installIdentity` (a `set_model` that lands, an interrupt, a fallback),
+   * `settingsVersion()` covers a `modelSlots`/`preferredProviders` edit. `providerToolSpecs()` runs
+   * once per generation, and a turn boundary IS the quiescent boundary R13c-4 applies a model change
+   * at — so nothing has to watch anything, and a mid-turn change cannot split one turn's advertised
+   * enum from the model that turn is running on.
+   */
+  let slotRenderMemo: { key: string | undefined; version: number; render: { enum: string[]; descriptionLines: string[] } } | undefined;
+  const currentAgentModelRender = (): { enum: string[]; descriptionLines: string[] } | undefined => {
+    if (activeSlotSet === undefined) return undefined;
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    const version = settingsVersion?.() ?? 0;
+    if (slotRenderMemo === undefined || slotRenderMemo.key !== key || slotRenderMemo.version !== version) {
+      slotRenderMemo = { key, version, render: renderAgentModelSchema(activeSlotSet(key)) };
+    }
+    return slotRenderMemo.render;
+  };
+
+  /**
+   * One advertised tool as the provider request carries it.
+   *
+   * THE REGISTRY'S DESCRIPTOR IS NEVER MUTATED. The registry is process-wide and its descriptors are
+   * shared by every session in the process; rendering the Agent enum in place would make one
+   * session's family the next session's default (and a child's parent's), permanently and
+   * invisibly. The clone is per call, and the STATIC descriptor keeps the pinned four as its own
+   * default -- which is also what a session with no `activeSlotSet` wired still advertises.
+   */
+  const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
+    if (descriptor.canonicalName !== AGENT_TOOL_CANONICAL_NAME) {
+      return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
+    }
+    const render = currentAgentModelRender();
+    // An EMPTY enum is not a render: a session with no effective model to derive a family from
+    // (`own-model` with no key) would otherwise advertise a `model` property whose enum admits
+    // nothing at all. The static default stands, and the marker block comes off so the description
+    // the model reads never contains the placeholder.
+    if (render === undefined || render.enum.length === 0) {
+      return { name: descriptor.advertisedName, description: descriptor.description.replace(AGENT_MODEL_SLOTS_BLOCK, ""), inputSchema: descriptor.inputSchema as Record<string, unknown> };
+    }
+    const inputSchema = structuredClone(descriptor.inputSchema) as Record<string, unknown>;
+    const properties = (inputSchema as { properties?: Record<string, unknown> }).properties;
+    const modelProperty = properties?.["model"];
+    if (typeof modelProperty === "object" && modelProperty !== null) (modelProperty as { enum?: string[] }).enum = [...render.enum];
+    return { name: descriptor.advertisedName, description: descriptor.description.replace(AGENT_MODEL_SLOTS_MARKER, render.descriptionLines.join("\n")), inputSchema };
+  };
+
   const providerToolSpecs = (): ProviderToolSpec[] => {
     const specs: ProviderToolSpec[] = [];
     for (const descriptor of advertisedPartition.eager) {
-      specs.push({ name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> });
+      specs.push(toolSpecFor(descriptor));
     }
     for (const descriptor of advertisedPartition.deferred) {
       if (!loadedToolSet.isLoaded(descriptor.canonicalName)) continue;
-      specs.push({ name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> });
+      specs.push(toolSpecFor(descriptor));
     }
     return specs;
   };

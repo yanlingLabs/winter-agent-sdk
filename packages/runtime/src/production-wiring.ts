@@ -68,6 +68,23 @@ import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
 import { redactCredentialRef } from "./provider/selection.ts";
+// WS-13c (P6.6): the family layer. `slots.ts` is Lane A's resolver, `family-listing.ts` Lane C's
+// listing builder, `validateModelSlots` Lane B's whole-set validator -- one wiring composes all
+// three, so the Agent tool, `set_model` and the listing can never disagree about a slot.
+import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence, type SlotProviderResolution } from "./provider/slots.ts";
+import { buildModelFamilyListing } from "./provider/family-listing.ts";
+import { validateModelSlots, type ModelSlotsLookup } from "@yanlinglabs/winter-agent-sdk";
+import type { ActiveSlotSet, ModelFamilyListing, ModelSlotSetting } from "@yanlinglabs/winter-agent-sdk";
+import { rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
+
+/**
+ * The throwaway slot name the listing's `resolvesTo` probe resolves under.
+ *
+ * A one-slot CUSTOM set is how the listing reuses `resolveSlotToProvider`'s real §4 ordering instead
+ * of re-deriving it -- the name is never advertised anywhere and exists only so the probe has
+ * something to ask for.
+ */
+const LISTING_PROBE_SLOT_NAME = "probe";
 import type { PricedUsage, ProviderUsage, ResolveModelSwitch } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
@@ -380,6 +397,25 @@ export interface ProductionWiring {
     supportedModels: () => unknown[];
     /** The Winter-only `account_info` control handler's source. */
     accountInfo: () => unknown;
+    // --- WS-13c (P6.6): model families and ranked slots -----------------------------------------
+    //
+    // All four are WITHHELD for the reserved `winter-test/<name>` namespace, exactly like
+    // `resolveModelSwitch` above -- a scripted double has no catalog identity to derive a family
+    // from, and every pre-P6.6 golden is driven by such a session.
+    /** WS-13c §3: the active slot set for a given model key -- the Agent tool's `model` enum and description lines. */
+    activeSlotSet?: (currentModelKey: string | undefined) => ActiveSlotSet;
+    /** WS-13c §4: slot name -> provider + catalog key, for a child spawn and for `set_model`. */
+    resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
+    /** WS-13c §5: bumps when the resolved settings view changes, so a `modelSlots` edit re-renders with no restart. */
+    settingsVersion?: () => number;
+    /**
+     * WS-13c §7: the `list_model_families` control handler's source.
+     *
+     * The parameter is Lane A's; the spine's `EngineOptions.listModelFamilies` is `() => …`, which
+     * this is assignable to. See the producer for the one-line spine fix that makes the engine
+     * actually pass the live key.
+     */
+    listModelFamilies?: (currentModelKey?: string) => ModelFamilyListing;
     systemPromptAssembler: SystemPromptAssembler;
     commandResolver: FilesystemCommandResolver;
     compactionController: CompactionController;
@@ -472,6 +508,13 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // session. Narrowed from the wire's `Record<string, unknown>` (it arrives as JSON).
     ...(isPlainSettings(config.managedSettings) ? { managedSettings: config.managedSettings as Settings } : {}),
     ...(isPlainSettings(config.serverManagedSettings) ? { serverManagedSettings: config.serverManagedSettings as Settings } : {}),
+    // WS-13c §5 / R-6c-16: the host-declared workspace-trust bit (RULING P5-A), which is what gates
+    // an untrusted PROJECT tier's `modelSlots`/`preferredProviders`. It had no producer in
+    // production, so the gate was unreachable in a live session -- a cloned repository's
+    // `.winter/settings.json` could have mapped `cheap` to the most expensive model in the catalog.
+    // Passed here rather than derived a second time: `defaultTrustSource(config)` (below, and in
+    // engine.ts) reads exactly this field, so the two cannot disagree.
+    ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
   });
   const effective = resolved.effective;
   assertEffectiveSettings(effective, resolved);
@@ -776,11 +819,238 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // re-resolves and hands down a new view is seen at the session's next resolution and at every
     // `set_model`, with no restart and nothing rebuilt.
     providerSettings: () => providerSettingsFrom(settingsGetter()),
+    // WS-13c §4 step 6: `set_model` by slot name. Forwarded rather than passed directly because
+    // `resolveSlot` is declared BELOW and closes over `providerWiring` -- the binding it reads is
+    // initialised long before anything calls it (nothing in `buildSessionProvider`'s construction
+    // touches this field; it is read only inside `resolveModelSwitch`).
+    resolveSlot: (requested, currentModelKey) => resolveSlot(requested, currentModelKey),
     ...(opts.provider ?? {}),
   });
   if (providerWiring.resolutionError !== undefined) {
     warnings.push(
       `provider selection failed (${providerWiring.resolutionError.code}): ${providerWiring.resolutionError.message} -- this session starts, but its first generation will fail with a provider error`,
+    );
+  }
+
+  // --- (17b) WS-13c (P6.6): MODEL FAMILIES AND RANKED SLOTS -------------------------------------
+  //
+  // Everything below is a GETTER over `settingsGetter()` and the session's live model key, for the
+  // same reason the provider-enable view above is: `modelSlots` and `preferredProviders` take effect
+  // at the next quiescent boundary through the existing cascade, with nothing rebuilt and no restart
+  // of the SESSION. R-6c-28: that is the seam, not yet the end-to-end behaviour -- this module
+  // resolves settings ONCE and nothing in this SDK re-resolves them mid-session (the identical R6b-7
+  // limitation `providerSettings` has carried since WS-13b), so the version only moves when a HOST
+  // hands down a new resolved view. Closing it is P8 host integration, and it is named debt.
+
+  const slotCatalog = providerWiring.catalog;
+
+  /**
+   * WHETHER THIS SESSION HAS A SLOT SURFACE AT ALL.
+   *
+   * Withheld for the reserved `winter-test/<name>` namespace, exactly as `resolveModelSwitch` is and
+   * for the same reason: a scripted double has no catalog identity, so a slot set derived for it
+   * would be a statement about a test fixture -- and every pre-P6.6 golden is driven by exactly such
+   * a session. A REFUSED session DOES get the surface: that is how it recovers.
+   */
+  const slotSurfaceLive = providerWiring.identity !== undefined || providerWiring.resolutionError !== undefined;
+
+  /**
+   * WS-13c §4 step 2: is a credential configured for this provider?
+   *
+   * A SYNCHRONOUS ANSWER OVER AN ASYNCHRONOUS FACT, and the shape is forced: `CredentialStore.get`
+   * is async (a Keychain read), while `SlotProviderResolutionInput.hasCredential` and
+   * `ResolveModelSwitch` are both synchronous. TRI-STATE rather than boolean (R-6c-27), because the
+   * honest third answer is "nobody has looked yet":
+   *
+   *   - the SESSION's own provider -> `"present"` with no lookup at all. `describeTargetMaterial`
+   *     answers `source: "session"` for it, so the session's own material is the credential by
+   *     construction.
+   *   - a provider this session has already probed -> `"present"` / `"absent"`.
+   *   - a provider it has NOT probed -> `"unknown"`, and a probe is scheduled so the next resolution
+   *     is exact. `"absent"` would be a false claim about the user's configuration; the earlier
+   *     optimistic `true` was not a substitution (the credential is verified again downstream) but it
+   *     let a COLD subscription row take §4 step 3-i's first place from a WARM token row -- an
+   *     openai-API-key-only session's first `Agent(model: "astra")` chose `codex-oauth`, and
+   *     `set_model` reported success and failed only at the next generation. `unknown` orders after
+   *     `present` inside the same tier, which removes exactly that false success.
+   *
+   * THE PREWARM IS BOUNDED TO THE ACTIVE FAMILY'S `vendorProviders` (<=3 ids), and it is scheduled at
+   * the FIRST slot resolution rather than at session start: warming everything that could serve one
+   * active set would be a dozen Keychain reads on every startup path -- and into every test that
+   * builds a real wiring -- while warming nothing left the vendor group cold exactly where §4 leans
+   * on it hardest. The cache otherwise fills from probes this session was going to make anyway
+   * (`resolveChildProvider`'s own) plus one background read per cold provider a resolution asks about.
+   */
+  const CREDENTIAL_PRESENCE_TTL_MS = 5_000;
+  const credentialPresence = new Map<string, { present: boolean; at: number }>();
+  const credentialProbesInFlight = new Set<string>();
+  const probeCredentialPresence = async (providerId: string): Promise<boolean> => {
+    if (providerId === providerWiring.sessionProviderId()) return true;
+    const rowKey = slotCatalog.models.find((m) => m.providerId === providerId)?.key;
+    if (rowKey === undefined) return false; // a provider with no rows can serve nothing anyway
+    const resolvedRow = providerWiring.registry.resolve({ model: rowKey });
+    if (resolvedRow instanceof WinterProviderResolutionError) return false;
+    const material = providerWiring.describeTargetMaterial(resolvedRow);
+    // Only a `provider-record` target needs a store lookup; `route`/`session` material IS configured
+    // (and a keyless `local-none` provider's `{ kind: "none" }` ref is a real, sufficient answer).
+    if (material.source !== "provider-record") return true;
+    try {
+      return (await providerWiring.credentials.get(material.authRef)) !== null;
+    } catch {
+      return false; // a store that cannot answer is a store with no record to offer
+    }
+  };
+  /** Records a probe result. Called by the background refresh AND by `resolveChildProvider`, whose probe is already real and paid for. */
+  const recordCredentialPresence = (providerId: string, present: boolean): void => {
+    credentialPresence.set(providerId, { present, at: Date.now() });
+  };
+  // M-4: a probe that lands after `dispose()` must change nothing. It cannot be CANCELLED (the store
+  // API has no abort), so the session is marked disposed and every in-flight answer is discarded --
+  // which is what stops a probe scheduled by the last slot resolution writing into a cache whose
+  // session is gone, and (in a test) touching a credential store after the test that owned it ended.
+  let credentialProbesDisposed = false;
+  const refreshCredentialPresence = (providerId: string): void => {
+    if (credentialProbesDisposed || credentialProbesInFlight.has(providerId)) return;
+    credentialProbesInFlight.add(providerId);
+    void probeCredentialPresence(providerId)
+      .then((present) => {
+        if (!credentialProbesDisposed) recordCredentialPresence(providerId, present);
+      })
+      .catch(() => undefined) // a failed probe leaves the cache exactly as it was
+      .finally(() => credentialProbesInFlight.delete(providerId));
+  };
+  const credentialPresent = (providerId: string): CredentialPresence => {
+    // The SESSION's own provider is `present` SYNCHRONOUSLY and without a probe: its material is
+    // `config.provider.authRef` (or a keyless `local-none` row), which is configured by construction.
+    // Waiting for a probe to say so would leave the one provider this session certainly has in
+    // `unknown` on the first resolution -- exactly where §4's vendor group needs it most.
+    if (providerId === providerWiring.sessionProviderId()) return "present";
+    const cached = credentialPresence.get(providerId);
+    // The TTL is what keeps a mid-session credential change visible: a key stored while the session
+    // runs is seen at the next resolution rather than at the next process.
+    if (cached === undefined || Date.now() - cached.at > CREDENTIAL_PRESENCE_TTL_MS) refreshCredentialPresence(providerId);
+    return cached === undefined ? "unknown" : cached.present ? "present" : "absent";
+  };
+  /**
+   * R-6c-27: the ACTIVE family's own `vendorProviders`, probed once, the first time this session
+   * resolves a slot or paints a listing. Bounded to <=3 ids by the overlay's own shape, coalesced by
+   * `refreshCredentialPresence`, and never awaited -- the very first answer may still be `unknown`,
+   * and the tier ordering already handles that honestly.
+   */
+  let vendorPrewarmDone = false;
+  const prewarmActiveVendorProviders = (currentModelKey: string | undefined): void => {
+    if (vendorPrewarmDone) return;
+    vendorPrewarmDone = true;
+    const familyId = computeActiveSlotSet({ catalog: slotCatalog, currentModelKey: currentModelKey ?? providerWiring.resolved?.modelKey ?? config.model, customSlots: undefined }).family;
+    for (const id of slotCatalog.families.find((f) => f.id === familyId)?.vendorProviders ?? []) refreshCredentialPresence(id);
+  };
+  const providerEnabled = (providerId: string): boolean => providerSettingsFrom(settingsGetter())[providerId]?.enabled !== false;
+  const preferredProviders = (): string[] => {
+    const raw = settingsGetter()?.preferredProviders;
+    return Array.isArray(raw) ? raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0) : [];
+  };
+
+  /** WS-13c §5: the user's own four options, validated WHOLE (Lane B owns the validator; an invalid set is no set). */
+  const modelSlotsLookup: ModelSlotsLookup = {
+    rowsForCanonicalId: (id) => rowsForCanonicalId(slotCatalog, id).map((m) => ({ key: m.key, providerId: m.providerId })),
+    keyToCanonicalId: (key) => slotCatalog.models.find((m) => m.key === key)?.canonicalModelId,
+  };
+  const customSlots = (): ModelSlotSetting[] | undefined => {
+    const raw = settingsGetter()?.modelSlots;
+    if (raw === undefined) return undefined;
+    const validated = validateModelSlots(raw, modelSlotsLookup);
+    // `ok: false` is "no custom slots" here rather than a warning: the provenance record
+    // (`modelSlotsIgnored: "invalid"` / `"untrusted-project"`) belongs to the settings cascade, which
+    // sees WHICH tier the set came from -- this module sees only the resolved value.
+    return validated.ok ? validated.slots : undefined;
+  };
+
+  /**
+   * THE SESSION'S LIVE MODEL KEY, as last reported by the engine.
+   *
+   * The wiring cannot see `set_model`: `providerWiring.resolved` is the SESSION-START snapshot and
+   * `installIdentity` never writes back. But the engine passes its live key
+   * (`currentProviderIdentity?.modelKey ?? currentModel`) into `activeSlotSet` once per generation
+   * and into `resolveSlot` at every spawn, so recording it here gives every other consumer in this
+   * module the same live value with no new seam and no watcher.
+   *
+   * Closes the staleness Lane D's investigation found in `resolveChildProvider` (its report §1.6):
+   * that function judged a child's bare model id against the start snapshot, so after a mid-session
+   * `set_model` a child naming the parent's NEW model was resolved under the OLD provider.
+   */
+  let liveEngineModelKey: string | undefined;
+  const rememberEngineModelKey = (currentModelKey: string | undefined): void => {
+    if (currentModelKey !== undefined && currentModelKey.length > 0) liveEngineModelKey = currentModelKey;
+  };
+  /** The parent identity a child is judged against: the LIVE model, falling back to the start snapshot. */
+  const liveParentIdentity = (): { providerId: string; modelKey: string } | undefined => {
+    const startSnapshot = providerWiring.resolved !== undefined ? { providerId: providerWiring.resolved.providerId, modelKey: providerWiring.resolved.modelKey } : undefined;
+    if (liveEngineModelKey === undefined || liveEngineModelKey === startSnapshot?.modelKey) return startSnapshot;
+    const resolvedLive = providerWiring.registry.resolve({ model: liveEngineModelKey });
+    // An `allowUnlisted` pass-through key may not be in the catalog at all; the start snapshot is the
+    // honest fallback rather than a provider id guessed from the string.
+    return resolvedLive instanceof WinterProviderResolutionError ? startSnapshot : { providerId: resolvedLive.providerId, modelKey: resolvedLive.modelKey };
+  };
+
+  const activeSlotSet = (currentModelKey: string | undefined): ActiveSlotSet => {
+    rememberEngineModelKey(currentModelKey);
+    return computeActiveSlotSet({
+      catalog: slotCatalog,
+      // The ENGINE's live key wins; the wiring's own `resolved` is only the START model, and falling
+      // back to it after a `set_model` would advertise the family the session began on.
+      currentModelKey: currentModelKey ?? providerWiring.resolved?.modelKey ?? config.model,
+      customSlots: customSlots(),
+    });
+  };
+
+  const resolveSlot = (requested: string, currentModelKey: string | undefined): SlotProviderResolution => {
+    prewarmActiveVendorProviders(currentModelKey);
+    const custom = customSlots();
+    return resolveSlotToProvider({
+      catalog: slotCatalog,
+      active: activeSlotSet(currentModelKey),
+      requested,
+      hasCredential: credentialPresent,
+      providerEnabled,
+      preferredProviders: preferredProviders(),
+      ...(custom !== undefined ? { customSlots: custom } : {}),
+    });
+  };
+
+  /**
+   * A monotonic number that changes when the resolved settings view does (WS-13c §5's hot-reload
+   * obligation, as the engine's re-render memo consumes it).
+   *
+   * IDENTITY, not a deep compare: this module resolves settings once and hands down a live GETTER
+   * (see the file header), so a host that re-resolves hands down a NEW object and the version bumps
+   * at the engine's next turn boundary. A session whose settings never change keeps one version and
+   * the Agent tool's render is computed once.
+   *
+   * R-6c-28, stated plainly so nobody reads more into this than it does: NOTHING IN THIS SDK
+   * RE-RESOLVES `resolveSettingsDetailed` after the session starts, so in production today this
+   * returns 1 for the life of a session and an edit to `settings.json` is invisible until the next
+   * one. The engine half is correct and complete; the missing half is a settings view that can
+   * change, which is the cascade's (P8 host integration, R6b-7's precedent).
+   */
+  let settingsIdentity: Settings | undefined = settingsGetter();
+  let settingsVersionCounter = 1;
+  const settingsVersion = (): number => {
+    const current = settingsGetter();
+    if (current !== settingsIdentity) {
+      settingsIdentity = current;
+      settingsVersionCounter += 1;
+    }
+    return settingsVersionCounter;
+  };
+
+  // D25 "for now": a Claude session ignores custom slots, and the ignore is RECORDED rather than
+  // swallowed -- a user who configured four options and sees the pinned four deserves to be told
+  // why. Evaluated at session start against the session's own model; a session that later switches
+  // INTO the claude family re-renders the pinned four (the enum is always right) but does not emit a
+  // second warning, which is disclosed in this task's report rather than papered over.
+  if (slotSurfaceLive && customSlots() !== undefined && activeSlotSet(undefined).source === "claude-pinned") {
+    warnings.push(
+      "settings: `modelSlots` is configured but this session's model is a Claude model, whose Agent-tool options are pinned to fable/opus/sonnet/haiku (WS-13c D25) -- the custom set was ignored (modelSlotsIgnored: \"claude-pinned\")",
     );
   }
 
@@ -821,6 +1091,52 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       apiKeySource: providerWiring.apiKeySource,
       supportedModels: () => providerWiring.supportedModels(),
       accountInfo: () => providerWiring.accountInfo(),
+      // WS-13c (P6.6): the Agent tool's per-family render, the child/`set_model` slot resolver, the
+      // hot-reload tripwire the render memoises on, and the "more options" listing -- WITHHELD for
+      // the reserved `winter-test/<name>` namespace, exactly like `resolveModelSwitch` beside them.
+      ...(slotSurfaceLive
+        ? {
+            activeSlotSet,
+            resolveSlot,
+            settingsVersion,
+            // TAKES THE MODEL KEY (assignable to the spine's `() => ModelFamilyListing`, so no
+            // spine type changes). The spine's handler calls it with no argument today, which means
+            // a listing served after a cross-family `set_model` reports the START model's active set
+            // -- §7's switcher would list the family the session has left. The one-line spine fix is
+            // owed and recorded in this task's report: widen the option to
+            // `(currentModelKey?: string) => ModelFamilyListing` and call it with
+            // `currentProviderIdentity?.modelKey ?? currentModel`. This side is already correct.
+            listModelFamilies: (currentModelKey?: string): ModelFamilyListing => {
+              prewarmActiveVendorProviders(currentModelKey);
+              return buildModelFamilyListing({
+                catalog: slotCatalog,
+                active: activeSlotSet(currentModelKey),
+                // R-6c-27: `"present"` ONLY. §7 defines `servable` as "a credential is configured and
+                // the provider is enabled", so `unknown` is `false` -- honest by default. A cold
+                // session's first paint used to report `servable: true` for every row in the catalog,
+                // which states something nobody knows; the probe this call schedules makes the next
+                // paint accurate. The tri-state itself belongs in `ModelFamilyListing`'s row shape,
+                // which is a P7 carry (the spine's public type is not widened here).
+                servable: (providerId) => credentialPresent(providerId) === "present" && providerEnabled(providerId),
+                // THE SAME §4 ORDERING the resolver uses, expressed as a one-slot custom set rather
+                // than re-derived: a listing that showed a different first row than a `set_model`
+                // would actually reach is a listing that lies about what clicking it does.
+                resolveSlot: (canonicalModelId, provider) => {
+                  const result = resolveSlotToProvider({
+                    catalog: slotCatalog,
+                    active: { family: "", source: "custom", slots: [{ name: LISTING_PROBE_SLOT_NAME, canonicalModelId, description: "", reason: "" }] },
+                    requested: LISTING_PROBE_SLOT_NAME,
+                    hasCredential: credentialPresent,
+                    providerEnabled,
+                    preferredProviders: preferredProviders(),
+                    customSlots: [{ name: LISTING_PROBE_SLOT_NAME, model: canonicalModelId, ...(provider !== undefined ? { provider } : {}) }],
+                  });
+                  return result.ok ? { providerId: result.providerId, key: result.modelKey } : undefined;
+                },
+              });
+            },
+          }
+        : {}),
       // P6 fix wave (Rulings E-2 / E-3): the switch seam and the fallback candidates, from the SAME
       // wiring the session's own provider came from -- one resolution path, on every leg. WITHHELD
       // for the reserved `winter-test/<name>` namespace: a scripted double has no catalog to resolve a
@@ -883,7 +1199,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // second adapter and every pre-P6 child is byte-identical.
       resolveChildProvider: async (model: string) => {
         const registry = providerWiring.registry;
-        const parent = providerWiring.resolved;
+        // WS-13c (Lane D investigation §1.6): the LIVE parent, not the session-start snapshot. A
+        // mid-session `set_model` moves the session's model and provider; judging a child's bare id
+        // against the model the session STARTED on resolved it under the old provider (and made
+        // "same as the parent" compare against a model the parent had left), so a child naming the
+        // parent's new model was either mis-provisioned or refused.
+        const parent = liveParentIdentity();
         if (parent === undefined) return undefined; // a scripted double has no catalog to resolve against
         // R6-17 verbatim: a BARE id resolves against the PARENT's provider; a QUALIFIED
         // `<providerId>/<model>` key names its own. Passing the parent's id alongside a qualified key
@@ -906,6 +1227,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
           } catch {
             present = false; // a store that cannot answer is a store with no record to offer
           }
+          // WS-13c §4 step 2: this probe is real and already paid for, so the slot layer's own
+          // (synchronous) credential view learns from it -- see `credentialPresent` for why that
+          // cache exists at all and why it must never fabricate an absence.
+          recordCredentialPresence(resolvedChild.providerId, present);
           if (!present) {
             const reason = `no keychain record ${redactCredentialRef(material.authRef)} and no \`authRef\` on the child's own route (a child on another provider never inherits the parent's credential, Ruling E-1)`;
             // R-E3 (fix wave round 2): the refused child gets the DEFERRED-REFUSAL provider -- the same
@@ -951,6 +1276,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     },
     warnings,
     dispose(): void {
+      // M-4: stop scheduling credential probes and ignore whatever is still in flight -- see
+      // `refreshCredentialPresence`.
+      credentialProbesDisposed = true;
       clearSkillSessionRuntime(skillRuntimeKey);
       clearPluginAgents(config.sessionId);
     },
