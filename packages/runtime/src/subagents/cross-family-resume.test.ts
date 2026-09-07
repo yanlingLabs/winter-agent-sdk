@@ -170,6 +170,123 @@ describe("WS-13c §8: SendMessage across families -- the child's own record is a
     expect(modelInfo(handle).effectiveProvider).toBe("openai");
   });
 
+  test("I1 (Fix round 1, review repro 4): a successful re-resolution onto a DIFFERENT provider than recorded is a typed refusal, never a silent substitution", async () => {
+    // Not a WS13c-SM* named case -- a permanent regression test for a review finding (I1): a
+    // resolver that returns a genuinely SUCCESSFUL resolution (no `refused`, not `undefined`) for
+    // the child's own recorded model, but onto a DIFFERENT provider id than the one recorded at
+    // spawn, must never be trusted unconditionally. Before this fix: `resumed_and_delivered`, the
+    // substituted provider served the resume, and `record.model.effectiveProvider` was silently
+    // rewritten out from under its own history -- inert only because today's production resolver is
+    // deterministic over a session-start snapshot (see the report's §1.6/I1 finding); once that
+    // snapshot is made live, a bare-id resolution after a parent `set_model` reaches exactly this
+    // branch for real.
+    const fakeA = createScriptedProviderFake(); // deps.provider -- irrelevant to this cross-provider child
+    const fakeB = createScriptedProviderFake(); // the CHILD's own resolved provider at spawn (anthropic)
+    const fakeD = createScriptedProviderFake(); // what the resolver maps the SAME model onto by resume time (bedrock) -- must never be reached
+    const model = "anthropic/claude-sonnet-5";
+    let mapToBedrock = false;
+    const deps: ChildEngineFactoryDeps = {
+      provider: fakeA,
+      env: {},
+      resolveChildProvider: (requested) => {
+        if (requested !== model) return undefined;
+        return mapToBedrock
+          ? { provider: fakeD, identity: { providerId: "bedrock", modelKey: model, family: "claude" } }
+          : { provider: fakeB, identity: { providerId: "anthropic", modelKey: model, family: "claude" } };
+      },
+    };
+
+    const handle = await spawnAndSettle(deps, baseReq({ model }), baseInherit({ model }));
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+    expect(fakeB.callCount()).toBe(1);
+
+    mapToBedrock = true; // the resolver now maps this SAME recorded model onto a different provider
+    const outcome = await handle.resume(fakeMessage("second turn"));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") {
+      expect(outcome.retryable).toBe(false);
+      expect(outcome.reason).toContain("child-provider-unavailable");
+      expect(outcome.reason).toContain("anthropic");
+      expect(outcome.reason).toContain("bedrock");
+    }
+    // No substitution: the record is UNCHANGED, and the substituted provider never served anything.
+    expect(handle.status()).toBe("completed");
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+    expect(fakeD.callCount()).toBe(0);
+    expect(fakeB.callCount()).toBe(1);
+  });
+
+  test("I1's mirror: a successful re-resolution onto the SAME recorded provider (recovery after an at-spawn refusal) is honoured, not refused", async () => {
+    // The guard above must not make every successful re-resolution suspect -- only a provider-id
+    // MISMATCH refuses. A child refused at spawn under Ruling E-1 still records the target it was
+    // refused for (`childProvider.identity` on the refused branch); once that credential exists again,
+    // resume's re-resolution matches the recorded id and must recover onto a real adapter.
+    const fakeRefused = createScriptedProviderFake(); // never actually called -- the deferred-refusal provider throws if invoked
+    const fakeRecovered = createScriptedProviderFake(); // the SAME provider id, now servable
+    const model = "anthropic/claude-sonnet-5";
+    const identity: ChildProviderIdentity = { providerId: "anthropic", modelKey: model, family: "claude" };
+    let credentialPresent = false;
+    const deps: ChildEngineFactoryDeps = {
+      provider: createScriptedProviderFake(),
+      env: {},
+      resolveChildProvider: (requested) => {
+        if (requested !== model) return undefined;
+        if (!credentialPresent) {
+          return {
+            refused: { providerId: "anthropic", modelKey: model, reason: "no credential yet" },
+            provider: {
+              async generate(): Promise<never> {
+                throw new Error("the deferred-refusal provider must never actually be called");
+              },
+            },
+            identity,
+          };
+        }
+        return { provider: fakeRecovered, identity };
+      },
+    };
+
+    const handle = await spawnAndSettle(deps, baseReq({ model }), baseInherit({ model }));
+    // A refused-at-spawn child still records the target identity (childProvider.identity is set on
+    // the refused branch too) -- its own first generation settles immediately (the deferred-refusal
+    // provider's `generate` throws, caught by `startGeneration`'s own `.catch`, settling "failed").
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+
+    credentialPresent = true; // the credential now exists
+    const outcome = await handle.resume(fakeMessage("second turn"));
+    expect(outcome.status).toBe("resumed_and_delivered");
+    await waitUntil(() => handle.status() === "completed");
+    expect(fakeRecovered.callCount()).toBe(1);
+    expect(fakeRefused.callCount()).toBe(0);
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+  });
+
+  test("Fix round 1 (coordinator follow-up): recordModelEffort stamps BOTH effectiveProvider and slot from the child's own materialised identity, and omits both keys entirely when absent", async () => {
+    const fakeA = createScriptedProviderFake();
+    const fakeWithSlot = await spawnAndSettle(
+      { provider: fakeA, env: {} },
+      baseReq(),
+      baseInherit({
+        provider: { providerId: "openai", modelKey: "gpt-5.6-luna", family: "gpt" },
+        slot: { family: "gpt", name: "luna", source: "family-default" },
+      }),
+    );
+    expect(modelInfo(fakeWithSlot).effectiveProvider).toBe("openai");
+    expect(modelInfo(fakeWithSlot).slot).toEqual({ family: "gpt", name: "luna", source: "family-default" });
+
+    const fakeB = createScriptedProviderFake();
+    const withoutSlot = await spawnAndSettle(
+      { provider: fakeB, env: {} },
+      baseReq(),
+      baseInherit({ provider: { providerId: "openai", modelKey: "gpt-5.6-luna", family: "gpt" } }), // no `slot`
+    );
+    expect(modelInfo(withoutSlot).effectiveProvider).toBe("openai"); // identity alone is still recorded
+    // The spine's own JSON round-trip rule (resolution.ts's `recordModelEffort`): an unset field is a
+    // genuinely ABSENT key, never a `slot: undefined` that would disagree with a fresh parse of the
+    // same record from its durable sidecar.
+    expect(Object.hasOwn(modelInfo(withoutSlot), "slot")).toBe(false);
+  });
+
   test("WS13c-SM3: a child whose provider lost its credential is a typed refusal on resume, never the parent's provider (a REFUSED re-resolution)", async () => {
     const fakeA = createScriptedProviderFake();
     const fakeB = createScriptedProviderFake();
@@ -223,16 +340,17 @@ describe("WS-13c §8: SendMessage across families -- the child's own record is a
     const deps: ChildEngineFactoryDeps = {
       provider: fakeA,
       env: {},
-      // The parent's OWN identity, DIFFERENT from the child's ("anthropic") -- if resume ever fell
-      // back onto `deps.provider` here it would be a silent substitution onto the parent's family.
-      parentIdentity: { providerId: "openai", modelKey: "gpt-5.6-terra", family: "gpt" },
       resolveChildProvider: (requested) => {
         if (requested !== model) return undefined;
         return resolvable ? { provider: fakeB, identity } : undefined; // "cannot be resolved at all" once false
       },
     };
 
-    const handle = await spawnAndSettle(deps, baseReq({ model }), baseInherit({ model }));
+    // Fix round 1 (I2): the parent's OWN identity, DIFFERENT from the child's ("anthropic"), through
+    // `inherit.provider` -- the PRODUCTION source (R6-17, engine.ts:2405's live `buildChildInheritance`
+    // read), not the deleted `deps.parentIdentity` override. If resume ever fell back onto
+    // `deps.provider` here it would be a silent substitution onto the parent's family.
+    const handle = await spawnAndSettle(deps, baseReq({ model }), baseInherit({ model, provider: { providerId: "openai", modelKey: "gpt-5.6-terra", family: "gpt" } }));
     expect(fakeB.callCount()).toBe(1);
 
     resolvable = false;
@@ -257,10 +375,12 @@ describe("WS-13c §8: SendMessage across families -- the child's own record is a
       // No `resolveChildProvider` at all -- the exact bug this lane's report investigates: today,
       // pre-fix, `childProvider` stays `undefined` here and every generation reads `deps.provider`
       // fresh, forever, with nothing pinning it to what was true at spawn.
-      parentIdentity: { providerId: "openai", modelKey: "gpt-5.6-terra", family: "gpt" },
     };
 
-    const handle = await spawnAndSettle(deps, baseReq(), baseInherit());
+    // Fix round 1 (I2): the identity comes from `inherit.provider` -- the PRODUCTION source
+    // (R6-17, engine.ts:2405) -- never the deleted `deps.parentIdentity` override, so this is the
+    // ONE test in this file that exercises the exact path a real spawned session uses.
+    const handle = await spawnAndSettle(deps, baseReq(), baseInherit({ provider: { providerId: "openai", modelKey: "gpt-5.6-terra", family: "gpt" } }));
     expect(fakeA.callCount()).toBe(1);
     expect(modelInfo(handle).effectiveProvider).toBe("openai");
 

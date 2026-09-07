@@ -165,19 +165,6 @@ export interface ChildEngineFactoryDeps {
    */
   warn?: (line: string) => void;
   /**
-   * P6.6 (WS-13c §8, Lane D Task 5): an override for the PARENT's identity at spawn, for a caller
-   * that builds a `ChildEngineRunContext`/`ChildInheritance` by hand with no live engine behind it
-   * (a test double, chiefly).
-   *
-   * Production should not need to set this: `ChildInheritance.provider` (R6-17, `inherit.provider`
-   * below) is `buildChildInheritance`'s own read of the parent's LIVE `currentProviderIdentity`
-   * (engine.ts), taken fresh at the moment of THIS spawn -- it already reflects any `set_model` that
-   * landed before this child existed, with no new wiring required. This field wins over it ONLY when
-   * supplied, which today is nothing in `main.ts`/`testing.ts`/`production-wiring.ts` -- see this
-   * lane's own report on whether wiring it there is still worth doing.
-   */
-  parentIdentity?: ChildProviderIdentity;
-  /**
    * Phase 6 Task 10 (R6-17): THE CHILD'S OWN PROVIDER.
    *
    * `AgentDefinition.model` is a real per-child model selection, and until this seam existed a child
@@ -375,12 +362,20 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // ASYNC since the fix wave (Ruling E-1): a child on ANOTHER provider than the parent's has its
     // own credential probed before the spawn commits to it, and a probe is a store read.
     const childResolution = await deps.resolveChildProvider?.(resolvedModel.effectiveModel);
-    // P6.6 (WS-13c §8): the parent's identity AT THIS SPAWN -- see `ChildEngineFactoryDeps.
-    // parentIdentity`'s own doc for why `inherit.provider` (an existing field, not a new accessor)
-    // is the production source. Captured ONCE, here, and reused verbatim by `resume()` below --
+    // P6.6 (WS-13c §8): the parent's identity AT THIS SPAWN. `inherit.provider` (R6-17, an EXISTING
+    // field -- `ChildInheritance.provider`, child-handle.ts) is `buildChildInheritance`'s own read of
+    // the parent's LIVE `currentProviderIdentity` (engine.ts:2405), taken fresh at the moment of THIS
+    // spawn -- it already reflects any `set_model` that landed before this child existed, with no new
+    // wiring required. Fix round 1 (I2): a `deps.parentIdentity` override used to sit in front of
+    // this with `deps.parentIdentity ?? inherit.provider` -- backwards precedence for an unwired,
+    // untested field (a future construction-time wiring of it would silently SHADOW the live value
+    // on every spawn, exactly the "a second source can only lie or drift" the ruling names) -- and
+    // was deleted rather than reordered: nothing needs a second source when the live one already
+    // covers every production spawn and is proven to (cross-family-resume.test.ts's own
+    // production-source cases). Captured ONCE, here, and reused verbatim by `resume()` below --
     // WS-13c §8 compares against what was true when this child was BORN, never against whatever the
     // parent is doing by the time it resumes.
-    const parentIdentityAtSpawn: ChildProviderIdentity | undefined = deps.parentIdentity ?? inherit.provider;
+    const parentIdentityAtSpawn: ChildProviderIdentity | undefined = inherit.provider;
     // P6.6 (WS-13c §8, Lane D Task 5 -- the investigation this lane's own report opens with):
     // `childProvider` is now ALWAYS materialised, never left `undefined`. Before this fix, a
     // "same-provider" child (the final `else` branch below) recorded NO identity of its own at all,
@@ -393,10 +388,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // model) would move an already-spawned child's resume() silently. Freezing `{provider, identity}`
     // into this OBJECT now is what makes `resume()` immune to that: the object keeps its OWN
     // reference regardless of what `deps.provider` is reassigned to afterward (proven in this lane's
-    // own cross-family-resume.test.ts's same-provider case). `.identity` stays `undefined` -- never
-    // a fabricated `{providerId: "", ...}` sentinel -- when neither `deps.parentIdentity` nor
-    // `inherit.provider` exists, so a pre-R6-17 caller or a bare test double still records no
-    // `effectiveProvider` at all: byte-identical to every child spawned before this change.
+    // own cross-family-resume.test.ts's same-provider case). `.identity` stays `undefined` -- never a
+    // fabricated `{providerId: "", ...}` sentinel -- when `inherit.provider` does not exist, so a
+    // pre-R6-17 caller or a bare test double still records no `effectiveProvider` at all:
+    // byte-identical to every child spawned before this change (Fix round 1, I2's own "must refuse,
+    // never synthesise" instruction: this stays `undefined`, so `resume()` below has NOTHING to
+    // contradict and proceeds unrefused -- see the `if (again === undefined)` branch's own comment).
     let childProvider: { provider: Provider; identity: ChildProviderIdentity | undefined };
     if (childResolution !== undefined && "refused" in childResolution) {
       // RULING E-1 / R-E3: never the parent's provider. Both the operator and the host are told, in
@@ -809,11 +806,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // `childProvider` is resolved once, above, from `resolvedModel.effectiveModel`.
         //
         // P6.6 (WS-13c §8): `childProvider.identity` alone now covers both the cross-provider AND
-        // the same-provider case -- it is materialised from `parentIdentityAtSpawn`, which already
-        // prefers `deps.parentIdentity` over `inherit.provider`, so the second half of this ternary
-        // is UNREACHABLE now (`childProvider.identity === undefined` only happens when
-        // `parentIdentityAtSpawn` itself was `undefined`, which requires `inherit.provider` to have
-        // ALSO been `undefined`). Kept verbatim, not simplified away, because
+        // the same-provider case -- it is materialised from `parentIdentityAtSpawn`, which (Fix
+        // round 1, I2) IS `inherit.provider` now, nothing else. So the second half of this ternary
+        // is UNREACHABLE (`childProvider.identity === undefined` only happens when `inherit.provider`
+        // was itself `undefined` -- the exact condition the second half re-checks). Kept verbatim,
+        // not simplified away, because
         // `provider/seam-contracts-p6.test.ts`'s own "R6-17 contract" describe block asserts this
         // EXACT substring against this file's source text as a deliberate placeholder pin ("a
         // structural check here is what keeps the thread from being quietly deleted in the
@@ -1068,7 +1065,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // transcript read) runs, so a refusal here is cheap and side-effect-free exactly like a
         // rejected spawn (this file's own spawn-time header comment).
         //
-        // Three outcomes `again` can carry:
+        // Four outcomes `again` can carry (a fifth, THROWN, is Fix round 1 (m4) below):
         //  - a REFUSAL: the resolver actively probed this child's own target and found no
         //    credential for it (Ruling E-1) -- authoritative on its own, refused regardless of what
         //    the parent is doing, since a refusal only ever names a model genuinely different from
@@ -1081,10 +1078,48 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         //    child that used to resolve onto its OWN provider no longer does, and nothing here can
         //    tell whether that is a genuine credential loss or a coincidental re-convergence -- WS-13c
         //    §8's "never a substitution" makes refusal the only safe reading.
+        //
+        //    Fix round 1 (I3): `parentIdentityAtSpawn` is the parent's identity AT THIS CHILD'S OWN
+        //    SPAWN, not a live read -- by construction, since nothing on this run context exposes the
+        //    parent's CURRENT identity to an already-spawned handle (only `inherit.provider`, taken
+        //    once, at spawn, exists at all). Today's `production-wiring.ts` resolver compares against
+        //    ITS OWN session-start snapshot too, so the two staleness's agree and this never
+        //    misfires. THE MOMENT `production-wiring.ts`'s `resolveChildProvider` is made to compare
+        //    against the parent's LIVE identity instead (the §1.6 fix this lane's own report flags
+        //    for Lane A) -- a narrow sub-case breaks: a parent whose `set_model` lands on EXACTLY this
+        //    child's own model key makes the resolver return `undefined` (its own "same as the parent
+        //    now" contract), while THIS comparison still measures against the parent's identity from
+        //    BEFORE that switch -- refusing a child whose provider is perfectly available. Fail-closed
+        //    (never a substitution), so not unsafe, but it is a false refusal inside the very
+        //    conformance row this task exists to satisfy. The real fix is Lane A's: give
+        //    `resolveChildProvider` a THIRD, distinguishable answer for "unresolvable" that does not
+        //    overload the same `undefined` "matches the parent" already carries -- not arithmetic this
+        //    branch can do with the information it currently receives.
         //  - a fresh, successful resolution: re-resolved cleanly under the child's own recorded
         //    model; the closure's own `childProvider` is refreshed so `startGeneration` below (and
-        //    any LATER resume) reads the fresh adapter, and the sidecar is updated to match.
-        const again = await deps.resolveChildProvider?.(record.model.effectiveModel);
+        //    any LATER resume) reads the fresh adapter, and the sidecar is updated to match --
+        //    PROVIDED (Fix round 1, I1) the resolved provider id still MATCHES the recorded one: see
+        //    the `else` branch below for why trusting it unconditionally was a silent substitution.
+        let again: ChildProviderResolution | undefined;
+        try {
+          again = await deps.resolveChildProvider?.(record.model.effectiveModel);
+        } catch (err) {
+          // Fix round 1 (m4): unlike `checkAndRegisterSpawn` twenty lines below, this call was
+          // unguarded -- a throw here escaped `resume()` entirely, past its own `Promise<
+          // DeliveryOutcome>` contract, and reached `messaging/router.ts`'s generic catch, which
+          // reports `delivery_uncertain` ("the effect may have already happened"). That is provably
+          // FALSE at this point: nothing stateful (checkAndRegisterSpawn, the transcript read,
+          // startGeneration) has run yet. Production's resolver does not throw today
+          // (`production-wiring.ts` catches its own store errors), so this was latent, not observed
+          // -- caught here anyway, since the method's own contract is a typed outcome, never a throw.
+          const reason = err instanceof Error ? err.message : String(err);
+          return {
+            status: "unavailable",
+            messageId: msg.messageId,
+            retryable: false,
+            reason: `child-provider-unavailable: re-resolution failed for ${record.model.effectiveModel} (${reason})`,
+          };
+        }
         if (again !== undefined && "refused" in again) {
           const { providerId, modelKey, reason } = again.refused;
           return {
@@ -1106,6 +1141,23 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           }
           // Else: no recorded identity to contradict, or it still agrees with the parent's identity
           // at this child's own spawn -- proceed on the already-frozen `childProvider.provider`.
+        } else if (record.model.effectiveProvider !== undefined && again.identity.providerId !== record.model.effectiveProvider) {
+          // Fix round 1 (I1, CRITICAL per review): the other half of WS-13c §8's own sentence.
+          // Before this guard, a SUCCESSFUL re-resolution was trusted unconditionally -- but
+          // "successful" only means "the resolver returned SOME adapter for this model," never "the
+          // SAME provider the child was recorded against." A resolver that maps this child's own
+          // recorded model onto a DIFFERENT provider on resume (a bare-id resolution against a now
+          // -live, switched parent baseline -- exactly what Lane A's §1.6 fix will make reachable,
+          // per the report's own finding) would otherwise run the resume on the substituted adapter
+          // and silently rewrite `record.model.effectiveProvider` out from under its own history.
+          // Recorded absent (never resolved before, e.g. a same-provider child whose FIRST real
+          // resolution happens on resume) is not a mismatch -- there is nothing yet to contradict.
+          return {
+            status: "unavailable",
+            messageId: msg.messageId,
+            retryable: false,
+            reason: `child-provider-unavailable: recorded ${record.model.effectiveProvider}, the resolver now maps ${record.model.effectiveModel} onto ${again.identity.providerId}`,
+          };
         } else {
           childProvider = { provider: again.provider, identity: again.identity };
           record.model = { ...record.model, effectiveProvider: again.identity.providerId };
