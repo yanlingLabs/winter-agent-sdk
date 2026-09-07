@@ -1,7 +1,7 @@
 import { test, expect, spyOn, describe } from "bun:test";
 import { query, type QueryInternal } from "./query.ts";
 import type { Options } from "./options.ts";
-import { ResultError, WinterRpcError } from "./errors.ts";
+import { ResultError, WinterRpcError, InvalidBrandError } from "./errors.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, testProviderByName } from "winter-agent-runtime";
 import type { Provider, ProviderTurn } from "winter-agent-runtime";
@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { PermissionMode, PermissionResult, PermissionRequestPayload, HookInvocationPayload, HookInput, HookJSONOutput } from "./permissions/types.ts";
 import type { ModelFamilyListing } from "./protocol/config.ts";
+// P7a spine, Step 2 (D19): the brand profile the wrapper resolves onto every `--config-json`.
+import { WINTER_BRAND } from "./brand.ts";
 // Phase 5 Task 2: the P5 session-option constants (see this file's own P5 block at the bottom).
 import {
   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
@@ -1822,4 +1824,136 @@ test("R6-F: an ordinary error result keeps its pre-P6 message, byte-identical", 
     threw = err as Error;
   }
   expect(threw!.message).toBe("result error: error_during_execution");
+});
+
+// ================================================================================================
+// P7a spine, Step 2 (D19): `Options.brand` -> `RuntimeConfig.brand`.
+//
+// The scripted double is the whole proof surface here: `brand` is not observable anywhere else in
+// this package (nothing the wrapper does with it changes a frame), so what has to be pinned is that
+// the FULL resolved profile reaches `--config-json` — including for a session that never mentioned
+// the option, which is the case a "conditional spread like every other field" implementation would
+// silently get wrong.
+// ================================================================================================
+
+test("P7a: an unbranded session still carries the FULL resolved Winter profile on the wire", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  // Unconditional, unlike every other optional option: the runtime never defaults a missing brand
+  // (protocol/config.ts's own field comment), so an absent key would be a session with no names.
+  expect(capture.get()["brand"]).toEqual(WINTER_BRAND);
+});
+
+test("P7a: a partial brand folds onto Winter's defaults and the WHOLE profile rides the wire", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      brand: { productName: "Acme", homeDirName: ".acme", projectDirName: ".acme", envPrefix: "ACME_", codexOriginator: "acme", mcpServerName: "acme" },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+  const brand = capture.get()["brand"] as Record<string, unknown>;
+  expect(brand["productName"]).toBe("Acme");
+  expect(brand["homeDirName"]).toBe(".acme");
+  expect(brand["envPrefix"]).toBe("ACME_");
+  expect(brand["mcpServerName"]).toBe("acme");
+  // Not supplied -> Winter's, and PRESENT: the runtime reads the profile as a whole, so a folded
+  // profile that dropped its un-overridden fields would leave the child with holes to guess at.
+  expect(brand["packageName"]).toBe(WINTER_BRAND.packageName);
+  expect(brand["instructionsFile"]).toBe(WINTER_BRAND.instructionsFile);
+  expect(brand["presetName"]).toBe(WINTER_BRAND.presetName);
+  expect(brand["tempRootName"]).toBe(WINTER_BRAND.tempRootName);
+  expect(brand["pluginManifestDir"]).toBe(WINTER_BRAND.pluginManifestDir);
+  expect(Object.keys(brand).sort()).toEqual(Object.keys(WINTER_BRAND).sort());
+});
+
+test("P7a: an invalid brand is a typed InvalidBrandError thrown SYNCHRONOUSLY from query(), naming the field", () => {
+  // Synchronous, like the two sessionStore rejections: nothing spawns, nothing is yielded, and the
+  // host learns at construction rather than on the first `for await`.
+  let threw: unknown;
+  try {
+    query({ prompt: "ping", options: { brand: { envPrefix: "acme" }, spawnClaudeCodeProcess: () => inMemoryProcess([]) } });
+  } catch (err) {
+    threw = err;
+  }
+  expect(threw).toBeInstanceOf(InvalidBrandError);
+  expect((threw as InvalidBrandError).code).toBe("invalid_brand");
+  expect((threw as InvalidBrandError).reason).toContain("envPrefix");
+  expect((threw as Error).message).toContain("invalid_brand");
+});
+
+test("P7a: a first-party codexOriginator is refused at query() — the impersonation rule reaches the option", () => {
+  expect(() => query({ prompt: "ping", options: { brand: { codexOriginator: "anthropic" }, spawnClaudeCodeProcess: () => inMemoryProcess([]) } })).toThrow(InvalidBrandError);
+});
+
+test("P7a: the DEPRECATED keychainService option wins over brand.keychainService, and the loss is warned about", async () => {
+  const warned: string[] = [];
+  const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    warned.push(args.join(" "));
+  });
+  try {
+    const capture = captureConfigJson();
+    for await (const _msg of query({
+      prompt: "ping",
+      options: { keychainService: "com.acme.core.dev", brand: { keychainService: "com.acme.core" }, spawnClaudeCodeProcess: capture.hook },
+    })) {
+      /* drain */
+    }
+    const config = capture.get();
+    // BOTH surfaces agree — the fold is what makes that true, so a runtime reading either one gets
+    // the same service.
+    expect(config["keychainService"]).toBe("com.acme.core.dev");
+    expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core.dev");
+    expect(warned.some((w) => w.includes("keychainService") && w.includes("com.acme.core.dev") && w.includes("com.acme.core"))).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("P7a: setting BOTH keychain services to the SAME value warns about nothing", async () => {
+  const warned: string[] = [];
+  const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    warned.push(args.join(" "));
+  });
+  try {
+    const capture = captureConfigJson();
+    for await (const _msg of query({
+      prompt: "ping",
+      options: { keychainService: "com.acme.core", brand: { keychainService: "com.acme.core" }, spawnClaudeCodeProcess: capture.hook },
+    })) {
+      /* drain */
+    }
+    expect((capture.get()["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core");
+    expect(warned.filter((w) => w.includes("keychainService"))).toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("P7a: brand.keychainService ALONE reaches the profile, and leaves the deprecated wire key absent", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { brand: { keychainService: "com.acme.core" }, spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core");
+  // The deprecated key stays an "unset option = absent wire key" field: a host that has moved to
+  // the profile does not start emitting the old one.
+  expect("keychainService" in config).toBe(false);
+});
+
+test("P7a: query() cannot be made to mutate WINTER_BRAND through the profile it hands the wire", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { keychainService: "com.acme.core", spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  // The fold assigns into the resolved profile; if resolveBrand returned the frozen singleton this
+  // would either throw or corrupt every later session in the process.
+  expect(WINTER_BRAND.keychainService).toBe("com.winter.core");
+  expect((capture.get()["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core");
 });

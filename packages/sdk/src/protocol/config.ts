@@ -13,6 +13,10 @@
 // serialize-only posture. The runtime engine (a later task) is the actual consumer.
 import type { HookSource } from "../permissions/types.ts";
 import type { SettingSource } from "../settings/types.ts";
+// P7a (D19): the resolved brand profile rides `RuntimeConfig.brand` — declared in brand.ts (the one
+// module allowed to spell Winter's own names) and imported here as a TYPE only, so config.ts stays
+// the shape contract it has always been and never a second source of default values.
+import type { BrandProfile } from "../brand.ts";
 
 // --- Phase 5 Task 2 (WS-11; derived-shapes-p5.md items (b)/(c)/(d)/(e)) ---------------------------
 //
@@ -444,6 +448,24 @@ export interface RuntimeConfig {
   keychainService?: string;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;
+  /**
+   * P7a (D19): the RESOLVED brand profile — every Winter-owned name this session runs under.
+   *
+   * ALWAYS the full profile, never a partial and never absent from a config `query()` built: the
+   * WRAPPER resolves (`resolveBrand(Options.brand)`, validated at construction), and the runtime
+   * NEVER defaults. That asymmetry is the whole design — a runtime that filled in Winter's own
+   * names when the field was missing would silently un-brand a reuser's session on any path that
+   * forgot to thread it, which is exactly the failure the profile exists to make impossible.
+   *
+   * Optional on the TYPE only, for the configs this repository hand-builds in tests and for a
+   * pre-P7a wire message; a runtime reader that finds it absent is reading a config no `query()`
+   * produced and should say so rather than substituting.
+   *
+   * `keychainService` above is the DEPRECATED standalone alias for `brand.keychainService` (P6's
+   * own R6-10 field). The wrapper folds it: when the host sets it, its value is what lands in
+   * `brand.keychainService` too, so the two can never disagree on the wire.
+   */
+  brand?: BrandProfile;
 }
 
 // --- Phase 6 Task 2 (WS-13 §4/§6, rulings R6-9/R6-10/R6-11/R6-E/R6-H): the provider-layer types ---

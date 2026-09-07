@@ -34,6 +34,13 @@ export type { McpServerConfig, McpSdkServerConfigWithInstance, McpServerToolPoli
 export { isWinterMcpServerInstance } from "./options.ts";
 export type { WinterMcpServerInstance } from "./options.ts";
 export type { WireMcpToolDefinition } from "./protocol/config.ts";
+// P7a (D19): THE BRAND PROFILE. Exported from the package index that owns it, values and types
+// together — a host writing `Options.brand` needs `BrandProfile` to type its own profile,
+// `WINTER_BRAND` to read a default it is not overriding, `resolveBrand` to validate one before
+// constructing a query, and the three derivation helpers to spell the names its own integration
+// code needs (an env var, an mcp tool name, a User-Agent) exactly the way Winter spells them.
+export { WINTER_BRAND, BRAND_TOKEN_RE, FIRST_PARTY_ORIGINATORS, resolveBrand, envName, mcpToolName, userAgent } from "./brand.ts";
+export type { BrandProfile, BrandValidation } from "./brand.ts";
 export {
   WinterSDKError,
   CLIConnectionError,
@@ -44,6 +51,7 @@ export {
   SessionNotFoundError,
   WinterRpcError,
   WinterRpcTimeoutError,
+  InvalidBrandError,
 } from "./errors.ts";
 
 // The pinned process seam (WS-04 §8) — byte-level SpawnedRuntimeProcess handle, shared by the real

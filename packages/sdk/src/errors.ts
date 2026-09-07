@@ -64,6 +64,23 @@ export class SessionNotFoundError extends WinterSDKError {
   }
 }
 
+// P7a (D19): `Options.brand` failed validation at `query()` construction.
+//
+// A NAMED CLASS RATHER THAN A PLAIN `Error`, unlike the two `sessionStore` combination rejections
+// above it in query(): those deliberately mirror a PINNED upstream behaviour (a named subclass
+// there would be stricter than the pin, a divergence). `brand` has no pinned counterpart at all —
+// it is a disclosed Winter option — so nothing is being mirrored, and a host that wants to
+// distinguish "my brand profile is malformed" from "my option combination is unsupported" should
+// be able to. `code` is the stable, string-comparable discriminator (the same convention
+// WinterRpcError uses); `reason` is brand.ts's own message, naming the offending field.
+export class InvalidBrandError extends WinterSDKError {
+  readonly code = "invalid_brand";
+  constructor(public readonly reason: string) {
+    super(`invalid_brand: ${reason}`);
+    this.name = "InvalidBrandError";
+  }
+}
+
 // Task 2 (WS-04 §3.1): the control-RPC bridge's typed rejection for a `control_response{ok:false}`
 // — both directions (runtime's createRpcBridge answering a runtime-originated request; query.ts's
 // own host-originated pendingHostRequests correlation) throw this SAME class rather than each

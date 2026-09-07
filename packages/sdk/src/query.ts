@@ -17,7 +17,8 @@ import type {
   HookInvocationPayload,
 } from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
-import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError } from "./errors.ts";
+import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError, InvalidBrandError } from "./errors.ts";
+import { resolveBrand } from "./brand.ts";
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
 // catch-all for lossless pass-through of unknown message kinds, Task 5). The SDK's public surface
@@ -426,6 +427,32 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     throw new Error("enableFileCheckpointing is not yet supported with sessionStore (backup blobs are not mirrored, so rewindFiles() fails after a store-backed resume).");
   }
 
+  // --- P7a (D19): resolve and validate the BRAND PROFILE ------------------------------------------
+  //
+  // AFTER the two rejections above, deliberately: their relative order is itself pinned and tested
+  // ("VALIDATION ORDER is observable"), so a new check goes behind them rather than between them.
+  //
+  // THE WRAPPER RESOLVES; THE RUNTIME NEVER DEFAULTS (protocol/config.ts's own `brand` comment).
+  // Every config this function builds carries the FULL profile, so a spawned or compiled child
+  // derives its home dir, env names, keychain service, preset name and MCP server name from the
+  // same object the wrapper used. A host that passes no `brand` gets `WINTER_BRAND` — identical to
+  // every session before this option existed.
+  const brandResolution = resolveBrand(options.brand);
+  if (!brandResolution.ok) throw new InvalidBrandError(brandResolution.reason);
+  const brand = brandResolution.brand;
+  // The DEPRECATED standalone alias wins (it predates the profile, and existing hosts pass it), and
+  // the losing value is never silent: a host that sets BOTH to different services is told which one
+  // is on the wire. Setting both to the SAME value is not a mistake and warns about nothing.
+  if (options.keychainService !== undefined) {
+    if (options.brand?.keychainService !== undefined && options.brand.keychainService !== options.keychainService) {
+      console.error(
+        `winter: both 'keychainService' (${options.keychainService}) and 'brand.keychainService' (${options.brand.keychainService}) are set and differ — ` +
+          `the deprecated 'keychainService' option wins. Set only 'brand.keychainService'.`,
+      );
+    }
+    brand.keychainService = options.keychainService;
+  }
+
   // Task 10: computed once, ahead of `config`, so it can be conditionally spread into it below.
   const runtimeHooksConfig = buildRuntimeHooksConfig(options.hooks);
   // Phase 4 Task 2: same "computed once, ahead of `config`" convention, for the identical reason —
@@ -523,6 +550,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.keychainService !== undefined ? { keychainService: options.keychainService } : {}),
     ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
     ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
+    // P7a (D19): UNCONDITIONAL, unlike every conditional spread above it. `brand` is not an
+    // "unset option = absent wire key" field: the runtime never defaults it (see this file's own
+    // resolution block and protocol/config.ts's `brand` comment), so an absent key would mean a
+    // session with NO brand at all rather than "a Winter-branded one".
+    brand,
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote
