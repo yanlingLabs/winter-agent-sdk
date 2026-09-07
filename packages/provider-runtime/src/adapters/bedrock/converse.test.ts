@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderMessageLike, TurnRequest } from "../../types.ts";
 import { bedrockErrorCode, buildConverseBody, mapBedrockEffort, normalizeBedrockError, toBedrockMessages } from "./converse.ts";
 
@@ -7,8 +8,13 @@ import { bedrockErrorCode, buildConverseBody, mapBedrockEffort, normalizeBedrock
 // server involved; the LIVE-REQUEST assertions (the ground truth for what a provider was asked) live
 // in the conformance package's corpus, where a fake records them.
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 function descriptor(overrides: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor {
-  return {
+  return stampRow({
     key: "bedrock/test-model",
     providerId: "bedrock",
     upstreamId: "test-model",
@@ -22,7 +28,7 @@ function descriptor(overrides: Partial<WinterModelDescriptor> = {}): WinterModel
     unsupportedParameters: [],
     status: "experimental",
     ...overrides,
-  };
+  });
 }
 
 const reasoningDescriptor = descriptor({

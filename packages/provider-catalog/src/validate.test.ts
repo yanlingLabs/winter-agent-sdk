@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_VOCABULARIES, loadCatalog, scanForSecrets, validateCatalog } from "./index.ts";
+import { CATALOG_VOCABULARIES, CLAUDE_RESERVED_SLOT_NAMES, loadCatalog, rowsForCanonicalId, scanForSecrets, SLOT_NAME_RE, stampFamilyFields, validateCatalog } from "./index.ts";
 import catalogSchema from "../schema/catalog.schema.json" with { type: "json" };
-import type { CatalogValidationError, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
+import type { CatalogValidationError, FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
 
 // A minimal, VALID catalog every negative case mutates one field of. Building the negatives by
 // mutation (rather than by hand-writing each broken document) is what keeps a test from passing
@@ -28,8 +28,11 @@ function baseProvider(over: Partial<WinterProviderDescriptor> = {}): WinterProvi
   };
 }
 
-function baseModel(over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor {
-  return {
+// WS-13c: the two derived family fields are stamped by the SAME `stampFamilyFields` the pipeline
+// uses, never hand-typed — a fixture that spelled them itself would be a second implementation of
+// the normaliser, and the first thing to drift away from the real one.
+function baseModel(over: Partial<WinterModelDescriptor> = {}, families: readonly ModelFamilyDescriptor[] = []): WinterModelDescriptor {
+  const row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId"> & { modelFamily?: string; canonicalModelId?: string } = {
     key: "acme/m1",
     providerId: "acme",
     upstreamId: "m1",
@@ -44,17 +47,56 @@ function baseModel(over: Partial<WinterModelDescriptor> = {}): WinterModelDescri
     status: "candidate",
     ...over,
   };
+  return stampFamilyFields([row], families)[0]!;
 }
 
 function baseCatalog(over: Partial<WinterCatalog> = {}): WinterCatalog {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     catalogVersion: "0.0.0-test",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [baseProvider()],
     models: [baseModel()],
+    // EMPTY by default, and every pre-WS-13c case keeps it that way. `families` is required but a
+    // family is not: the validator only pins the `claude` reservation when a `claude` family is
+    // actually present, because the upstream layer's own standalone check and every fixture below
+    // legitimately carry none.
+    families: [],
     ...over,
   };
+}
+
+/**
+ * A catalog WITH families — the WS-13c cases' fixture, and the only one whose model rows exist to
+ * satisfy slots.
+ *
+ * Separate from `baseCatalog()` rather than folded into it: `slot-model-missing` makes every slot a
+ * claim about the `models` array, and dozens of existing negative cases replace `models` wholesale.
+ * Putting families on the shared base would have made those cases fail for a second, unrelated
+ * reason — the exact defect `expectRejected`'s needle argument exists to catch.
+ */
+function validCatalog(): WinterCatalog {
+  const slot = (name: string, canonicalModelId: string): FamilySlot => ({
+    name, canonicalModelId, description: `the ${name} option`, reason: `it holds the ${name} position`, basis: "winter-curated", citation: "spec:WS-13c §9", status: "candidate",
+  });
+  const families: ModelFamilyDescriptor[] = [
+    {
+      id: "claude", displayName: "Claude", vendor: "Anthropic", vendorProviders: ["acme"],
+      matchers: [{ pattern: "^claude-", note: "" }], status: "candidate", citation: "spec:WS-13c §9",
+      slots: CLAUDE_RESERVED_SLOT_NAMES.map((n) => slot(n, `claude-${n}-5`)),
+    },
+    {
+      id: "gpt", displayName: "GPT", vendor: "OpenAI", vendorProviders: ["acme"],
+      matchers: [{ pattern: "^gpt-(?!oss)", note: "" }], status: "candidate", citation: "spec:WS-13c §9",
+      slots: [slot("astra", "gpt-6-astra"), slot("luna", "gpt-5.6-luna")],
+    },
+  ];
+  const models = [
+    ...CLAUDE_RESERVED_SLOT_NAMES.map((n) => baseModel({ key: `acme/claude-${n}-5`, upstreamId: `claude-${n}-5`, displayName: `Claude ${n} 5` }, families)),
+    baseModel({ key: "acme/gpt-6-astra", upstreamId: "gpt-6-astra", displayName: "GPT-6 Astra" }, families),
+    baseModel({ key: "acme/gpt-5.6-luna", upstreamId: "gpt-5.6-luna", displayName: "GPT-5.6 Luna" }, families),
+  ];
+  return baseCatalog({ models, families });
 }
 
 /** Asserts the catalog is rejected AND that at least one message mentions `needle` — a rejection for the wrong reason is not a pass. */
@@ -277,7 +319,7 @@ describe("scanForSecrets — descriptors never contain secrets (WS-13 §6, R6-10
 describe("the COMMITTED catalog", () => {
   test("loadCatalog() resolves the bundled JSON module (never a filesystem read) and it validates", () => {
     const catalog = loadCatalog();
-    expect(catalog.schemaVersion).toBe(1);
+    expect(catalog.schemaVersion).toBe(2);
     expect(catalog.providers.length).toBeGreaterThan(0);
     expect(catalog.models.length).toBeGreaterThan(0);
   });
@@ -400,6 +442,10 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
     ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],
+    // WS-13c §2's two slot vocabularies, on the same footing as every other closed set here.
+    ["slotBases", "$defs.FamilySlot.properties.basis"],
+    ["slotStatuses", "$defs.FamilySlot.properties.status"],
+    ["familyStatuses", "$defs.ModelFamilyDescriptor.properties.status"],
   ];
 
   test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
@@ -413,6 +459,15 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
   test("every vocabulary is covered — a new one cannot be added without a parity case", () => {
     const covered: string[] = cases.map(([name]) => name).sort();
     expect(covered).toEqual(Object.keys(CATALOG_VOCABULARIES).sort());
+  });
+
+  // Enums are not the only cross-language surface WS-13c added. `FamilySlot.name` is the one place
+  // the schema restates a GRAMMAR the validator owns, and it was a hand-copied string: a widened
+  // `SLOT_NAME_RE` would have left the schema refusing names the validator accepts, discovered by
+  // whoever is furthest from the change (fix r1, M-2).
+  test("the schema's slot-name pattern IS `SLOT_NAME_RE`, not a hand-copy of it", () => {
+    const pattern = (schema as { $defs: { FamilySlot: { properties: { name: { pattern?: string } } } } }).$defs.FamilySlot.properties.name.pattern;
+    expect(pattern).toBe(SLOT_NAME_RE.source);
   });
 });
 
@@ -535,5 +590,76 @@ describe("WS-13b §1: rows are evidence", () => {
     // validator that rejected every `identityHeaders` value, which is a different bug.
     const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk" } })] });
     expect(validateCatalog(catalog).ok).toBe(true);
+  });
+});
+
+// --- WS-13c §1 (R13c-3): the family layer's own integrity, enforced by the validator ---------------
+//
+// Every rule below is one the CATALOG must satisfy and that nothing else can catch: the JSON Schema
+// is never executed in this repo, and a reviewer reading `overlay/families.json` cannot see that a
+// slot points at a model row nobody ships. The Claude reservation in particular is D25's "no false
+// information" rule made mechanical — an OpenAI session must never be offered `fable`.
+describe("WS-13c families (schemaVersion 2)", () => {
+  test("a catalog without `families` fails with code families-missing", () => {
+    const c = validCatalog(); delete (c as { families?: unknown }).families;
+    const r = validateCatalog(c); expect(r.ok).toBe(false);
+    expect(!r.ok && r.errors.some((e) => e.code === "families-missing")).toBe(true);
+  });
+  test("the claude family must carry exactly fable, opus, sonnet, haiku in that order", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "claude")!.slots.reverse();
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "claude-slots-pinned")).toBe(true);
+  });
+  test("a reserved Claude name on another family is refused", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.name = "opus";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-name-reserved")).toBe(true);
+  });
+  test("a slot whose canonical model has no row is refused", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.canonicalModelId = "gpt-9-nowhere";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-model-missing")).toBe(true);
+  });
+  test("five slots, duplicate names, a bad token, a currency amount, a bad family id", () => {
+    const c = validCatalog(); const gpt = c.families.find((f) => f.id === "gpt")!;
+    gpt.slots = [...gpt.slots, ...gpt.slots, gpt.slots[0]!]; // 5 with duplicates
+    let r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slots-too-many")).toBe(true);
+    expect(!r.ok && r.errors.some((e) => e.code === "slot-name-duplicate")).toBe(true);
+    const d = validCatalog(); d.families.find((f) => f.id === "gpt")!.slots[0]!.name = "Astra"; r = validateCatalog(d); expect(!r.ok && r.errors.some((e) => e.code === "slot-name-invalid")).toBe(true);
+    const e = validCatalog(); e.families.find((f) => f.id === "gpt")!.slots[0]!.description = "costs $10 per 1M"; r = validateCatalog(e); expect(!r.ok && r.errors.some((e2) => e2.code === "slot-description-currency")).toBe(true);
+    const g = validCatalog(); g.families.find((f) => f.id === "gpt")!.id = "GPT"; r = validateCatalog(g); expect(!r.ok && r.errors.some((e2) => e2.code === "invalid" && e2.path.endsWith(".id"))).toBe(true);
+    const h = validCatalog(); h.families.push({ ...h.families[1]!, slots: [] }); r = validateCatalog(h); expect(!r.ok && r.errors.some((e2) => e2.code === "family-id-duplicate")).toBe(true);
+  });
+  test("every model row carries modelFamily and canonicalModelId, and modelFamily names a family or other", () => {
+    const c = validCatalog(); (c.models[0] as { modelFamily: string }).modelFamily = "nope";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "model-family-unknown")).toBe(true);
+    const d = validCatalog(); delete (d.models[0] as { canonicalModelId?: string }).canonicalModelId;
+    expect(validateCatalog(d).ok).toBe(false);
+    const errs = validateCatalog(d); expect(!errs.ok && errs.errors.some((e) => e.code === "model-canonical-missing")).toBe(true);
+  });
+  test("a slot whose only rows serve neither chat nor responses is refused (fix r1 I-3: ONE predicate)", () => {
+    // The validator's slot check and `rowsForCanonicalId` were two different predicates — the
+    // validator asked only about `status`. A slot backed solely by an embeddings row therefore
+    // VALIDATED and resolved to nothing, making "the catalog validated, so every slot has a
+    // candidate row" false exactly where §4 step 1 relies on it.
+    const c = validCatalog();
+    for (const row of c.models) if (row.canonicalModelId === "gpt-6-astra") row.endpoints = ["embeddings"];
+    const r = validateCatalog(c);
+    expect(!r.ok && r.errors.some((e) => e.code === "slot-model-missing")).toBe(true);
+    // ...and the two agree: the resolver sees no candidate either.
+    expect(rowsForCanonicalId(c, "gpt-6-astra")).toEqual([]);
+  });
+
+  test("a slot `provider` that serves no row with that canonical id is refused", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.provider = "nobody";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-provider-unserving")).toBe(true);
+  });
+  test("schemaVersion 1 is refused outright — the family fields are not optional", () => {
+    const c = validCatalog() as unknown as { schemaVersion: number };
+    c.schemaVersion = 1;
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "schema-version")).toBe(true);
+  });
+  test("a family with NO claude entry validates — the reservation is conditional, not a presence rule", () => {
+    // The upstream layer's own standalone check and every pre-WS-13c fixture carry `families: []`.
+    // Requiring `claude` would have made the validator refuse the very documents this repo already
+    // hands it, so the pin is "IF a claude family exists, its slots are exactly the four, in order".
+    expect(validateCatalog(baseCatalog()).ok).toBe(true);
   });
 });

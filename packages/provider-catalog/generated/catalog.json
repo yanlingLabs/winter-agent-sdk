@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "catalogVersion": "v3.8.50+winter.1",
   "upstream": {
     "tag": "v3.8.50",
@@ -6111,7 +6111,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8",
+      "modelFamily": "claude"
     },
     {
       "key": "agentrouter/claude-opus-5",
@@ -6162,7 +6164,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
     },
     {
       "key": "agentrouter/gpt-5.6-sol",
@@ -6213,7 +6217,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
     },
     {
       "key": "agnes/agnes-1.5-flash",
@@ -6272,7 +6278,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "agnes-1.5-flash",
+      "modelFamily": "other"
     },
     {
       "key": "agnes/agnes-2.0-flash",
@@ -6342,7 +6350,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "agnes-2.0-flash",
+      "modelFamily": "other"
     },
     {
       "key": "agnes/agnes-2.5-flash",
@@ -6412,7 +6422,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "agnes-2.5-flash",
+      "modelFamily": "other"
     },
     {
       "key": "aihorde/aphrodite/TheDrummer/Cydonia-24B-v4.3",
@@ -6467,7 +6479,9 @@
         "tool_choice",
         "parallel_tool_calls"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "thedrummer/cydonia-24b-v4.3",
+      "modelFamily": "other"
     },
     {
       "key": "aihorde/aphrodite/TheDrummer/Skyfall-31B-v4.2",
@@ -6522,7 +6536,9 @@
         "tool_choice",
         "parallel_tool_calls"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "thedrummer/skyfall-31b-v4.2",
+      "modelFamily": "other"
     },
     {
       "key": "aimlapi/claude-3-5-sonnet-20241022",
@@ -6566,7 +6582,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-3.5-sonnet-20241022",
+      "modelFamily": "claude"
     },
     {
       "key": "aimlapi/deepseek-chat",
@@ -6610,7 +6628,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-chat",
+      "modelFamily": "deepseek"
     },
     {
       "key": "aimlapi/gemini-1.5-pro",
@@ -6654,7 +6674,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-1.5-pro",
+      "modelFamily": "gemini"
     },
     {
       "key": "aimlapi/gpt-4o",
@@ -6698,7 +6720,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o",
+      "modelFamily": "gpt"
     },
     {
       "key": "aimlapi/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
@@ -6742,7 +6766,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "meta-llama-3.1-70b-instruct-turbo",
+      "modelFamily": "other"
     },
     {
       "key": "aimlapi/mistral-large-latest",
@@ -6786,7 +6812,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-large-latest",
+      "modelFamily": "mistral"
     },
     {
       "key": "alibaba-cn/deepseek-v4-flash",
@@ -6830,7 +6858,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "alibaba-cn/deepseek-v4-pro",
@@ -6874,7 +6904,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "alibaba-cn/glm-5.2",
@@ -6918,7 +6950,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "alibaba-cn/glm-5.2-fast-preview",
@@ -6962,7 +6996,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2-fast-preview",
+      "modelFamily": "glm"
     },
     {
       "key": "alibaba-cn/kimi-k2.7-code",
@@ -7006,7 +7042,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "alibaba-cn/qwen3.5-122b-a10b",
@@ -7050,7 +7088,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-122b-a10b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.5-397b-a17b",
@@ -7094,7 +7134,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.5-plus",
@@ -7138,7 +7180,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.6-27b",
@@ -7182,7 +7226,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.6-35b-a3b",
@@ -7226,7 +7272,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-35b-a3b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.6-plus",
@@ -7270,7 +7318,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.7-max",
@@ -7314,7 +7364,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.7-plus",
@@ -7358,7 +7410,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba-cn/qwen3.8-max",
@@ -7402,7 +7456,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.8-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/deepseek-v4-flash",
@@ -7446,7 +7502,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "alibaba/deepseek-v4-pro",
@@ -7490,7 +7548,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "alibaba/glm-5.2",
@@ -7534,7 +7594,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "alibaba/glm-5.2-fast-preview",
@@ -7578,7 +7640,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2-fast-preview",
+      "modelFamily": "glm"
     },
     {
       "key": "alibaba/kimi-k2.7-code",
@@ -7622,7 +7686,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "alibaba/qwen3.5-122b-a10b",
@@ -7666,7 +7732,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-122b-a10b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.5-397b-a17b",
@@ -7710,7 +7778,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.5-plus",
@@ -7754,7 +7824,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.6-27b",
@@ -7798,7 +7870,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.6-35b-a3b",
@@ -7842,7 +7916,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-35b-a3b",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.6-plus",
@@ -7886,7 +7962,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.7-max",
@@ -7930,7 +8008,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.7-plus",
@@ -7974,7 +8054,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "alibaba/qwen3.8-max",
@@ -8018,7 +8100,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.8-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "ant-ling/Ling-2.6-1T",
@@ -8062,7 +8146,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ling-2.6-1t",
+      "modelFamily": "other"
     },
     {
       "key": "ant-ling/Ling-2.6-flash",
@@ -8106,7 +8192,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ling-2.6-flash",
+      "modelFamily": "other"
     },
     {
       "key": "ant-ling/Ring-2.6-1T",
@@ -8150,7 +8238,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ring-2.6-1t",
+      "modelFamily": "other"
     },
     {
       "key": "anthropic/claude-fable-5",
@@ -8205,7 +8295,9 @@
         "top_p",
         "top_k"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-haiku-4-5-20251001",
@@ -8268,7 +8360,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5-20251001",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-haiku-4.5",
@@ -8319,7 +8413,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-opus-4.5",
@@ -8370,7 +8466,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-opus-4.6",
@@ -8421,7 +8519,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-opus-4.7",
@@ -8476,7 +8576,9 @@
         "top_p",
         "top_k"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.7",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-opus-4.8",
@@ -8531,7 +8633,9 @@
         "top_p",
         "top_k"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-opus-5",
@@ -8678,7 +8782,9 @@
         "top_p",
         "top_k"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-sonnet-4.5",
@@ -8729,7 +8835,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-sonnet-4.6",
@@ -8780,7 +8888,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "anthropic/claude-sonnet-5",
@@ -8920,7 +9030,9 @@
         "top_p",
         "top_k"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-5",
+      "modelFamily": "claude"
     },
     {
       "key": "api-airforce/anthropic/claude-3.7-sonnet",
@@ -8978,7 +9090,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-3.7-sonnet",
+      "modelFamily": "claude"
     },
     {
       "key": "api-airforce/deepseek/deepseek-v3",
@@ -9036,7 +9150,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3",
+      "modelFamily": "deepseek"
     },
     {
       "key": "api-airforce/google/gemini-2.5-flash",
@@ -9094,7 +9210,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.5-flash",
+      "modelFamily": "gemini"
     },
     {
       "key": "api-airforce/moonshot/kimi-k2.6",
@@ -9152,7 +9270,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "api-airforce/qwen/qwen3-32b",
@@ -9210,7 +9330,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-32b",
+      "modelFamily": "qwen"
     },
     {
       "key": "api-airforce/x-ai/grok-2-1212",
@@ -9268,7 +9390,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-2-1212",
+      "modelFamily": "grok"
     },
     {
       "key": "api-airforce/x-ai/grok-3",
@@ -9326,7 +9450,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-3",
+      "modelFamily": "grok"
     },
     {
       "key": "arcee-ai/trinity-large-thinking",
@@ -9370,7 +9496,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "trinity-large-thinking",
+      "modelFamily": "other"
     },
     {
       "key": "azure-openai/gpt-4.1",
@@ -9413,7 +9541,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "experimental",
+      "canonicalModelId": "gpt-4.1",
+      "modelFamily": "gpt"
     },
     {
       "key": "baichuan/Baichuan3-Turbo",
@@ -9464,7 +9594,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "baichuan3-turbo",
+      "modelFamily": "other"
     },
     {
       "key": "baichuan/Baichuan3-Turbo-128k",
@@ -9515,7 +9647,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "baichuan3-turbo-128k",
+      "modelFamily": "other"
     },
     {
       "key": "baichuan/Baichuan4",
@@ -9559,7 +9693,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "baichuan4",
+      "modelFamily": "other"
     },
     {
       "key": "baichuan/Baichuan4-Air",
@@ -9610,7 +9746,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "baichuan4-air",
+      "modelFamily": "other"
     },
     {
       "key": "baichuan/Baichuan4-Turbo",
@@ -9661,7 +9799,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "baichuan4-turbo",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-3.5-8k",
@@ -9712,7 +9852,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-3.5-8k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.0-8k",
@@ -9756,7 +9898,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.0-8k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.0-turbo-128k",
@@ -9807,7 +9951,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.0-turbo-128k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.0-turbo-8k",
@@ -9858,7 +10004,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.0-turbo-8k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.5-0.3b",
@@ -9909,7 +10057,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.5-0.3b",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.5-21b-a3b",
@@ -9960,7 +10110,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.5-21b-a3b",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.5-turbo-128k",
@@ -10011,7 +10163,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.5-turbo-128k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.5-turbo-32k",
@@ -10062,7 +10216,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.5-turbo-32k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-4.5-turbo-vl",
@@ -10113,7 +10269,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-4.5-turbo-vl",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-5.0",
@@ -10164,7 +10322,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-5.0",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-5.1",
@@ -10215,7 +10375,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-5.1",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-lite-8k",
@@ -10266,7 +10428,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-lite-8k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-speed-128k",
@@ -10317,7 +10481,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-speed-128k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-speed-8k",
@@ -10368,7 +10534,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-speed-8k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-tiny-8k",
@@ -10419,7 +10587,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-tiny-8k",
+      "modelFamily": "other"
     },
     {
       "key": "baidu/ernie-x1.1",
@@ -10470,7 +10640,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-x1.1",
+      "modelFamily": "other"
     },
     {
       "key": "bazaarlink/auto:free",
@@ -10514,7 +10686,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "auto:free",
+      "modelFamily": "other"
     },
     {
       "key": "bazaarlink/claude-haiku-4.5",
@@ -10558,7 +10732,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "bazaarlink/claude-opus-4.7",
@@ -10602,7 +10778,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.7",
+      "modelFamily": "claude"
     },
     {
       "key": "bazaarlink/claude-sonnet-4.6",
@@ -10646,7 +10824,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "bazaarlink/deepseek-v3.2",
@@ -10690,7 +10870,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3.2",
+      "modelFamily": "deepseek"
     },
     {
       "key": "bazaarlink/gemini-3-flash-preview",
@@ -10734,7 +10916,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3-flash-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "bazaarlink/gemini-3.1-flash-lite-preview",
@@ -10778,7 +10962,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-flash-lite-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "bazaarlink/gemini-3.1-pro-preview",
@@ -10822,7 +11008,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-pro-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "bazaarlink/gemma-4-26b-a4b-it",
@@ -10866,7 +11054,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-4-26b-a4b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "bazaarlink/gemma-4-31b-it",
@@ -10910,7 +11100,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-4-31b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "bazaarlink/glm-5",
@@ -10954,7 +11146,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
     },
     {
       "key": "bazaarlink/glm-5.1",
@@ -10998,7 +11192,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "bazaarlink/gpt-5.4",
@@ -11042,7 +11238,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4",
+      "modelFamily": "gpt"
     },
     {
       "key": "bazaarlink/gpt-5.4-mini",
@@ -11086,7 +11284,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "bazaarlink/gpt-5.4-nano",
@@ -11130,7 +11330,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-nano",
+      "modelFamily": "gpt"
     },
     {
       "key": "bazaarlink/gpt-5.5",
@@ -11174,7 +11376,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.5",
+      "modelFamily": "gpt"
     },
     {
       "key": "bazaarlink/grok-4.20",
@@ -11218,7 +11422,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.20",
+      "modelFamily": "grok"
     },
     {
       "key": "bazaarlink/grok-4.3",
@@ -11262,7 +11468,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.3",
+      "modelFamily": "grok"
     },
     {
       "key": "bazaarlink/kimi-k2.5",
@@ -11306,7 +11514,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.5",
+      "modelFamily": "kimi"
     },
     {
       "key": "bazaarlink/kimi-k2.6",
@@ -11350,7 +11560,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "bazaarlink/llama-3.3-70b-instruct",
@@ -11394,7 +11606,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-70b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "bazaarlink/llama-4-maverick",
@@ -11438,7 +11652,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-4-maverick",
+      "modelFamily": "llama"
     },
     {
       "key": "bazaarlink/llama-4-scout",
@@ -11482,7 +11698,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-4-scout",
+      "modelFamily": "llama"
     },
     {
       "key": "bazaarlink/mimo-v2.5",
@@ -11526,7 +11744,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mimo-v2.5",
+      "modelFamily": "other"
     },
     {
       "key": "bazaarlink/mimo-v2.5-pro",
@@ -11570,7 +11790,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mimo-v2.5-pro",
+      "modelFamily": "other"
     },
     {
       "key": "bazaarlink/minimax-m2.5",
@@ -11614,7 +11836,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5",
+      "modelFamily": "minimax"
     },
     {
       "key": "bazaarlink/minimax-m2.7",
@@ -11658,7 +11882,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "bazaarlink/minimax-m3",
@@ -11710,7 +11936,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "bazaarlink/mistral-large-2512",
@@ -11754,7 +11982,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-large-2512",
+      "modelFamily": "mistral"
     },
     {
       "key": "bazaarlink/mistral-medium-3.1",
@@ -11798,7 +12028,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-medium-3.1",
+      "modelFamily": "mistral"
     },
     {
       "key": "bazaarlink/mistral-small-2603",
@@ -11842,7 +12074,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-small-2603",
+      "modelFamily": "mistral"
     },
     {
       "key": "bazaarlink/nemotron-3-super-120b-a12b",
@@ -11886,7 +12120,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-super-120b-a12b",
+      "modelFamily": "other"
     },
     {
       "key": "bazaarlink/qwen3.6-plus",
@@ -11930,7 +12166,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -11972,7 +12210,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-3.5-sonnet-20241022",
+      "modelFamily": "claude"
     },
     {
       "key": "bedrock/anthropic.claude-haiku-4-5",
@@ -12024,7 +12264,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "bedrock/anthropic.claude-opus-4-6",
@@ -12076,7 +12318,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "bedrock/anthropic.claude-opus-4-7",
@@ -12128,7 +12372,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.7",
+      "modelFamily": "claude"
     },
     {
       "key": "bedrock/anthropic.claude-sonnet-4-5",
@@ -12180,7 +12426,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "bedrock/anthropic.claude-sonnet-4-6",
@@ -12232,7 +12480,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "bedrock/openai.gpt-oss-120b-1:0",
@@ -12283,7 +12533,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "blackbox/claude-fable-5",
@@ -12327,7 +12579,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5",
+      "modelFamily": "claude"
     },
     {
       "key": "blackbox/claude-opus-4.8",
@@ -12371,7 +12625,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8",
+      "modelFamily": "claude"
     },
     {
       "key": "blackbox/claude-sonnet-4.6",
@@ -12415,7 +12671,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "blackbox/claude-sonnet-5",
@@ -12459,7 +12717,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-5",
+      "modelFamily": "claude"
     },
     {
       "key": "blackbox/deepseek-v4-flash",
@@ -12503,7 +12763,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "blackbox/gpt-5.3-codex",
@@ -12547,7 +12809,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.3-codex",
+      "modelFamily": "gpt"
     },
     {
       "key": "blackbox/gpt-5.4",
@@ -12591,7 +12855,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4",
+      "modelFamily": "gpt"
     },
     {
       "key": "blackbox/gpt-5.4-nano",
@@ -12635,7 +12901,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-nano",
+      "modelFamily": "gpt"
     },
     {
       "key": "blackbox/gpt-5.4-pro",
@@ -12679,7 +12947,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-pro",
+      "modelFamily": "gpt"
     },
     {
       "key": "blackbox/gpt-5.5",
@@ -12723,7 +12993,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.5",
+      "modelFamily": "gpt"
     },
     {
       "key": "blackbox/grok-4.3",
@@ -12767,7 +13039,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.3",
+      "modelFamily": "grok"
     },
     {
       "key": "bluesminds/claude-haiku-4-5",
@@ -12818,7 +13092,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "bluesminds/claude-opus-4-5",
@@ -12869,7 +13145,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "bluesminds/claude-sonnet-4-5",
@@ -12920,7 +13198,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "bluesminds/deepseek-chat",
@@ -12971,7 +13251,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-chat",
+      "modelFamily": "deepseek"
     },
     {
       "key": "bluesminds/deepseek-reasoner",
@@ -13033,7 +13315,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-reasoner",
+      "modelFamily": "deepseek"
     },
     {
       "key": "bluesminds/gemini-2.0-flash",
@@ -13084,7 +13368,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.0-flash",
+      "modelFamily": "gemini"
     },
     {
       "key": "bluesminds/gemini-2.0-flash-exp",
@@ -13135,7 +13421,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.0-flash-exp",
+      "modelFamily": "gemini"
     },
     {
       "key": "bluesminds/gemini-2.5-pro",
@@ -13186,7 +13474,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.5-pro",
+      "modelFamily": "gemini"
     },
     {
       "key": "bluesminds/glm-4-flash",
@@ -13237,7 +13527,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4-flash",
+      "modelFamily": "glm"
     },
     {
       "key": "bluesminds/glm-4.7",
@@ -13288,7 +13580,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "bluesminds/gpt-4.1",
@@ -13339,7 +13633,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1",
+      "modelFamily": "gpt"
     },
     {
       "key": "bluesminds/gpt-4.1-mini",
@@ -13390,7 +13686,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "bluesminds/gpt-4.1-nano",
@@ -13441,7 +13739,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1-nano",
+      "modelFamily": "gpt"
     },
     {
       "key": "bluesminds/gpt-4o",
@@ -13492,7 +13792,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o",
+      "modelFamily": "gpt"
     },
     {
       "key": "bluesminds/gpt-4o-mini",
@@ -13543,7 +13845,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "bluesminds/grok-3",
@@ -13594,7 +13898,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-3",
+      "modelFamily": "grok"
     },
     {
       "key": "bluesminds/kimi-k2",
@@ -13645,7 +13951,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2",
+      "modelFamily": "kimi"
     },
     {
       "key": "bluesminds/kimi-k2-thinking",
@@ -13696,7 +14004,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2-thinking",
+      "modelFamily": "kimi"
     },
     {
       "key": "bluesminds/minimax-m2.5",
@@ -13747,7 +14057,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5",
+      "modelFamily": "minimax"
     },
     {
       "key": "bluesminds/qwen-max",
@@ -13798,7 +14110,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "bluesminds/qwen-plus",
@@ -13849,7 +14163,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "bluesminds/qwen-turbo",
@@ -13900,7 +14216,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen-turbo",
+      "modelFamily": "qwen"
     },
     {
       "key": "byteplus/glm-4.7",
@@ -13951,7 +14269,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "byteplus/gpt-oss-120b",
@@ -14002,7 +14322,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "byteplus/kimi-k2-thinking",
@@ -14064,7 +14386,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2-thinking",
+      "modelFamily": "kimi"
     },
     {
       "key": "byteplus/seed-2.0",
@@ -14115,7 +14439,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "seed-2.0",
+      "modelFamily": "other"
     },
     {
       "key": "cerebras/gemma-4-31b",
@@ -14159,7 +14485,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-4-31b",
+      "modelFamily": "gemma"
     },
     {
       "key": "cerebras/gpt-oss-120b",
@@ -14203,7 +14531,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "cerebras/zai-glm-4.7",
@@ -14247,7 +14577,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "charm-hyper/hyper/auto",
@@ -14291,7 +14623,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hyper/auto",
+      "modelFamily": "other"
     },
     {
       "key": "chutes/Qwen2.5-72B-Instruct",
@@ -14335,7 +14669,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen2.5-72b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "cline/x-ai/grok-4.5",
@@ -14390,7 +14726,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.5",
+      "modelFamily": "grok"
     },
     {
       "key": "cline/z-ai/glm-5.2",
@@ -14459,7 +14797,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "clinepass/cline-pass/glm-5.2",
@@ -14528,7 +14868,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "clinepass/cline-pass/minimax-m3",
@@ -14583,7 +14925,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "clova-studio/HCX-005",
@@ -14627,7 +14971,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hcx-005",
+      "modelFamily": "other"
     },
     {
       "key": "clova-studio/HCX-007",
@@ -14671,7 +15017,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hcx-007",
+      "modelFamily": "other"
     },
     {
       "key": "codex-oauth/gpt-5.6-sol",
@@ -14773,7 +15121,9 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
     },
     {
       "key": "codex-oauth/gpt-6-astra",
@@ -14880,7 +15230,9 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-6-astra",
+      "modelFamily": "gpt"
     },
     {
       "key": "cohere/command-a-03-2025",
@@ -14924,7 +15276,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "command-a-03-2025",
+      "modelFamily": "other"
     },
     {
       "key": "cohere/command-a-reasoning-08-2025",
@@ -14968,7 +15322,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "command-a-reasoning-08-2025",
+      "modelFamily": "other"
     },
     {
       "key": "cohere/command-a-vision-07-2025",
@@ -15012,7 +15368,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "command-a-vision-07-2025",
+      "modelFamily": "other"
     },
     {
       "key": "cohere/command-r-08-2024",
@@ -15056,7 +15414,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "command-r-08-2024",
+      "modelFamily": "other"
     },
     {
       "key": "cohere/command-r-plus-08-2024",
@@ -15100,7 +15460,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "command-r-plus-08-2024",
+      "modelFamily": "other"
     },
     {
       "key": "cohere/command-r7b-12-2024",
@@ -15144,7 +15506,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "command-r7b-12-2024",
+      "modelFamily": "other"
     },
     {
       "key": "coze/claude-3-7-sonnet-20250514",
@@ -15188,7 +15552,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-3.7-sonnet-20250514",
+      "modelFamily": "claude"
     },
     {
       "key": "crof/deepseek-v3.2",
@@ -15232,7 +15598,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3.2",
+      "modelFamily": "deepseek"
     },
     {
       "key": "crof/deepseek-v4-flash",
@@ -15293,7 +15661,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "crof/deepseek-v4-flash-0731",
@@ -15354,7 +15724,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash-0731",
+      "modelFamily": "deepseek"
     },
     {
       "key": "crof/deepseek-v4-pro",
@@ -15415,7 +15787,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "crof/gemma-4-31b-it",
@@ -15476,7 +15850,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-4-31b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "crof/glm-5.1",
@@ -15537,7 +15913,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "crof/glm-5.2",
@@ -15598,7 +15976,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "crof/kimi-k2.6",
@@ -15659,7 +16039,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "crof/kimi-k2.7-code",
@@ -15720,7 +16102,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "crof/kimi-k3",
@@ -15781,7 +16165,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
     },
     {
       "key": "crof/kimi-k3-eco",
@@ -15842,7 +16228,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3-eco",
+      "modelFamily": "kimi"
     },
     {
       "key": "crof/mimo-v2.5-pro",
@@ -15903,7 +16291,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mimo-v2.5-pro",
+      "modelFamily": "other"
     },
     {
       "key": "crof/qwen3.5-397b-a17b",
@@ -15964,7 +16354,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "crof/qwen3.5-9b",
@@ -16025,7 +16417,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-9b",
+      "modelFamily": "qwen"
     },
     {
       "key": "crof/qwen3.6-27b",
@@ -16086,7 +16480,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "deepseek-anthropic/deepseek-reasoner",
@@ -16141,7 +16537,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-reasoner",
+      "modelFamily": "deepseek"
     },
     {
       "key": "deepseek-anthropic/deepseek-v4-flash",
@@ -16210,7 +16608,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "deepseek-anthropic/deepseek-v4-pro",
@@ -16279,7 +16679,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "deepseek/deepseek-reasoner",
@@ -16352,7 +16754,9 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-reasoner",
+      "modelFamily": "deepseek"
     },
     {
       "key": "deepseek/deepseek-v4-flash",
@@ -16447,7 +16851,9 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "deepseek/deepseek-v4-pro",
@@ -16542,7 +16948,9 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "dgrid/dgridai/free",
@@ -16593,7 +17001,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "dgridai/free",
+      "modelFamily": "other"
     },
     {
       "key": "dit/claude-sonnet-4-6",
@@ -16656,7 +17066,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "dit/gpt-5.4",
@@ -16719,7 +17131,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4",
+      "modelFamily": "gpt"
     },
     {
       "key": "doubao/doubao-1-5-pro-32k-250115",
@@ -16770,7 +17184,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-1.5-pro-32k-250115",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-pro-32k",
@@ -16814,7 +17230,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-pro-32k",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-1-6-251015",
@@ -16865,7 +17283,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-1.6-251015",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-1-6-flash-250828",
@@ -16916,7 +17336,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-1.6-flash-250828",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-1-8-251228",
@@ -16967,7 +17389,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-1.8-251228",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-2-0-code-preview-260215",
@@ -17018,7 +17442,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-code-preview-260215",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-2-0-lite-260215",
@@ -17069,7 +17495,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-lite-260215",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-2-0-mini-260215",
@@ -17120,7 +17548,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-mini-260215",
+      "modelFamily": "other"
     },
     {
       "key": "doubao/doubao-seed-2-0-pro-260215",
@@ -17171,7 +17601,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-pro-260215",
+      "modelFamily": "other"
     },
     {
       "key": "factory/auto",
@@ -17215,7 +17647,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "auto",
+      "modelFamily": "other"
     },
     {
       "key": "fireworks/deepseek-v4-flash",
@@ -17270,7 +17704,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "fireworks/deepseek-v4-pro",
@@ -17325,7 +17761,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "fireworks/glm-5p1",
@@ -17369,7 +17807,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5p1",
+      "modelFamily": "glm"
     },
     {
       "key": "fireworks/gpt-oss-120b",
@@ -17413,7 +17853,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "fireworks/gpt-oss-20b",
@@ -17457,7 +17899,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-20b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "fireworks/kimi-k2p5",
@@ -17501,7 +17945,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2p5",
+      "modelFamily": "kimi"
     },
     {
       "key": "fireworks/kimi-k2p6",
@@ -17545,7 +17991,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2p6",
+      "modelFamily": "kimi"
     },
     {
       "key": "fireworks/minimax-m2p5",
@@ -17589,7 +18037,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2p5",
+      "modelFamily": "minimax"
     },
     {
       "key": "fireworks/minimax-m2p7",
@@ -17633,7 +18083,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2p7",
+      "modelFamily": "minimax"
     },
     {
       "key": "fireworks/qwen3p6-plus",
@@ -17677,7 +18129,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3p6-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "freeaiapikey/anthropic/claude-opus-4.6",
@@ -17728,7 +18182,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "freeaiapikey/anthropic/claude-opus-4.7",
@@ -17779,7 +18235,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.7",
+      "modelFamily": "claude"
     },
     {
       "key": "freeaiapikey/anthropic/claude-opus-4.8",
@@ -17830,7 +18288,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8",
+      "modelFamily": "claude"
     },
     {
       "key": "freeaiapikey/anthropic/claude-opus-5",
@@ -17881,7 +18341,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
     },
     {
       "key": "freeaiapikey/anthropic/claude-sonnet-4.6",
@@ -17932,7 +18394,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
     },
     {
       "key": "freeaiapikey/anthropic/claude-sonnet-5",
@@ -17983,7 +18447,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-5",
+      "modelFamily": "claude"
     },
     {
       "key": "freeaiapikey/openai/gpt-4o",
@@ -18034,7 +18500,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o",
+      "modelFamily": "gpt"
     },
     {
       "key": "freeaiapikey/openai/gpt-5.4",
@@ -18085,7 +18553,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4",
+      "modelFamily": "gpt"
     },
     {
       "key": "freeaiapikey/openai/gpt-5.5",
@@ -18136,7 +18606,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.5",
+      "modelFamily": "gpt"
     },
     {
       "key": "freeaiapikey/openai/gpt-5.6-sol",
@@ -18187,7 +18659,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
     },
     {
       "key": "freemodel-dev/gpt-5.3-codex",
@@ -18238,7 +18712,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.3-codex",
+      "modelFamily": "gpt"
     },
     {
       "key": "freemodel-dev/gpt-5.4",
@@ -18289,7 +18765,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4",
+      "modelFamily": "gpt"
     },
     {
       "key": "freemodel-dev/gpt-5.4-mini",
@@ -18340,7 +18818,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "freemodel-dev/gpt-5.5",
@@ -18391,7 +18871,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.5",
+      "modelFamily": "gpt"
     },
     {
       "key": "freetheai/deepseek-chat",
@@ -18442,7 +18924,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-chat",
+      "modelFamily": "deepseek"
     },
     {
       "key": "freetheai/gpt-4o-mini",
@@ -18493,7 +18977,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "freetheai/llama-3.3-70b-instruct",
@@ -18544,7 +19030,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-70b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "google/gemini-2.5-flash",
@@ -18596,7 +19084,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.5-flash",
+      "modelFamily": "gemini"
     },
     {
       "key": "google/gemini-2.5-flash-lite",
@@ -18648,7 +19138,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.5-flash-lite",
+      "modelFamily": "gemini"
     },
     {
       "key": "google/gemini-2.5-pro",
@@ -18757,7 +19249,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.5-pro",
+      "modelFamily": "gemini"
     },
     {
       "key": "google/gemini-3-flash-preview",
@@ -18809,7 +19303,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3-flash-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "google/gemini-3.1-flash-lite",
@@ -18861,7 +19357,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-flash-lite",
+      "modelFamily": "gemini"
     },
     {
       "key": "google/gemini-3.1-pro-preview",
@@ -18913,7 +19411,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-pro-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "google/gemini-3.7-flash",
@@ -18965,7 +19465,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.7-flash",
+      "modelFamily": "gemini"
     },
     {
       "key": "groq/llama-3.3-70b-versatile",
@@ -19009,7 +19511,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-70b-versatile",
+      "modelFamily": "llama"
     },
     {
       "key": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
@@ -19053,7 +19557,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-4-scout-17b-16e-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "groq/openai/gpt-oss-120b",
@@ -19097,7 +19603,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "groq/openai/gpt-oss-20b",
@@ -19141,7 +19649,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-20b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "groq/openai/gpt-oss-safeguard-20b",
@@ -19185,7 +19695,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-safeguard-20b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "groq/qwen/qwen3-32b",
@@ -19229,7 +19741,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-32b",
+      "modelFamily": "qwen"
     },
     {
       "key": "groq/qwen/qwen3.6-27b",
@@ -19273,7 +19787,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "huggingface/Qwen/Qwen2.5-7B-Instruct",
@@ -19317,7 +19833,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen2.5-7b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "huggingface/deepseek-ai/DeepSeek-V3",
@@ -19361,7 +19879,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3",
+      "modelFamily": "deepseek"
     },
     {
       "key": "huggingface/google/gemma-2-9b-it",
@@ -19405,7 +19925,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-2-9b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "huggingface/meta-llama/llama-3.1-8b-instruct",
@@ -19449,7 +19971,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-8b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "huggingface/meta-llama/llama-3.2-11b-instruct",
@@ -19493,7 +20017,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-11b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "huggingface/mistralai/mistral-7b-instruct",
@@ -19537,7 +20063,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-7b-instruct",
+      "modelFamily": "mistral"
     },
     {
       "key": "hyperbolic/NousResearch/Hermes-3-Llama-3.1-70B",
@@ -19581,7 +20109,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nousresearch/hermes-3-llama-3.1-70b",
+      "modelFamily": "other"
     },
     {
       "key": "hyperbolic/Qwen/QwQ-32B",
@@ -19625,7 +20155,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwq-32b",
+      "modelFamily": "other"
     },
     {
       "key": "hyperbolic/Qwen/Qwen2.5-72B-Instruct",
@@ -19669,7 +20201,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen2.5-72b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "hyperbolic/Qwen/Qwen2.5-Coder-32B-Instruct",
@@ -19713,7 +20247,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen2.5-coder-32b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "hyperbolic/deepseek-ai/DeepSeek-R1",
@@ -19757,7 +20293,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-r1",
+      "modelFamily": "deepseek"
     },
     {
       "key": "hyperbolic/deepseek-ai/DeepSeek-V3",
@@ -19801,7 +20339,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3",
+      "modelFamily": "deepseek"
     },
     {
       "key": "hyperbolic/meta-llama/Llama-3.2-3B-Instruct",
@@ -19845,7 +20385,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-3b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "hyperbolic/meta-llama/Llama-3.3-70B-Instruct",
@@ -19889,7 +20431,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-70b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "iflytek/4.0Ultra",
@@ -19940,7 +20484,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "4.0ultra",
+      "modelFamily": "other"
     },
     {
       "key": "iflytek/generalv3",
@@ -19991,7 +20537,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "generalv3",
+      "modelFamily": "other"
     },
     {
       "key": "iflytek/generalv3.5",
@@ -20035,7 +20583,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "generalv3.5",
+      "modelFamily": "other"
     },
     {
       "key": "iflytek/lite",
@@ -20086,7 +20636,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "lite",
+      "modelFamily": "other"
     },
     {
       "key": "iflytek/max-32k",
@@ -20137,7 +20689,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "max-32k",
+      "modelFamily": "other"
     },
     {
       "key": "iflytek/pro-128k",
@@ -20188,7 +20742,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "pro-128k",
+      "modelFamily": "other"
     },
     {
       "key": "inception/mercury-2",
@@ -20246,7 +20802,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mercury-2",
+      "modelFamily": "other"
     },
     {
       "key": "internlm/intern-latest",
@@ -20290,7 +20848,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "intern-latest",
+      "modelFamily": "other"
     },
     {
       "key": "internlm/intern-s1",
@@ -20334,7 +20894,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "intern-s1",
+      "modelFamily": "other"
     },
     {
       "key": "internlm/intern-s1-mini",
@@ -20378,7 +20940,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "intern-s1-mini",
+      "modelFamily": "other"
     },
     {
       "key": "internlm/intern-s1-pro",
@@ -20422,7 +20986,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "intern-s1-pro",
+      "modelFamily": "other"
     },
     {
       "key": "internlm/internvl3.5-latest",
@@ -20466,7 +21032,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "internvl3.5-latest",
+      "modelFamily": "other"
     },
     {
       "key": "kie/claude-fable-5",
@@ -20517,7 +21085,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5",
+      "modelFamily": "claude"
     },
     {
       "key": "kie/claude-haiku-4-5",
@@ -20568,7 +21138,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "kie/claude-opus-5",
@@ -20619,7 +21191,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
     },
     {
       "key": "kie/claude-sonnet-5",
@@ -20670,7 +21244,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-5",
+      "modelFamily": "claude"
     },
     {
       "key": "kie/gemini-3-1-pro",
@@ -20721,7 +21297,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-pro",
+      "modelFamily": "gemini"
     },
     {
       "key": "kie/gemini-3-7-flash",
@@ -20772,7 +21350,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.7-flash",
+      "modelFamily": "gemini"
     },
     {
       "key": "kie/gpt-5-6-luna",
@@ -20823,7 +21403,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-luna",
+      "modelFamily": "gpt"
     },
     {
       "key": "kie/gpt-5-6-sol",
@@ -20874,7 +21456,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
     },
     {
       "key": "kie/gpt-5-6-terra",
@@ -20925,7 +21509,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-terra",
+      "modelFamily": "gpt"
     },
     {
       "key": "kie/grok-4-6",
@@ -20976,7 +21562,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.6",
+      "modelFamily": "grok"
     },
     {
       "key": "kilocode/anthropic/claude-opus-5",
@@ -21020,7 +21608,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
     },
     {
       "key": "kilocode/google/gemini-3.1-pro-preview",
@@ -21064,7 +21654,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-pro-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "kilocode/openai/gpt-5.6-sol",
@@ -21108,12 +21700,15 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
     },
     {
       "key": "kimi-coding/k3",
       "providerId": "kimi-coding",
       "upstreamId": "k3",
+      "canonicalModelId": "kimi-k3",
       "displayName": "Kimi K3 (Kimi Code)",
       "aliases": [],
       "endpoints": [
@@ -21170,7 +21765,8 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "modelFamily": "kimi"
     },
     {
       "key": "kimi-coding/kimi-for-coding",
@@ -21232,7 +21828,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-for-coding",
+      "modelFamily": "kimi"
     },
     {
       "key": "kimi-coding/kimi-for-coding-highspeed",
@@ -21294,7 +21892,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-for-coding-highspeed",
+      "modelFamily": "kimi"
     },
     {
       "key": "liquid/liquid-lfm-40b",
@@ -21338,7 +21938,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "liquid-lfm-40b",
+      "modelFamily": "other"
     },
     {
       "key": "llm7/deepseek-r1-0528",
@@ -21382,7 +21984,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-r1-0528",
+      "modelFamily": "deepseek"
     },
     {
       "key": "llm7/gpt-4.1-nano-2025-04-14",
@@ -21426,7 +22030,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1-nano-2025-04-14",
+      "modelFamily": "gpt"
     },
     {
       "key": "llm7/gpt-4o-mini-2024-07-18",
@@ -21470,7 +22076,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o-mini-2024-07-18",
+      "modelFamily": "gpt"
     },
     {
       "key": "llm7/qwen2.5-coder-32b-instruct",
@@ -21514,7 +22122,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen2.5-coder-32b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "longcat/LongCat-2.0",
@@ -21565,7 +22175,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "longcat-2.0",
+      "modelFamily": "other"
     },
     {
       "key": "minimax-anthropic/MiniMax-M2.5",
@@ -21609,7 +22221,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-anthropic/MiniMax-M2.5-highspeed",
@@ -21653,7 +22267,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5-highspeed",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-anthropic/MiniMax-M2.7",
@@ -21697,7 +22313,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-anthropic/MiniMax-M2.7-highspeed",
@@ -21741,7 +22359,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-anthropic/MiniMax-M3",
@@ -21792,7 +22412,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-cn/MiniMax-M2.5",
@@ -21836,7 +22458,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-cn/MiniMax-M2.5-highspeed",
@@ -21880,7 +22504,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5-highspeed",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-cn/MiniMax-M2.7",
@@ -21924,7 +22550,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-cn/MiniMax-M2.7-highspeed",
@@ -21968,7 +22596,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax-cn/MiniMax-M3",
@@ -22020,7 +22650,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax/MiniMax-M2.5",
@@ -22064,7 +22696,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax/MiniMax-M2.5-highspeed",
@@ -22108,7 +22742,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5-highspeed",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax/MiniMax-M2.7",
@@ -22152,7 +22788,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax/MiniMax-M2.7-highspeed",
@@ -22196,7 +22834,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
     },
     {
       "key": "minimax/MiniMax-M3",
@@ -22248,7 +22888,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "mistral/codestral-latest",
@@ -22292,7 +22934,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "codestral-latest",
+      "modelFamily": "mistral"
     },
     {
       "key": "mistral/devstral-latest",
@@ -22336,7 +22980,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "devstral-latest",
+      "modelFamily": "mistral"
     },
     {
       "key": "mistral/mistral-large-latest",
@@ -22380,7 +23026,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-large-latest",
+      "modelFamily": "mistral"
     },
     {
       "key": "mistral/mistral-medium-3-5",
@@ -22424,7 +23072,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-medium-3.5",
+      "modelFamily": "mistral"
     },
     {
       "key": "mistral/mistral-small-latest",
@@ -22468,7 +23118,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-small-latest",
+      "modelFamily": "mistral"
     },
     {
       "key": "modal/google/gemini-2.0-flash",
@@ -22512,7 +23164,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-2.0-flash",
+      "modelFamily": "gemini"
     },
     {
       "key": "moonshot/kimi-k2.6",
@@ -22582,7 +23236,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "moonshot/kimi-k2.7-code",
@@ -22652,7 +23308,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "moonshot/kimi-k2.7-code-highspeed",
@@ -22722,7 +23380,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code-highspeed",
+      "modelFamily": "kimi"
     },
     {
       "key": "moonshot/kimi-k3",
@@ -22792,7 +23452,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
     },
     {
       "key": "nebius/deepseek-ai/DeepSeek-R1-0528",
@@ -22836,7 +23498,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-r1-0528",
+      "modelFamily": "deepseek"
     },
     {
       "key": "nlpcloud/chatdolphin",
@@ -22887,7 +23551,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "chatdolphin",
+      "modelFamily": "other"
     },
     {
       "key": "nlpcloud/dolphin",
@@ -22938,7 +23604,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "dolphin",
+      "modelFamily": "other"
     },
     {
       "key": "nlpcloud/finetuned-llama-3-70b",
@@ -22982,7 +23650,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "finetuned-llama-3-70b",
+      "modelFamily": "other"
     },
     {
       "key": "nlpcloud/llama-3-1-405b",
@@ -23026,7 +23696,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-405b",
+      "modelFamily": "llama"
     },
     {
       "key": "nlpcloud/llama-3-8b-instruct",
@@ -23070,7 +23742,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3-8b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nous-research/Hermes-4-405B",
@@ -23114,7 +23788,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hermes-4-405b",
+      "modelFamily": "other"
     },
     {
       "key": "nous-research/Hermes-4-70B",
@@ -23158,7 +23834,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hermes-4-70b",
+      "modelFamily": "other"
     },
     {
       "key": "novita/deepseek/deepseek-v3.2",
@@ -23227,7 +23905,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3.2",
+      "modelFamily": "deepseek"
     },
     {
       "key": "novita/deepseek/deepseek-v4-flash",
@@ -23296,7 +23976,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "novita/deepseek/deepseek-v4-pro",
@@ -23365,7 +24047,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "novita/google/gemma-4-31b-it",
@@ -23435,7 +24119,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-4-31b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "novita/meta-llama/llama-3.1-8b-instruct",
@@ -23493,7 +24179,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-8b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "novita/minimax/minimax-m2.7",
@@ -23562,7 +24250,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "novita/minimax/minimax-m3",
@@ -23632,7 +24322,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "novita/moonshotai/kimi-k2.6",
@@ -23702,7 +24394,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "novita/moonshotai/kimi-k2.7-code",
@@ -23772,7 +24466,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "novita/moonshotai/kimi-k3",
@@ -23842,7 +24538,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
     },
     {
       "key": "novita/openai/gpt-oss-120b",
@@ -23911,7 +24609,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "novita/qwen/qwen3-coder-480b-a35b-instruct",
@@ -23969,7 +24669,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-coder-480b-a35b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "novita/qwen/qwen3.5-397b-a17b",
@@ -24039,7 +24741,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "novita/qwen/qwen3.6-plus",
@@ -24109,7 +24813,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "novita/qwen/qwen3.7-max",
@@ -24178,7 +24884,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "novita/xiaomimimo/mimo-v2.5-pro",
@@ -24247,7 +24955,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "xiaomimimo/mimo-v2.5-pro",
+      "modelFamily": "other"
     },
     {
       "key": "novita/zai-org/glm-4.7",
@@ -24316,7 +25026,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "novita/zai-org/glm-5.1",
@@ -24385,7 +25097,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "novita/zai-org/glm-5.2",
@@ -24454,7 +25168,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "nvidia/abacusai/dracarys-llama-3.1-70b-instruct",
@@ -24498,7 +25214,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "abacusai/dracarys-llama-3.1-70b-instruct",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/google/gemma-2-2b-it",
@@ -24542,7 +25260,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-2-2b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "nvidia/google/gemma-3n-e2b-it",
@@ -24586,7 +25306,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-3n-e2b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "nvidia/google/gemma-4-31b-it",
@@ -24630,7 +25352,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-4-31b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "nvidia/meta/llama-3.1-8b-instruct",
@@ -24674,7 +25398,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-8b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/meta/llama-3.2-11b-vision-instruct",
@@ -24719,7 +25445,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-11b-vision-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/meta/llama-3.2-1b-instruct",
@@ -24763,7 +25491,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-1b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/meta/llama-3.2-3b-instruct",
@@ -24807,7 +25537,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-3b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/meta/llama-3.2-90b-vision-instruct",
@@ -24852,7 +25584,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-90b-vision-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/meta/llama-4-maverick-17b-128e-instruct",
@@ -24896,7 +25630,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-4-maverick-17b-128e-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/meta/llama-guard-4-12b",
@@ -24940,7 +25676,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-guard-4-12b",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/minimaxai/minimax-m2.7",
@@ -24984,7 +25722,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimaxai/minimax-m2.7",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/mistralai/devstral-2-123b-instruct-2512",
@@ -25028,7 +25768,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "devstral-2-123b-instruct-2512",
+      "modelFamily": "mistral"
     },
     {
       "key": "nvidia/mistralai/ministral-14b-instruct-2512",
@@ -25072,7 +25814,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ministral-14b-instruct-2512",
+      "modelFamily": "mistral"
     },
     {
       "key": "nvidia/mistralai/mistral-large-3-675b-instruct-2512",
@@ -25116,7 +25860,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-large-3-675b-instruct-2512",
+      "modelFamily": "mistral"
     },
     {
       "key": "nvidia/mistralai/mistral-medium-3.5-128b",
@@ -25160,7 +25906,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-medium-3.5-128b",
+      "modelFamily": "mistral"
     },
     {
       "key": "nvidia/mistralai/mistral-nemotron",
@@ -25204,7 +25952,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-nemotron",
+      "modelFamily": "mistral"
     },
     {
       "key": "nvidia/mistralai/mistral-small-4-119b-2603",
@@ -25248,7 +25998,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-small-4-119b-2603",
+      "modelFamily": "mistral"
     },
     {
       "key": "nvidia/mistralai/mixtral-8x7b-instruct-v0.1",
@@ -25292,7 +26044,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mixtral-8x7b-instruct-v0.1",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/moonshotai/kimi-k2.6",
@@ -25336,7 +26090,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "nvidia/nvidia/ising-calibration-1-35b-a3b",
@@ -25391,7 +26147,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ising-calibration-1-35b-a3b",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/llama-3.1-nemoguard-8b-content-safety",
@@ -25435,7 +26193,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-nemoguard-8b-content-safety",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/llama-3.1-nemoguard-8b-topic-control",
@@ -25479,7 +26239,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-nemoguard-8b-topic-control",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/llama-3.1-nemotron-nano-8b-v1",
@@ -25523,7 +26285,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-nemotron-nano-8b-v1",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
@@ -25568,7 +26332,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-nemotron-nano-vl-8b-v1",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -25612,7 +26378,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-nemotron-safety-guard-8b-v3",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1",
@@ -25656,7 +26424,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-nemotron-super-49b-v1",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1.5",
@@ -25700,7 +26470,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-nemotron-super-49b-v1.5",
+      "modelFamily": "llama"
     },
     {
       "key": "nvidia/nvidia/nemotron-3-content-safety",
@@ -25744,7 +26516,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-content-safety",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-3-nano-30b-a3b",
@@ -25799,7 +26573,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-nano-30b-a3b",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -25855,7 +26631,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-nano-omni-30b-a3b-reasoning",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-3-super-120b-a12b",
@@ -25899,7 +26677,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-super-120b-a12b",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
@@ -25943,7 +26723,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-ultra-550b-a55b",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-3.5-content-safety",
@@ -25987,7 +26769,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3.5-content-safety",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-mini-4b-instruct",
@@ -26031,7 +26815,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-mini-4b-instruct",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nemotron-nano-12b-v2-vl",
@@ -26087,7 +26873,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-nano-12b-v2-vl",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/nvidia-nemotron-nano-9b-v2",
@@ -26142,7 +26930,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nvidia-nemotron-nano-9b-v2",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/nvidia/riva-translate-4b-instruct-v1.1",
@@ -26186,7 +26976,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "riva-translate-4b-instruct-v1.1",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/openai/gpt-oss-120b",
@@ -26230,7 +27022,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "nvidia/openai/gpt-oss-20b",
@@ -26274,7 +27068,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-20b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "nvidia/qwen/qwen3-next-80b-a3b-instruct",
@@ -26329,7 +27125,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-next-80b-a3b-instruct",
+      "modelFamily": "qwen"
     },
     {
       "key": "nvidia/qwen/qwen3.5-122b-a10b",
@@ -26373,7 +27171,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-122b-a10b",
+      "modelFamily": "qwen"
     },
     {
       "key": "nvidia/qwen/qwen3.5-397b-a17b",
@@ -26417,7 +27217,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "nvidia/sarvamai/sarvam-m",
@@ -26461,7 +27263,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sarvamai/sarvam-m",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/stepfun-ai/step-3.5-flash",
@@ -26505,7 +27309,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "stepfun-ai/step-3.5-flash",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/stepfun-ai/step-3.7-flash",
@@ -26549,7 +27355,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "stepfun-ai/step-3.7-flash",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/stockmark/stockmark-2-100b-instruct",
@@ -26593,7 +27401,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "stockmark/stockmark-2-100b-instruct",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/upstage/solar-10.7b-instruct",
@@ -26637,7 +27447,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "upstage/solar-10.7b-instruct",
+      "modelFamily": "other"
     },
     {
       "key": "nvidia/z-ai/glm-5.2",
@@ -26681,7 +27493,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "ollama-cloud/deepseek-v4-flash",
@@ -26742,7 +27556,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "ollama-cloud/deepseek-v4-pro",
@@ -26803,7 +27619,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "ollama-cloud/gemma4:31b",
@@ -26864,7 +27682,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma4-31b",
+      "modelFamily": "other"
     },
     {
       "key": "ollama-cloud/glm-5.1",
@@ -26925,7 +27745,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "ollama-cloud/glm-5.2",
@@ -26986,7 +27808,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "ollama-cloud/gpt-oss:120b",
@@ -27045,7 +27869,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "ollama-cloud/gpt-oss:20b",
@@ -27104,7 +27930,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-20b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "ollama-cloud/kimi-k2.6",
@@ -27165,7 +27993,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "ollama-cloud/minimax-m2.7",
@@ -27226,7 +28056,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "ollama-cloud/minimax-m3",
@@ -27295,7 +28127,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "ollama-cloud/nemotron-3-super",
@@ -27356,7 +28190,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nemotron-3-super",
+      "modelFamily": "other"
     },
     {
       "key": "ollama-cloud/qwen3.5:397b",
@@ -27417,7 +28253,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b",
+      "modelFamily": "qwen"
     },
     {
       "key": "ollama-local/llama3.1:8b",
@@ -27458,7 +28296,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama3.1-8b",
+      "modelFamily": "other"
     },
     {
       "key": "openadapter/glm-4.7",
@@ -27509,7 +28349,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "openai/gpt-4.1",
@@ -27582,7 +28424,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-4.1-mini",
@@ -27633,7 +28477,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-4.1-nano",
@@ -27684,7 +28530,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1-nano",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-4o",
@@ -27735,7 +28583,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-4o-2024-11-20",
@@ -27786,7 +28636,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o-2024-11-20",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-4o-mini",
@@ -27837,7 +28689,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4o-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.4",
@@ -27888,7 +28742,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.4-mini",
@@ -27939,7 +28795,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-mini",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.4-nano",
@@ -27990,7 +28848,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-nano",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.4-pro",
@@ -28041,7 +28901,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.4-pro",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.5",
@@ -28092,7 +28954,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.5",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.5-pro",
@@ -28143,7 +29007,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.5-pro",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.6",
@@ -28220,7 +29086,9 @@
         "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.6-luna",
@@ -28297,7 +29165,9 @@
         "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-luna",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.6-sol",
@@ -28374,7 +29244,9 @@
         "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-5.6-terra",
@@ -28451,7 +29323,9 @@
         "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-terra",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/gpt-6-astra",
@@ -28578,7 +29452,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-6-astra",
+      "modelFamily": "gpt"
     },
     {
       "key": "openai/o3",
@@ -28629,7 +29505,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "o3",
+      "modelFamily": "o-series"
     },
     {
       "key": "openai/o3-mini",
@@ -28680,7 +29558,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "o3-mini",
+      "modelFamily": "o-series"
     },
     {
       "key": "openai/o4-mini",
@@ -28806,7 +29686,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "o4-mini",
+      "modelFamily": "o-series"
     },
     {
       "key": "opencode/big-pickle",
@@ -28861,7 +29743,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "big-pickle",
+      "modelFamily": "other"
     },
     {
       "key": "openference/GLM-5.2",
@@ -28912,7 +29796,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "openrouter/openai/gpt-4.1",
@@ -28954,7 +29840,9 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-4.1",
+      "modelFamily": "gpt"
     },
     {
       "key": "openrouter/openrouter/auto",
@@ -29007,7 +29895,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "openrouter/auto",
+      "modelFamily": "other"
     },
     {
       "key": "perplexity/sonar",
@@ -29051,7 +29941,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sonar",
+      "modelFamily": "other"
     },
     {
       "key": "perplexity/sonar-deep-research",
@@ -29095,7 +29987,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sonar-deep-research",
+      "modelFamily": "other"
     },
     {
       "key": "perplexity/sonar-pro",
@@ -29139,7 +30033,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sonar-pro",
+      "modelFamily": "other"
     },
     {
       "key": "perplexity/sonar-reasoning-pro",
@@ -29183,7 +30079,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sonar-reasoning-pro",
+      "modelFamily": "other"
     },
     {
       "key": "pioneer/HuggingFaceTB/SmolLM3-3B-Base",
@@ -29227,7 +30125,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "huggingfacetb/smollm3-3b-base",
+      "modelFamily": "other"
     },
     {
       "key": "pioneer/Qwen/Qwen3-1.7B-Base",
@@ -29271,7 +30171,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-1.7b-base",
+      "modelFamily": "qwen"
     },
     {
       "key": "pioneer/Qwen/Qwen3-32B",
@@ -29315,7 +30217,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-32b",
+      "modelFamily": "qwen"
     },
     {
       "key": "pioneer/Qwen/Qwen3-4B-Base",
@@ -29359,7 +30263,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-4b-base",
+      "modelFamily": "qwen"
     },
     {
       "key": "pioneer/Qwen/Qwen3-8B",
@@ -29403,7 +30309,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-8b",
+      "modelFamily": "qwen"
     },
     {
       "key": "pioneer/Qwen/Qwen3.5-9B",
@@ -29447,7 +30355,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-9b",
+      "modelFamily": "qwen"
     },
     {
       "key": "pioneer/Qwen/Qwen3.6-27B",
@@ -29491,7 +30401,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "pioneer/google/gemma-3-4b-pt",
@@ -29535,7 +30447,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma-3-4b-pt",
+      "modelFamily": "gemma"
     },
     {
       "key": "pioneer/meta-llama/Llama-3.1-8B-Instruct",
@@ -29579,7 +30493,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-8b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "pioneer/meta-llama/Llama-3.2-1B-Instruct",
@@ -29623,7 +30539,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.2-1b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "plamo/plamo-3.0-prime",
@@ -29681,7 +30599,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "plamo-3.0-prime",
+      "modelFamily": "other"
     },
     {
       "key": "poolside/poolside/laguna-s-2.1",
@@ -29725,7 +30645,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "poolside/laguna-s-2.1",
+      "modelFamily": "other"
     },
     {
       "key": "qianfan/ernie-5.0-thinking-latest",
@@ -29776,7 +30698,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-5.0-thinking-latest",
+      "modelFamily": "other"
     },
     {
       "key": "qianfan/ernie-5.1",
@@ -29827,7 +30751,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-5.1",
+      "modelFamily": "other"
     },
     {
       "key": "qianfan/ernie-x1.1",
@@ -29878,7 +30804,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "ernie-x1.1",
+      "modelFamily": "other"
     },
     {
       "key": "qwen-cloud-token-plan/deepseek-v4-flash-0731",
@@ -29947,7 +30875,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash-0731",
+      "modelFamily": "deepseek"
     },
     {
       "key": "qwen-cloud-token-plan/deepseek-v4-pro",
@@ -30016,7 +30946,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "qwen-cloud-token-plan/glm-5.2",
@@ -30085,7 +31017,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "qwen-cloud-token-plan/qwen3.6-flash",
@@ -30155,7 +31089,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-flash",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud-token-plan/qwen3.7-max",
@@ -30224,7 +31160,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud-token-plan/qwen3.7-plus",
@@ -30294,7 +31232,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud-token-plan/qwen3.8-max",
@@ -30364,7 +31304,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.8-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/deepseek-v4-flash",
@@ -30408,7 +31350,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "qwen-cloud/deepseek-v4-pro",
@@ -30452,7 +31396,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "qwen-cloud/glm-5.2",
@@ -30496,7 +31442,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "qwen-cloud/glm-5.2-fast-preview",
@@ -30540,7 +31488,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2-fast-preview",
+      "modelFamily": "glm"
     },
     {
       "key": "qwen-cloud/kimi-k2.7-code",
@@ -30584,7 +31534,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "qwen-cloud/qwen3.5-122b-a10b",
@@ -30628,7 +31580,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-122b-a10b",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.5-397b-a17b",
@@ -30672,7 +31626,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.5-plus-2026-04-20",
@@ -30716,7 +31672,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-plus-2026-04-20",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.6-27b",
@@ -30760,7 +31718,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.6-35b-a3b",
@@ -30804,7 +31764,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-35b-a3b",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.6-plus",
@@ -30848,7 +31810,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.7-max-2026-06-08",
@@ -30892,7 +31856,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-max-2026-06-08",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.7-plus",
@@ -30936,7 +31902,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.7-plus",
+      "modelFamily": "qwen"
     },
     {
       "key": "qwen-cloud/qwen3.8-max",
@@ -30980,7 +31948,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.8-max",
+      "modelFamily": "qwen"
     },
     {
       "key": "reka/reka-edge-2603",
@@ -31024,7 +31994,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "reka-edge-2603",
+      "modelFamily": "other"
     },
     {
       "key": "reka/reka-flash",
@@ -31068,7 +32040,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "reka-flash",
+      "modelFamily": "other"
     },
     {
       "key": "reka/reka-flash-3",
@@ -31112,7 +32086,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "reka-flash-3",
+      "modelFamily": "other"
     },
     {
       "key": "sarvam/sarvam-105b",
@@ -31163,7 +32139,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sarvam-105b",
+      "modelFamily": "other"
     },
     {
       "key": "sarvam/sarvam-30b",
@@ -31214,7 +32192,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sarvam-30b",
+      "modelFamily": "other"
     },
     {
       "key": "scaleway/deepseek-v3-0324",
@@ -31258,7 +32238,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3-0324",
+      "modelFamily": "deepseek"
     },
     {
       "key": "scaleway/gpt-oss-120b",
@@ -31302,7 +32284,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "scaleway/llama-3.1-70b-instruct",
@@ -31346,7 +32330,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-70b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "scaleway/llama-3.1-8b-instruct",
@@ -31390,7 +32376,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.1-8b-instruct",
+      "modelFamily": "llama"
     },
     {
       "key": "scaleway/mistral-small-3.2-24b-instruct-2506",
@@ -31434,7 +32422,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-small-3.2-24b-instruct-2506",
+      "modelFamily": "mistral"
     },
     {
       "key": "scaleway/qwen3-235b-a22b-instruct-2507",
@@ -31478,7 +32468,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-235b-a22b-instruct-2507",
+      "modelFamily": "qwen"
     },
     {
       "key": "sealion/aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
@@ -31522,7 +32514,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "aisingapore/qwen-sea-lion-v4.5-27b-it",
+      "modelFamily": "other"
     },
     {
       "key": "sensenova/deepseek-v4-flash",
@@ -31597,7 +32591,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "sensenova/glm-5.2",
@@ -31666,7 +32662,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "sensenova/sensenova-6.7-flash-lite",
@@ -31725,7 +32723,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "sensenova-6.7-flash-lite",
+      "modelFamily": "other"
     },
     {
       "key": "siliconflow/Qwen/Qwen3-32B",
@@ -31769,7 +32769,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3-32b",
+      "modelFamily": "qwen"
     },
     {
       "key": "siliconflow/deepseek-ai/DeepSeek-V3",
@@ -31813,7 +32815,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v3",
+      "modelFamily": "deepseek"
     },
     {
       "key": "sparkdesk/4.0Ultra",
@@ -31864,7 +32868,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "4.0ultra",
+      "modelFamily": "other"
     },
     {
       "key": "sparkdesk/generalv3",
@@ -31915,7 +32921,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "generalv3",
+      "modelFamily": "other"
     },
     {
       "key": "sparkdesk/lite",
@@ -31966,7 +32974,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "lite",
+      "modelFamily": "other"
     },
     {
       "key": "sparkdesk/pro-128k",
@@ -32017,7 +33027,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "pro-128k",
+      "modelFamily": "other"
     },
     {
       "key": "stepfun/step-1o-turbo-vision",
@@ -32068,7 +33080,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "step-1o-turbo-vision",
+      "modelFamily": "other"
     },
     {
       "key": "stepfun/step-1v",
@@ -32112,7 +33126,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "step-1v",
+      "modelFamily": "other"
     },
     {
       "key": "stepfun/step-3.5-flash",
@@ -32163,7 +33179,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "step-3.5-flash",
+      "modelFamily": "other"
     },
     {
       "key": "stepfun/step-3.5-flash-2603",
@@ -32214,7 +33232,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "step-3.5-flash-2603",
+      "modelFamily": "other"
     },
     {
       "key": "stepfun/step-3.7-flash",
@@ -32265,7 +33285,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "step-3.7-flash",
+      "modelFamily": "other"
     },
     {
       "key": "synthetic/hf:MiniMaxAI/MiniMax-M3",
@@ -32337,7 +33359,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimaxai/minimax-m3",
+      "modelFamily": "other"
     },
     {
       "key": "synthetic/hf:Qwen/Qwen3.6-27B",
@@ -32409,7 +33433,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "synthetic/hf:moonshotai/Kimi-K2.7-Code",
@@ -32481,7 +33507,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "synthetic/hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
@@ -32552,7 +33580,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "nvidia-nemotron-3-super-120b-a12b-nvfp4",
+      "modelFamily": "other"
     },
     {
       "key": "synthetic/hf:openai/gpt-oss-120b",
@@ -32623,7 +33653,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "synthetic/hf:zai-org/GLM-4.7-Flash",
@@ -32694,7 +33726,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7-flash",
+      "modelFamily": "glm"
     },
     {
       "key": "synthetic/hf:zai-org/GLM-5.2",
@@ -32765,7 +33799,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "tabitoken/claude-opus-4-8",
@@ -32809,7 +33845,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8",
+      "modelFamily": "claude"
     },
     {
       "key": "tabitoken/claude-opus-4-8-thinking",
@@ -32853,7 +33891,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8-thinking",
+      "modelFamily": "claude"
     },
     {
       "key": "tabitoken/claude-opus-5",
@@ -32897,7 +33937,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
     },
     {
       "key": "tabitoken/claude-opus-5-thinking",
@@ -32941,7 +33983,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5-thinking",
+      "modelFamily": "claude"
     },
     {
       "key": "tencent/hunyuan-functioncall",
@@ -32985,7 +34029,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-functioncall",
+      "modelFamily": "other"
     },
     {
       "key": "tencent/hunyuan-lite",
@@ -33029,7 +34075,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-lite",
+      "modelFamily": "other"
     },
     {
       "key": "tencent/hunyuan-pro",
@@ -33073,7 +34121,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-pro",
+      "modelFamily": "other"
     },
     {
       "key": "tencent/hunyuan-t1-latest",
@@ -33124,7 +34174,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-t1-latest",
+      "modelFamily": "other"
     },
     {
       "key": "tencent/hunyuan-turbos-latest",
@@ -33175,7 +34227,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-turbos-latest",
+      "modelFamily": "other"
     },
     {
       "key": "tencent/hunyuan-vision",
@@ -33219,7 +34273,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-vision",
+      "modelFamily": "other"
     },
     {
       "key": "together/Qwen/Qwen3.5-9B",
@@ -33263,7 +34319,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-9b",
+      "modelFamily": "qwen"
     },
     {
       "key": "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -33307,7 +34365,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "llama-3.3-70b-instruct-turbo",
+      "modelFamily": "llama"
     },
     {
       "key": "typhoon/typhoon-v2.5-30b-a3b-instruct",
@@ -33358,7 +34418,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "typhoon-v2.5-30b-a3b-instruct",
+      "modelFamily": "other"
     },
     {
       "key": "uncloseai/adamo1139/Hermes-3-Llama-3.1-8B-FP8-Dynamic",
@@ -33402,7 +34464,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "adamo1139/hermes-3-llama-3.1-8b-fp8-dynamic",
+      "modelFamily": "other"
     },
     {
       "key": "uncloseai/gemma4:31b",
@@ -33446,7 +34510,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemma4-31b",
+      "modelFamily": "other"
     },
     {
       "key": "uncloseai/qwen3.6:27b",
@@ -33490,7 +34556,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "vertex/DeepSeek-V4-Flash",
@@ -33534,7 +34602,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "vertex/DeepSeek-V4-Pro",
@@ -33578,7 +34648,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "vertex/GLM-5.1-FP8",
@@ -33622,7 +34694,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1-fp8",
+      "modelFamily": "glm"
     },
     {
       "key": "vertex/Qwen3.6-35B-A3B",
@@ -33666,7 +34740,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.6-35b-a3b",
+      "modelFamily": "qwen"
     },
     {
       "key": "vertex/gemini-2.5-pro",
@@ -33748,7 +34824,9 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "experimental",
+      "canonicalModelId": "gemini-2.5-pro",
+      "modelFamily": "gemini"
     },
     {
       "key": "vertex/gemini-3-flash-preview",
@@ -33792,7 +34870,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "experimental",
+      "canonicalModelId": "gemini-3-flash-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "vertex/gemini-3.1-flash-lite",
@@ -33836,7 +34916,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "experimental",
+      "canonicalModelId": "gemini-3.1-flash-lite",
+      "modelFamily": "gemini"
     },
     {
       "key": "vertex/gemini-3.1-pro-preview",
@@ -33880,7 +34962,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "experimental",
+      "canonicalModelId": "gemini-3.1-pro-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "vertex/gemma-4-31b-it",
@@ -33924,7 +35008,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "experimental",
+      "canonicalModelId": "gemma-4-31b-it",
+      "modelFamily": "gemma"
     },
     {
       "key": "volcengine-agent-plan/deepseek-v4-flash-ga-260731",
@@ -33986,7 +35072,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash-ga-260731",
+      "modelFamily": "deepseek"
     },
     {
       "key": "volcengine-agent-plan/deepseek-v4-pro-260425",
@@ -34048,7 +35136,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro-260425",
+      "modelFamily": "deepseek"
     },
     {
       "key": "volcengine-agent-plan/doubao-seed-2-0-lite-260215",
@@ -34111,7 +35201,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-lite-260215",
+      "modelFamily": "other"
     },
     {
       "key": "volcengine-agent-plan/doubao-seed-2-0-mini-260215",
@@ -34174,7 +35266,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-mini-260215",
+      "modelFamily": "other"
     },
     {
       "key": "volcengine-agent-plan/doubao-seed-2-1-turbo-260628",
@@ -34237,7 +35331,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.1-turbo-260628",
+      "modelFamily": "other"
     },
     {
       "key": "volcengine-agent-plan/doubao-seed-evolving",
@@ -34300,7 +35396,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-evolving",
+      "modelFamily": "other"
     },
     {
       "key": "volcengine-agent-plan/glm-5-2-260617",
@@ -34362,7 +35460,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2-260617",
+      "modelFamily": "glm"
     },
     {
       "key": "volcengine-agent-plan/kimi-k2.6",
@@ -34424,7 +35524,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "volcengine-agent-plan/kimi-k2.7-code",
@@ -34487,7 +35589,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "volcengine-agent-plan/kimi-k3",
@@ -34550,7 +35654,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
     },
     {
       "key": "volcengine-agent-plan/minimax-m2.7",
@@ -34612,7 +35718,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "volcengine-agent-plan/minimax-m3",
@@ -34675,7 +35783,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "volcengine-coding-plan/deepseek-v4-flash",
@@ -34737,7 +35847,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash",
+      "modelFamily": "deepseek"
     },
     {
       "key": "volcengine-coding-plan/deepseek-v4-pro",
@@ -34799,7 +35911,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "volcengine-coding-plan/doubao-seed-2-1-turbo",
@@ -34862,7 +35976,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.1-turbo",
+      "modelFamily": "other"
     },
     {
       "key": "volcengine-coding-plan/doubao-seed-2.0-lite",
@@ -34925,7 +36041,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "doubao-seed-2.0-lite",
+      "modelFamily": "other"
     },
     {
       "key": "volcengine-coding-plan/glm-5.2",
@@ -34987,7 +36105,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "volcengine-coding-plan/kimi-k2.6",
@@ -35049,7 +36169,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "volcengine-coding-plan/kimi-k2.7-code",
@@ -35112,7 +36234,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "volcengine-coding-plan/minimax-m2.7",
@@ -35174,7 +36298,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "volcengine-coding-plan/minimax-m3",
@@ -35237,7 +36363,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "wafer/DeepSeek-V4-Pro",
@@ -35281,7 +36409,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro",
+      "modelFamily": "deepseek"
     },
     {
       "key": "wafer/GLM-5.1",
@@ -35325,7 +36455,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "wafer/MiniMax-M2.7",
@@ -35369,7 +36501,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
     },
     {
       "key": "wafer/Qwen3.5-397B-A17B",
@@ -35413,7 +36547,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "qwen3.5-397b-a17b",
+      "modelFamily": "qwen"
     },
     {
       "key": "writer/palmyra-x4",
@@ -35464,7 +36600,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "palmyra-x4",
+      "modelFamily": "other"
     },
     {
       "key": "writer/palmyra-x5",
@@ -35515,7 +36653,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "palmyra-x5",
+      "modelFamily": "other"
     },
     {
       "key": "xai-oauth/grok-4.5",
@@ -35582,7 +36722,9 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.5",
+      "modelFamily": "grok"
     },
     {
       "key": "xai-oauth/grok-4.6",
@@ -35650,7 +36792,9 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.6",
+      "modelFamily": "grok"
     },
     {
       "key": "xai/grok-4.20-0309-non-reasoning",
@@ -35694,7 +36838,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.20-0309-non-reasoning",
+      "modelFamily": "grok"
     },
     {
       "key": "xai/grok-4.20-0309-reasoning",
@@ -35738,7 +36884,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.20-0309-reasoning",
+      "modelFamily": "grok"
     },
     {
       "key": "xai/grok-4.3",
@@ -35782,7 +36930,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.3",
+      "modelFamily": "grok"
     },
     {
       "key": "xai/grok-build-0.1",
@@ -35833,7 +36983,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-build-0.1",
+      "modelFamily": "grok"
     },
     {
       "key": "yi/yi-large",
@@ -35877,7 +37029,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "yi-large",
+      "modelFamily": "other"
     },
     {
       "key": "zai-anthropic/glm-4.7",
@@ -35921,7 +37075,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "zai-anthropic/glm-4.7-flash",
@@ -35965,7 +37121,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7-flash",
+      "modelFamily": "glm"
     },
     {
       "key": "zai-anthropic/glm-5",
@@ -36009,7 +37167,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
     },
     {
       "key": "zai-anthropic/glm-5-turbo",
@@ -36053,7 +37213,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5-turbo",
+      "modelFamily": "glm"
     },
     {
       "key": "zai-anthropic/glm-5.1",
@@ -36097,7 +37259,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "zai-anthropic/glm-5.2",
@@ -36141,7 +37305,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "zai-anthropic/glm-5.3",
@@ -36185,7 +37351,9 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-4.7",
@@ -36229,7 +37397,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-4.7-flash",
@@ -36273,7 +37443,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7-flash",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-5",
@@ -36317,7 +37489,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-5-turbo",
@@ -36361,7 +37535,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5-turbo",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-5.1",
@@ -36405,7 +37581,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-5.2",
@@ -36449,7 +37627,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "zai/glm-5.3",
@@ -36493,7 +37673,9 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
     },
     {
       "key": "zenmux/anthropic/claude-opus-4.5",
@@ -36556,7 +37738,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "zenmux/anthropic/claude-sonnet-4.5",
@@ -36619,7 +37803,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.5",
+      "modelFamily": "claude"
     },
     {
       "key": "zenmux/deepseek/deepseek-chat",
@@ -36670,7 +37856,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "deepseek-chat",
+      "modelFamily": "deepseek"
     },
     {
       "key": "zenmux/google/gemini-3-flash-preview",
@@ -36733,7 +37921,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3-flash-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "zenmux/google/gemini-3.1-pro-preview",
@@ -36796,7 +37986,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.1-pro-preview",
+      "modelFamily": "gemini"
     },
     {
       "key": "zenmux/mistralai/mistral-large-2512",
@@ -36848,7 +38040,9 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "mistral-large-2512",
+      "modelFamily": "mistral"
     },
     {
       "key": "zenmux/openai/gpt-5",
@@ -36911,7 +38105,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "gpt-5",
+      "modelFamily": "gpt"
     },
     {
       "key": "zenmux/x-ai/grok-4.1-fast",
@@ -36973,7 +38169,9 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "grok-4.1-fast",
+      "modelFamily": "grok"
     },
     {
       "key": "zenmux/z-ai/glm-4.6v-flash",
@@ -37025,7 +38223,601 @@
         "confidence": "inferred"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "canonicalModelId": "glm-4.6v-flash",
+      "modelFamily": "glm"
+    }
+  ],
+  "families": [
+    {
+      "id": "claude",
+      "displayName": "Claude",
+      "vendor": "Anthropic",
+      "vendorProviders": [
+        "anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^claude-",
+          "note": "every Anthropic lineup id, after the normaliser strips Bedrock's `us.`/`anthropic.` prefixes and `-v1:0` suffix"
+        }
+      ],
+      "slots": [
+        {
+          "name": "fable",
+          "canonicalModelId": "claude-fable-5",
+          "description": "the most capable Claude model, for the hardest reasoning and the most open-ended agentic work; the highest price.",
+          "reason": "First because it is the strongest.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); points at `claude-fable-5` until the owed `claude-fable-5-1` row is verified (P6.6 Task 1b)",
+          "status": "candidate"
+        },
+        {
+          "name": "opus",
+          "canonicalModelId": "claude-opus-5",
+          "description": "very capable on complex, multi-step engineering; the demanding-work default.",
+          "reason": "Second: near the top on capability at a lower price.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "sonnet",
+          "canonicalModelId": "claude-sonnet-5",
+          "description": "fast, capable everyday coding; the default worker.",
+          "reason": "Third: the balance of speed, capability and price.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "haiku",
+          "canonicalModelId": "claude-haiku-4.5",
+          "description": "the fastest and cheapest; simple, well-specified tasks.",
+          "reason": "Fourth: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9 — order = strength = price (user-ruling)"
+    },
+    {
+      "id": "deepseek",
+      "displayName": "DeepSeek",
+      "vendor": "DeepSeek",
+      "vendorProviders": [
+        "deepseek",
+        "deepseek-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^deepseek",
+          "note": "unanchored tail on purpose: the lineup ships as `deepseek-v4-pro` and as `deepseek-reasoner`-style ids alike"
+        }
+      ],
+      "slots": [
+        {
+          "name": "pro",
+          "canonicalModelId": "deepseek-v4-pro",
+          "description": "the strongest DeepSeek; long reasoning and hard coding at a low price.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "deepseek-v4-flash",
+          "description": "the fast, cheap implementer of the same lineup.",
+          "reason": "Second: cost and speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "gemini",
+      "displayName": "Gemini",
+      "vendor": "Google",
+      "vendorProviders": [
+        "google",
+        "vertex"
+      ],
+      "matchers": [
+        {
+          "pattern": "^gemini-",
+          "note": "after the normaliser strips the `models/` namespace Google AI Studio uses"
+        }
+      ],
+      "slots": [
+        {
+          "name": "pro",
+          "canonicalModelId": "gemini-3.1-pro-preview",
+          "description": "described by what it is good at — long-context analysis, multimodal understanding and careful, deliberate reasoning; the community still favours it for those.",
+          "reason": "First by breadth, not by the vendor's strength ranking.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING, winter-curated text)",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "gemini-3.7-flash",
+          "description": "Google's strongest current model by its own documentation; fast agentic coding.",
+          "reason": "Second: strength.",
+          "basis": "vendor-doc",
+          "citation": "spec:WS-13c §9 — vendor-doc basis; the vendor model page citation lands with the owed `google/gemini-3.8-flash` row (P6.6 Task 1b), which this slot then points at",
+          "status": "candidate"
+        },
+        {
+          "name": "lite",
+          "canonicalModelId": "gemini-3.1-flash-lite",
+          "description": "the cheap implementer.",
+          "reason": "Third: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1)",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "gemma",
+      "displayName": "Gemma",
+      "vendor": "Google",
+      "vendorProviders": [
+        "vertex"
+      ],
+      "matchers": [
+        {
+          "pattern": "^gemma-",
+          "note": "Google's open-weight lineup; served by many providers, one vendor identity"
+        }
+      ],
+      "slots": [
+        {
+          "name": "gemma-4",
+          "canonicalModelId": "gemma-4-31b-it",
+          "description": "Google's open-weight model.",
+          "reason": "Single slot.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "glm",
+      "displayName": "GLM",
+      "vendor": "Z.AI",
+      "vendorProviders": [
+        "zai",
+        "zai-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^glm-",
+          "note": "after the normaliser strips the `zai-` prefix some providers put on GLM ids"
+        }
+      ],
+      "slots": [
+        {
+          "name": "strong",
+          "canonicalModelId": "glm-5.3",
+          "description": "the strongest GLM; agentic coding on the GLM Coding plan.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling NAME, winter-curated text)",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "glm-4.7-flash",
+          "description": "the fast, cheap implementer.",
+          "reason": "Second: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling NAME — user: \"5.3 and 5.3 flash … strong/flash\", §0 2026-09-06 — winter-curated text, same provenance as the sibling `strong` slot; R-6c-11, fix r1 I-1); points at `glm-4.7-flash` until the owed `zai/glm-5.3-flash` row is verified (P6.6 Task 1b)",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "gpt",
+      "displayName": "GPT",
+      "vendor": "OpenAI",
+      "vendorProviders": [
+        "codex-oauth",
+        "openai"
+      ],
+      "matchers": [
+        {
+          "pattern": "^gpt-(?!oss)",
+          "note": "DISJOINT from `gpt-oss` by the negative lookahead, so the two never both match and family order never matters"
+        }
+      ],
+      "slots": [
+        {
+          "name": "astra",
+          "canonicalModelId": "gpt-6-astra",
+          "description": "for seemingly impossible, novelty-like tasks that involve lots of abstract reasoning; substantially above Sol.",
+          "reason": "First: nothing else reaches it.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        },
+        {
+          "name": "sol",
+          "canonicalModelId": "gpt-5.6-sol",
+          "description": "a highly capable model for VERY complex novelty tasks; already overkill for most work.",
+          "reason": "Second: the ceiling before Astra.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        },
+        {
+          "name": "terra",
+          "canonicalModelId": "gpt-5.6-terra",
+          "description": "a highly reliable and capable model for demanding work — framed as Sol was.",
+          "reason": "Third: the demanding-work default.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        },
+        {
+          "name": "luna",
+          "canonicalModelId": "gpt-5.6-luna",
+          "description": "not far from Terra on implementation capability, and probably the best cheap implementer on the market.",
+          "reason": "Fourth: cost.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9 — user-ruling"
+    },
+    {
+      "id": "gpt-oss",
+      "displayName": "GPT-OSS",
+      "vendor": "OpenAI",
+      "vendorProviders": [
+        "groq",
+        "cerebras"
+      ],
+      "matchers": [
+        {
+          "pattern": "^gpt-oss-",
+          "note": "OpenAI's OPEN-WEIGHT lineup — a separate vendor identity from `gpt`, and disjoint from it by that family's lookahead"
+        }
+      ],
+      "slots": [
+        {
+          "name": "120b",
+          "canonicalModelId": "gpt-oss-120b",
+          "description": "OpenAI's large open-weight model.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "20b",
+          "canonicalModelId": "gpt-oss-20b",
+          "description": "the small, cheap one.",
+          "reason": "Second: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "grok",
+      "displayName": "Grok",
+      "vendor": "xAI",
+      "vendorProviders": [
+        "xai-oauth",
+        "xai"
+      ],
+      "matchers": [
+        {
+          "pattern": "^grok-",
+          "note": "xAI's lineup, including the coding-tuned `grok-build-*` ids"
+        }
+      ],
+      "slots": [
+        {
+          "name": "grok-4.6",
+          "canonicalModelId": "grok-4.6",
+          "description": "the stronger Grok, for reasoning-heavy work.",
+          "reason": "First: strength.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9; served today by `xai-oauth`, with the owed `xai/grok-4.6` row still to be verified (P6.6 Task 1b). NOT pinned to a provider — §4's ordering decides.",
+          "status": "candidate"
+        },
+        {
+          "name": "grok-build",
+          "canonicalModelId": "grok-build-0.1",
+          "description": "the implementer — xAI's coding-tuned build model.",
+          "reason": "Second: implementation.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "kimi",
+      "displayName": "Kimi",
+      "vendor": "Moonshot AI",
+      "vendorProviders": [
+        "kimi-coding",
+        "moonshot"
+      ],
+      "matchers": [
+        {
+          "pattern": "^kimi-|^k[0-9](?:\\.|$)",
+          "note": "the platform ids plus the coding plan's bare `k<n>` spelling"
+        }
+      ],
+      "slots": [
+        {
+          "name": "k3",
+          "canonicalModelId": "kimi-k3",
+          "description": "the strongest Kimi.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "code",
+          "canonicalModelId": "kimi-k2.7-code",
+          "description": "the coding-tuned model.",
+          "reason": "Second: implementation.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "fast",
+          "canonicalModelId": "kimi-k2.7-code-highspeed",
+          "description": "the same model on the high-speed tier.",
+          "reason": "Third: speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "llama",
+      "displayName": "Llama",
+      "vendor": "Meta",
+      "vendorProviders": [
+        "groq"
+      ],
+      "matchers": [
+        {
+          "pattern": "^llama-",
+          "note": "after the normaliser strips the `meta-llama/` namespace"
+        }
+      ],
+      "slots": [
+        {
+          "name": "scout",
+          "canonicalModelId": "llama-4-scout-17b-16e-instruct",
+          "description": "the current open-weight Llama, fast on Groq.",
+          "reason": "First: recency.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "3.3",
+          "canonicalModelId": "llama-3.3-70b-versatile",
+          "description": "the proven 70B generalist.",
+          "reason": "Second: reliability.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "minimax",
+      "displayName": "MiniMax",
+      "vendor": "MiniMax",
+      "vendorProviders": [
+        "minimax",
+        "minimax-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^minimax-",
+          "note": "after the normaliser lowercases `MiniMax-M3` and strips the `minimax/` namespace"
+        }
+      ],
+      "slots": [
+        {
+          "name": "m3",
+          "canonicalModelId": "minimax-m3",
+          "description": "the strongest MiniMax.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "m2.7",
+          "canonicalModelId": "minimax-m2.7",
+          "description": "the previous flagship; the cheaper implementer.",
+          "reason": "Second: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "fast",
+          "canonicalModelId": "minimax-m2.7-highspeed",
+          "description": "the high-speed tier.",
+          "reason": "Third: speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "mistral",
+      "displayName": "Mistral",
+      "vendor": "Mistral AI",
+      "vendorProviders": [
+        "mistral"
+      ],
+      "matchers": [
+        {
+          "pattern": "^mistral-|^codestral|^devstral|^magistral|^ministral|^pixtral",
+          "note": "the vendor ships one lineup under several `-stral` names; all of them are Mistral models"
+        }
+      ],
+      "slots": [
+        {
+          "name": "large",
+          "canonicalModelId": "mistral-large-latest",
+          "description": "the strongest Mistral.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "medium",
+          "canonicalModelId": "mistral-medium-3.5",
+          "description": "the balanced model.",
+          "reason": "Second: balance.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "devstral",
+          "canonicalModelId": "devstral-latest",
+          "description": "the agentic-coding model.",
+          "reason": "Third: implementation.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "small",
+          "canonicalModelId": "mistral-small-latest",
+          "description": "the cheap implementer.",
+          "reason": "Fourth: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "o-series",
+      "displayName": "o-series",
+      "vendor": "OpenAI",
+      "vendorProviders": [
+        "openai"
+      ],
+      "matchers": [
+        {
+          "pattern": "^o[1-9](?:-|$)",
+          "note": "`o1`, `o3-mini`, `o4-mini` — bounded so it cannot swallow an unrelated id that merely starts with `o`"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9 — no slots; listed under \"more options\" only"
+    },
+    {
+      "id": "other",
+      "displayName": "Other",
+      "vendor": "(various)",
+      "vendorProviders": [],
+      "matchers": [
+        {
+          "pattern": "(?!)",
+          "note": "never matches; listed for the record — `familyIdOf` returns `other` as its FALLBACK, not through this pattern"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §1/§9 — the reserved fallback id"
+    },
+    {
+      "id": "qwen",
+      "displayName": "Qwen",
+      "vendor": "Alibaba",
+      "vendorProviders": [
+        "qwen-cloud",
+        "alibaba"
+      ],
+      "matchers": [
+        {
+          "pattern": "^qwen",
+          "note": "unanchored tail: the lineup ships as `qwen3.8-max` and `qwen-…` alike, after the `qwen/` namespace is stripped"
+        }
+      ],
+      "slots": [
+        {
+          "name": "max",
+          "canonicalModelId": "qwen3.8-max",
+          "description": "the strongest Qwen; complex reasoning and agentic coding.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "plus",
+          "canonicalModelId": "qwen3.7-plus",
+          "description": "the balanced everyday model.",
+          "reason": "Second: balance.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "small",
+          "canonicalModelId": "qwen3.6-27b",
+          "description": "a small open-weight implementer, cheap and widely served.",
+          "reason": "Third: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
     }
   ]
 }

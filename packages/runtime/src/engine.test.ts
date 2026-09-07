@@ -3820,3 +3820,50 @@ test("P5 T2: a configured outputStyle is what system/init.output_style reports",
   const init = dataMessages(frames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as Record<string, unknown>;
   expect(init["output_style"]).toBe("explanatory");
 });
+
+// --- WS-13c §7 (P6.6 spine): the `list_model_families` control handler ----------------------------
+//
+// The handler is payload-free and Winter-only, beside `list_models`. What this pins is the ABSENT
+// case, which is the one a scripted double actually hits: an engine wired with no producer must
+// still ANSWER, and answer with the shape `Query.listModelFamilies()` decodes — `active: undefined`
+// (no effective model to derive a family from) beside an empty `families` array. A handler that
+// answered `ok: false`, or that was simply missing and left the request unanswered, would hang the
+// caller's control-request promise rather than telling it there is nothing to list.
+test("WS-13c: `list_model_families` answers `{ active: undefined, families: [] }` when no producer is wired", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([{ kind: "text", text: "done" }]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  host.output.write({ type: "control_request", requestId: "fam1", subtype: "list_model_families", payload: undefined });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames = await drain(host.input);
+  await done;
+
+  const reply = frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "fam1") as ControlResponseFrame | undefined;
+  expect(reply).toBeDefined();
+  expect(reply!.ok).toBe(true);
+  // `active: undefined` and `families: []` are DIFFERENT statements — the first is "this session has
+  // no effective model", the second "there are no families" — so both are asserted, not just the key set.
+  expect((reply as unknown as { payload: { active: unknown; families: unknown[] } }).payload.active).toBeUndefined();
+  expect((reply as unknown as { payload: { active: unknown; families: unknown[] } }).payload.families).toEqual([]);
+});
+
+test("WS-13c: a wired `listModelFamilies` producer is what the handler answers with", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([{ kind: "text", text: "done" }]);
+  const listing = {
+    active: { family: "gpt", source: "family-default" as const, slots: [{ name: "astra", canonicalModelId: "gpt-6-astra", description: "d", reason: "r" }] },
+    families: [{ id: "gpt", displayName: "GPT", vendor: "OpenAI", slots: [], models: [] }],
+  };
+  const done = runEngine({
+    config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor,
+    listModelFamilies: () => listing,
+  });
+  host.output.write({ type: "control_request", requestId: "fam2", subtype: "list_model_families", payload: undefined });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames = await drain(host.input);
+  await done;
+
+  const reply = frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "fam2") as ControlResponseFrame | undefined;
+  expect(reply?.ok).toBe(true);
+  expect((reply as unknown as { payload: unknown }).payload).toEqual(listing);
+});

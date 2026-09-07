@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadCatalog, scanForSecrets, validateCatalog } from "../index.ts";
+import { CLAUDE_FAMILY_ID, CLAUDE_RESERVED_SLOT_NAMES, familyIdOf, loadCatalog, rowsForCanonicalId, scanForSecrets, stampFamilyFields, validateCatalog } from "../index.ts";
 import { UNKNOWN_CITATION_RE } from "../validate.ts";
 import type { WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
 import upstreamLayer from "../../generated/upstream-layer.json" with { type: "json" };
@@ -197,12 +197,18 @@ describe("standing floors", () => {
   });
 
   test("the UPSTREAM LAYER validates standalone — its cohort rows are all shadowed and would never be checked otherwise", () => {
+    // WS-13c: the layer's rows carry no `modelFamily`/`canonicalModelId` — deliberately, since the
+    // stamp treats a pre-existing value as an override it must never overwrite (merge.ts's
+    // `UnstampedModelDescriptor`). Stamped here with NO families, exactly as `mergeLayers` does for
+    // this same check: every row lands in `other`, and family assignment stays the merged catalog's
+    // own gate rather than a claim the layer alone could not satisfy.
     const standalone = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       catalogVersion: catalog.catalogVersion,
       upstream: catalog.upstream,
       providers: upstreamLayer.providers,
-      models: upstreamLayer.models,
+      models: stampFamilyFields(upstreamLayer.models as unknown as Array<{ upstreamId: string }>, []),
+      families: [],
     };
     const result = validateCatalog(standalone);
     expect(result.ok ? [] : result.errors).toEqual([]);
@@ -798,5 +804,106 @@ describe("WS-13b §2: the widened catalog", () => {
       expect([p.id, citation === "local" || Object.values(body).some((v) => (v ?? "").length > 0)]).toEqual([p.id, true]);
       expect([p.id, UNKNOWN_CITATION_RE.test(citation)]).toEqual([p.id, false]);
     }
+  });
+});
+
+// --- WS-13c §1 (R13c-3): the family layer as a property of the SHIPPED document -------------------
+//
+// `validate.test.ts` proves the RULES against small fixtures; this proves the CATALOG. The two do
+// not overlap: a validator that accepts a legal document says nothing about whether the 600 rows
+// this repository actually ships got stamped, whether the 35 slots point at rows that exist, or
+// whether the matchers a human authored are still disjoint after a row landed that nobody thought
+// about. Each of those is a silent failure — a picker with a dead option, a slot resolving into
+// another vendor's family — that no other gate can see.
+describe("WS-13c: model families and slots", () => {
+  test("every model row carries a non-empty `modelFamily` and `canonicalModelId`", () => {
+    for (const model of catalog.models) {
+      expect([model.key, model.modelFamily.length > 0, model.canonicalModelId.length > 0]).toEqual([model.key, true, true]);
+    }
+  });
+
+  test("the families layer ships, and `claude`'s slots are the pinned four in order", () => {
+    expect(catalog.families.length).toBeGreaterThanOrEqual(15);
+    const claude = catalog.families.find((f) => f.id === CLAUDE_FAMILY_ID);
+    expect(claude).toBeDefined();
+    expect(claude!.slots.map((s) => s.name)).toEqual([...CLAUDE_RESERVED_SLOT_NAMES]);
+  });
+
+  test("no NON-claude family uses a reserved Claude name (D25: never false information)", () => {
+    for (const family of catalog.families) {
+      if (family.id === CLAUDE_FAMILY_ID) continue;
+      for (const slot of family.slots) {
+        expect([`${family.id}/${slot.name}`, CLAUDE_RESERVED_SLOT_NAMES.includes(slot.name)]).toEqual([`${family.id}/${slot.name}`, false]);
+      }
+    }
+  });
+
+  test("every slot's canonical id resolves to at least one SERVABLE row", () => {
+    let slots = 0;
+    for (const family of catalog.families) {
+      for (const slot of family.slots) {
+        slots++;
+        const rows = rowsForCanonicalId(catalog, slot.canonicalModelId);
+        expect([`${family.id}/${slot.name} -> ${slot.canonicalModelId}`, rows.length > 0]).toEqual([`${family.id}/${slot.name} -> ${slot.canonicalModelId}`, true]);
+      }
+    }
+    expect(slots).toBeGreaterThanOrEqual(30);
+  });
+
+  test("the normaliser reproduces these LIVE rows, including the one that needs an overlay override", () => {
+    const canonicalOf = (key: string): string => catalog.models.find((m) => m.key === key)!.canonicalModelId;
+    const familyOf = (key: string): string => catalog.models.find((m) => m.key === key)!.modelFamily;
+    // ONE canonical model across three spellings and three providers — the whole point of §1.
+    expect(canonicalOf("vertex/DeepSeek-V4-Pro")).toBe("deepseek-v4-pro");
+    expect(canonicalOf("deepseek/deepseek-v4-pro")).toBe("deepseek-v4-pro");
+    expect(canonicalOf("anthropic/claude-haiku-4-5-20251001")).toBe("claude-haiku-4.5-20251001");
+    expect(canonicalOf("groq/openai/gpt-oss-120b")).toBe("gpt-oss-120b");
+    expect(familyOf("groq/openai/gpt-oss-120b")).toBe("gpt-oss");
+    expect(canonicalOf("minimax/MiniMax-M3")).toBe("minimax-m3");
+    // The OVERRIDE: the coding plan's own id is bare `k3`, which no matcher would claim and which
+    // would be its own canonical model — so the `k3` slot would see the platform row and not this one.
+    expect(canonicalOf("kimi-coding/k3")).toBe("kimi-k3");
+    expect(familyOf("kimi-coding/k3")).toBe("kimi");
+    // ...and the slot that names it reaches BOTH rows.
+    expect(rowsForCanonicalId(catalog, "kimi-k3").map((m) => m.key)).toContain("kimi-coding/k3");
+    expect(familyOf("openai/gpt-6-astra")).toBe("gpt");
+    expect(catalog.families.find((f) => f.id === "gpt")!.slots.find((s) => s.name === "astra")!.canonicalModelId).toBe("gpt-6-astra");
+  });
+
+  test("ORDER INDEPENDENCE: no row matches two families, so the pipeline's sort-by-id cannot change a stamp", () => {
+    // The generated array is sorted by `id`; the overlay is authored in whatever order a human finds
+    // readable. `familyIdOf` takes the FIRST match, so if any row matched two families the stamp
+    // would depend on that sort — and a family renamed or inserted would silently re-home rows.
+    // Both halves are asserted: the stamp reproduces from the generated array, and nothing is
+    // ambiguous in the first place.
+    //
+    // ONE THING THIS CASE CANNOT ACCOMMODATE, deliberately: a per-row `modelFamily` OVERRIDE in
+    // `overlay/models.json`. WS-13c §1 permits one and `stampFamilyFields` honours it, but an
+    // overridden row's family is by definition NOT what its matchers say — so the first assertion
+    // below would fail, reporting "the matchers are not disjoint" for a row where they are.
+    // No override exists today. Adding one means exempting that row HERE, in the same reviewed
+    // commit, rather than discovering this failure and mis-diagnosing it.
+    for (const model of catalog.models) {
+      expect([model.key, familyIdOf(model.canonicalModelId, catalog.families)]).toEqual([model.key, model.modelFamily]);
+      const hits = catalog.families.filter((f) => f.matchers.some((m) => new RegExp(m.pattern).test(model.canonicalModelId)));
+      // Asserted as "at most one", not by comparing `hits` to a value derived from `hits` — the
+      // earlier spelling failed correctly but READ as a tautology, and a future editor "simplifying"
+      // it would have deleted the disjointness proof without the suite noticing (fix r1, M-1). The
+      // failure still names the row AND the families that collided.
+      expect([model.key, hits.length > 1 ? hits.map((f) => f.id) : null]).toEqual([model.key, null]);
+    }
+    // ...proved a second way, against a REVERSED families array: same answer for every row.
+    const reversed = [...catalog.families].reverse();
+    for (const model of catalog.models) {
+      expect([model.key, familyIdOf(model.canonicalModelId, reversed)]).toEqual([model.key, model.modelFamily]);
+    }
+  });
+
+  test("informational: how many rows no matcher claims", () => {
+    const others = catalog.models.filter((m) => m.modelFamily === "other");
+    // No assertion, deliberately. `other` is a legal, expected home — every vendor lineup with a row
+    // MAY become a family in a reviewed commit (§1), and a threshold here would either be arbitrary
+    // or would turn a new provider's rows into a failing build.
+    console.log(`WS-13c: ${others.length} of ${catalog.models.length} model rows are in family "other" (${new Set(others.map((m) => m.canonicalModelId)).size} distinct canonical ids)`);
   });
 });

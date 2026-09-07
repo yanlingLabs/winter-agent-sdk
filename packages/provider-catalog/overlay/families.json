@@ -1,0 +1,600 @@
+{
+  "$comment": "HAND-AUTHORED overlay FAMILIES — WS-13c §9's default slot table, the reviewed third layer beside overlay/providers.json and overlay/models.json. Generated into `catalog.families` by `bun run provider:catalog`, sorted by `id`, and never edited under generated/. EVERY description and reason is §9's own sentence, verbatim: a slot's text is the thing a user reads in the model switcher, so paraphrasing it here would silently replace a reviewed statement with an unreviewed one. `basis` records where that TEXT came from — `user-ruling` where §9's bracket names the user's own framing unqualified, `winter-curated` where §9 says the ORDER or the NAME is the user's but the sentence is Winter's, `vendor-doc` where the claim is the vendor's documentation. EVERY slot is `status: \"candidate\"`, including claude's and gpt's: promotion is a later, reviewed commit (§9, and WS-13c §12 item 1 leaves the candidate text with the user to review). MATCHERS ARE AUTHORED DISJOINT — `^gpt-(?!oss)` beside `^gpt-oss-` — so the pipeline's sort-by-id can never change a row's stamp; catalog-integrity.test.ts asserts that over all 600 rows rather than trusting this note. Four slots point at the NEAREST EXISTING ROW while their owed vendor-verified row is authored (P6.6 Task 1b): claude/fable, gemini/flash, glm/flash and grok/grok-4.6 — each says so in its own citation, and the integrity suite refuses a slot whose row does not exist, so none of these is an invented id.",
+  "families": [
+    {
+      "id": "claude",
+      "displayName": "Claude",
+      "vendor": "Anthropic",
+      "vendorProviders": [
+        "anthropic"
+      ],
+      "$comment": "D25: the ONE family whose slot names are a compat contract. `fable`/`opus`/`sonnet`/`haiku` are the Claude Agent SDK's own enum and are reserved to this family by the validator — a Claude session advertises exactly these four whether it runs on the official SDK or inside Winter, and custom slots are ignored there. §9's ordering (strength = price) is the user's ruling; the sentences are Winter's.",
+      "matchers": [
+        {
+          "pattern": "^claude-",
+          "note": "every Anthropic lineup id, after the normaliser strips Bedrock's `us.`/`anthropic.` prefixes and `-v1:0` suffix"
+        }
+      ],
+      "slots": [
+        {
+          "name": "fable",
+          "canonicalModelId": "claude-fable-5",
+          "description": "the most capable Claude model, for the hardest reasoning and the most open-ended agentic work; the highest price.",
+          "reason": "First because it is the strongest.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); points at `claude-fable-5` until the owed `claude-fable-5-1` row is verified (P6.6 Task 1b)",
+          "status": "candidate"
+        },
+        {
+          "name": "opus",
+          "canonicalModelId": "claude-opus-5",
+          "description": "very capable on complex, multi-step engineering; the demanding-work default.",
+          "reason": "Second: near the top on capability at a lower price.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "sonnet",
+          "canonicalModelId": "claude-sonnet-5",
+          "description": "fast, capable everyday coding; the default worker.",
+          "reason": "Third: the balance of speed, capability and price.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "haiku",
+          "canonicalModelId": "claude-haiku-4.5",
+          "description": "the fastest and cheapest; simple, well-specified tasks.",
+          "reason": "Fourth: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9 — order = strength = price (user-ruling)"
+    },
+    {
+      "id": "deepseek",
+      "displayName": "DeepSeek",
+      "vendor": "DeepSeek",
+      "vendorProviders": [
+        "deepseek",
+        "deepseek-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^deepseek",
+          "note": "unanchored tail on purpose: the lineup ships as `deepseek-v4-pro` and as `deepseek-reasoner`-style ids alike"
+        }
+      ],
+      "slots": [
+        {
+          "name": "pro",
+          "canonicalModelId": "deepseek-v4-pro",
+          "description": "the strongest DeepSeek; long reasoning and hard coding at a low price.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "deepseek-v4-flash",
+          "description": "the fast, cheap implementer of the same lineup.",
+          "reason": "Second: cost and speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "gemini",
+      "displayName": "Gemini",
+      "vendor": "Google",
+      "vendorProviders": [
+        "google",
+        "vertex"
+      ],
+      "$comment": "The family §9 uses to make D26's point: position is NOT a strength claim. Flash is documented as the stronger model and Pro still leads the list, because the user's framing is that Pro is described by what it is GOOD AT rather than by rank.",
+      "matchers": [
+        {
+          "pattern": "^gemini-",
+          "note": "after the normaliser strips the `models/` namespace Google AI Studio uses"
+        }
+      ],
+      "slots": [
+        {
+          "name": "pro",
+          "canonicalModelId": "gemini-3.1-pro-preview",
+          "description": "described by what it is good at — long-context analysis, multimodal understanding and careful, deliberate reasoning; the community still favours it for those.",
+          "reason": "First by breadth, not by the vendor's strength ranking.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING, winter-curated text)",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "gemini-3.7-flash",
+          "description": "Google's strongest current model by its own documentation; fast agentic coding.",
+          "reason": "Second: strength.",
+          "basis": "vendor-doc",
+          "citation": "spec:WS-13c §9 — vendor-doc basis; the vendor model page citation lands with the owed `google/gemini-3.8-flash` row (P6.6 Task 1b), which this slot then points at",
+          "status": "candidate"
+        },
+        {
+          "name": "lite",
+          "canonicalModelId": "gemini-3.1-flash-lite",
+          "description": "the cheap implementer.",
+          "reason": "Third: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1)",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "gemma",
+      "displayName": "Gemma",
+      "vendor": "Google",
+      "vendorProviders": [
+        "vertex"
+      ],
+      "matchers": [
+        {
+          "pattern": "^gemma-",
+          "note": "Google's open-weight lineup; served by many providers, one vendor identity"
+        }
+      ],
+      "slots": [
+        {
+          "name": "gemma-4",
+          "canonicalModelId": "gemma-4-31b-it",
+          "description": "Google's open-weight model.",
+          "reason": "Single slot.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "glm",
+      "displayName": "GLM",
+      "vendor": "Z.AI",
+      "vendorProviders": [
+        "zai",
+        "zai-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^glm-",
+          "note": "after the normaliser strips the `zai-` prefix some providers put on GLM ids"
+        }
+      ],
+      "slots": [
+        {
+          "name": "strong",
+          "canonicalModelId": "glm-5.3",
+          "description": "the strongest GLM; agentic coding on the GLM Coding plan.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling NAME, winter-curated text)",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "glm-4.7-flash",
+          "description": "the fast, cheap implementer.",
+          "reason": "Second: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9 (user-ruling NAME — user: \"5.3 and 5.3 flash … strong/flash\", §0 2026-09-06 — winter-curated text, same provenance as the sibling `strong` slot; R-6c-11, fix r1 I-1); points at `glm-4.7-flash` until the owed `zai/glm-5.3-flash` row is verified (P6.6 Task 1b)",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "gpt",
+      "displayName": "GPT",
+      "vendor": "OpenAI",
+      "vendorProviders": [
+        "codex-oauth",
+        "openai"
+      ],
+      "$comment": "Every sentence here is the user's own framing (§0 D25's OpenAI paragraph), condensed to one line each and keeping the user's key phrases — 'seemingly impossible', 'very complex novelty', 'framed as sol currently', 'best cheap implementer on the market'. Codex's own picker text was named explicitly as NOT a good description, so none of it is reused. `codex-oauth` leads `vendorProviders`: a configured subscription's marginal cost is zero (WS-13c §4 step 3-i).",
+      "matchers": [
+        {
+          "pattern": "^gpt-(?!oss)",
+          "note": "DISJOINT from `gpt-oss` by the negative lookahead, so the two never both match and family order never matters"
+        }
+      ],
+      "slots": [
+        {
+          "name": "astra",
+          "canonicalModelId": "gpt-6-astra",
+          "description": "for seemingly impossible, novelty-like tasks that involve lots of abstract reasoning; substantially above Sol.",
+          "reason": "First: nothing else reaches it.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        },
+        {
+          "name": "sol",
+          "canonicalModelId": "gpt-5.6-sol",
+          "description": "a highly capable model for VERY complex novelty tasks; already overkill for most work.",
+          "reason": "Second: the ceiling before Astra.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        },
+        {
+          "name": "terra",
+          "canonicalModelId": "gpt-5.6-terra",
+          "description": "a highly reliable and capable model for demanding work — framed as Sol was.",
+          "reason": "Third: the demanding-work default.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        },
+        {
+          "name": "luna",
+          "canonicalModelId": "gpt-5.6-luna",
+          "description": "not far from Terra on implementation capability, and probably the best cheap implementer on the market.",
+          "reason": "Fourth: cost.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9 — user-ruling"
+    },
+    {
+      "id": "gpt-oss",
+      "displayName": "GPT-OSS",
+      "vendor": "OpenAI",
+      "vendorProviders": [
+        "groq",
+        "cerebras"
+      ],
+      "matchers": [
+        {
+          "pattern": "^gpt-oss-",
+          "note": "OpenAI's OPEN-WEIGHT lineup — a separate vendor identity from `gpt`, and disjoint from it by that family's lookahead"
+        }
+      ],
+      "slots": [
+        {
+          "name": "120b",
+          "canonicalModelId": "gpt-oss-120b",
+          "description": "OpenAI's large open-weight model.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "20b",
+          "canonicalModelId": "gpt-oss-20b",
+          "description": "the small, cheap one.",
+          "reason": "Second: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "grok",
+      "displayName": "Grok",
+      "vendor": "xAI",
+      "vendorProviders": [
+        "xai-oauth",
+        "xai"
+      ],
+      "matchers": [
+        {
+          "pattern": "^grok-",
+          "note": "xAI's lineup, including the coding-tuned `grok-build-*` ids"
+        }
+      ],
+      "slots": [
+        {
+          "name": "grok-4.6",
+          "canonicalModelId": "grok-4.6",
+          "description": "the stronger Grok, for reasoning-heavy work.",
+          "reason": "First: strength.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9; served today by `xai-oauth`, with the owed `xai/grok-4.6` row still to be verified (P6.6 Task 1b). NOT pinned to a provider — §4's ordering decides.",
+          "status": "candidate"
+        },
+        {
+          "name": "grok-build",
+          "canonicalModelId": "grok-build-0.1",
+          "description": "the implementer — xAI's coding-tuned build model.",
+          "reason": "Second: implementation.",
+          "basis": "user-ruling",
+          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "kimi",
+      "displayName": "Kimi",
+      "vendor": "Moonshot AI",
+      "vendorProviders": [
+        "kimi-coding",
+        "moonshot"
+      ],
+      "$comment": "The coding plan spells its ids differently from the platform (`k3`, not `kimi-k3`), which is what the per-row `canonicalModelId` override in overlay/models.json exists for — without it `kimi-coding/k3` would be its own canonical model and the `k3` slot would not see it. VENDORPROVIDERS DIVERGE FROM §9's PRINTED LIST, deliberately (controller ruling R-6c-15, fix r1): §9 prints `moonshot, kimi-coding`, but §4 step 3-i requires a configured SUBSCRIPTION row before a token row of the same vendor, and in this catalog `kimi-coding` is `pricingBasis: subscription` while `moonshot` is `token` — kimi was the only family where the two disagreed (`gpt` and `grok` already put the subscription first). §9 is amended by the controller; a §9<->overlay diff must read this row as the ruling, not as drift.",
+      "matchers": [
+        {
+          "pattern": "^kimi-|^k[0-9](?:\\.|$)",
+          "note": "the platform ids plus the coding plan's bare `k<n>` spelling"
+        }
+      ],
+      "slots": [
+        {
+          "name": "k3",
+          "canonicalModelId": "kimi-k3",
+          "description": "the strongest Kimi.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "code",
+          "canonicalModelId": "kimi-k2.7-code",
+          "description": "the coding-tuned model.",
+          "reason": "Second: implementation.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "fast",
+          "canonicalModelId": "kimi-k2.7-code-highspeed",
+          "description": "the same model on the high-speed tier.",
+          "reason": "Third: speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "llama",
+      "displayName": "Llama",
+      "vendor": "Meta",
+      "vendorProviders": [
+        "groq"
+      ],
+      "matchers": [
+        {
+          "pattern": "^llama-",
+          "note": "after the normaliser strips the `meta-llama/` namespace"
+        }
+      ],
+      "slots": [
+        {
+          "name": "scout",
+          "canonicalModelId": "llama-4-scout-17b-16e-instruct",
+          "description": "the current open-weight Llama, fast on Groq.",
+          "reason": "First: recency.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "3.3",
+          "canonicalModelId": "llama-3.3-70b-versatile",
+          "description": "the proven 70B generalist.",
+          "reason": "Second: reliability.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "minimax",
+      "displayName": "MiniMax",
+      "vendor": "MiniMax",
+      "vendorProviders": [
+        "minimax",
+        "minimax-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^minimax-",
+          "note": "after the normaliser lowercases `MiniMax-M3` and strips the `minimax/` namespace"
+        }
+      ],
+      "slots": [
+        {
+          "name": "m3",
+          "canonicalModelId": "minimax-m3",
+          "description": "the strongest MiniMax.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "m2.7",
+          "canonicalModelId": "minimax-m2.7",
+          "description": "the previous flagship; the cheaper implementer.",
+          "reason": "Second: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "fast",
+          "canonicalModelId": "minimax-m2.7-highspeed",
+          "description": "the high-speed tier.",
+          "reason": "Third: speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "mistral",
+      "displayName": "Mistral",
+      "vendor": "Mistral AI",
+      "vendorProviders": [
+        "mistral"
+      ],
+      "matchers": [
+        {
+          "pattern": "^mistral-|^codestral|^devstral|^magistral|^ministral|^pixtral",
+          "note": "the vendor ships one lineup under several `-stral` names; all of them are Mistral models"
+        }
+      ],
+      "slots": [
+        {
+          "name": "large",
+          "canonicalModelId": "mistral-large-latest",
+          "description": "the strongest Mistral.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "medium",
+          "canonicalModelId": "mistral-medium-3.5",
+          "description": "the balanced model.",
+          "reason": "Second: balance.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "devstral",
+          "canonicalModelId": "devstral-latest",
+          "description": "the agentic-coding model.",
+          "reason": "Third: implementation.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "small",
+          "canonicalModelId": "mistral-small-latest",
+          "description": "the cheap implementer.",
+          "reason": "Fourth: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "o-series",
+      "displayName": "o-series",
+      "vendor": "OpenAI",
+      "vendorProviders": [
+        "openai"
+      ],
+      "matchers": [
+        {
+          "pattern": "^o[1-9](?:-|$)",
+          "note": "`o1`, `o3-mini`, `o4-mini` — bounded so it cannot swallow an unrelated id that merely starts with `o`"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9 — no slots; listed under \"more options\" only"
+    },
+    {
+      "id": "other",
+      "displayName": "Other",
+      "vendor": "(various)",
+      "vendorProviders": [],
+      "$comment": "The fallback id `familyIdOf` returns when no matcher claims a row. Its matcher NEVER matches by construction — `(?!)` is an empty negative lookahead — so this row exists to be listed and described, not to claim anything. A session on such a model renders its own model as the single slot (WS-13c §3).",
+      "matchers": [
+        {
+          "pattern": "(?!)",
+          "note": "never matches; listed for the record — `familyIdOf` returns `other` as its FALLBACK, not through this pattern"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §1/§9 — the reserved fallback id"
+    },
+    {
+      "id": "qwen",
+      "displayName": "Qwen",
+      "vendor": "Alibaba",
+      "vendorProviders": [
+        "qwen-cloud",
+        "alibaba"
+      ],
+      "matchers": [
+        {
+          "pattern": "^qwen",
+          "note": "unanchored tail: the lineup ships as `qwen3.8-max` and `qwen-…` alike, after the `qwen/` namespace is stripped"
+        }
+      ],
+      "slots": [
+        {
+          "name": "max",
+          "canonicalModelId": "qwen3.8-max",
+          "description": "the strongest Qwen; complex reasoning and agentic coding.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "plus",
+          "canonicalModelId": "qwen3.7-plus",
+          "description": "the balanced everyday model.",
+          "reason": "Second: balance.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "small",
+          "canonicalModelId": "qwen3.6-27b",
+          "description": "a small open-weight implementer, cheap and widely served.",
+          "reason": "Third: cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    }
+  ]
+}

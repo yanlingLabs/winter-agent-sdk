@@ -12,6 +12,7 @@
 import { test, expect, describe } from "bun:test";
 import { createMemoryCredentialStore, createRegistry, CredentialResolutionError, type CredentialMaterial, type CredentialRef, type CredentialStatus, type CredentialStore, type ProviderAdapter, type ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { deleteProviderCredential, providerCredentialRef, startProviderLogin, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
 // BY PACKAGE NAME, as every other runtime test reaches this package (`winter-provider-conformance`
 // is a root devDependency). A deep relative path into another workspace's `src/` is the drift its
@@ -206,6 +207,11 @@ describe("MATERIAL IS REDACTED IN EVERY THROWN ERROR", () => {
 // validateProviderCredential
 // -------------------------------------------------------------------------------------------------
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 function catalog(
   models: Array<{ key: string; providerId: string; upstreamId: string; aliases?: string[] }>,
   providerId = "fake",
@@ -231,12 +237,13 @@ function catalog(
   };
   const verified = { source: "official-doc", confidence: "verified" } as const;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-test",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [provider],
     models: models.map(
-      (m): WinterModelDescriptor => ({
+      (m): WinterModelDescriptor => stampRow({
         key: m.key,
         providerId: m.providerId,
         upstreamId: m.upstreamId,

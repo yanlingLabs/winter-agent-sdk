@@ -8,6 +8,7 @@
 // runtime-side file, deliberately).
 
 import type { CapabilityEvidence, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import type { ConnectionProfile, CredentialRef, DiscoveryContext, ProviderContext, ProviderEvent } from "../../types.ts";
 
@@ -35,10 +36,15 @@ export interface DescriptorOverrides {
   parallelTools?: boolean;
 }
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 /** A descriptor shaped like the seed catalog's rows, with only the fields a fixture cares about varied. */
 export function descriptor(overrides: DescriptorOverrides = {}): WinterModelDescriptor {
   const key = overrides.key ?? "openai/o4-mini";
-  return {
+  return stampRow({
     key,
     providerId: overrides.providerId ?? key.split("/")[0]!,
     upstreamId: overrides.upstreamId ?? key.slice(key.indexOf("/") + 1),
@@ -66,7 +72,7 @@ export function descriptor(overrides: DescriptorOverrides = {}): WinterModelDesc
         }),
     unsupportedParameters: overrides.unsupportedParameters ?? [],
     status: "candidate",
-  };
+  });
 }
 
 export interface TestContextOptions {

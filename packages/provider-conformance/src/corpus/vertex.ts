@@ -12,6 +12,7 @@
 // the service-account JSON is assembled in memory, and the file credential store reads it through an
 // INJECTED reader that never touches a real filesystem.
 import type { ReasoningCapabilities, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { createFileCredentialStore, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialStore, ProviderAdapter, ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import { createVertexGeminiAdapter, vertexModelPath } from "../../../provider-runtime/src/adapters/google/index.ts";
@@ -43,8 +44,13 @@ const vertexReasoning = (key: string): ReasoningCapabilities => ({
   continuationDomain: evidence([key]),
 });
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 function model(over: Partial<WinterModelDescriptor> & { key: string; upstreamId: string }): WinterModelDescriptor {
-  return {
+  return stampRow({
     providerId: "vertex",
     displayName: over.key,
     aliases: [],
@@ -58,13 +64,14 @@ function model(over: Partial<WinterModelDescriptor> & { key: string; upstreamId:
     // `supported`, until the behavioural corpus has run against a real endpoint.
     status: "experimental",
     ...over,
-  };
+  });
 }
 
 export function testVertexCatalog(): WinterCatalog {
   const reasoningIds = [GOOGLE_MODELS.main, GOOGLE_MODELS.full, GOOGLE_MODELS.multiTool, GOOGLE_MODELS.dropBeforeFinish, GOOGLE_MODELS.usage, GOOGLE_MODELS.replay, GOOGLE_MODELS.refusal];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-lane-b-fixture",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [

@@ -9,10 +9,16 @@ import { describe, expect, test } from "bun:test";
 import { createAnthropicMessagesAdapter, mapAnthropicEffort, toWireMessages } from "./index.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext } from "../../types.ts";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
 const evidence = <T>(value: T) => ({ value, source: "upstream-static" as const, confidence: "inferred" as const });
 
-const descriptor = (over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor => ({
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
+const descriptor = (over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor => stampRow({
   key: "anthropic/claude-sonnet-5",
   providerId: "anthropic",
   upstreamId: "claude-sonnet-5",
@@ -126,7 +132,7 @@ describe("mapEffort", () => {
   });
 
   test("the public `mapEffort` seam and the internal mapping cannot disagree -- they are the same function", () => {
-    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 1, catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
+    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 2, families: [], catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
     const model = descriptor({ reasoning: { supported: evidence(true), efforts: ["medium"], continuation: "none" } });
     expect(adapter.mapEffort("medium", model)).toEqual(mapAnthropicEffort("medium", model) as { ok: true; value: unknown });
     expect(adapter.mapEffort("max", model)).toMatchObject({ ok: false });
@@ -135,7 +141,7 @@ describe("mapEffort", () => {
 
 describe("capabilities", () => {
   test("reads the descriptor's own evidence, and omits a continuation domain the row does not declare", () => {
-    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 1, catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
+    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 2, families: [], catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
     expect(adapter.capabilities(descriptor())).toEqual({ toolCalling: "native", readableState: "none" });
     expect(
       adapter.capabilities(
@@ -151,7 +157,7 @@ describe("capabilities", () => {
 
 describe("the endpoint policy", () => {
   test("a plain-http user endpoint that is NOT declared local is refused before any request", async () => {
-    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 1, catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
+    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 2, families: [], catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
     const events = [];
     for await (const event of adapter.streamTurn({ model: "m", messages: [{ role: "user", content: "hi" }] }, ctx("http://127.0.0.1:9/"))) events.push(event);
     expect(events).toHaveLength(1);
@@ -161,7 +167,7 @@ describe("the endpoint policy", () => {
   });
 
   test("a non-http scheme is refused, and the refusal never echoes a credential", async () => {
-    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 1, catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
+    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 2, families: [], catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
     const events = [];
     for await (const event of adapter.streamTurn({ model: "m", messages: [{ role: "user", content: "hi" }] }, ctx("ftp://example.invalid"))) events.push(event);
     expect(events[0]).toMatchObject({ type: "error", error: { code: "capability" } });

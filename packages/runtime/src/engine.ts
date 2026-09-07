@@ -28,6 +28,8 @@ import {
   // a second structural copy in this file is exactly the drift R6-D exists to avoid.
   type SDKAssistantMessageError,
   type WireStreamEvent,
+  // WS-13c §7 (P6.6): the `list_model_families` control response's payload shape.
+  type ModelFamilyListing,
 } from "@yanlinglabs/winter-agent-sdk";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
@@ -1122,6 +1124,20 @@ export interface EngineOptions {
    */
   supportedModels?: () => unknown[];
   /**
+   * WS-13c §7 (P6.6): the session's MODEL FAMILY listing — the active slot set plus every family
+   * behind "more options".
+   *
+   * A function from the WIRING for the same reason `supportedModels` is: the listing needs the
+   * catalog, the session's effective model AND the credential/enablement view, none of which the
+   * engine has. Absent -> the handler answers `{ active: undefined, families: [] }`, the honest
+   * answer for a session running a scripted double (`active: undefined` means "no effective model
+   * to derive a family from", NOT "no families" — that is the empty array beside it).
+   *
+   * Winter-only and disclosed: `Query.supportedModels()` keeps its pinned `ModelInfo[]` shape
+   * unchanged, and this is a separate surface rather than a widening of it.
+   */
+  listModelFamilies?: () => ModelFamilyListing;
+  /**
    * `account_info` is a WINTER-ONLY control subtype, disclosed.
    *
    * The pin carries `AccountInfo` on the `initialize`/`reinitialize` RESPONSE (`sdk.d.ts:3804`), and
@@ -1425,6 +1441,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     apiKeySource,
     classifier,
     supportedModels,
+    listModelFamilies,
     accountInfo,
     resolveModelSwitch,
     fallbackModels,
@@ -3493,6 +3510,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // discovery here would be a behavioural divergence, not an improvement.
           if (cf.subtype === "list_models") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: supportedModels?.() ?? [] });
+            continue;
+          }
+          // WS-13c §7: Winter-only, payload-free. The producer is wired by production-wiring.ts (Lane A) from Lane C's builder.
+          if (cf.subtype === "list_model_families") {
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: listModelFamilies?.() ?? { active: undefined, families: [] } });
             continue;
           }
           // Winter-only, disclosed — see `EngineOptions.accountInfo` for why the pin's own surface

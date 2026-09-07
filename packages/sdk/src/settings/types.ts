@@ -27,6 +27,11 @@
 // way for permission WRITES. Winter's own `RuleSource` (permissions/types.ts) is a fifth and is a
 // RULE ORIGIN, not a file tier: it additionally carries `cliArg`/`session`/`sdk`.
 
+// WS-13c §5: `Settings.modelSlots` holds the SAME shape the public listing surface uses, imported
+// rather than re-declared — a settings key and the API that reports it disagreeing about an optional
+// field is precisely the drift `protocol/config.ts`'s own header describes.
+import type { ModelSlotSetting } from "../protocol/config.ts";
+
 /** The three settings FILE tiers a session may load. `sdk.d.ts:7917`, verbatim and in pinned order. */
 export type SettingSource = "user" | "project" | "local";
 
@@ -157,6 +162,37 @@ export interface Settings {
    * `permissions.allow` already carry.
    */
   providers?: Record<string, { enabled?: boolean }>;
+  /**
+   * WINTER-DEFINED (WS-13c §5, D27, disclosed): the user's OWN four options, with the facing names
+   * that show on the Agent tool and the default model switcher.
+   *
+   * 1–4 entries. Honoured from the USER tier and the TRUSTED project tier only (R13c-7) — an
+   * untrusted project's set is ignored whole and recorded as `modelSlotsIgnored:
+   * "untrusted-project"`. That gate is the point of the key, not a precaution around it: a cloned
+   * repository that could map `cheap` to Astra would be choosing what the user's agent spends.
+   *
+   * Validated WHOLE (never partially): a set with one bad entry is ignored entirely and the failing
+   * entry recorded, because a partially-applied set is a lineup the user did not ask for.
+   */
+  modelSlots?: ModelSlotSetting[];
+  /**
+   * WINTER-DEFINED (WS-13c §4 step 3-ii, disclosed): an ordered list of provider ids, consulted
+   * after the family's own `vendorProviders` and before the admission-tier fallback.
+   *
+   * A PREFERENCE, never an admission: a provider named here still needs a credential and still
+   * obeys `providers.<id>.enabled`. Same tiers and same hot-reload as `modelSlots`.
+   */
+  preferredProviders?: string[];
+  /**
+   * DERIVED provenance — written by `resolve.ts` / the runtime, NEVER read from a settings file.
+   *
+   * It records WHY a `modelSlots` set did not take effect, so a host can say so instead of showing
+   * the default lineup with no explanation: the set came from an untrusted project tier, it failed
+   * whole-set validation, or the session's effective main model is a Claude model and D25 pins that
+   * enum. A file that sets this key is stating a conclusion it does not get to draw; the resolver
+   * overwrites it.
+   */
+  modelSlotsIgnored?: "untrusted-project" | "invalid" | "claude-pinned";
   [key: string]: unknown;
 }
 

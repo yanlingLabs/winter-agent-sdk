@@ -25,6 +25,7 @@
 import type {
   AdmissionTier,
   CapabilityEvidence,
+  ModelFamilyDescriptor,
   ProviderAuthKind,
   ProviderProtocol,
   ReasoningCapabilities,
@@ -32,6 +33,8 @@ import type {
   WinterModelDescriptor,
   WinterProviderDescriptor,
 } from "../types.ts";
+// WS-13c: ONE stamper, two assemblers (this one and scripts/provider-catalog.ts's `buildCatalog`).
+import { stampFamilyFields } from "../families.ts";
 import type { ExclusionClass, LiteralValue, Rejection } from "./literal-extractor.ts";
 // The `unknown`-citation rule has ONE definition, in the validator. Two copies of "which
 // citations are refused" is how an extraction gate and a document gate start disagreeing.
@@ -261,10 +264,23 @@ const MODEL_TARGET_FORMAT_ENDPOINT: Readonly<Record<string, "chat" | "responses"
 
 // --- the layer's own shape ----------------------------------------------------------------------
 
+/**
+ * A model row as a LAYER carries it: everything a finished row has EXCEPT the two derived family
+ * fields (WS-13c §1).
+ *
+ * The two are stamped once, at assembly, by `stampFamilyFields` — and `stampFamilyFields` treats a
+ * value already on the row as an OVERLAY OVERRIDE it must never overwrite. So a layer that pre-filled
+ * them would freeze whatever it guessed: an upstream layer stamped with no families at hand would
+ * write `modelFamily: "other"` onto 540 rows, and the merge would then honour that "override"
+ * forever. The layer therefore does not carry them, and the committed `upstream-layer.json` is
+ * correct exactly as it stands.
+ */
+export type UnstampedModelDescriptor = Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">;
+
 export interface UpstreamLayer {
   $comment: string;
   providers: WinterProviderDescriptor[];
-  models: WinterModelDescriptor[];
+  models: UnstampedModelDescriptor[];
   rejections: LedgerRejection[];
 }
 
@@ -346,7 +362,7 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
   const { allowlist, registry, categories, registrySourcePaths, commit, observedAt } = input;
   const rejections: LedgerRejection[] = [];
   const providers: WinterProviderDescriptor[] = [];
-  const models: WinterModelDescriptor[] = [];
+  const models: UnstampedModelDescriptor[] = [];
 
   const allowedByUpstreamId = new Map(allowlist.providers.map((p) => [p.upstreamId, p]));
   // A `"*"` sentinel is REFUSED, not filtered. One sat here restating WS-13 §5/§6's categorical
@@ -911,7 +927,7 @@ export function compareRejections(a: LedgerRejection, b: LedgerRejection): numbe
 }
 
 /** The overlay files a re-sync must NEVER write. Exported so the sync script's own guard and its test read the same list. */
-export const OVERLAY_FILES = ["overlay/providers.json", "overlay/models.json"] as const;
+export const OVERLAY_FILES = ["overlay/providers.json", "overlay/models.json", "overlay/families.json"] as const;
 
 /**
  * The overlay-wins merge, mirroring `scripts/provider-catalog.ts`.
@@ -919,23 +935,38 @@ export const OVERLAY_FILES = ["overlay/providers.json", "overlay/models.json"] a
  * Used to VALIDATE a layer before the frozen script writes anything — never to write the committed
  * catalog. Row-level, not field-level: WS-13 §7's rule is that upstream never overwrites overlay
  * evidence, and a field-level merge would do exactly that for every field the overlay leaves out.
+ *
+ * WS-13c: the family stamp happens HERE and in the script, through the ONE `stampFamilyFields` both
+ * call — a second implementation of "which family is this" would make the standalone gate and the
+ * committed catalog disagree about a row while both reported success. `pipeline.test.ts` pins the
+ * two assemblers byte-identical on the real layers, which is what keeps the mirroring honest.
+ *
+ * `families` defaults to EMPTY, and that default is what the upstream layer's standalone check
+ * uses: the layer alone has none of the overlay rows the real slots point at, so validating it
+ * against the real families would fail `slot-model-missing` on rows that are present in the merged
+ * catalog and only there. With no families every row stamps `other`, which the validator accepts —
+ * the standalone gate is about the LAYER's own shape, and family assignment is the merged catalog's
+ * own gate (`bun run provider:catalog --check` plus the integrity suite).
  */
 export function mergeLayers(
-  upstream: { providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] },
-  overlay: { providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] },
+  upstream: { providers: WinterProviderDescriptor[]; models: UnstampedModelDescriptor[] },
+  overlay: { providers: WinterProviderDescriptor[]; models: UnstampedModelDescriptor[] },
   pin: WinterCatalog["upstream"],
+  families: readonly ModelFamilyDescriptor[] = [],
 ): WinterCatalog {
   const overlayProviderIds = new Set(overlay.providers.map((p) => p.id));
   const overlayModelKeys = new Set(overlay.models.map((m) => m.key));
   const providers = [...upstream.providers.filter((p) => !overlayProviderIds.has(p.id)), ...overlay.providers];
-  const models = [...upstream.models.filter((m) => !overlayModelKeys.has(m.key)), ...overlay.models];
+  const merged = [...upstream.models.filter((m) => !overlayModelKeys.has(m.key)), ...overlay.models];
   providers.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  models.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  merged.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const sortedFamilies = [...families].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     catalogVersion: pin.commit === "" ? "0.0.0-seed" : `${pin.tag}+${pin.extractorVersion}`,
     upstream: pin,
     providers,
-    models,
+    models: stampFamilyFields(merged, sortedFamilies),
+    families: sortedFamilies,
   };
 }

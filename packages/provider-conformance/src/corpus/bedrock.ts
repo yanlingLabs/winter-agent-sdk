@@ -23,6 +23,7 @@ import { discoverModels } from "../../../provider-runtime/src/discovery.ts";
 import type { DiscoveryContext, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../../provider-runtime/src/types.ts";
 import type { ResolvedModel } from "../../../provider-runtime/src/registry.ts";
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { encodeEventStreamMessage } from "../../../provider-runtime/src/adapters/bedrock/testing.ts";
 import { FAKE_ACCESS_KEY_ID, FAKE_REGION, FAKE_SECRET_ACCESS_KEY, bedrockError, converseStreamEvent, converseStreamException, eventStreamResponse, textTurnFrames } from "../fakes/bedrock.ts";
 import { jsonResponse, type FakeServer, type ScenarioResponder } from "../fakes/server.ts";
@@ -47,7 +48,12 @@ export const FOREIGN_DOMAIN_MARKER = "STATE-FROM-ANOTHER-DOMAIN-MUST-NOT-RIDE";
  * so. Both spellings are exercised: the seeded row is run as its own target in `bedrock.test.ts`,
  * where those cases are skipped AS FACTS about the row rather than as declined cases.
  */
-export const CORPUS_DESCRIPTOR: WinterModelDescriptor = {
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
+export const CORPUS_DESCRIPTOR: WinterModelDescriptor = stampRow({
   key: `bedrock/${BEDROCK_CORPUS_MODEL}`,
   providerId: "bedrock",
   upstreamId: BEDROCK_CORPUS_MODEL,
@@ -70,7 +76,7 @@ export const CORPUS_DESCRIPTOR: WinterModelDescriptor = {
   },
   unsupportedParameters: [],
   status: "experimental",
-};
+});
 
 // --- the harness ---------------------------------------------------------------------------------------
 
@@ -186,7 +192,8 @@ export const CORPUS_PROVIDER: WinterCatalog["providers"][number] = {
 /** A minimal catalog carrying the Bedrock provider and the corpus model — the input `identity-across-resume` resolves against. */
 export function corpusCatalog(): WinterCatalog {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-corpus",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers: [CORPUS_PROVIDER],

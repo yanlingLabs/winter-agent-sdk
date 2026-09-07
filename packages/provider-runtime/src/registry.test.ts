@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { loadCatalog, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderAdapter } from "./types.ts";
 import { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";
@@ -334,7 +334,12 @@ describe("listModelInfo — pinned ModelInfo rows (R6-I, capture (J))", () => {
 });
 
 describe("estimateCostUsd (R6-H)", () => {
-  const priced = (over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor => ({
+  // WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+  // pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+  // `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+  const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
+  const priced = (over: Partial<WinterModelDescriptor> = {}): WinterModelDescriptor => stampRow({
     key: "acme/m1",
     providerId: "acme",
     upstreamId: "m1",

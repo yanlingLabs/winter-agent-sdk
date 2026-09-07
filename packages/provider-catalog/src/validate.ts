@@ -21,12 +21,19 @@ import type {
   ModelStatus,
   ProviderAuthKind,
   ProviderProtocol,
+  ModelFamilyDescriptor,
   ReasoningCapabilities,
+  SlotBasis,
+  SlotStatus,
   ToolCalling,
   WinterCatalog,
   WinterModelDescriptor,
   WinterProviderDescriptor,
 } from "./types.ts";
+// WS-13c: the grammars and the reserved-name list have ONE definition, in `families.ts`, because the
+// validator, the runtime's slot resolver and the Agent tool's renderer all key on them. A second
+// copy of `^[a-z0-9][a-z0-9.-]{0,31}$` here would be a second answer to "is this a legal slot name".
+import { CLAUDE_FAMILY_ID, CLAUDE_RESERVED_SLOT_NAMES, CURRENCY_RE, FAMILY_ID_RE, isSlotServableRow, OTHER_FAMILY_ID, SLOT_NAME_RE } from "./families.ts";
 
 // --- the closed vocabularies. An UNKNOWN value fails (WS-13 §13's acceptance test: "unknown
 // category/auth/executor/protocol values fail extraction") -- forward-compat leniency belongs on the
@@ -55,6 +62,21 @@ const UPSTREAM_PROJECTS = ["OmniRoute", "winter"] as const;
 const PRICING_BASES = ["token", "subscription", "free"] as const;
 const ADMISSION_BASES = ["api-key", "oauth-documented", "keyless-documented", "local", "cloud-credential"] as const;
 const ADMISSION_TIERS = ["fetched-document", "pinned-upstream", "spec-ruling", "local", "audit"] as const;
+/** WS-13c §2: where a slot's ranking and text came from, and how far it has been reviewed. */
+const SLOT_BASES: readonly SlotBasis[] = ["user-ruling", "vendor-doc", "winter-curated"];
+const SLOT_STATUSES: readonly SlotStatus[] = ["candidate", "supported"];
+/**
+ * WS-13c §1: a FAMILY's own promotion state.
+ *
+ * Structurally the same two members as `SLOT_STATUSES`, and a separate vocabulary on purpose (fix
+ * round 1, M-2): it was hard-coded inline in `checkFamily`, so the JSON Schema's
+ * `ModelFamilyDescriptor.properties.status.enum` was a second, unpinned copy. Being in
+ * `CATALOG_VOCABULARIES` is what makes the "every vocabulary is covered" parity test demand a case
+ * for it — the two can no longer drift in silence, and if the family and slot vocabularies ever
+ * diverge (a family reaching `supported` on different evidence than a slot, say) the split is
+ * already there.
+ */
+const FAMILY_STATUSES: readonly ModelFamilyDescriptor["status"][] = ["candidate", "supported"];
 
 /**
  * The header NAMES a reviewed row may put in `identityHeaders` (fix-wave R-FW-2).
@@ -98,6 +120,9 @@ export const CATALOG_VOCABULARIES = {
   pricingBases: PRICING_BASES,
   admissionBases: ADMISSION_BASES,
   admissionTiers: ADMISSION_TIERS,
+  slotBases: SLOT_BASES,
+  slotStatuses: SLOT_STATUSES,
+  familyStatuses: FAMILY_STATUSES,
   continuations: CONTINUATIONS,
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,
@@ -466,6 +491,97 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
   }
 }
 
+/**
+ * WS-13c §1's integrity rules that are LOCAL to one family descriptor (R13c-3).
+ *
+ * The cross-cutting ones — the Claude reservation, duplicate family ids, and every slot's model row
+ * actually existing — need the whole document and live in `validateCatalog` below.
+ *
+ * Written in `checkProvider`'s style deliberately: same total-checker vocabulary, same
+ * path-prefixed messages, and a specific `code` only where something else keys on it. The families
+ * overlay is a hand-authored, reviewed file exactly like the provider and model overlays, so the
+ * thing standing between a typo in it and a shipped catalog is this function.
+ */
+function checkFamily(errs: Errors, v: unknown, path: string): void {
+  if (!isRecord(v)) {
+    errs.add(path, `expected a model-family descriptor, got ${describe(v)}`);
+    return;
+  }
+  const id = errs.str(v, "id", path);
+  if (id !== undefined && !FAMILY_ID_RE.test(id)) {
+    errs.add(`${path}.id`, `${JSON.stringify(id)} is not a family id — expected ${FAMILY_ID_RE.source}`);
+  }
+  errs.str(v, "displayName", path);
+  errs.str(v, "vendor", path);
+  errs.str(v, "citation", path);
+  errs.strArray(v, "vendorProviders", path);
+  errs.enum(v, "status", path, FAMILY_STATUSES);
+
+  const matchers = v["matchers"];
+  if (!Array.isArray(matchers)) {
+    errs.add(`${path}.matchers`, `expected an array of {pattern, note}, got ${describe(matchers)}`);
+  } else {
+    for (let i = 0; i < matchers.length; i++) {
+      const m = matchers[i];
+      const mp = `${path}.matchers[${i}]`;
+      if (!isRecord(m)) {
+        errs.add(mp, `expected {pattern, note}, got ${describe(m)}`);
+        continue;
+      }
+      const pattern = errs.str(m, "pattern", mp);
+      if (typeof m["note"] !== "string") errs.add(`${mp}.note`, `expected a string (empty is legal), got ${describe(m["note"])}`);
+      // A pattern that does not COMPILE is the failure mode a reviewer cannot see: `familyIdOf`
+      // builds a `RegExp` from it at every stamp, so a bad source would throw inside the pipeline
+      // rather than report here.
+      if (pattern !== undefined) {
+        try {
+          new RegExp(pattern);
+        } catch (error) {
+          errs.add(`${mp}.pattern`, `is not a compilable regular expression (${error instanceof Error ? error.message : String(error)})`);
+        }
+      }
+    }
+  }
+
+  const slots = v["slots"];
+  if (!Array.isArray(slots)) {
+    errs.add(`${path}.slots`, `expected an array of slots (0-4), got ${describe(slots)}`, "slots-invalid");
+    return;
+  }
+  // D26: "four slots are the options". More than four is not a listing to truncate at render time —
+  // it is a family whose author disagreed with the ruling, and the disagreement belongs in review.
+  if (slots.length > 4) errs.add(`${path}.slots`, `a family carries at most 4 slots (WS-13c §1/D26), got ${slots.length}`, "slots-too-many");
+  const seenNames = new Set<string>();
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const sp = `${path}.slots[${i}]`;
+    if (!isRecord(slot)) {
+      errs.add(sp, `expected a slot, got ${describe(slot)}`);
+      continue;
+    }
+    const name = slot["name"];
+    if (typeof name !== "string" || !SLOT_NAME_RE.test(name)) {
+      errs.add(`${sp}.name`, `${describe(name)} is not a slot token — expected ${SLOT_NAME_RE.source}`, "slot-name-invalid");
+    } else {
+      if (seenNames.has(name)) errs.add(`${sp}.name`, `duplicate slot name ${JSON.stringify(name)} within family ${JSON.stringify(id ?? "?")}`, "slot-name-duplicate");
+      seenNames.add(name);
+    }
+    errs.str(slot, "canonicalModelId", sp);
+    errs.str(slot, "reason", sp);
+    errs.str(slot, "citation", sp);
+    errs.optStr(slot, "provider", sp);
+    errs.enum(slot, "basis", sp, SLOT_BASES);
+    errs.enum(slot, "status", sp, SLOT_STATUSES);
+    const description = errs.str(slot, "description", sp);
+    // Pricing lives on model rows, inside a `CapabilityEvidence<ModelPricing>` with a source and an
+    // instant. A number in prose has none of that: it cannot be re-checked, it cannot be updated by
+    // a pipeline run, and it is read by a user as a current price long after it stopped being one.
+    if (description !== undefined && CURRENCY_RE.test(description)) {
+      errs.add(`${sp}.description`, `carries a currency amount (${JSON.stringify(description)}) — WS-13c §1: pricing lives on model rows with its own evidence, never in a slot description`, "slot-description-currency");
+    }
+  }
+}
+
 function checkModel(errs: Errors, v: unknown, path: string): void {
   if (!isRecord(v)) {
     errs.add(path, `expected a model descriptor, got ${describe(v)}`);
@@ -479,6 +595,16 @@ function checkModel(errs: Errors, v: unknown, path: string): void {
   errs.enumArray(v, "endpoints", path, MODEL_ENDPOINTS);
   errs.strArray(v, "unsupportedParameters", path);
   errs.enum(v, "status", path, MODEL_STATUSES);
+
+  // WS-13c §1: both derived fields are REQUIRED on every row. They carry their own codes because
+  // the stamp is a PIPELINE step — a row that reached the document without one means the assembler
+  // was bypassed, not that a hand-authored field was forgotten, and the two are worth telling apart.
+  if (typeof v["modelFamily"] !== "string" || v["modelFamily"].length === 0) {
+    errs.add(`${path}.modelFamily`, `required — WS-13c §1: every row carries its family id (or ${JSON.stringify(OTHER_FAMILY_ID)}), stamped at build by \`stampFamilyFields\`. Got ${describe(v["modelFamily"])}`, "model-family-missing");
+  }
+  if (typeof v["canonicalModelId"] !== "string" || v["canonicalModelId"].length === 0) {
+    errs.add(`${path}.canonicalModelId`, `required — WS-13c §1: the vendor's model identity with the provider's spelling removed, stamped at build. Got ${describe(v["canonicalModelId"])}`, "model-canonical-missing");
+  }
 
   // WS-13 §8.3: the key IS `<providerId>/<upstreamId-or-alias>`; a key that does not start with its
   // own provider is a routing bug waiting to happen (the registry splits on the first "/").
@@ -535,7 +661,10 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
   const errs = new Errors();
   if (!isRecord(json)) return { ok: false, errors: [{ code: "invalid", path: "<root>", message: `<root>: expected a catalog object, got ${describe(json)}` }] };
 
-  if (json["schemaVersion"] !== 1) errs.add("schemaVersion", `expected the literal 1, got ${describe(json["schemaVersion"])}`);
+  // 2 since WS-13c. Its own code because the family fields are NOT optional at 2: a document still
+  // claiming 1 is one whose rows may lack `modelFamily`/`canonicalModelId` entirely, and every
+  // consumer of the family layer would then read `undefined` from a catalog that validated.
+  if (json["schemaVersion"] !== 2) errs.add("schemaVersion", `expected the literal 2, got ${describe(json["schemaVersion"])}`, "schema-version");
   errs.str(json, "catalogVersion", "<root>");
 
   const upstream = json["upstream"];
@@ -559,6 +688,58 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
       if (isRecord(row) && typeof row["id"] === "string" && row["id"].length > 0) {
         if (providerIds.has(row["id"])) errs.add(`${path}.id`, `duplicate provider id ${JSON.stringify(row["id"])}`);
         providerIds.add(row["id"]);
+      }
+    }
+  }
+
+  // --- WS-13c §1: the family layer -----------------------------------------------------------------
+  //
+  // `families` is REQUIRED and may be EMPTY. A family is not: the upstream layer's own standalone
+  // check (merge.ts's `mergeLayers`, provider-source-sync's `--offline` gate) validates a document
+  // whose slots' model rows all live in the overlay it does not have, so the rules below are shaped
+  // "IF a claude family is present, its slots are exactly the four, in order" rather than
+  // "claude must be present". Presence on the SHIPPED catalog is pinned by catalog-integrity.
+  const families = json["families"];
+  const familyIds = new Set<string>();
+  if (!Array.isArray(families)) {
+    errs.add("families", `required — WS-13c §1: the vendor lineups the Agent tool's per-family enum and the slot resolver read. An empty array is legal; a missing key is not. Got ${describe(families)}`, "families-missing");
+  } else {
+    for (let i = 0; i < families.length; i++) {
+      const path = `families[${i}]`;
+      checkFamily(errs, families[i], path);
+      const row = families[i];
+      if (isRecord(row) && typeof row["id"] === "string" && row["id"].length > 0) {
+        if (familyIds.has(row["id"])) errs.add(`${path}.id`, `duplicate family id ${JSON.stringify(row["id"])}`, "family-id-duplicate");
+        familyIds.add(row["id"]);
+      }
+    }
+
+    // D25, the concrete form of "no false information": `fable`/`opus`/`sonnet`/`haiku` name Claude
+    // models and nothing else. A `gpt` family that used one would put a Claude name on an enum whose
+    // resolution reaches an OpenAI model — the exact thing the ruling forbids.
+    for (let i = 0; i < families.length; i++) {
+      const row = families[i];
+      if (!isRecord(row) || !Array.isArray(row["slots"])) continue;
+      const id = typeof row["id"] === "string" ? row["id"] : "";
+      const names = (row["slots"] as unknown[]).map((s) => (isRecord(s) && typeof s["name"] === "string" ? s["name"] : ""));
+      if (id === CLAUDE_FAMILY_ID) {
+        if (names.length !== CLAUDE_RESERVED_SLOT_NAMES.length || names.some((n, k) => n !== CLAUDE_RESERVED_SLOT_NAMES[k])) {
+          errs.add(
+            `families[${i}].slots`,
+            `the \`claude\` family's slots are PINNED to [${CLAUDE_RESERVED_SLOT_NAMES.join(", ")}] in that order (WS-13c §1/D25 — the compat enum the Claude Agent SDK ships), got [${names.join(", ")}]`,
+            "claude-slots-pinned",
+          );
+        }
+        continue;
+      }
+      for (let s = 0; s < names.length; s++) {
+        if (CLAUDE_RESERVED_SLOT_NAMES.includes(names[s]!)) {
+          errs.add(
+            `families[${i}].slots[${s}].name`,
+            `${JSON.stringify(names[s])} is reserved to the \`claude\` family (WS-13c §1/D25: a non-Claude model must never be offered under a Claude lineup name)`,
+            "slot-name-reserved",
+          );
+        }
       }
     }
   }
@@ -602,6 +783,76 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
       for (const { name, where } of candidates) {
         if (names.has(name)) errs.add(where, `${JSON.stringify(name)} already resolves inside provider ${JSON.stringify(providerId)} — model ids and aliases share one namespace per provider`);
         names.add(name);
+      }
+    }
+  }
+
+  // --- WS-13c §1/§4: the family layer's claims about the MODEL rows ---------------------------------
+  //
+  // Both rules exist because a slot is a PROMISE the catalog makes to a user's picker: a slot whose
+  // canonical id names nothing shippable renders an option that cannot resolve, and a `provider` pin
+  // naming a provider that does not serve the model is a resolution that fails only at turn time.
+  // Neither is visible to a reviewer reading `overlay/families.json`, which is why they are here.
+  /**
+   * canonicalModelId -> the provider ids that could actually SERVE it.
+   *
+   * `isSlotServableRow` is the SAME predicate `rowsForCanonicalId` uses — §4 step 1's own filter,
+   * status AND endpoint. Fix round 1's I-3: these were two predicates, and the validator's (status
+   * only) was the looser one, so a slot whose only rows were `endpoints: ["embeddings"]` validated
+   * clean and resolved to nothing. One function, both call sites.
+   */
+  const serversByCanonicalId = new Map<string, Set<string>>();
+  if (Array.isArray(models) && Array.isArray(families)) {
+    for (const row of models) {
+      if (!isRecord(row)) continue;
+      const canonical = row["canonicalModelId"];
+      const providerId = row["providerId"];
+      if (typeof canonical !== "string" || canonical.length === 0) continue;
+      // The row is raw JSON here; a malformed `status`/`endpoints` is already reported by
+      // `checkModel`, and a row whose shape cannot be read is not one that can serve a slot.
+      const endpoints = Array.isArray(row["endpoints"]) ? row["endpoints"].filter((e): e is string => typeof e === "string") : [];
+      if (typeof row["status"] !== "string" || !isSlotServableRow({ status: row["status"], endpoints })) continue;
+      const set = serversByCanonicalId.get(canonical) ?? new Set<string>();
+      if (typeof providerId === "string" && providerId.length > 0) set.add(providerId);
+      serversByCanonicalId.set(canonical, set);
+    }
+
+    for (let i = 0; i < models.length; i++) {
+      const row = models[i];
+      if (!isRecord(row)) continue;
+      const family = row["modelFamily"];
+      if (typeof family !== "string" || family.length === 0) continue; // already reported by checkModel
+      if (family !== OTHER_FAMILY_ID && !familyIds.has(family)) {
+        errs.add(`models[${i}].modelFamily`, `${JSON.stringify(family)} names no family in this catalog (and is not ${JSON.stringify(OTHER_FAMILY_ID)})`, "model-family-unknown");
+      }
+    }
+
+    for (let i = 0; i < families.length; i++) {
+      const row = families[i];
+      if (!isRecord(row) || !Array.isArray(row["slots"])) continue;
+      const slots = row["slots"] as unknown[];
+      for (let s = 0; s < slots.length; s++) {
+        const slot = slots[s];
+        if (!isRecord(slot)) continue;
+        const canonical = slot["canonicalModelId"];
+        if (typeof canonical !== "string" || canonical.length === 0) continue; // already reported
+        const servers = serversByCanonicalId.get(canonical);
+        if (servers === undefined) {
+          errs.add(
+            `families[${i}].slots[${s}].canonicalModelId`,
+            `${JSON.stringify(canonical)} is on NO model row that could serve it (every row is missing, blocked, deprecated, or serves neither \`chat\` nor \`responses\`) — WS-13c §1: a slot never names a model the catalog does not ship`,
+            "slot-model-missing",
+          );
+          continue;
+        }
+        const pinned = slot["provider"];
+        if (typeof pinned === "string" && pinned.length > 0 && !servers.has(pinned)) {
+          errs.add(
+            `families[${i}].slots[${s}].provider`,
+            `${JSON.stringify(pinned)} serves no row with canonicalModelId ${JSON.stringify(canonical)} (served by: ${[...servers].sort().join(", ") || "nobody"}) — a pin that cannot resolve is a slot that fails at turn time`,
+            "slot-provider-unserving",
+          );
+        }
       }
     }
   }

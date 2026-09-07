@@ -1,0 +1,137 @@
+// WS-13c §1–§3: the pure, catalog-level family helpers. No I/O, no runtime state — every lane imports these.
+//
+// Inside the sdk fence (tsconfig.sdk-fence.json) like the rest of this package: no Bun API, no
+// fetch, no filesystem. Everything here is a total function over data the caller already holds, so
+// the build pipeline, the validator, the runtime's slot resolver and the listing builder all reach
+// the SAME answer rather than three near-identical re-derivations of "which family is this".
+import type { FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor } from "./types.ts";
+
+export const SLOT_NAME_RE = /^[a-z0-9][a-z0-9.-]{0,31}$/;
+export const FAMILY_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+export const CLAUDE_FAMILY_ID = "claude";
+export const OTHER_FAMILY_ID = "other";
+/** D25: reserved to the `claude` family, in the pinned order. */
+export const CLAUDE_RESERVED_SLOT_NAMES: readonly string[] = ["fable", "opus", "sonnet", "haiku"];
+/** "$10", "10 USD", "€2", "£1", "10 dollars" — pricing lives on rows, never in a slot description. */
+export const CURRENCY_RE = /(?:[$€£]\s?\d)|(?:\d\s?(?:usd|dollars?)\b)/i;
+
+/**
+ * Vendor/host namespaces a provider puts in front of the model id (WS-13c §1, amended by R-6c-14).
+ *
+ * The five added in fix round 1 are the ones a review measured against the shipped 600 rows:
+ * `deepseek/` (Novita re-namespaces DeepSeek's own ids, so `novita/deepseek/deepseek-v4-pro` did not
+ * reach the `deepseek/pro` slot — a row the provider demonstrably serves), `moonshot/`,
+ * `cline-pass/`, `hf:` (Hugging Face-style ids, which are a namespace ON TOP of another one) and
+ * `aphrodite/`. §1's list is the reviewed authority, so widening it is a spec amendment, not a
+ * tidy-up — and it changes generated data, which is why it lands here rather than in a lane.
+ */
+const NAMESPACE_PREFIXES = ["models/", "anthropic/", "openai/", "google/", "deepseek/", "deepseek-ai/", "meta-llama/", "meta/", "qwen/", "x-ai/", "xai/", "moonshot/", "moonshotai/", "zai-org/", "z-ai/", "minimax/", "mistralai/", "nvidia/", "cline-pass/", "hf:", "aphrodite/"] as const;
+/** Bedrock region and vendor prefixes. `openai.` joins them for `bedrock/openai.gpt-oss-120b-1:0` (R-6c-14). */
+const BEDROCK_PREFIXES = ["us.", "eu.", "apac.", "global.", "anthropic.", "openai."] as const;
+
+/** The vendor's model identity with the provider's spelling removed (WS-13c §1, R13c-2). Deterministic; a per-row overlay `canonicalModelId` overrides it. */
+export function canonicalModelIdOf(upstreamId: string): string {
+  let id = upstreamId.trim().toLowerCase();
+  const account = /^accounts\/[^/]+\/models\/(.+)$/.exec(id);
+  if (account !== null) id = account[1]!;
+  // REPEATS rather than stopping at the first hit, like the Bedrock loop below. A single pass was
+  // enough while every namespace was one segment; `hf:` is a namespace wrapped AROUND another one
+  // (`hf:openai/gpt-oss-120b`, `hf:zai-org/glm-4.7-flash`), so one strip would leave the vendor's own
+  // namespace in place and the id still unreachable by its slot. Terminates: every prefix is
+  // non-empty, so each iteration strictly shortens `id`.
+  let namespaced = true;
+  while (namespaced) {
+    namespaced = false;
+    for (const prefix of NAMESPACE_PREFIXES) {
+      if (id.startsWith(prefix)) { id = id.slice(prefix.length); namespaced = true; break; }
+    }
+  }
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const prefix of BEDROCK_PREFIXES) {
+      if (id.startsWith(prefix)) { id = id.slice(prefix.length); stripped = true; }
+    }
+  }
+  // `-v1:0` AND the bare `-1:0` Bedrock writes on non-Anthropic rows (`openai.gpt-oss-120b-1:0`).
+  id = id.replace(/-(?:v)?\d+:\d+$/, "");
+  if (id.startsWith("zai-glm")) id = id.slice("zai-".length);
+  // "claude-haiku-4-5-20251001" -> "claude-haiku-4.5-20251001": single-digit groups joined by "-" are one dotted version.
+  id = id.replace(/-(\d)-(\d)(?=-|$)/g, "-$1.$2");
+  // Ollama's size tag: "qwen3.6:27b" -> "qwen3.6-27b", "gpt-oss:120b" -> "gpt-oss-120b". ONLY the
+  // separator is rewritten — no hyphen is inserted into `gemma4`/`llama3.1`, because Alibaba's own
+  // ids really are `qwen3.6` with no hyphen, and inventing one would make a lineup that ships both
+  // spellings look like two models. Those rows stay in `other`, honestly.
+  id = id.replace(/:(\d+[bB])$/, "-$1");
+  return id;
+}
+
+export function familyIdOf(canonicalModelId: string, families: readonly ModelFamilyDescriptor[]): string {
+  for (const family of families) {
+    for (const matcher of family.matchers) {
+      if (new RegExp(matcher.pattern).test(canonicalModelId)) return family.id;
+    }
+  }
+  return OTHER_FAMILY_ID;
+}
+
+export function stampFamilyFields<T extends { upstreamId: string; canonicalModelId?: string; modelFamily?: string }>(
+  rows: readonly T[],
+  families: readonly ModelFamilyDescriptor[],
+): Array<T & { canonicalModelId: string; modelFamily: string }> {
+  return rows.map((row) => {
+    const canonicalModelId = row.canonicalModelId ?? canonicalModelIdOf(row.upstreamId);
+    const modelFamily = row.modelFamily ?? familyIdOf(canonicalModelId, families);
+    return { ...row, canonicalModelId, modelFamily };
+  });
+}
+
+export type SlotNameResolution =
+  | { kind: "slot"; family: ModelFamilyDescriptor; slot: FamilySlot; advertised: boolean }
+  | { kind: "ambiguous"; name: string; candidates: string[] }
+  | { kind: "unknown"; name: string };
+
+/** WS-13c §3 acceptance: active set first; the Claude names always into `claude`; a unique foreign name; else ambiguous/unknown. */
+export function resolveSlotName(name: string, activeFamilyId: string | undefined, families: readonly ModelFamilyDescriptor[]): SlotNameResolution {
+  const active = families.find((f) => f.id === activeFamilyId);
+  const own = active?.slots.find((s) => s.name === name);
+  if (active !== undefined && own !== undefined) return { kind: "slot", family: active, slot: own, advertised: true };
+  if (CLAUDE_RESERVED_SLOT_NAMES.includes(name)) {
+    const claude = families.find((f) => f.id === CLAUDE_FAMILY_ID);
+    const slot = claude?.slots.find((s) => s.name === name);
+    if (claude !== undefined && slot !== undefined) return { kind: "slot", family: claude, slot, advertised: false };
+  }
+  const hits: Array<{ family: ModelFamilyDescriptor; slot: FamilySlot }> = [];
+  for (const family of families) for (const slot of family.slots) if (slot.name === name) hits.push({ family, slot });
+  if (hits.length === 1) return { kind: "slot", family: hits[0]!.family, slot: hits[0]!.slot, advertised: false };
+  if (hits.length > 1) return { kind: "ambiguous", name, candidates: hits.map((h) => `${h.family.id}/${h.slot.name}`) };
+  return { kind: "unknown", name };
+}
+
+export function familyOfModelKey(catalog: WinterCatalog, modelKey: string): ModelFamilyDescriptor | undefined {
+  const row = catalog.models.find((m) => m.key === modelKey);
+  if (row === undefined) return undefined;
+  return catalog.families.find((f) => f.id === row.modelFamily);
+}
+
+/**
+ * Can this row serve a slot at all? (WS-13c §4 step 1.)
+ *
+ * ONE predicate, deliberately, and it is what fix round 1's I-3 closed: the validator's
+ * `slot-model-missing` check and `rowsForCanonicalId` had drifted into two answers — the validator
+ * asked only about `status`, the resolver also required a chat/responses endpoint. A slot whose only
+ * rows were `endpoints: ["embeddings"]` therefore VALIDATED and resolved to nothing, which makes the
+ * natural inference "the catalog validated, so every slot has a candidate row" false in exactly the
+ * place a lane relies on it.
+ *
+ * Structurally typed rather than taking a `WinterModelDescriptor`, because the validator's caller
+ * holds `unknown` JSON it has already shape-checked, not a narrowed row.
+ */
+export function isSlotServableRow(row: { status: string; endpoints: readonly string[] }): boolean {
+  return row.status !== "blocked" && row.status !== "deprecated" && (row.endpoints.includes("chat") || row.endpoints.includes("responses"));
+}
+
+/** Candidate rows for a slot (WS-13c §4 step 1). The SAME predicate `validateCatalog` refuses a slot on. */
+export function rowsForCanonicalId(catalog: WinterCatalog, canonicalModelId: string): WinterModelDescriptor[] {
+  return catalog.models.filter((m) => m.canonicalModelId === canonicalModelId && isSlotServableRow(m));
+}

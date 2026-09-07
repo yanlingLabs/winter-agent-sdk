@@ -605,3 +605,85 @@ export interface AccountInfo {
   apiKeySource?: string;
   apiProvider?: "firstParty" | "bedrock" | "vertex" | "foundry" | "anthropicAws" | "anthropicGoogleCloud" | "mantle" | "gateway";
 }
+
+// --- WS-13c §7 (P6.6 spine): the model-family and slot PUBLIC shapes ------------------------------
+//
+// Declared HERE for the same structural reason `ModelInfo` and `AccountInfo` above are:
+// `Query.listModelFamilies()` is on the sdk's public surface, the sdk package is dependency-free and
+// fence-resident, and both `packages/runtime` (which BUILDS the listing) and `packages/provider-
+// runtime` are Bun-only. One declaration; a producer and a consumer importing from either package
+// get the identical type rather than two structurally-similar twins that drift on an optional field.
+//
+// Note what is NOT here: `ModelFamilyDescriptor`/`FamilySlot` are CATALOG DATA and live in
+// `@yanlinglabs/winter-provider-catalog`. These are the VIEW a host renders — a slot plus where it
+// actually resolved, which is a runtime fact the catalog cannot know.
+
+/**
+ * One option as a host renders it (WS-13c §7).
+ *
+ * `resolvesTo` is present only when the slot actually resolves for THIS session — a credential is
+ * configured and the provider is enabled. Its absence is the honest "this option exists in the
+ * lineup but nothing here can serve it", which is what lets a switcher grey an entry rather than
+ * offer it and fail at turn time.
+ */
+export interface SlotView {
+  name: string;
+  canonicalModelId: string;
+  description: string;
+  reason: string;
+  resolvesTo?: { providerId: string; key: string };
+}
+
+/**
+ * The slots a session is CURRENTLY offering, and why they are those slots (WS-13c §3).
+ *
+ * `source` is the whole provenance story in one field, and every member is a distinct, observable
+ * state a host may want to explain:
+ *   `family-default`  the effective main model's family has curated slots, and these are they.
+ *   `custom`          `settings.modelSlots` replaced the set (D27).
+ *   `claude-pinned`   the effective main model is a Claude model, so the set is the pinned four and
+ *                     any custom slots were IGNORED and recorded (D25, "for now").
+ *   `own-model`       the family has no curated slots (or is `other`), so the session renders its
+ *                     own effective model as the single slot (D26's minimum of one).
+ */
+export interface ActiveSlotSet {
+  family: string;
+  source: "family-default" | "custom" | "claude-pinned" | "own-model";
+  slots: SlotView[];
+}
+
+/**
+ * `Query.listModelFamilies()`'s answer (WS-13c §7): the active set first, then everything behind
+ * "more options".
+ *
+ * `active` is `undefined` ONLY for a session running a scripted test double, which has no effective
+ * model to derive a family from. It is not a "no families" signal — that is `families: []`.
+ */
+export interface ModelFamilyListing {
+  active: ActiveSlotSet | undefined;
+  families: Array<{
+    id: string;
+    displayName: string;
+    vendor: string;
+    slots: SlotView[];
+    models: Array<{
+      canonicalModelId: string;
+      displayName: string;
+      rows: Array<{ key: string; providerId: string; status: string; pricingBasis: string; servable: boolean }>;
+    }>;
+  }>;
+}
+
+/**
+ * One entry of `settings.modelSlots` (WS-13c §5, D27): the user's own facing name for a model.
+ *
+ * `model` is a `canonicalModelId` OR a catalog key — both spellings are things a user reasonably has
+ * to hand, and validation resolves either. `description` overrides Winter's own slot text; absent
+ * means "use Winter's description for that canonical model, else the row's displayName".
+ */
+export interface ModelSlotSetting {
+  name: string;
+  model: string;
+  provider?: string;
+  description?: string;
+}

@@ -14,6 +14,10 @@
 // providerSupportsToolSearch/deferrableContextShare are the identical class of disclosed gap). The
 // moment [WS-13] lands a real catalog, wiring it through this SAME parameter activates real
 // substitution/rejection with no change to this function's own contract.
+// TYPE-ONLY, and it must stay that way: `child-handle.ts` is the seam file both lanes bind to, and a
+// runtime import here would close a cycle that `import type` erases entirely.
+import type { ChildInheritance } from "./child-handle.ts";
+
 export interface ModelCatalog {
   // Maps one of the four AgentInput aliases (or any other requested string) to a REAL provider model
   // identifier. An absent entry for a requested value means "this catalog has no opinion" (passed
@@ -87,19 +91,47 @@ export function resolveEffort(inheritedEffort: string): ResolvedEffort {
   return { requestedEffort: inheritedEffort, effectiveEffort: inheritedEffort };
 }
 
-// WS-10 §3.4: the four fields recorded on every child, verbatim.
+// WS-10 §3.4: the four fields recorded on every child, verbatim -- plus WS-13c §3's two.
 export interface RecordedModelEffort {
   requestedModel?: string;
   effectiveModel: string;
   requestedEffort?: string;
   effectiveEffort: string;
+  /**
+   * WS-13c §3: the provider the child's model actually resolved to.
+   *
+   * `effectiveModel` is a catalog KEY, whose provider half is only readable by string-splitting it --
+   * and a child spawned onto another family reaches a provider the parent's own record never names.
+   * WS-13c §8 makes the child's own record AUTHORITATIVE on resume, so the provider has to be a field
+   * here rather than something re-derived from the parent's live selection at resume time.
+   */
+  effectiveProvider?: string;
+  /**
+   * WS-13c §3: the SLOT the request named, if it named one.
+   *
+   * `requestedModel` is the raw string; this says what it meant and where it came from. Typed as
+   * `ChildInheritance["slot"]` rather than re-declared, so the record and the inheritance that
+   * produced it cannot drift apart on the `source` union.
+   */
+  slot?: ChildInheritance["slot"];
 }
 
-export function recordModelEffort(opts: { requestedModel?: string; resolved: ResolvedModel; effort: ResolvedEffort }): RecordedModelEffort {
+export function recordModelEffort(opts: {
+  requestedModel?: string;
+  resolved: ResolvedModel;
+  effort: ResolvedEffort;
+  effectiveProvider?: string;
+  slot?: ChildInheritance["slot"];
+}): RecordedModelEffort {
   return {
     ...(opts.requestedModel !== undefined ? { requestedModel: opts.requestedModel } : {}),
     effectiveModel: opts.resolved.effectiveModel,
     ...(opts.effort.requestedEffort !== undefined ? { requestedEffort: opts.effort.requestedEffort } : {}),
     effectiveEffort: opts.effort.effectiveEffort,
+    // PASSED THROUGH ONLY WHEN GIVEN. An absent key is "the caller resolved no slot / no provider",
+    // which is every pre-WS-13c call site and every test double; writing `undefined` instead would
+    // put the key on the child's record and make a JSON round trip disagree with a fresh one.
+    ...(opts.effectiveProvider !== undefined ? { effectiveProvider: opts.effectiveProvider } : {}),
+    ...(opts.slot !== undefined ? { slot: opts.slot } : {}),
   };
 }

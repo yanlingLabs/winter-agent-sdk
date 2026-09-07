@@ -16,6 +16,7 @@ import type {
   WinterProviderDescriptor,
 } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderAdapter, ProviderEvent, ProviderFamily } from "../types.ts";
+import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { readableStateOf } from "./domains.ts";
 
 export const evidence = <T>(value: T, confidence: EvidenceConfidence = "verified"): CapabilityEvidence<T> => ({
@@ -35,8 +36,13 @@ export interface FixtureModelInit {
   contextWindow?: number;
 }
 
+// WS-13c: `modelFamily`/`canonicalModelId` are DERIVED, never hand-typed into a fixture. The
+// pipeline's own `stampFamilyFields` fills them here with NO families, so a fixture row lands in
+// `other` carrying the real normaliser's canonical id rather than a second, drifting spelling.
+const stampRow = (row: Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">): WinterModelDescriptor => stampFamilyFields([row], [])[0]!;
+
 export function fixtureModel(init: FixtureModelInit): WinterModelDescriptor {
-  return {
+  return stampRow({
     key: init.key,
     providerId: init.providerId,
     upstreamId: init.upstreamId ?? init.key.slice(init.key.indexOf("/") + 1),
@@ -51,7 +57,7 @@ export function fixtureModel(init: FixtureModelInit): WinterModelDescriptor {
     ...(init.reasoning !== undefined ? { reasoning: init.reasoning } : {}),
     unsupportedParameters: [],
     status: "supported",
-  };
+  });
 }
 
 /**
@@ -102,7 +108,8 @@ export function fixtureProvider(init: { id: string; adapterId?: string; family?:
 
 export function fixtureCatalog(providers: WinterProviderDescriptor[], models: WinterModelDescriptor[]): WinterCatalog {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    families: [],
     catalogVersion: "0.0.0-continuity-fixture",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers,
