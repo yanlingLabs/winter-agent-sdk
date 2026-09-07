@@ -1194,9 +1194,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
           ...(config.compactionThreshold !== undefined ? { compactionThreshold: config.compactionThreshold } : {}),
         }),
       // R6-17: the per-child provider. Resolved through the SESSION's own registry, so a child's
-      // `AgentDefinition.model` reaches the same catalog the parent did -- and returns `undefined`
-      // when the model resolves to what the parent is already running, so the common case builds no
-      // second adapter and every pre-P6 child is byte-identical.
+      // `AgentDefinition.model` reaches the same catalog the parent did -- and returns
+      // `{ sameAsParent: true, identity }` when the model resolves to what the parent is already
+      // running, so the common case builds no second adapter and every pre-P6 child is byte-identical.
+      // `undefined` is reserved, strictly, for "unresolvable / no catalog to resolve against": see
+      // `ChildProviderResolution` for why overloading one answer with both facts made `resume()`
+      // refuse a perfectly servable child (P6.6 fix wave, whole-branch Important-1).
       resolveChildProvider: async (model: string) => {
         const registry = providerWiring.registry;
         // WS-13c (Lane D investigation §1.6): the LIVE parent, not the session-start snapshot. A
@@ -1212,7 +1215,28 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         // one outcome a child that explicitly named another provider must not get.
         const resolvedChild = model.includes("/") ? registry.resolve({ model }) : registry.resolve({ model, provider: { providerId: parent.providerId } });
         if (resolvedChild instanceof WinterProviderResolutionError) return undefined;
-        if (resolvedChild.modelKey === parent.modelKey) return undefined;
+        if (resolvedChild.modelKey === parent.modelKey) {
+          // P6.6 fix wave (whole-branch Important-1): the DISTINGUISHABLE "same as the parent"
+          // answer. The parent's adapter is the answer, so none is built here -- but the identity it
+          // resolved TO travels with it, which is what lets `resume()` tell "the parent has moved
+          // onto this child's own model key" (the child is servable; proceed) apart from "this
+          // child's model no longer resolves anywhere" (refuse). No credential probe: this is the
+          // model the parent is running RIGHT NOW on material the session already holds, and a probe
+          // whose answer is "yes, obviously" is a store read bought for nothing. `authRefKind` is
+          // therefore genuinely unknown here and is omitted rather than guessed.
+          return {
+            sameAsParent: true,
+            identity: {
+              providerId: resolvedChild.providerId,
+              modelKey: resolvedChild.modelKey,
+              family: String(resolvedChild.adapter.family),
+              ...(resolvedChild.continuationDomain !== undefined ? { continuationDomain: resolvedChild.continuationDomain } : {}),
+              adapterId: resolvedChild.adapterId,
+              adapterVersion: resolvedChild.adapter.version,
+              catalogVersion: resolvedChild.catalogVersion,
+            },
+          };
+        }
         // RULING E-1 (whole-branch C-1, probe P1a): a child on ANOTHER provider gets that provider's
         // OWN material -- never the parent's `authRef`, never the parent's user `baseUrl`. When the
         // rule lands on the target provider's keychain record, its EXISTENCE is probed here, before

@@ -941,7 +941,48 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(child?.identity).toMatchObject({ providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5" });
       expect(child).not.toHaveProperty("refused");
       // ...and a child naming the parent's NEW model is "the same as the parent": no second adapter.
-      expect(await resolveChildProvider("anthropic/claude-opus-5")).toBeUndefined();
+      // P6.6 fix wave (whole-branch Important-1): a DISTINGUISHABLE shape, not `undefined`. The two
+      // facts `undefined` used to carry -- "resolves onto what the parent is running" and "does not
+      // resolve at all" -- are what made `resume()` refuse a servable child; the identity travels so
+      // the resume side can tell them apart and check the resolved provider against the recorded one.
+      const sameAsParent = await resolveChildProvider("anthropic/claude-opus-5");
+      expect(sameAsParent).toMatchObject({ sameAsParent: true, identity: { providerId: "anthropic", modelKey: "anthropic/claude-opus-5" } });
+      expect(sameAsParent).not.toHaveProperty("provider"); // the parent's own adapter IS the answer
+      expect(sameAsParent).not.toHaveProperty("refused");
+      // An UNRESOLVABLE model keeps `undefined` all to itself -- the whole point of the split.
+      expect(await resolveChildProvider("no-such-provider/no-such-model")).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // P6.6 fix wave (whole-branch Important-1, probe P-D) through the REAL wiring: a gpt parent spawns
+  // a cross-family `sonnet` child, then `set_model`s onto the CHILD'S OWN key. The resolver must
+  // report "same as the parent" naming anthropic -- the child's own recorded provider -- so the
+  // resume proceeds instead of being refused with "anthropic no longer serves anthropic/claude-sonnet-5".
+  test("P-D: after the parent switches onto a cross-family child's OWN key, the resolver names that child's provider rather than answering `undefined`", async () => {
+    const wiring = await buildProductionWiring({
+      config: gptSession("s-slots-same-key"),
+      env: {},
+      winterHome: home,
+      provider: { credentials: createMemoryCredentialStore([[providerCredentialRef({ providerId: "anthropic", accountId: "default" }), { kind: "api-key", key: "fixture" }]]) },
+    });
+    try {
+      const resolveChildProvider = wiring.childFactoryOptions.resolveChildProvider!;
+      // AT SPAWN: the parent is on `openai/gpt-6-astra`; the `sonnet` child resolves onto its own
+      // anthropic adapter (a full resolution -- a second provider really is built).
+      const atSpawn = await resolveChildProvider("anthropic/claude-sonnet-5");
+      expect(atSpawn).toMatchObject({ identity: { providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5" } });
+      expect(atSpawn).toHaveProperty("provider");
+      expect(atSpawn).not.toHaveProperty("sameAsParent");
+      // THE SWITCH: the engine reports its live key once per generation -- this is that call.
+      wiring.engineOptions.activeSlotSet!("anthropic/claude-sonnet-5");
+      // ON RESUME: the same recorded key now IS the parent's key. The answer names anthropic, which
+      // is what the child was recorded against, so `resume()`'s recorded-vs-resolved guard passes and
+      // the child is served on its own provider.
+      const onResume = await resolveChildProvider("anthropic/claude-sonnet-5");
+      expect(onResume).toMatchObject({ sameAsParent: true, identity: { providerId: "anthropic" } });
+      expect(onResume).toBeDefined();
     } finally {
       wiring.dispose();
     }

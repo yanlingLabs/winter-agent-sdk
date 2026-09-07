@@ -170,6 +170,161 @@ describe("WS-13c §8: SendMessage across families -- the child's own record is a
     expect(modelInfo(handle).effectiveProvider).toBe("openai");
   });
 
+  // P6.6 fix wave (whole-branch Important-1, probe P-D): the sub-case the SM1/SM2 rows above MISS.
+  // They switch the parent onto a DIFFERENT model of the child's family; this switches it onto the
+  // child's OWN model key, which is what a user delegating "use sonnet" and then moving to sonnet
+  // themselves actually does. The production resolver answers `{ sameAsParent: true }` for exactly
+  // that, and before the third shape existed it answered `undefined` -- indistinguishable from "this
+  // model no longer resolves at all", so `resume()` refused a perfectly servable child and said
+  // "anthropic no longer serves anthropic/claude-sonnet-5", which is false.
+  test("WS13c-SM1 (P-D sub-case): the parent switching onto the child's OWN model key resumes the child on its own provider, never a refusal", async () => {
+    const fakeA = createScriptedProviderFake(); // the parent's provider AT SPAWN (gpt)
+    const fakeB = createScriptedProviderFake(); // the CHILD's own resolved provider (anthropic)
+    const model = "anthropic/claude-sonnet-5";
+    const identity: ChildProviderIdentity = { providerId: "anthropic", modelKey: model, family: "claude" };
+    // Flipped after the spawn: the parent `set_model`s onto EXACTLY this child's key, so the live
+    // resolver stops building a second adapter and reports "same as the parent" instead.
+    let parentOnChildsKey = false;
+    const deps: ChildEngineFactoryDeps = {
+      provider: fakeA,
+      env: {},
+      resolveChildProvider: (requested) => {
+        if (requested !== model) return undefined;
+        return parentOnChildsKey ? { sameAsParent: true, identity } : { provider: fakeB, identity };
+      },
+    };
+
+    // The parent's identity AT SPAWN is openai -- the frozen value `resume()` used to measure the
+    // recorded "anthropic" against, which is what produced the false refusal.
+    const handle = await spawnAndSettle(
+      deps,
+      baseReq({ model }),
+      baseInherit({ model, provider: { providerId: "openai", modelKey: "openai/gpt-6-astra", family: "gpt" }, slot: { family: "claude", name: "sonnet", source: "family-default" } }),
+    );
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+    expect(fakeB.callCount()).toBe(1);
+
+    parentOnChildsKey = true;
+    const outcome = await handle.resume(fakeMessage("second turn"));
+    expect(outcome.status).toBe("resumed_and_delivered");
+    await waitUntil(() => handle.status() === "completed");
+
+    expect(fakeB.callCount()).toBe(2); // the child's OWN provider served the resume
+    expect(fakeA.callCount()).toBe(0); // never the parent's spawn-time adapter
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic"); // and the record is unmoved
+    expect(modelInfo(handle).slot).toEqual({ family: "claude", name: "sonnet", source: "family-default" });
+  });
+
+  test("WS13c-SM2 (P-D sub-case mirror): a claude parent switching onto its luna child's own key resumes that child on openai", async () => {
+    const fakeA = createScriptedProviderFake(); // the parent's provider AT SPAWN (claude)
+    const fakeB = createScriptedProviderFake(); // the child's own resolved provider (openai/luna)
+    const model = "openai/gpt-5.6-luna";
+    const identity: ChildProviderIdentity = { providerId: "openai", modelKey: model, family: "gpt" };
+    let parentOnChildsKey = false;
+    const deps: ChildEngineFactoryDeps = {
+      provider: fakeA,
+      env: {},
+      resolveChildProvider: (requested) => {
+        if (requested !== model) return undefined;
+        return parentOnChildsKey ? { sameAsParent: true, identity } : { provider: fakeB, identity };
+      },
+    };
+
+    const handle = await spawnAndSettle(
+      deps,
+      baseReq({ model }),
+      baseInherit({ model, provider: { providerId: "anthropic", modelKey: "anthropic/claude-opus-5", family: "claude" }, slot: { family: "gpt", name: "luna", source: "family-default" } }),
+    );
+    expect(modelInfo(handle).effectiveProvider).toBe("openai");
+    expect(fakeB.callCount()).toBe(1);
+
+    parentOnChildsKey = true;
+    const outcome = await handle.resume(fakeMessage("second turn"));
+    expect(outcome.status).toBe("resumed_and_delivered");
+    await waitUntil(() => handle.status() === "completed");
+
+    expect(fakeB.callCount()).toBe(2);
+    expect(fakeA.callCount()).toBe(0);
+    expect(modelInfo(handle).effectiveProvider).toBe("openai");
+  });
+
+  test("the `sameAsParent` shape is still subject to the recorded-vs-resolved guard: a foreign provider id is refused, never proceeded on", async () => {
+    // The third shape must not become a bypass around I1's guard. If the resolver claims "same as the
+    // parent" while naming a provider this child was never recorded against, that is exactly the
+    // substitution WS-13c §8 forbids -- and it stays a typed refusal.
+    const fakeA = createScriptedProviderFake();
+    const fakeB = createScriptedProviderFake();
+    const model = "anthropic/claude-sonnet-5";
+    let drifted = false;
+    const deps: ChildEngineFactoryDeps = {
+      provider: fakeA,
+      env: {},
+      resolveChildProvider: (requested) => {
+        if (requested !== model) return undefined;
+        return drifted
+          ? { sameAsParent: true, identity: { providerId: "bedrock", modelKey: model, family: "claude" } }
+          : { provider: fakeB, identity: { providerId: "anthropic", modelKey: model, family: "claude" } };
+      },
+    };
+
+    const handle = await spawnAndSettle(deps, baseReq({ model }), baseInherit({ model }));
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+
+    drifted = true;
+    const outcome = await handle.resume(fakeMessage("second turn"));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") {
+      expect(outcome.retryable).toBe(false);
+      expect(outcome.reason).toContain("child-provider-unavailable");
+      expect(outcome.reason).toContain("anthropic");
+      expect(outcome.reason).toContain("bedrock");
+    }
+    expect(modelInfo(handle).effectiveProvider).toBe("anthropic");
+    expect(fakeB.callCount()).toBe(1);
+  });
+
+  // P6.6 fix wave (Important-1): a refusal reason may never state something false about a provider.
+  test("no refusal reason claims a provider `no longer serves` a model -- the text states the session-scoped cause", async () => {
+    const fakeA = createScriptedProviderFake();
+    const fakeB = createScriptedProviderFake();
+    const model = "anthropic/claude-sonnet-5";
+    const identity: ChildProviderIdentity = { providerId: "anthropic", modelKey: model, family: "claude" };
+    let mode: "ok" | "refused" | "unresolvable" = "ok";
+    const deps: ChildEngineFactoryDeps = {
+      provider: fakeA,
+      env: {},
+      resolveChildProvider: (requested) => {
+        if (requested !== model) return undefined;
+        if (mode === "unresolvable") return undefined;
+        if (mode === "refused") {
+          return {
+            refused: { providerId: "anthropic", modelKey: model, reason: "credential revoked" },
+            provider: {
+              async generate(): Promise<never> {
+                throw new Error("must never be called");
+              },
+            },
+            identity,
+          };
+        }
+        return { provider: fakeB, identity };
+      },
+    };
+
+    for (const which of ["refused", "unresolvable"] as const) {
+      const handle = await spawnAndSettle(deps, baseReq({ model }), baseInherit({ model, provider: { providerId: "openai", modelKey: "openai/gpt-6-astra", family: "gpt" } }));
+      mode = which;
+      const outcome = await handle.resume(fakeMessage("second turn"));
+      expect(outcome.status).toBe("unavailable");
+      if (outcome.status === "unavailable") {
+        expect(outcome.reason).toContain("child-provider-unavailable");
+        expect(outcome.reason).toContain("anthropic"); // the recorded provider is still named
+        expect(outcome.reason).not.toContain("no longer serves"); // ...but never accused of dropping the model
+      }
+      mode = "ok";
+    }
+  });
+
   test("I1 (Fix round 1, review repro 4): a successful re-resolution onto a DIFFERENT provider than recorded is a typed refusal, never a silent substitution", async () => {
     // Not a WS13c-SM* named case -- a permanent regression test for a review finding (I1): a
     // resolver that returns a genuinely SUCCESSFUL resolution (no `refused`, not `undefined`) for

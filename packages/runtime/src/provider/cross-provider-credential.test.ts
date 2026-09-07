@@ -427,7 +427,7 @@ describe("Ruling E-1 on the PRODUCTION child seam (`resolveChildProvider`)", () 
       try {
         const resolution = await wiring.childFactoryOptions.resolveChildProvider!("provb/bmodel");
         expect(resolution).toBeDefined();
-        if (resolution === undefined || "refused" in resolution) throw new Error(`expected a built child provider, got ${JSON.stringify(resolution)}`);
+        if (resolution === undefined || "refused" in resolution || "sameAsParent" in resolution) throw new Error(`expected a built child provider, got ${JSON.stringify(resolution)}`);
         // The parent authenticated INLINE; the child's material is the KEYCHAIN record. Stamping the
         // parent's kind here was M-7.
         expect(resolution.identity.authRefKind).toBe("keychain");
@@ -468,7 +468,10 @@ describe("Ruling E-1 on the PRODUCTION child seam (`resolveChildProvider`)", () 
       const { wiring, dispose } = await productionWiring(catalog, credentialsWith(false));
       try {
         const resolution = await wiring.childFactoryOptions.resolveChildProvider!("asmall");
-        if (resolution === undefined || "refused" in resolution) throw new Error("expected a built child provider");
+        // P6.6 fix wave (Important-1): `asmall` is a DIFFERENT key from the parent's, so this is a
+        // full resolution -- the `sameAsParent` shape (a child naming the parent's OWN key) carries no
+        // adapter and would not satisfy what this control asserts.
+        if (resolution === undefined || "refused" in resolution || "sameAsParent" in resolution) throw new Error("expected a built child provider");
         expect(resolution.identity.authRefKind).toBe("inline");
         await resolution.provider.generate({ messages: [{ role: "user", content: "child turn" }] });
         expect(fakeB.requests.length).toBe(0);

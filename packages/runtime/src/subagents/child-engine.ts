@@ -145,16 +145,32 @@ export interface ChildProviderIdentity {
 }
 
 /**
- * What `resolveChildProvider` answers. `refused` (Ruling E-1, R-E3) is the cross-provider child with
- * no credential of its own: the resolver names the child, the provider and the reason, the spawn
- * path says so on stderr AND on a `continuity_warning` frame, and the child runs on the
- * DEFERRED-REFUSAL provider it carries -- its first generation lands on R6-F with NO request. Never
- * the parent's provider: a foreign model id on the parent's wire is exactly what a refusal exists to
- * prevent.
+ * What `resolveChildProvider` answers. THREE shapes, plus `undefined` -- and the distinction between
+ * the third shape and `undefined` is load-bearing (P6.6 fix wave, whole-branch Important-1):
+ *
+ *  - `{ provider, identity }` -- a full resolution onto the child's OWN adapter.
+ *  - `{ refused, provider, identity }` (Ruling E-1, R-E3) -- the cross-provider child with no
+ *    credential of its own: the resolver names the child, the provider and the reason, the spawn path
+ *    says so on stderr AND on a `continuity_warning` frame, and the child runs on the
+ *    DEFERRED-REFUSAL provider it carries -- its first generation lands on R6-F with NO request. Never
+ *    the parent's provider: a foreign model id on the parent's wire is exactly what a refusal exists
+ *    to prevent.
+ *  - `{ sameAsParent: true, identity }` -- THE MODEL RESOLVED, onto exactly the key the parent is
+ *    running RIGHT NOW, so no second adapter is needed: the caller uses the parent's own provider.
+ *    The `identity` is what it resolved TO, which is what makes this shape distinguishable from an
+ *    unresolvable one on resume. No `provider` rides along deliberately: the parent's adapter is the
+ *    answer, and the resolver has no business handing back a second reference to it.
+ *  - `undefined` -- STRICTLY "unresolvable, or there is no catalog to resolve against" (a scripted
+ *    test double, a model id the registry rejects). NEVER "same as the parent" -- that overload is
+ *    exactly the bug the third shape exists to kill: `resume()` cannot distinguish "the parent moved
+ *    onto this child's own model key" (harmless, the child is servable) from "this child's model no
+ *    longer resolves at all" (a genuine refusal) when both arrive as `undefined`, and the false
+ *    refusal it produced named a provider as no longer serving a model it serves perfectly well.
  */
 export type ChildProviderResolution =
   | { provider: Provider; identity: ChildProviderIdentity }
-  | { refused: { providerId: string; modelKey: string; reason: string }; provider: Provider; identity: ChildProviderIdentity };
+  | { refused: { providerId: string; modelKey: string; reason: string }; provider: Provider; identity: ChildProviderIdentity }
+  | { sameAsParent: true; identity: ChildProviderIdentity };
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
@@ -173,9 +189,11 @@ export interface ChildEngineFactoryDeps {
    * child's model then travelled only as `ProviderRequest.model`, so a cross-provider child sent one
    * vendor's model id to another vendor's endpoint.
    *
-   * Returns `undefined` when the model resolves to the same thing the parent is already running (or
-   * cannot be resolved at all), in which case the parent's provider is used unchanged -- which is
-   * every pre-P6 child and every session whose provider is the reserved test double.
+   * Returns `{ sameAsParent: true, identity }` when the model resolves to the same key the parent is
+   * running, and `undefined` when it cannot be resolved at all (no catalog, or a key the registry
+   * rejects); the parent's provider is used unchanged in BOTH cases at spawn -- which is every pre-P6
+   * child and every session whose provider is the reserved test double. They are two different facts
+   * and must not share one answer: see `ChildProviderResolution` for what `resume()` does with each.
    *
    * The IDENTITY comes back with it deliberately: a child running its own provider that reported its
    * PARENT's identity would write provider-state records naming a model it never called, and the
@@ -422,10 +440,18 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         /* a torn-down parent stream must never fail a spawn over a warning */
       }
       childProvider = { provider: childResolution.provider, identity: childResolution.identity };
+    } else if (childResolution !== undefined && "sameAsParent" in childResolution) {
+      // P6.6 fix wave (Important-1): the resolver says this model IS what the parent is running, so
+      // the parent's own adapter is the answer -- byte-identical to the `undefined` branch below,
+      // which is what this case used to arrive as. The recorded identity stays `parentIdentityAtSpawn`
+      // rather than `childResolution.identity`: they name the same provider by construction (that is
+      // what "same as the parent" means), and the inheritance's own read is the one every pre-fix
+      // child was recorded from, so nothing about an existing child's durable record moves.
+      childProvider = { provider: deps.provider, identity: parentIdentityAtSpawn };
     } else if (childResolution !== undefined) {
       childProvider = childResolution;
     } else {
-      // Same-provider (or no resolver configured): materialise rather than leave undefined -- see
+      // Unresolvable (or no resolver configured): materialise rather than leave undefined -- see
       // the header comment above `let childProvider` for why this is the fix.
       childProvider = { provider: deps.provider, identity: parentIdentityAtSpawn };
     }
@@ -1063,36 +1089,36 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         //    credential for it (Ruling E-1) -- authoritative on its own, refused regardless of what
         //    the parent is doing, since a refusal only ever names a model genuinely different from
         //    whatever the parent is running (see `resolveChildProvider`'s own contract).
-        //  - `undefined` with the recorded provider id UNCHANGED from `parentIdentityAtSpawn`: the
-        //    harmless case the resolver's own doc describes ("resolves to what the parent is already
-        //    running") -- true of every same-provider child by construction, so this falls through
-        //    to the frozen `childProvider.provider` unchanged, exactly as before this fix.
-        //  - `undefined` with the recorded provider id DIFFERENT from `parentIdentityAtSpawn`: a
-        //    child that used to resolve onto its OWN provider no longer does, and nothing here can
-        //    tell whether that is a genuine credential loss or a coincidental re-convergence -- WS-13c
-        //    §8's "never a substitution" makes refusal the only safe reading.
+        //  - `undefined`: the child's own recorded model no longer resolves AT ALL (no catalog to
+        //    resolve against, or a key the registry now rejects). Harmless when the recorded provider
+        //    id still agrees with `parentIdentityAtSpawn` -- there is nothing to contradict, and every
+        //    same-provider child is that by construction, so it falls through to the frozen
+        //    `childProvider.provider` unchanged. A DIFFERENT recorded provider id means a child that
+        //    used to resolve onto its OWN provider no longer resolves anywhere: WS-13c §8's "never a
+        //    substitution" makes refusal the only safe reading.
+        //  - `{ sameAsParent: true, identity }` (P6.6 fix wave, whole-branch Important-1): the model
+        //    RESOLVED, onto exactly the key the parent is running right now. The child is servable --
+        //    on the identity's provider, which the mismatch guard below proves equal to the recorded
+        //    one -- so this PROCEEDS, on the adapter frozen at spawn, and refuses only if the resolved
+        //    provider disagrees with what this child was recorded against.
         //
-        //    Fix round 1 (I3): `parentIdentityAtSpawn` is the parent's identity AT THIS CHILD'S OWN
-        //    SPAWN, not a live read -- by construction, since nothing on this run context exposes the
-        //    parent's CURRENT identity to an already-spawned handle (only `inherit.provider`, taken
-        //    once, at spawn, exists at all). Today's `production-wiring.ts` resolver compares against
-        //    ITS OWN session-start snapshot too, so the two staleness's agree and this never
-        //    misfires. THE MOMENT `production-wiring.ts`'s `resolveChildProvider` is made to compare
-        //    against the parent's LIVE identity instead (the §1.6 fix this lane's own report flags
-        //    for Lane A) -- a narrow sub-case breaks: a parent whose `set_model` lands on EXACTLY this
-        //    child's own model key makes the resolver return `undefined` (its own "same as the parent
-        //    now" contract), while THIS comparison still measures against the parent's identity from
-        //    BEFORE that switch -- refusing a child whose provider is perfectly available. Fail-closed
-        //    (never a substitution), so not unsafe, but it is a false refusal inside the very
-        //    conformance row this task exists to satisfy. The real fix is Lane A's: give
-        //    `resolveChildProvider` a THIRD, distinguishable answer for "unresolvable" that does not
-        //    overload the same `undefined` "matches the parent" already carries -- not arithmetic this
-        //    branch can do with the information it currently receives.
+        //    This shape is the fix for a false refusal that was live on the assembled branch. Before
+        //    it, the resolver answered `undefined` for BOTH "unresolvable" and "resolves onto what the
+        //    parent is now running", while `parentIdentityAtSpawn` is (by construction -- nothing on
+        //    this run context exposes the parent's CURRENT identity to an already-spawned handle)
+        //    frozen at THIS child's spawn. Once `production-wiring.ts`'s resolver was made to compare
+        //    against the parent's LIVE identity, a parent whose `set_model` landed on EXACTLY this
+        //    child's own model key produced `undefined` here, measured against a pre-switch parent
+        //    identity, and refused a child whose provider was perfectly available -- inside the very
+        //    conformance rows (WS13c-SM1/SM2) this path exists to satisfy, with a reason string that
+        //    claimed a provider "no longer serves" a model it does. Fail-closed, never a substitution,
+        //    but false. The distinction is not arithmetic this branch can do: it has to come from the
+        //    resolver, which is why the third shape exists.
         //  - a fresh, successful resolution: re-resolved cleanly under the child's own recorded
         //    model; the closure's own `childProvider` is refreshed so `startGeneration` below (and
         //    any LATER resume) reads the fresh adapter, and the sidecar is updated to match --
         //    PROVIDED (Fix round 1, I1) the resolved provider id still MATCHES the recorded one: see
-        //    the `else` branch below for why trusting it unconditionally was a silent substitution.
+        //    the mismatch guard below for why trusting it unconditionally was a silent substitution.
         let again: ChildProviderResolution | undefined;
         try {
           again = await deps.resolveChildProvider?.(record.model.effectiveModel);
@@ -1119,7 +1145,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             status: "unavailable",
             messageId: msg.messageId,
             retryable: false,
-            reason: `child-provider-unavailable: ${providerId} no longer serves ${modelKey} (${reason})`,
+            // P6.6 fix wave (Important-1): NOT "no longer serves" -- the provider very often still
+            // serves this model perfectly well and the refusal is about THIS SESSION's access to it
+            // (Ruling E-1: no credential of the child's own). A reason string that states a false
+            // fact about a vendor is the same D25 "no false information" failure the typed refusal
+            // exists to avoid.
+            reason: `child-provider-unavailable: this session cannot reach ${modelKey} on ${providerId} (${reason})`,
           };
         }
         if (again === undefined) {
@@ -1129,7 +1160,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
               status: "unavailable",
               messageId: msg.messageId,
               retryable: false,
-              reason: `child-provider-unavailable: ${recordedProviderId} no longer serves ${record.model.effectiveModel} (the model no longer resolves against this session's own provider)`,
+              // P6.6 fix wave (Important-1): states the ACTUAL cause. `undefined` now means one thing
+              // only -- the recorded model did not resolve at all -- so the text says that, and names
+              // the recorded provider (which may well still serve the model; this session just cannot
+              // resolve its way back to it) rather than accusing it of having dropped the model.
+              reason: `child-provider-unavailable: ${record.model.effectiveModel} no longer resolves for this session, so its recorded provider ${recordedProviderId} cannot be re-established for this child`,
             };
           }
           // Else: no recorded identity to contradict, or it still agrees with the parent's identity
@@ -1151,6 +1186,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             retryable: false,
             reason: `child-provider-unavailable: recorded ${record.model.effectiveProvider}, the resolver now maps ${record.model.effectiveModel} onto ${again.identity.providerId}`,
           };
+        } else if ("sameAsParent" in again) {
+          // P6.6 fix wave (Important-1): the model resolved, onto the key the parent is now running,
+          // and the guard directly above has just proven the resolved provider id equals the one this
+          // child was recorded against. So the child IS servable, on the adapter frozen at ITS OWN
+          // spawn -- which is the same provider by that equality, and is the reference WS-13c §8's
+          // retention rule wants used regardless. Nothing is refreshed and nothing is rewritten: the
+          // resolver handed back no adapter (deliberately -- see `ChildProviderResolution`), and
+          // `record.model.effectiveProvider` already says exactly what this branch just confirmed.
         } else {
           childProvider = { provider: again.provider, identity: again.identity };
           record.model = { ...record.model, effectiveProvider: again.identity.providerId };
