@@ -9,6 +9,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "dependencies": {
+    "@yanlinglabs/winter-provider-catalog": "workspace:*"
+  },
   "optionalDependencies": {
     "@yanlinglabs/winter-agent-sdk-darwin-arm64": "workspace:*"
   },
