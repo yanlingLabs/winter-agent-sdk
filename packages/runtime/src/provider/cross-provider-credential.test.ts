@@ -221,8 +221,13 @@ describe("Ruling E-1: a target on ANOTHER provider never inherits the session's 
         catalog: catalogFor(fakeA.url, fakeB.url),
         credentials: credentialsWith(false),
       });
-      expect(wiring.advisorProvider).toBeDefined();
-      await wiring.advisorProvider!.generate({ messages: [{ role: "user", content: "review this" }] });
+      // P7a LANE B: the advisor's backend is now resolved through `resolveReviewer` (the P2-carry
+      // `advisorProvider` field is gone). The claim this test makes is unchanged and now runs on the
+      // PRODUCTION seam rather than beside it.
+      const reviewer = wiring.resolveReviewer?.();
+      expect(reviewer).toBeDefined();
+      expect(reviewer!.model).toBe("provb/bmodel");
+      await reviewer!.provider.generate({ messages: [{ role: "user", content: "review this" }] });
       expect(fakeA.requests.length).toBe(0);
       expect(fakeB.requests.length).toBe(1);
       expect(fakeB.requests[0]!.authorization).toBe("Bearer ADVISOR-OWN-SECRET");
@@ -287,7 +292,7 @@ describe("Ruling E-1: a target on ANOTHER provider never inherits the session's 
       expect(material.connection?.baseUrl).toBe(fakeB.url);
       expect(material.connection?.headers).toBeUndefined();
 
-      await wiring.advisorProvider!.generate({ messages: [{ role: "user", content: "review" }] });
+      await wiring.resolveReviewer!()!.provider.generate({ messages: [{ role: "user", content: "review" }] });
       expect(fakeA.requests.length).toBe(0);
       expect(fakeB.requests.length).toBe(1);
       expect(fakeB.requests[0]!.headers["x-session-only"]).toBeUndefined();

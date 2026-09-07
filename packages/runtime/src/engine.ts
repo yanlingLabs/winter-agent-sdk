@@ -213,7 +213,7 @@ import {
 // here rather than left looking like an oversight against R3-5's "lanes never edit registry.ts"
 // boundary (this is the opposite direction: the engine reaching INTO a lane's own file, not a lane
 // reaching into the registry).
-import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type TranscriptEntry } from "./tools/impl/advisor.ts";
+import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type ResolvedReviewer, type TranscriptEntry } from "./tools/impl/advisor.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
@@ -1252,6 +1252,26 @@ export interface EngineOptions {
    * observe the pin's `fallback_state` record.
    */
   autoAudit?: AutoAuditRecorder;
+  /**
+   * P7a LANE B (D29/D30, WS-06 §4): the ADVISOR's reviewer, for the model key given.
+   *
+   * TAKES THE MODEL KEY for the same reason `activeSlotSet` and `listModelFamilies` do: D30's
+   * default is per FAMILY, the family comes from the session's effective model, and the wiring's own
+   * view of that model is the START snapshot (`installIdentity` updates the ENGINE's, never writes
+   * back). A resolver that closed over the wiring's value would keep reviewing with the family the
+   * session began on after a cross-family `set_model` — the same false-information class D25 forbids
+   * for the Agent tool's enum, with the transcript as the payload.
+   *
+   * TWO CONSUMERS, one authority: the `advisor` tool's executor (which calls it per invocation, so a
+   * hot `settings.advisor.model` edit is seen at the next call) and the `winter.reviewer-model`
+   * capability (WS-06 §4's availability predicate — "a reviewer model is resolvable in the session's
+   * provider catalog", which is this function answering).
+   *
+   * ABSENT -> no reviewer, which is what a scripted double and a session whose own model failed to
+   * resolve both get: the tool is not advertised, and if a host advertised it anyway (by supplying
+   * the capability token) it returns WS-06 §4's ordinary "reviewer unavailable" tool error.
+   */
+  resolveReviewer?: (currentModelKey?: string) => ResolvedReviewer | undefined;
 }
 
 /**
@@ -1523,6 +1543,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     priceUsage,
     classifierIdentity,
     autoAudit,
+    // P7a LANE B (D29/D30): the advisor's reviewer route -- see EngineOptions.resolveReviewer.
+    resolveReviewer: resolveReviewerRoute,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -3225,7 +3247,47 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // refused at dispatch by rider 27's availability check. Equivalent to the old predicate for every
   // other input by construction: the engine builds `mcpLifecycle` (hence a state source) exactly when
   // no source was supplied and `config.mcpServers` is non-empty.
-  const resolveLiveSessionCapabilities = (): string[] => resolveSessionCapabilities(config.capabilities, { hasMcpServers: sessionHasMcp() });
+  // --- P7a LANE B (D29/D30), THE ADVISOR BLOCK, half 1: `winter.reviewer-model` ------------------
+  //
+  // WS-06 §4's availability predicate, verbatim: "a reviewer model is resolvable in the session's
+  // provider catalog". Until P7a the token was HOST-SUPPLIED ONLY -- a host that wrote
+  // `capabilities: ["winter.reviewer-model"]` got the tool advertised whether or not anything could
+  // review, and a host that did not (which is every real one, since no wiring supplied it) never
+  // saw the advisor at all however well-configured its catalog was. Both halves were wrong in the
+  // same direction: the token described a host's INTENT rather than the session's fact.
+  //
+  // Now it is DERIVED from the fact itself -- `resolveReviewer()` answering with a provider. The
+  // question is asked LIVE (it is a getter, and the wiring re-resolves when the settings view or the
+  // session's family changes), so an advisor that becomes resolvable mid-session -- a credential
+  // stored, a `set_model` into a family that has a reviewer -- is advertised at the next boundary,
+  // and one that stops being resolvable is withdrawn. `init.tools` reads the startup snapshot below,
+  // exactly as it always did.
+  //
+  // A HOST-SUPPLIED token still wins as a union member (registry.ts's own rule: derived tokens union
+  // with host tokens, never replace them), so nothing a host configured before this change stops
+  // working -- including the fixtures that supply it against a scripted double with no catalog.
+  //
+  // NOT put in `RUNTIME_DERIVED_CAPABILITIES` (registry.ts), and that is a lane boundary rather than
+  // a design preference: that table's derivation is "does this family's executor exist in the live
+  // registry", which is a process-global fact identical on all three transports (WS-04 §12). "Does
+  // a reviewer resolve" is a per-SESSION fact about a catalog and a credential view, which is the
+  // one thing that table's own header says it must never key on.
+  const reviewerResolves = (): boolean => {
+    if (resolveReviewerRoute === undefined) return false;
+    try {
+      return resolveReviewerRoute(currentProviderIdentity?.modelKey ?? currentModel) !== undefined;
+    } catch {
+      // A resolver that throws is a session with no reviewer, never a session that fails to start.
+      // WS-06 §4's own posture for the advisor is "ordinary tool error, never blocks the turn"; the
+      // capability half of it is "not advertised", never "the tool list throws".
+      return false;
+    }
+  };
+  const ADVISOR_CAPABILITY = "winter.reviewer-model";
+  const resolveLiveSessionCapabilities = (): string[] => {
+    const base = resolveSessionCapabilities(config.capabilities, { hasMcpServers: sessionHasMcp() });
+    return reviewerResolves() && !base.includes(ADVISOR_CAPABILITY) ? [...base, ADVISOR_CAPABILITY] : base;
+  };
   // The STARTUP snapshot, for `init.tools` and the advertised partition (see sessionHasMcp above for
   // why this one cannot be live).
   const sessionCapabilities = resolveLiveSessionCapabilities();
@@ -3895,26 +3957,37 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     }
   }
 
-  // M6 (fix wave, P3 close-out): wire the advisor's REAL transcript source, now that `messages`
+  // --- P7a LANE B (D29/D30), THE ADVISOR BLOCK, half 2: the executor ------------------------------
+  //
+  // M6 (fix wave, P3 close-out) wired the advisor's REAL transcript source, now that `messages`
   // (this run's own turn history) exists in this closure -- see this file's own import comment for
-  // why this cross-module call is deliberate, not an oversight. `resolveReviewer` STAYS the P6 seam
-  // (advisor.ts's own module-load default, `() => undefined`) -- this call replaces ONLY
-  // `transcriptSource`, never invents a reviewer-resolution story this phase was never asked to
-  // build. Gated on the SAME capability (`winter.reviewer-model`) `buildAdvertisedSet` already
-  // checks before ever advertising the tool (this file's own call, a few lines down) -- wiring a
-  // live transcript source for a tool that is never advertised to this session would be pointless
-  // per-run work, and the capability check is already computed once, here, for that call anyway.
+  // why this cross-module call is deliberate, not an oversight. P7a supplies the OTHER half M6 left
+  // as a seam: `resolveReviewer` is no longer `() => undefined` (which made every call answer "no
+  // reviewer" no matter how the session was configured) but the wiring's own route -- D30's
+  // precedence, D30's per-family default, and WS-13c §4's resolver behind both.
+  //
   // `messages` is captured by REFERENCE (the closure below runs only when the advisor tool actually
   // executes, well after this line, by which point the round loop has appended real turns to it) --
-  // the getter is what stays live, never a one-time snapshot taken at this line.
-  if (config.capabilities?.includes("winter.reviewer-model") === true) {
+  // the getter is what stays live, never a one-time snapshot taken at this line. The reviewer is
+  // resolved at CALL time for the same reason: `settings.advisor.model` is hot, and the per-family
+  // default follows a `set_model` across families.
+  //
+  // THE GATE keeps M6's shape and gains the new producer: re-wire when a reviewer resolver exists
+  // (the production wiring), or when a host supplied the capability itself (every pre-P7a fixture).
+  // A session with neither is left with advisor.ts's own module-load default, which answers exactly
+  // the same "no reviewer" this branch would have produced -- so the skip costs nothing and keeps
+  // the process-global registry untouched for sessions that can never use the tool.
+  if (config.capabilities?.includes("winter.reviewer-model") === true || resolveReviewerRoute !== undefined) {
     replaceExecutor(
       ADVISOR_TOOL_NAME,
       createAdvisorExecutor({
         transcriptSource: {
           getEntries: (): TranscriptEntry[] => messages.map((m) => ({ role: m.role, text: providerMessageContentToText(m.content) })),
         },
-        resolveReviewer: () => undefined,
+        // The LIVE model key, not the session's start model: the per-family default is a statement
+        // about the family the session is on NOW (D30 reads the session's model, and R13c-4 makes a
+        // `set_model` a re-render point for exactly this class of derived value).
+        resolveReviewer: () => resolveReviewerRoute?.(currentProviderIdentity?.modelKey ?? currentModel),
       }),
     );
   }

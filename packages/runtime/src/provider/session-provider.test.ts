@@ -9,7 +9,7 @@
 // adapter would have sent X" cannot tell a wired provider from an unwired one; a test that asserts
 // "the fake, on 127.0.0.1, received exactly this" can only pass if the whole chain ran.
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CredentialRef, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
@@ -21,7 +21,7 @@ import { ANTHROPIC_DEFAULT_BASE_URL } from "@yanlinglabs/winter-provider-runtime
 import { startFake, sseResponse, jsonResponse, type FakeServer } from "@yanlinglabs/winter-provider-conformance";
 import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
-import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence } from "./slots.ts";
+import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence, type SlotProviderResolution } from "./slots.ts";
 import { echoProvider } from "./mock.ts";
 import type { ProviderMessage } from "../engine.ts";
 import { runEngine } from "../engine.ts";
@@ -568,11 +568,18 @@ describe("T10 wiring: the advisor backend (P2 carry, `config.advisor.model`)", (
         catalog,
         credentials: createMemoryCredentialStore(),
       });
-      expect(wiring.advisorProvider).toBeDefined();
+      // P7a LANE B: the field became `resolveReviewer` (a function, because the model can now come
+      // from a HOT setting and from a per-family default that follows `set_model`). The claim is
+      // unchanged.
+      const reviewer = wiring.resolveReviewer?.();
+      expect(reviewer).toBeDefined();
+      expect(reviewer!.model).toBe("t10openai/t10-advisor");
       // AND IT IS A DIFFERENT PROVIDER OBJECT from the session's. Sharing one would mean the advisor
       // silently ran on the session's model, which is the whole thing `config.advisor.model` exists
       // to prevent.
-      expect(wiring.advisorProvider).not.toBe(wiring.provider);
+      expect(reviewer!.provider).not.toBe(wiring.provider);
+      // R6-G's "pinned at first use": a second call inside one settings version is the SAME object.
+      expect(wiring.resolveReviewer!()).toBe(reviewer);
     });
   });
 });
@@ -1158,5 +1165,267 @@ describe("WS-13c: set_model by slot name", () => {
     expect(wiring.resolveModelSwitch("luna", undefined)).toMatchObject({ refused: true, code: "unknown-model" });
     // ...and a bare id the session's OWN provider does hold still resolves, unchanged.
     expect("refused" in wiring.resolveModelSwitch("claude-opus-5", undefined)).toBe(false);
+  });
+});
+
+// ================================================================================================
+// P7a LANE B (D29/D30, WS-06 §4): THE ADVISOR'S REVIEWER, at the wiring seam.
+//
+// `advisor-route.test.ts` pins the ROUTE (precedence, per-family defaults, the two refusals) as a
+// pure function. This block pins the half a pure function cannot: that the route is actually wired
+// into `buildSessionProvider`, that the setting arrives through a LIVE getter, that a refusal builds
+// no provider at all, and that R6-G's pin holds across calls.
+// ================================================================================================
+describe("P7a: the advisor's reviewer (D29/D30)", () => {
+  const advisorFamily = (id: string, vendorProviders: string[], slots: Array<[string, string]>): ModelFamilyDescriptor => ({
+    id,
+    displayName: id,
+    vendor: id,
+    vendorProviders,
+    matchers: [{ pattern: id === "claude" ? "^claude-" : id === "gpt" ? "^gpt-" : `^${id}-`, note: "" }],
+    status: "candidate",
+    citation: "fixture:session-provider",
+    slots: slots.map(([name, canonicalModelId]) => ({ name, canonicalModelId, description: `d-${name}`, reason: `r-${name}`, basis: "winter-curated" as const, citation: "c", status: "candidate" as const })),
+  });
+  const FAMILIES: ModelFamilyDescriptor[] = [
+    advisorFamily("claude", ["anthropic"], [["fable", "claude-fable-5.1"], ["opus", "claude-opus-5"], ["sonnet", "claude-sonnet-5"], ["haiku", "claude-haiku-4.5"]]),
+    advisorFamily("gpt", ["codex-oauth", "openai"], [["astra", "gpt-6-astra"], ["luna", "gpt-5.6-luna"]]),
+    // A family with NO slots: D30's "the session's own model" clause, at the wiring.
+    { id: "kimi", displayName: "kimi", vendor: "kimi", vendorProviders: ["moonshot"], matchers: [{ pattern: "^kimi-", note: "" }], status: "candidate", citation: "c", slots: [] },
+  ];
+  const inFamilies = (row: WinterModelDescriptor): WinterModelDescriptor => ({ ...row, modelFamily: familyIdOf(row.canonicalModelId, FAMILIES) });
+
+  /** `authKinds` is what the claude gate reads, so the vendor row carries its real shipped pair (D20). */
+  const anthropicRow = { ...testProvider({ id: "anthropic", adapterId: "winter.openai-responses", family: "openai", api: "https://anthropic.example" }), authKinds: ["api-key", "oauth-approved"] as const };
+  const CATALOG = catalogWith(
+    [
+      { ...anthropicRow, authKinds: [...anthropicRow.authKinds] },
+      testProvider({ id: "openai", adapterId: "winter.openai-responses", family: "openai", api: "https://openai.example" }),
+      { ...testProvider({ id: "codex-oauth", adapterId: "winter.openai-responses", family: "openai", api: "https://codex.example" }), pricingBasis: "subscription" as const },
+      testProvider({ id: "moonshot", adapterId: "winter.openai-responses", family: "openai", api: "https://moonshot.example" }),
+      // The non-Winter credential kind (D13/D14): no API key, no Console OAuth, no cloud chain.
+      { ...testProvider({ id: "subscription-only", adapterId: "winter.openai-responses", family: "openai", api: "https://subscription.example" }), authKinds: ["custom"] as WinterProviderDescriptor["authKinds"] },
+    ],
+    [
+      inFamilies(testModel({ key: "anthropic/claude-fable-5-1", providerId: "anthropic", upstreamId: "claude-fable-5-1" })),
+      inFamilies(testModel({ key: "anthropic/claude-sonnet-5", providerId: "anthropic", upstreamId: "claude-sonnet-5" })),
+      inFamilies(testModel({ key: "openai/gpt-6-astra", providerId: "openai", upstreamId: "gpt-6-astra" })),
+      inFamilies(testModel({ key: "codex-oauth/gpt-6-astra", providerId: "codex-oauth", upstreamId: "gpt-6-astra" })),
+      inFamilies(testModel({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna" })),
+      inFamilies(testModel({ key: "moonshot/kimi-k3", providerId: "moonshot", upstreamId: "kimi-k3" })),
+      inFamilies(testModel({ key: "subscription-only/claude-fable-5-1", providerId: "subscription-only", upstreamId: "claude-fable-5-1" })),
+    ],
+    FAMILIES,
+  );
+
+  /** The PRODUCTION §4 resolver over this fixture, exactly as `production-wiring.ts` builds it. */
+  const resolveSlot = (hasCredential: (providerId: string) => CredentialPresence, catalog: WinterCatalog = CATALOG) => (requested: string, currentModelKey: string | undefined) =>
+    resolveSlotToProvider({
+      catalog,
+      active: computeActiveSlotSet({ catalog, currentModelKey, customSlots: undefined }),
+      requested,
+      hasCredential,
+      providerEnabled: () => true,
+      preferredProviders: [],
+    });
+
+  interface WiringInit {
+    model: string;
+    providerId: string;
+    hasCredential?: (providerId: string) => CredentialPresence;
+    advisorModelSetting?: () => string | undefined;
+    advisor?: RuntimeConfig["advisor"];
+    catalog?: WinterCatalog;
+    credentialEpoch?: () => number;
+    resolveSlotOverride?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
+  }
+  const wiringFor = (init: WiringInit): ReturnType<typeof buildSessionProvider> =>
+    buildSessionProvider({
+      config: baseConfig({ model: init.model, provider: { providerId: init.providerId, authRef: { kind: "inline", value: "test" } }, ...(init.advisor !== undefined ? { advisor: init.advisor } : {}) }),
+      env: {},
+      catalog: init.catalog ?? CATALOG,
+      credentials: createMemoryCredentialStore(),
+      resolveSlot: init.resolveSlotOverride ?? resolveSlot(init.hasCredential ?? (() => "present"), init.catalog ?? CATALOG),
+      ...(init.advisorModelSetting !== undefined ? { advisorModelSetting: init.advisorModelSetting } : {}),
+      ...(init.credentialEpoch !== undefined ? { credentialEpoch: init.credentialEpoch } : {}),
+    });
+
+  /** The refusal a resolver now THROWS (fix r1, M-2) rather than swallowing into a bare `undefined`. */
+  const refusalOf = (wiring: ReturnType<typeof buildSessionProvider>, currentModelKey?: string): string => {
+    try {
+      const reviewer = wiring.resolveReviewer?.(currentModelKey);
+      throw new Error(`expected a refusal; got ${reviewer === undefined ? "undefined" : reviewer.model}`);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  test("a gpt session with NO setting reviews with astra -- openai/gpt-6-astra when only the API key is configured", () => {
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", hasCredential: (p) => (p === "openai" ? "present" : "absent") });
+    expect(wiring.resolveReviewer?.()?.model).toBe("openai/gpt-6-astra");
+  });
+
+  test("...and codex-oauth/gpt-6-astra when the subscription credential IS present (§4 step 3-i)", () => {
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", hasCredential: () => "present" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("a claude session reviews with anthropic/claude-fable-5-1 through the vendor row's api-key/Console-OAuth pair", () => {
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("anthropic/claude-fable-5-1");
+  });
+
+  test("a claude reviewer served ONLY by a non-Winter credential kind yields NO reviewer -- and the refusal says why, naming the provider and its kinds (fix r1, M-2)", () => {
+    const onlyCustom: WinterCatalog = { ...CATALOG, models: CATALOG.models.filter((m) => m.key !== "anthropic/claude-fable-5-1") };
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic", catalog: onlyCustom });
+    const reason = refusalOf(wiring);
+    expect(reason).toContain("subscription-only");
+    expect(reason).toContain("custom");
+    expect(reason).toContain("no request was made");
+    // The refusal is STRUCTURAL: no `ResolvedReviewer` is ever produced, so the advisor tool has no
+    // provider object at all. There is nothing to call `generate` on, which is what "no request"
+    // means here -- not a discipline observed at the call site.
+  });
+
+  test("a claude session with NO anthropic credential refuses rather than substituting another vendor's row, and the reason names the row that would have served", () => {
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic", hasCredential: (p) => (p === "anthropic" ? "absent" : "present") });
+    // `subscription-only` DOES serve claude-fable-5.1 and would be reachable if the gate leaked,
+    // so this is a real negative rather than an empty-candidate accident.
+    expect(CATALOG.models.some((m) => m.canonicalModelId === "claude-fable-5.1" && m.providerId === "subscription-only")).toBe(true);
+    const reason = refusalOf(wiring);
+    expect(reason).toContain("subscription-only");
+  });
+
+  // --- fix r1 -----------------------------------------------------------------------------------
+
+  test("I-1: the memo key SEPARATES its terms -- (a, b) and (ab, \"\") are different reviewers, not one", () => {
+    // The separator is `\u0000`, which cannot occur in a model key, so no pair of inputs can collide
+    // by concatenation. Probed through the seam rather than asserted about the string: the two
+    // wirings below would share a memo entry under a naive `a + b` key.
+    const split = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisor: { model: "openai/gpt-6" }, advisorModelSetting: () => "-astra" });
+    const joined = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisor: { model: "openai/gpt-6-astra" }, advisorModelSetting: () => undefined });
+    // `Options.advisor.model` wins in both, so the two differ ONLY in how the key's terms divide.
+    expect(refusalOf(split)).toContain("openai/gpt-6");
+    expect(joined.resolveReviewer?.()?.model).toBe("openai/gpt-6-astra");
+    // And the source file carries no raw control byte at all.
+    const source = readFileSync(new URL("./session-provider.ts", import.meta.url), "utf8");
+    expect(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(source)).toBe(false);
+    expect(source).toContain("\\u0000");
+  });
+
+  test("M-1: the memo does NOT outlive the cold credential view -- an epoch bump re-resolves, and §4's subscription-first rule finally governs", () => {
+    // Production's real first-call shape: the session's own provider is `present`, every other is
+    // `unknown` because its probe has not landed. This is what `init.tools` necessarily sees.
+    let codexPresence: CredentialPresence = "unknown";
+    let epoch = 0;
+    const wiring = wiringFor({
+      model: "openai/gpt-5.6-luna",
+      providerId: "openai",
+      hasCredential: (p) => (p === "openai" ? "present" : p === "codex-oauth" ? codexPresence : "unknown"),
+      credentialEpoch: () => epoch,
+    });
+    // Cold: the token row wins on `presenceRank`, correctly -- a subscription row nobody has looked
+    // at must not outrank a key the user demonstrably has (R-6c-27).
+    expect(wiring.resolveReviewer?.()?.model).toBe("openai/gpt-6-astra");
+    // The probe lands. WITHOUT the epoch term this stayed `openai/gpt-6-astra` for the session's
+    // whole life, and a user with a Codex subscription was billed per token on their API key for
+    // every advisor call.
+    codexPresence = "present";
+    epoch += 1;
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("M-1: an epoch that has NOT moved keeps R6-G's pin -- the same provider object, not merely the same key", () => {
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", credentialEpoch: () => 7 });
+    const first = wiring.resolveReviewer?.();
+    expect(wiring.resolveReviewer?.()).toBe(first);
+  });
+
+  test("M-2: a route that resolves onto a row the REGISTRY then refuses reports that reason, not the generic one", () => {
+    const wiring = wiringFor({
+      model: "openai/gpt-5.6-luna",
+      providerId: "openai",
+      // A slot layer that answers `ok` for a provider the registry has never heard of: the route
+      // succeeds, `resolveUnder` refuses, and before this fix the reason was dropped on the floor.
+      resolveSlotOverride: () => ({ ok: true, modelKey: "nowhere/ghost", providerId: "nowhere", canonicalModelId: "ghost", slot: { family: "gpt", name: "astra", source: "family-default" }, viaSlotName: true }),
+    });
+    const reason = refusalOf(wiring);
+    expect(reason).toContain("nowhere/ghost");
+    expect(reason).toContain("family-default");
+    expect(reason).toContain("registry then refused");
+  });
+
+  test("M-2: a genuine ABSENCE is still `undefined`, never a throw -- nothing stated a reviewer and there is no model to derive one from", () => {
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai" });
+    // A session key in no family, with no option and no setting, has no candidate at all.
+    expect(wiring.resolveReviewer?.("")).toBeUndefined();
+  });
+
+  test("`settings.advisor.model` beats the family default, and `Options.advisor.model` beats the setting", () => {
+    const bySetting = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => "luna" });
+    expect(bySetting.resolveReviewer?.()?.model).toBe("openai/gpt-5.6-luna");
+    const byOption = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => "luna", advisor: { model: "openai/gpt-6-astra" } });
+    expect(byOption.resolveReviewer?.()?.model).toBe("openai/gpt-6-astra");
+  });
+
+  test("HOT: a `settings.advisor.model` change is seen at the next call, with nothing rebuilt and no restart", () => {
+    let setting: string | undefined;
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => setting });
+    // Unset -> the family default.
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+    setting = "luna";
+    expect(wiring.resolveReviewer?.()?.model).toBe("openai/gpt-5.6-luna");
+    // ...and back. A getter read ONCE at construction would have frozen the first answer.
+    setting = undefined;
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("R6-G: PINNED AT FIRST USE -- the same inputs return the same provider object, a changed input re-pins", () => {
+    let setting: string | undefined = "luna";
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => setting });
+    const first = wiring.resolveReviewer?.();
+    expect(wiring.resolveReviewer?.()).toBe(first);
+    setting = "astra";
+    expect(wiring.resolveReviewer?.()).not.toBe(first);
+  });
+
+  test("the reviewer follows the LIVE model key: a session that switched family reviews with the new family's default", () => {
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("anthropic/claude-fable-5-1");
+    // The engine passes `currentProviderIdentity?.modelKey ?? currentModel` after a `set_model`.
+    expect(wiring.resolveReviewer?.("openai/gpt-5.6-luna")?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("a family with NO slots reviews with the session's own model (D30's last clause)", () => {
+    const wiring = wiringFor({ model: "moonshot/kimi-k3", providerId: "moonshot" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("moonshot/kimi-k3");
+  });
+
+  test("the reserved winter-test namespace and a REFUSED session withhold the seam entirely", () => {
+    const scripted = buildSessionProvider({ config: baseConfig({ model: "winter-test/echo" }), env: {}, catalog: CATALOG, credentials: createMemoryCredentialStore() });
+    expect(scripted.resolveReviewer).toBeUndefined();
+    const refused = buildSessionProvider({ config: baseConfig({ model: "openai/no-such-model-anywhere", provider: { providerId: "openai" } }), env: {}, catalog: CATALOG, credentials: createMemoryCredentialStore() });
+    expect(refused.resolutionError).toBeDefined();
+    expect(refused.resolveReviewer).toBeUndefined();
+  });
+
+  test("R6-G: the reviewer's provider never streams -- a `sink` on its request is dropped, not forwarded", async () => {
+    await withResponsesFake(async (fake) => {
+      const catalog = catalogWith(
+        [testProvider({ id: "t10openai", adapterId: "winter.openai-responses", family: "openai", api: fake.url })],
+        [testModel({ key: "t10openai/t10-model", providerId: "t10openai", upstreamId: "t10-model" }), testModel({ key: "t10openai/t10-advisor", providerId: "t10openai", upstreamId: "t10-advisor" })],
+      );
+      const wiring = buildSessionProvider({
+        config: baseConfig({ model: "t10openai/t10-model", advisor: { model: "t10openai/t10-advisor" }, provider: { providerId: "t10openai", authRef: { kind: "inline", value: "test" } } }),
+        env: {},
+        catalog,
+        credentials: createMemoryCredentialStore(),
+      });
+      const seen: unknown[] = [];
+      const sink = { onStreamEvent: (e: unknown) => void seen.push(e), onRetry: (e: unknown) => void seen.push(e), onRateLimit: (e: unknown) => void seen.push(e) } as unknown as NonNullable<Parameters<typeof wiring.provider.generate>[0]["sink"]>;
+      await wiring.resolveReviewer!()!.provider.generate({ messages: USER_TURN, model: "t10-advisor", sink });
+      expect(seen).toEqual([]);
+      expect(fake.requests.length).toBe(1);
+    });
   });
 });

@@ -857,6 +857,17 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // initialised long before anything calls it (nothing in `buildSessionProvider`'s construction
     // touches this field; it is read only inside `resolveModelSwitch`).
     resolveSlot: (requested, currentModelKey) => resolveSlot(requested, currentModelKey),
+    // P7a LANE B (D30): `settings.advisor.model`, over the SAME live `settingsGetter` every other
+    // settings consumer in this module reads -- so the advisor's model is hot on exactly the terms
+    // `providerSettings` and `modelSlots` already are (R-6c-28's limitation included: this SDK
+    // resolves settings once and the version moves when a HOST hands down a new view).
+    advisorModelSetting: () => settingsGetter()?.advisor?.model,
+    // P7a LANE B, fix r1 (M-1): the credential-view version, so the advisor's memo cannot outlive the
+    // cold first view that `init.tools` necessarily takes. Forwarded through a closure for the same
+    // reason `resolveSlot` above is: the counter is declared BELOW and nothing in
+    // `buildSessionProvider`'s construction reads it -- `resolveReviewer` is defined there, never
+    // called there.
+    credentialEpoch: () => credentialEpochCounter,
     ...(opts.provider ?? {}),
   });
   if (providerWiring.resolutionError !== undefined) {
@@ -933,8 +944,16 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       return false; // a store that cannot answer is a store with no record to offer
     }
   };
+  // P7a LANE B, fix r1 (review M-1): the epoch the advisor's reviewer memo keys on. Bumped when this
+  // session LEARNS something about a provider's credential -- a value CHANGE or a first answer, never
+  // a re-confirmation -- so a reviewer resolved on the cold first view (which is every session: the
+  // first `credentialPresent` consumer is `init.tools`, and it is what fires the prewarm) is
+  // re-resolved once the probes land, and is otherwise left pinned exactly as R6-G requires.
+  let credentialEpochCounter = 0;
   /** Records a probe result. Called by the background refresh AND by `resolveChildProvider`, whose probe is already real and paid for. */
   const recordCredentialPresence = (providerId: string, present: boolean): void => {
+    const previous = credentialPresence.get(providerId);
+    if (previous === undefined || previous.present !== present) credentialEpochCounter += 1;
     credentialPresence.set(providerId, { present, at: Date.now() });
   };
   // M-4: a probe that lands after `dispose()` must change nothing. It cannot be CANCELLED (the store
@@ -1209,6 +1228,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // model's key for the R6-14 pin.
       priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
       ...(providerWiring.classifierIdentity !== undefined ? { classifierIdentity: providerWiring.classifierIdentity } : {}),
+      // P7a LANE B (D29/D30): the advisor's reviewer route. WITHHELD on the two arms that withhold
+      // it themselves (the reserved `winter-test/<name>` namespace, a session whose own model failed
+      // to resolve) -- absent means "there is nothing to ask", and the engine then neither advertises
+      // the advisor nor re-wires its executor.
+      ...(providerWiring.resolveReviewer !== undefined ? { resolveReviewer: providerWiring.resolveReviewer } : {}),
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,
