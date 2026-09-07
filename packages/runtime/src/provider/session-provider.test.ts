@@ -13,14 +13,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CredentialRef, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
+import type { ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { familyIdOf, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, createMemoryCredentialStore, type CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { ANTHROPIC_DEFAULT_BASE_URL } from "@yanlinglabs/winter-provider-runtime";
 import { startFake, sseResponse, jsonResponse, type FakeServer } from "winter-provider-conformance";
 import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
+import { computeActiveSlotSet, resolveSlotToProvider } from "./slots.ts";
 import { echoProvider } from "./mock.ts";
 import type { ProviderMessage } from "../engine.ts";
 import { runEngine } from "../engine.ts";
@@ -83,10 +84,13 @@ function testModel(init: { key: string; providerId: string; upstreamId: string; 
   } as Omit<WinterModelDescriptor, "modelFamily" | "canonicalModelId">);
 }
 
-function catalogWith(providers: WinterProviderDescriptor[], models: WinterModelDescriptor[]): WinterCatalog {
+// WS-13c (P6.6 Lane A): `families` joins the builder as an OPTIONAL third argument, defaulting to
+// the spine's `[]` — every existing caller is unchanged, and the slot tests below get a catalog with
+// real lineups without a second builder that could drift from this one.
+function catalogWith(providers: WinterProviderDescriptor[], models: WinterModelDescriptor[], families: ModelFamilyDescriptor[] = []): WinterCatalog {
   return {
     schemaVersion: 2,
-    families: [],
+    families,
     catalogVersion: "0.0.0-t10-fixture",
     upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
     providers,
@@ -958,5 +962,118 @@ describe("WS-13b R6b-7: a disabled provider is refused at the set_model seam too
     enabled = false;
     const out = wiring.resolveModelSwitch("gate/gate-other", undefined);
     expect(out).toMatchObject({ refused: true, code: "provider-disabled" });
+  });
+});
+
+// ================================================================================================
+// WS-13c §4 step 6 (P6.6 Lane A): `set_model` accepts a SLOT NAME, resolved through the same rules
+// the Agent tool's children use — and a refusal is the seam's typed refusal, never a parked switch.
+// ================================================================================================
+describe("WS-13c: set_model by slot name", () => {
+  const slotFamily = (id: string, vendorProviders: string[], slots: Array<[string, string]>): ModelFamilyDescriptor => ({
+    id,
+    displayName: id,
+    vendor: id,
+    vendorProviders,
+    matchers: [{ pattern: id === "claude" ? "^claude-" : id === "gpt" ? "^gpt-" : `^${id}-`, note: "" }],
+    status: "candidate",
+    citation: "fixture:session-provider",
+    slots: slots.map(([name, canonicalModelId]) => ({ name, canonicalModelId, description: `d-${name}`, reason: `r-${name}`, basis: "winter-curated" as const, citation: "c", status: "candidate" as const })),
+  });
+  const FAMILIES: ModelFamilyDescriptor[] = [
+    slotFamily("claude", ["anthropic"], [
+      ["fable", "claude-fable-5"],
+      ["opus", "claude-opus-5"],
+      ["sonnet", "claude-sonnet-5"],
+      ["haiku", "claude-haiku-4.5"],
+    ]),
+    slotFamily("gpt", ["codex-oauth", "openai"], [["luna", "gpt-5.6-luna"]]),
+    // Two families holding `flash` is what makes an ambiguity real rather than asserted.
+    slotFamily("gemini", ["google"], [["flash", "gemini-3.7-flash"]]),
+    slotFamily("deepseek", ["deepseek"], [["flash", "deepseek-v4-flash"]]),
+  ];
+  // `modelFamily` is DERIVED by the pipeline's own `familyIdOf` over the canonical id `stampRow`
+  // already computed — never a second, hand-typed spelling in a fixture.
+  const inFamilies = (row: WinterModelDescriptor): WinterModelDescriptor => ({ ...row, modelFamily: familyIdOf(row.canonicalModelId, FAMILIES) });
+
+  const CATALOG = catalogWith(
+    [
+      testProvider({ id: "anthropic", adapterId: "winter.openai-responses", family: "openai", api: "https://anthropic.example" }),
+      testProvider({ id: "openai", adapterId: "winter.openai-responses", family: "openai", api: "https://openai.example" }),
+    ],
+    [
+      inFamilies(testModel({ key: "anthropic/claude-opus-5", providerId: "anthropic", upstreamId: "claude-opus-5" })),
+      inFamilies(testModel({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna" })),
+    ],
+    FAMILIES,
+  );
+
+  /** The PRODUCTION resolver over this fixture, with only the credential/enable view injected. */
+  const resolveSlot = (hasCredential: (providerId: string) => boolean) => (requested: string, currentModelKey: string | undefined) =>
+    resolveSlotToProvider({
+      catalog: CATALOG,
+      active: computeActiveSlotSet({ catalog: CATALOG, currentModelKey, customSlots: undefined }),
+      requested,
+      hasCredential,
+      providerEnabled: () => true,
+      preferredProviders: [],
+    });
+
+  const wiringFor = (model: string, providerId: string, hasCredential: (p: string) => boolean = () => true): ReturnType<typeof buildSessionProvider> =>
+    buildSessionProvider({
+      config: baseConfig({ model, provider: { providerId, authRef: { kind: "inline", value: "test" } } }),
+      env: {},
+      catalog: CATALOG,
+      credentials: createMemoryCredentialStore(),
+      resolveSlot: resolveSlot(hasCredential),
+    });
+
+  test("a claude session's `set_model luna` resolves to the openai row that serves it — across providers, with no provider-mismatch", () => {
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic").resolveModelSwitch("luna", undefined);
+    expect("refused" in out).toBe(false);
+    expect(!("refused" in out) && out.identity).toMatchObject({ providerId: "openai", modelKey: "openai/gpt-5.6-luna" });
+  });
+
+  test("a gpt session's `set_model flash` is an ambiguous-slot-name refusal naming both families", () => {
+    const out = wiringFor("openai/gpt-5.6-luna", "openai").resolveModelSwitch("flash", undefined);
+    expect(out).toMatchObject({ refused: true, code: "ambiguous-slot-name" });
+    expect("refused" in out && out.message).toContain("gemini/flash");
+    expect("refused" in out && out.message).toContain("deepseek/flash");
+  });
+
+  test("a slot nothing configured can serve is a slot-unservable refusal, never a switch onto something else", () => {
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => p !== "openai").resolveModelSwitch("luna", undefined);
+    expect(out).toMatchObject({ refused: true, code: "slot-unservable" });
+    expect("refused" in out && out.message).toContain("openai/gpt-5.6-luna");
+  });
+
+  test("a QUALIFIED key never enters the slot layer — R6-K's own rules still decide it", () => {
+    // `openai/...` from an anthropic session is still the mismatch it always was: the caller named a
+    // provider, and a slot reading of a qualified key would be a second interpretation of one string.
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic").resolveModelSwitch("openai/gpt-5.6-luna", undefined);
+    expect(out).toMatchObject({ refused: true, code: "provider-mismatch" });
+  });
+
+  test("the ACTIVE family follows the live model: the same bare name resolves against `from`, not the session's start model", () => {
+    // `opus` from a gpt session is a unique foreign name (§3 acceptance (d): the Claude names always
+    // resolve into claude), so both directions resolve — what this pins is that the getter is asked
+    // with the model the session is on NOW.
+    const wiring = wiringFor("openai/gpt-5.6-luna", "openai");
+    const out = wiring.resolveModelSwitch("opus", { providerId: "openai", modelKey: "openai/gpt-5.6-luna", family: "openai" });
+    expect("refused" in out).toBe(false);
+    expect(!("refused" in out) && out.identity.modelKey).toBe("anthropic/claude-opus-5");
+  });
+
+  test("with NO resolveSlot wired, a bare name is exactly what it was before P6.6", () => {
+    const wiring = buildSessionProvider({
+      config: baseConfig({ model: "anthropic/claude-opus-5", provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" } } }),
+      env: {},
+      catalog: CATALOG,
+      credentials: createMemoryCredentialStore(),
+    });
+    // `luna` is not an id in anthropic's namespace, so this is the pre-existing unknown-model answer.
+    expect(wiring.resolveModelSwitch("luna", undefined)).toMatchObject({ refused: true, code: "unknown-model" });
+    // ...and a bare id the session's OWN provider does hold still resolves, unchanged.
+    expect("refused" in wiring.resolveModelSwitch("claude-opus-5", undefined)).toBe(false);
   });
 });

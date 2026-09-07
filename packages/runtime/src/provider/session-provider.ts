@@ -61,6 +61,7 @@ import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } fr
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
 import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
+import type { SlotProviderResolution } from "./slots.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -158,6 +159,18 @@ export interface SessionProviderOptions {
    * a disable that held only at start would be exactly such a walk-around.
    */
   providerSettings?: () => Record<string, { enabled: boolean }> | undefined;
+  /**
+   * WS-13c §4 step 6 (P6.6): the slot resolver, so `set_model` accepts a SLOT NAME.
+   *
+   * Consulted only for a BARE name — a qualified `<providerId>/<model>` key is already an
+   * unambiguous statement and goes straight to R6-K's own rules, unchanged. A refusal is returned as
+   * the seam's typed refusal and becomes the control response, exactly like `provider-mismatch`:
+   * never a parked switch, never a substitution.
+   *
+   * ABSENT -> `set_model` keeps its pre-P6.6 shape verbatim (every scripted double, every pre-P6.6
+   * fixture, and the reserved `winter-test/<name>` namespace, for which the wiring withholds it).
+   */
+  resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
 }
 
 export interface SessionProviderWiring {
@@ -489,9 +502,30 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     return resolvedFrom instanceof WinterProviderResolutionError ? "" : String(resolvedFrom.adapter.family);
   };
   const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
-    const providerId = sessionProviderId();
+    // WS-13c §4 step 6: a BARE name may be a slot (`luna`, `opus`, a custom slot's facing name) or a
+    // canonical id, and the slot resolver is what turns either into a concrete row. Only a bare name
+    // — a qualified key already names its provider, and reading it as a slot would be a second,
+    // competing interpretation of the same string.
+    let target = model;
+    let slotProviderId: string | undefined;
+    if (!model.includes("/") && opts.resolveSlot !== undefined) {
+      const slot = opts.resolveSlot(model, from?.modelKey ?? config.model);
+      // A typed refusal is the ANSWER, not a reason to fall through to `registry.resolve`: falling
+      // through would report `unknown-model` for a name that is really "two families call a model
+      // `flash`" or "nothing you have configured serves it", which is strictly less true.
+      if (!slot.ok) return { refused: true, code: slot.code, message: slot.message };
+      target = slot.modelKey;
+      slotProviderId = slot.providerId;
+    }
+    // A SLOT'S OWN PROVIDER, not the session's. The slot resolver has ALREADY made the provider
+    // decision (§4's ordering, under this session's credentials and enable settings), so passing the
+    // session's id beside a cross-provider key would hit R6-K's `provider-mismatch` — a refusal for
+    // a contradiction the caller never stated. WS-13c §5 makes cross-family sets explicitly legal,
+    // so this is the case R6-K's rule was never written about, and the two agree: the key and the
+    // provider id given here always name the same provider, so nothing is being reinterpreted.
+    const providerId = slotProviderId ?? sessionProviderId();
     const result = registry.resolve({
-      model,
+      model: target,
       ...(providerId !== undefined || config.provider?.allowUnlisted !== undefined
         ? { provider: { ...(providerId !== undefined ? { providerId } : {}), ...(config.provider?.allowUnlisted !== undefined ? { allowUnlisted: config.provider.allowUnlisted } : {}) } }
         : {}),
