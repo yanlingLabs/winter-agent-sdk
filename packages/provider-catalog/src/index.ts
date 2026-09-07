@@ -40,6 +40,7 @@ export {
   canonicalModelIdOf,
   familyIdOf,
   familyOfModelKey,
+  isSlotServableRow,
   resolveSlotName,
   rowsForCanonicalId,
   stampFamilyFields,

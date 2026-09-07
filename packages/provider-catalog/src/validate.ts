@@ -32,7 +32,7 @@ import type {
 // WS-13c: the grammars and the reserved-name list have ONE definition, in `families.ts`, because the
 // validator, the runtime's slot resolver and the Agent tool's renderer all key on them. A second
 // copy of `^[a-z0-9][a-z0-9.-]{0,31}$` here would be a second answer to "is this a legal slot name".
-import { CLAUDE_FAMILY_ID, CLAUDE_RESERVED_SLOT_NAMES, CURRENCY_RE, FAMILY_ID_RE, OTHER_FAMILY_ID, SLOT_NAME_RE } from "./families.ts";
+import { CLAUDE_FAMILY_ID, CLAUDE_RESERVED_SLOT_NAMES, CURRENCY_RE, FAMILY_ID_RE, isSlotServableRow, OTHER_FAMILY_ID, SLOT_NAME_RE } from "./families.ts";
 
 // --- the closed vocabularies. An UNKNOWN value fails (WS-13 §13's acceptance test: "unknown
 // category/auth/executor/protocol values fail extraction") -- forward-compat leniency belongs on the
@@ -779,16 +779,25 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
   // canonical id names nothing shippable renders an option that cannot resolve, and a `provider` pin
   // naming a provider that does not serve the model is a resolution that fails only at turn time.
   // Neither is visible to a reviewer reading `overlay/families.json`, which is why they are here.
-  /** canonicalModelId -> the provider ids serving it on a row that is neither blocked nor deprecated. */
+  /**
+   * canonicalModelId -> the provider ids that could actually SERVE it.
+   *
+   * `isSlotServableRow` is the SAME predicate `rowsForCanonicalId` uses — §4 step 1's own filter,
+   * status AND endpoint. Fix round 1's I-3: these were two predicates, and the validator's (status
+   * only) was the looser one, so a slot whose only rows were `endpoints: ["embeddings"]` validated
+   * clean and resolved to nothing. One function, both call sites.
+   */
   const serversByCanonicalId = new Map<string, Set<string>>();
   if (Array.isArray(models) && Array.isArray(families)) {
     for (const row of models) {
       if (!isRecord(row)) continue;
       const canonical = row["canonicalModelId"];
       const providerId = row["providerId"];
-      const status = row["status"];
       if (typeof canonical !== "string" || canonical.length === 0) continue;
-      if (status === "blocked" || status === "deprecated") continue;
+      // The row is raw JSON here; a malformed `status`/`endpoints` is already reported by
+      // `checkModel`, and a row whose shape cannot be read is not one that can serve a slot.
+      const endpoints = Array.isArray(row["endpoints"]) ? row["endpoints"].filter((e): e is string => typeof e === "string") : [];
+      if (typeof row["status"] !== "string" || !isSlotServableRow({ status: row["status"], endpoints })) continue;
       const set = serversByCanonicalId.get(canonical) ?? new Set<string>();
       if (typeof providerId === "string" && providerId.length > 0) set.add(providerId);
       serversByCanonicalId.set(canonical, set);
@@ -817,7 +826,7 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
         if (servers === undefined) {
           errs.add(
             `families[${i}].slots[${s}].canonicalModelId`,
-            `${JSON.stringify(canonical)} is on NO model row that could serve it (every row is missing, blocked or deprecated) — WS-13c §1: a slot never names a model the catalog does not ship`,
+            `${JSON.stringify(canonical)} is on NO model row that could serve it (every row is missing, blocked, deprecated, or serves neither \`chat\` nor \`responses\`) — WS-13c §1: a slot never names a model the catalog does not ship`,
             "slot-model-missing",
           );
           continue;

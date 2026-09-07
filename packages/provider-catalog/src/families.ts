@@ -114,9 +114,24 @@ export function familyOfModelKey(catalog: WinterCatalog, modelKey: string): Mode
   return catalog.families.find((f) => f.id === row.modelFamily);
 }
 
-/** Candidate rows for a slot (WS-13c §4 step 1). */
+/**
+ * Can this row serve a slot at all? (WS-13c §4 step 1.)
+ *
+ * ONE predicate, deliberately, and it is what fix round 1's I-3 closed: the validator's
+ * `slot-model-missing` check and `rowsForCanonicalId` had drifted into two answers — the validator
+ * asked only about `status`, the resolver also required a chat/responses endpoint. A slot whose only
+ * rows were `endpoints: ["embeddings"]` therefore VALIDATED and resolved to nothing, which makes the
+ * natural inference "the catalog validated, so every slot has a candidate row" false in exactly the
+ * place a lane relies on it.
+ *
+ * Structurally typed rather than taking a `WinterModelDescriptor`, because the validator's caller
+ * holds `unknown` JSON it has already shape-checked, not a narrowed row.
+ */
+export function isSlotServableRow(row: { status: string; endpoints: readonly string[] }): boolean {
+  return row.status !== "blocked" && row.status !== "deprecated" && (row.endpoints.includes("chat") || row.endpoints.includes("responses"));
+}
+
+/** Candidate rows for a slot (WS-13c §4 step 1). The SAME predicate `validateCatalog` refuses a slot on. */
 export function rowsForCanonicalId(catalog: WinterCatalog, canonicalModelId: string): WinterModelDescriptor[] {
-  return catalog.models.filter(
-    (m) => m.canonicalModelId === canonicalModelId && m.status !== "blocked" && m.status !== "deprecated" && (m.endpoints.includes("chat") || m.endpoints.includes("responses")),
-  );
+  return catalog.models.filter((m) => m.canonicalModelId === canonicalModelId && isSlotServableRow(m));
 }

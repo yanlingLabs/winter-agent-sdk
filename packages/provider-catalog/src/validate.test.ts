@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_VOCABULARIES, CLAUDE_RESERVED_SLOT_NAMES, loadCatalog, scanForSecrets, stampFamilyFields, validateCatalog } from "./index.ts";
+import { CATALOG_VOCABULARIES, CLAUDE_RESERVED_SLOT_NAMES, loadCatalog, rowsForCanonicalId, scanForSecrets, stampFamilyFields, validateCatalog } from "./index.ts";
 import catalogSchema from "../schema/catalog.schema.json" with { type: "json" };
 import type { CatalogValidationError, FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
 
@@ -624,6 +624,19 @@ describe("WS-13c families (schemaVersion 2)", () => {
     expect(validateCatalog(d).ok).toBe(false);
     const errs = validateCatalog(d); expect(!errs.ok && errs.errors.some((e) => e.code === "model-canonical-missing")).toBe(true);
   });
+  test("a slot whose only rows serve neither chat nor responses is refused (fix r1 I-3: ONE predicate)", () => {
+    // The validator's slot check and `rowsForCanonicalId` were two different predicates — the
+    // validator asked only about `status`. A slot backed solely by an embeddings row therefore
+    // VALIDATED and resolved to nothing, making "the catalog validated, so every slot has a
+    // candidate row" false exactly where §4 step 1 relies on it.
+    const c = validCatalog();
+    for (const row of c.models) if (row.canonicalModelId === "gpt-6-astra") row.endpoints = ["embeddings"];
+    const r = validateCatalog(c);
+    expect(!r.ok && r.errors.some((e) => e.code === "slot-model-missing")).toBe(true);
+    // ...and the two agree: the resolver sees no candidate either.
+    expect(rowsForCanonicalId(c, "gpt-6-astra")).toEqual([]);
+  });
+
   test("a slot `provider` that serves no row with that canonical id is refused", () => {
     const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.provider = "nobody";
     const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-provider-unserving")).toBe(true);
