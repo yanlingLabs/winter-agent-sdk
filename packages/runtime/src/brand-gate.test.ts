@@ -407,11 +407,6 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   "packages/runtime/src/provider/credential-api.ts",  // comment-only
   "packages/runtime/src/provider/keychain-store.ts",  // comment-only
   "packages/runtime/src/sandbox/profile.ts",
-  "packages/runtime/src/subagents/definitions.ts",
-  "packages/runtime/src/subagents/limits.ts",
-  "packages/runtime/src/subagents/policy.ts",
-  "packages/runtime/src/subagents/watchdog.ts",
-  "packages/runtime/src/subagents/workspace.ts",
   "packages/runtime/src/testing.ts",
   "packages/runtime/src/tools/descriptors/cron-create.ts",  // comment-only
   "packages/runtime/src/tools/descriptors/enter-worktree.ts",  // comment-only

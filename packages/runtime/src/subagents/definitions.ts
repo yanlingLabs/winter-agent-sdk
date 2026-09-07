@@ -1,10 +1,10 @@
 // WS-10 §2 / RULING R4-7: AgentDefinition sourcing -- programmatic (Options.agents, already
-// wire-plumbed to RuntimeConfig.agents by T2) + filesystem (`.winter/agents/*.md`,
+// wire-plumbed to RuntimeConfig.agents by T2) + filesystem (`<projectDir>/agents/*.md`,
 // `~/.winter/agents/*.md`) MUST coexist.
 //
 // Precedence among sources is a documented JUDGMENT CALL -- WS-10 §2 requires coexistence but does
 // not pin an order for a NAME COLLISION across sources: programmatic > project-local
-// (`.winter/agents`, trust-gated) > user-level (`~/.winter/agents`) -- most-specific/most-explicit
+// (a project `agents/`, trust-gated) > user-level (the winter home's `agents/`) -- most-specific/most-explicit
 // wins, matching this whole spec family's general posture elsewhere (WS-10 §3.1's own model chain is
 // "most specific invocation-time value wins"; engine.ts's own buildChildInheritance prefers a
 // definition's own restriction over the session's ambient one).
@@ -16,7 +16,7 @@
 // pre-parsed from the wire.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 
 export type AgentDefinitionSource = "programmatic" | "project" | "user" | "plugin";
 
@@ -168,19 +168,21 @@ export interface LoadAgentDefinitionsOptions {
   programmatic?: Record<string, RuntimeAgentDefinition>;
   cwd: string;
   /**
-   * The OS HOME directory. `<home>/.winter/agents` is the user tier when `winterHome` below is
-   * absent -- which is the pre-fix behaviour, kept for every caller that does not thread a resolved
-   * root.
+   * The OS HOME directory. `<home>/<brand.homeDirName>/agents` is the user tier when `winterHome`
+   * below is absent -- which is the pre-fix behaviour, kept for every caller that does not thread a
+   * resolved root.
    */
   home: string;
+  /** P7a (D19): the session's brand -- the home and project dot-dir names. Omitted = `WINTER_BRAND`. */
+  brand?: Pick<BrandProfile, "homeDirName" | "projectDirName">;
   /**
-   * Phase 5 fix wave, KNOWN-6: the RESOLVED `~/.winter` root (`WINTER_HOME` when set). When given it
+   * Phase 5 fix wave, KNOWN-6: the RESOLVED winter root (`<PREFIX>HOME` when set). When given it
    * IS the user tier's address (`<winterHome>/agents`), matching where the skills index, the command
    * resolver and `resolveSettings` all look. Never both: this is an address, not a second directory.
    */
   winterHome?: string;
-  // RULING R4-7: `.winter/agents/*.md` loads ONLY when true. `~/.winter/agents/` always loads
-  // regardless (WS-10 §2's own "~/.winter/agents/" carries no trust qualifier, unlike the
+  // RULING R4-7: a project `agents/*.md` loads ONLY when true. The user tier always loads
+  // regardless (WS-10 §2's own user-tier agents directory carries no trust qualifier, unlike the
   // project-local path).
   trustedWorkspace: boolean;
   /**
@@ -218,10 +220,10 @@ export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<str
   // two places, silently. `SkillIndexOptions.winterHome`'s header records exactly this hazard: the
   // two conventions in this codebase are not interchangeable, and a field named `home` gets handed
   // whichever one its caller happened to be reading.
-  const user = loadAgentDirectory(opts.winterHome !== undefined ? join(opts.winterHome, "agents") : join(opts.home, ".winter", "agents"));
+  const user = loadAgentDirectory(opts.winterHome !== undefined ? join(opts.winterHome, "agents") : join(opts.home, (opts.brand ?? WINTER_BRAND).homeDirName, "agents"));
   for (const [name, def] of Object.entries(user)) out.set(name, { ...def, _source: "user" });
   if (opts.trustedWorkspace) {
-    const project = loadAgentDirectory(join(opts.cwd, ".winter", "agents"));
+    const project = loadAgentDirectory(join(opts.cwd, (opts.brand ?? WINTER_BRAND).projectDirName, "agents"));
     for (const [name, def] of Object.entries(project)) out.set(name, { ...def, _source: "project" });
   }
   for (const [name, def] of Object.entries(opts.programmatic ?? {})) out.set(name, { ...def, _source: "programmatic" });
