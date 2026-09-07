@@ -93,6 +93,11 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-5",
       "google/gemini-2.5-pro",
+      // P7a (Lane D): the two Gemini rows P6.6 Task 1b authored but could not price -- its allowed
+      // page set named the MODELS index, which links out to per-model pages and states no rates.
+      // Both now cite `ai.google.dev/gemini-api/docs/pricing` directly.
+      "google/gemini-3.5-flash-lite",
+      "google/gemini-3.8-flash",
       "openai/gpt-4.1",
       // P6.6 fix wave (whole-branch Minor-4): the three `gpt` family SLOT rows. They were unpriced,
       // so a session on `sol`/`terra`/`luna` -- three of the four options the Agent tool advertises to
@@ -124,6 +129,35 @@ describe("pricing (R6-H, R6-9)", () => {
     for (const key of ["openrouter/openai/gpt-4.1", "azure-openai/gpt-4.1", "vertex/gemini-2.5-pro", "codex-oauth/gpt-5.6-sol"]) {
       expect(catalog.models.find((m) => m.key === key)?.pricing).toBeUndefined();
     }
+  });
+
+  test("P7a: the TIME-tiered Gemini row discloses its scheduled increase on the row itself", () => {
+    // The same disclosure obligation as the 200k-token tier below, in the other dimension.
+    // `gemini-3.8-flash`'s page states one price "through December 31, 2026" and a doubled one
+    // "starting January 1, 2027"; `ModelPricing` holds one rate per direction, so the row records
+    // the current one and MUST say so -- otherwise the day it silently starts under-reporting by 2x
+    // is a day nothing in the repository marks.
+    const flash = catalog.models.find((m) => m.key === "google/gemini-3.8-flash")!;
+    expect(flash.pricing?.value.inputPerMTokUsd).toBe(0.75);
+    expect(flash.pricing?.value.outputPerMTokUsd).toBe(3.75);
+    expect(flash.pricing?.sourceRef).toContain("January 1, 2027");
+    expect(flash.pricing?.sourceRef).toContain("UNDER-reports");
+    // Its `-lite` sibling has NO scheduled increase on the same page, and says that too -- so the
+    // disclosure is a statement about each row's own evidence, not boilerplate on every Gemini row.
+    const lite = catalog.models.find((m) => m.key === "google/gemini-3.5-flash-lite")!;
+    expect(lite.pricing?.value.inputPerMTokUsd).toBe(0.3);
+    expect(lite.pricing?.sourceRef).toContain("NO scheduled increase");
+  });
+
+  test("P7a: Claude Fable 5.1 carries the 5-MINUTE cache-write rate, and says the 1-hour one is unrepresentable", () => {
+    // P6.6 could reach only the models page, which states no cache-write rate at all. The pricing
+    // page states two (5m $12.50, 1h $20) and `ModelPricing` has ONE key -- so the row records the
+    // 5m rate every other Anthropic row here uses and discloses the omission rather than picking
+    // silently.
+    const fable = catalog.models.find((m) => m.key === "anthropic/claude-fable-5-1")!;
+    expect(fable.pricing?.value.cacheWritePerMTokUsd).toBe(12.5);
+    expect(fable.pricing?.value.cacheReadPerMTokUsd).toBe(0.25); // the documented 0.025x exception, not the usual 0.1x
+    expect(fable.pricing?.sourceRef).toContain("1-hour write ($20)");
   });
 
   test("Gemini's TIERED price is disclosed in the row itself, not only in a document", () => {

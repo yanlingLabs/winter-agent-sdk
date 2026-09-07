@@ -412,26 +412,48 @@ reviewed allowlist change" a property of the pipeline instead of a promise.
 
 ## Pricing
 
-`overlay/models.json` carries list prices for six cohort rows, each with the vendor's own pricing
-page as `sourceRef` and the observation instant:
+`overlay/models.json` carries list prices for the cohort rows below, each with the vendor's own
+pricing page as `sourceRef` and the observation instant. The set is pinned by name in
+`src/extract/catalog-integrity.test.ts`, so a row gaining or losing a price is a deliberate edit:
 
 | Model | Input | Output | Cache read | Cache write | Source |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `openai/gpt-4.1` | 2.00 | 8.00 | 0.50 | — | developers.openai.com/api/docs/pricing |
-| `openai/o4-mini` | 1.10 | 4.40 | 0.275 | — | developers.openai.com/api/docs/pricing |
+| `anthropic/claude-fable-5-1` | 10 | 50 | 0.25 | 12.50 | docs.anthropic.com/en/docs/about-claude/pricing |
+| `anthropic/claude-haiku-4-5-20251001` | 1.00 | 5.00 | 0.10 | 1.25 | claude.com/pricing |
 | `anthropic/claude-opus-5` | 5.00 | 25.00 | 0.50 | 6.25 | claude.com/pricing |
 | `anthropic/claude-sonnet-5` | 2.00 | 10.00 | 0.20 | 2.50 | claude.com/pricing |
-| `anthropic/claude-haiku-4-5-20251001` | 1.00 | 5.00 | 0.10 | 1.25 | claude.com/pricing |
 | `google/gemini-2.5-pro` | 1.25 | 10.00 | 0.125 | — | ai.google.dev/gemini-api/docs/pricing |
+| `google/gemini-3.5-flash-lite` | 0.30 | 2.50 | 0.03 | — | ai.google.dev/gemini-api/docs/pricing |
+| `google/gemini-3.8-flash` | 0.75 | 3.75 | 0.075 | — | ai.google.dev/gemini-api/docs/pricing |
+| `openai/gpt-4.1` | 2.00 | 8.00 | 0.50 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-5.6-luna` | 0.20 | 1.20 | 0.02 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-5.6-sol` | 4.00 | 20.00 | 0.40 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-5.6-terra` | 2.00 | 12.00 | 0.20 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-6-astra` | 10.00 | 50.00 | 1.00 | 12.50 | developers.openai.com/api/docs/pricing |
+| `openai/o4-mini` | 1.10 | 4.40 | 0.275 | — | developers.openai.com/api/docs/pricing |
+| `xai/grok-4.6` | 2.00 | 6.00 | 0.50 | — | docs.x.ai/docs/models |
 
-USD per million tokens. This closes the seed's disclosed gap: `estimateCostUsd` now returns
-`costBasis: "list"` for these six, and `maxBudgetUsd` is live for them.
+USD per million tokens. This closes the seed's disclosed gap: `estimateCostUsd` returns
+`costBasis: "list"` for these rows, and `maxBudgetUsd` is live for them.
 
-**Two disclosed limits.** (1) Gemini's price is **tiered** — prompts over 200k tokens bill at
-$2.50/$15.00/$0.25 — and `ModelPricing` has one rate per direction, so the standard tier is recorded
-and cost is **under-reported for prompts above 200k**. That is a schema gap, stated in the row's own
-`sourceRef` so it travels with the data. (2) Gateway (`openrouter/*`), Azure-deployment, Bedrock and
-Vertex rows are deliberately unpriced: their prices are the reseller's, not the vendor list, and
+**`ModelPricing` holds one rate per direction, and four disclosed limits follow from that.**
+
+1. **Gemini 2.5 Pro is tiered by PROMPT SIZE** — prompts over 200k tokens bill at $2.50/$15.00/$0.25
+   — so the standard tier is recorded and cost is **under-reported for prompts above 200k**.
+2. **Gemini 3.8 Flash is tiered in TIME** (P7a). Its page states $0.75/$3.75/$0.075 "through
+   December 31, 2026" and exactly double from January 1, 2027. The current rate is recorded, so from
+   that date the row under-reports by 2x until it is re-fetched. Its `-lite` sibling carries no such
+   schedule, and its row says so — the disclosure is each row's own evidence, never boilerplate.
+3. **Claude Fable 5.1 has two cache-write durations** (P7a): $12.50/MTok for the 5-minute write and
+   $20/MTok for the 1-hour one. The 5m rate is recorded, matching every other Anthropic row here;
+   the 1h rate has no field. Its cache READ is the vendor's documented 0.025x exception ($0.25/MTok,
+   not the usual 0.1x), which is why that number looks out of line with its siblings.
+4. **Batch (-50%), fast-mode, Flex/Priority and data-residency (1.1x) modifiers are never folded in.**
+   They are separate rate cards, and a blended number would be a price no invoice ever shows.
+
+Every one of these is stated in the offending row's own `sourceRef`, so the caveat travels with the
+data rather than living only here. **Gateway (`openrouter/*`), Azure-deployment, Bedrock and Vertex
+rows are deliberately unpriced**: their prices are the reseller's, not the vendor list, and
 attributing a vendor price to them would put a number on the wrong billing boundary — the exact
 confusion WS-13 §8.3 keeps `openai/gpt-x` and `gateway/gpt-x` apart to avoid. Every upstream-derived
 row is unpriced too, by construction: the extractor cannot emit `pricing` at all.
