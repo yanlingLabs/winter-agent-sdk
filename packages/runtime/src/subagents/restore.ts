@@ -24,6 +24,7 @@ import type { ChildHandle, ChildResult, ChildSessionRecord } from "./child-handl
 import { rebuildChildRoster, successfulRecords, type RosterKey } from "./roster.ts";
 import { ensureDefaultMessagingRuntimeRegistered } from "../messaging/reference-adapter.ts";
 import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts";
+import type { RecordedModelEffort } from "./resolution.ts";
 
 // The one place a rebuilt RECORD becomes a ChildHandle the messaging layer can list and address.
 // Every method answers from the durable record alone -- there is no live engine behind it.
@@ -39,13 +40,24 @@ export function restoredChildHandle(record: ChildSessionRecord): ChildHandle {
       return { status: "not_found", messageId: msg.messageId, reason: `child ${record.id} is not running (status: ${record.status})` };
     },
     async resume(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      // WS-13c §8 (Lane D Task 5): "a restored handle's refusal text carries the recorded provider
+      // id." `ChildSessionRecord.model` (child-handle.ts, spine-frozen) still declares the pre-P6.6
+      // inline shape -- the spine added `effectiveProvider`/`slot` to `RecordedModelEffort`
+      // (resolution.ts) without re-pointing this field at it (the same gap child-engine.ts's own
+      // `record` declaration works around locally; see this lane's report). `rebuildChildRoster`
+      // (roster.ts) reconstructs a child's sidecar via `{ type: _type, ...record }` -- a spread, not
+      // a field-by-field rebuild -- so an `effectiveProvider` child-engine.ts wrote at spawn/resume
+      // survives the round trip onto this object even though its OWN declared type does not name it;
+      // a local cast reads it back without touching the frozen type.
+      const modelInfo = record.model as RecordedModelEffort;
+      const providerNote = modelInfo.effectiveProvider !== undefined ? ` (recorded provider: ${modelInfo.effectiveProvider})` : "";
       return {
         status: "unavailable",
         messageId: msg.messageId,
         retryable: false,
         reason:
           `child ${record.id} was restored from durable storage after a restart -- its identity and transcript are available ` +
-          `(${record.transcript}), but reviving a live generation across a process restart is not implemented yet (WS-10 §7 carry)`,
+          `(${record.transcript})${providerNote}, but reviving a live generation across a process restart is not implemented yet (WS-10 §7 carry)`,
       };
     },
     async result(): Promise<ChildResult> {

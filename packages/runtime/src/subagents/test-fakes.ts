@@ -13,6 +13,43 @@
 // it as a suite. It exports nothing production code imports; it is a fixture module, the same shape
 // `mcp/test-fixtures.ts` already established in this codebase.
 import type { ChildHandle, ChildResult, ChildSessionRecord } from "./child-handle.ts";
+import type { Provider, ProviderTurn } from "../engine.ts";
+
+// P6.6 (WS-13c §8, Lane D Task 5): a scripted `Provider` fake that RECORDS which model key each
+// `generate()` call was asked to serve -- not in `child-engine.test.ts` (which already has
+// `../provider/mock.ts`'s `scriptedProvider`/`echoProvider` for the "what did the CHILD say" shape),
+// but here, alongside `createFakeChildHandle`, because `cross-family-resume.test.ts` needs the
+// OPPOSITE fact: not what a provider answered, but WHICH of several candidate providers a spawn or a
+// resume actually reached. `ProviderRequest.model` (engine.ts) is "the resolved model for THIS
+// generation" -- exactly the fact WS13c-SM1/SM2/SM3 turn on (never asserted anywhere else in this
+// package, so no existing fake exposes it).
+//
+// No lane's own file list claims `test-fakes.ts` (the P6.6 ownership map only names the four
+// subagents files Lane D touches directly); adding a second, independent export here is additive and
+// touches no other lane's assertions -- see this lane's own report for the deviation note.
+export interface ScriptedProviderFake extends Provider {
+  /** Every `ProviderRequest.model` this fake was asked to serve, in call order (`""` when absent). */
+  readonly servedModels: string[];
+  /** How many times `generate()` was called -- equivalent to `servedModels.length`, offered for readability at call sites. */
+  callCount(): number;
+}
+
+// One scripted turn (or a turn-producing function, for a fake reused across multiple resumes) per
+// call is enough for every P6.6 cross-family scenario: each fake plays exactly one role (the child's
+// own provider, or a parent's provider at one point in time) and is asked to finish its turn in one
+// round. Defaults to a plain text completion so a caller that only cares about "was THIS fake the one
+// that served the request" never has to script a turn at all.
+export function createScriptedProviderFake(turn: ProviderTurn | (() => ProviderTurn) = { kind: "text", text: "done" }): ScriptedProviderFake {
+  const servedModels: string[] = [];
+  return {
+    servedModels,
+    callCount: () => servedModels.length,
+    async generate(input) {
+      servedModels.push(input.model ?? "");
+      return typeof turn === "function" ? turn() : turn;
+    },
+  };
+}
 
 // A minimal, REALISTIC state machine satisfying the ChildHandle contract -- not production code
 // (Lane C's own child-engine.ts is that), but a fixture proving the four outcomes MUST 10 pins are
