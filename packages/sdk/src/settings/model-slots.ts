@@ -33,7 +33,9 @@
 // import would need a `"./families"` subpath export added to `packages/provider-catalog/package.json`
 // (or a cross-package relative import, precedented only in a test harness elsewhere in this repo) --
 // both are spine-owned edits, out of this lane's file list; flagged for the controller instead.
-import { CLAUDE_RESERVED_SLOT_NAMES, CURRENCY_RE, SLOT_NAME_RE } from "@yanlinglabs/winter-provider-catalog";
+// R-6c-19: the DATA-FREE subpath -- `families.ts` imports only `./types.ts`, so the sdk's unbundled
+// graph never loads generated/catalog.json (the barrel `"."` does, 1.4 MB, on the unbundled path).
+import { CLAUDE_RESERVED_SLOT_NAMES, CURRENCY_RE, SLOT_NAME_RE } from "@yanlinglabs/winter-provider-catalog/families";
 import type { ModelSlotSetting } from "../protocol/config.ts";
 
 /**

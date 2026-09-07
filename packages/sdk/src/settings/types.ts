@@ -292,6 +292,8 @@ export interface DetailedResolvedSettings extends ResolvedSettings {
 }
 
 export interface ResolveSettingsDetailedOptions extends ResolveSettingsOptions {
+  /** RULING P5-A's host-declared workspace-trust bit, threaded by production-wiring. Absent = untrusted (fail-safe): the project tier's `modelSlots`/`preferredProviders` are dropped (WS-13c §5, R-6c-16). */
+  trustedWorkspace?: boolean;
   /** Explicit `~/.winter` root. Tests MUST pass this rather than mutating process.env (a shared-process `bun test` run would race). */
   winterHome?: string;
   /** Injectable environment for WINTER_HOME resolution; defaults to `process.env`. */

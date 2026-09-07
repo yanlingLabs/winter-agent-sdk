@@ -329,16 +329,14 @@ const SOURCE_ORDER_LOWEST_FIRST: readonly SettingSource[] = ["user", "project", 
  * local > project > user. `local` above `project` is the pinned ordering capture (1) proves
  * behaviourally (cell J vs I: only a rule in the LOCAL file silences a prompt).
  *
- * `opts` is typed as the pinned `ResolveSettingsDetailedOptions` WIDENED with one field,
- * `trustedWorkspace`, via intersection rather than by adding it to that interface in `./types.ts`:
- * this phase's file-ownership map (context.md) freezes `types.ts` as the spine's surface, and this
- * lane's own file is where the bit belongs anyway -- `WorkspaceTrustFilterOptions` below (same file)
- * already carries the identical field for `applyWorkspaceTrust` for exactly the same reason. Every
- * existing caller is unaffected (the field is optional and nobody currently sets it); a caller that
- * wants R13c-7's project trust gate passes it in the same options object it already builds.
+ * `trustedWorkspace` lives on the pinned `ResolveSettingsDetailedOptions` itself (R-6c-16, folded by
+ * the controller after Lane B merged; the lane had widened it by intersection because `types.ts` was
+ * the spine's frozen surface during the phase). `WorkspaceTrustFilterOptions` below carries the
+ * identical field for `applyWorkspaceTrust`. Absent = untrusted (fail-safe); production-wiring
+ * threads the host's RULING P5-A bit.
  */
 export async function resolveSettingsDetailed(
-  opts: ResolveSettingsDetailedOptions & { trustedWorkspace?: boolean } = {},
+  opts: ResolveSettingsDetailedOptions = {},
 ): Promise<DetailedResolvedSettings> {
   const cwd = opts.cwd ?? process.cwd();
   const selected: readonly SettingSource[] = opts.settingSources ?? SETTING_SOURCES;
