@@ -1,6 +1,7 @@
 // The Winter provider catalog's inert data shapes — WS-13 §4, Winter-named (D17).
 //
-// FROZEN as of Phase 6 Task 2's merge (R6-12): lanes ADD files, never edit this one. Everything
+// FROZEN BETWEEN PHASES (R6-12): only a phase's SPINE task edits this file (P6.6's did, WS-13c
+// §1); lanes ADD files, never edit this one. Everything
 // here is *data*: no function, no class, no Bun API, no `fetch`, no filesystem. WS-13 §4's own MUST
 // is that descriptors are "safe inert data, decodable in Bun and Swift without executing upstream
 // code", which is why this package is inside tsconfig.sdk-fence.json (type-checked with Node's
