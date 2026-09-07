@@ -12,6 +12,7 @@
       "tools": [
         "Agent",
         "AskUserQuestion",
+        "advisor",
         "Bash",
         "CronCreate",
         "CronDelete",
