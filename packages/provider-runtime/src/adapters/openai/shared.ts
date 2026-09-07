@@ -154,12 +154,16 @@ function trimSlash(url: string): string {
 }
 
 /**
- * Chooses between the adapter's generated endpoint and the profile's user endpoint, and builds the
+ * Chooses between the adapter's generated endpoint and the profile's base URL, and builds the
  * policy `boundedFetch` enforces.
  *
- * A user `baseUrl` is evaluated with `generated: false` and the profile's own `local` declaration —
- * which is what lets a loopback Ollama be reached over plain http while an undeclared private
- * address is still refused (`evaluateEndpoint`'s own rule, not a second copy of it here).
+ * A profile `baseUrl` is evaluated by its ORIGIN, not by its mere presence (P7a): a reviewed
+ * endpoint the runtime COPIED in (`endpointOrigin: "reviewed"` — every row on an adapter that
+ * serves several providers) stays generated, and only a host- or user-supplied one is a USER
+ * endpoint. `connectionEndpointOptions` is the single reading of that field, and it carries the
+ * profile's own `local` declaration through — which is what lets a loopback Ollama be reached over
+ * plain http while an undeclared private address is still refused (`evaluateEndpoint`'s own rule,
+ * not a second copy of it here).
  */
 export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOptions, fallbackGeneratedBaseUrl?: string): ResolvedEndpoint {
   const userBase = ctx.connection.baseUrl;

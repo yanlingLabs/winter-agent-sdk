@@ -476,9 +476,13 @@ interface Endpoint {
 /**
  * The connection's endpoint policy.
  *
- * A user `baseUrl` is evaluated as a USER endpoint (`generated: false`), which is what makes
- * `applyPrivilegedHeaders` drop this family's privileged header for it (R6-L). The compiled default
- * is `generated: true` -- it is the reviewed, immutable descriptor endpoint.
+ * A profile `baseUrl` is evaluated by its ORIGIN, not by its mere presence (P7a): a host- or
+ * user-supplied one is a USER endpoint, which is what makes `applyPrivilegedHeaders` drop this
+ * family's privileged header for it (R6-L), while a reviewed endpoint the runtime COPIED in
+ * (`endpointOrigin: "reviewed"`) stays generated and keeps it. This family has FOUR such rows -- the
+ * Anthropic-dialect siblings -- and before the marker existed every one of them was silently read as
+ * a user endpoint (WS-13b §10's M-1 partial). The compiled default is `generated: true` either way:
+ * it is the reviewed, immutable descriptor endpoint.
  */
 function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint {
   const userBase = ctx.connection.baseUrl;
