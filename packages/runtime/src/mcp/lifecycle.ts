@@ -136,7 +136,7 @@ export { validateServerConfig };
 
 // Pure function of injected source maps + a trust boolean (no file I/O, no settings-loader, no
 // trust-computation -- ruleset.ts's own `{trustedWorkspace: boolean}` parameter precedent is
-// followed exactly: WHERE `.winter/mcp.json`/settings actually get read from disk, and HOW
+// followed exactly: WHERE the project `mcp.json`/settings actually get read from disk, and HOW
 // workspace trust is computed, are integration concerns for whoever assembles `McpServerSource[]`
 // in a live session -- see this task's own report for the exact recipe).
 export function resolveMcpServerSources(sources: readonly McpServerSource[], opts: { strictMcpConfig?: boolean; trustedWorkspace: boolean }): ResolveMcpServerSourcesResult {
@@ -188,7 +188,7 @@ export function resolveMcpServerSources(sources: readonly McpServerSource[], opt
         //
         // P4's gate was stdio-literal ("a checked-in .winter/mcp.json never auto-runs a stdio server
         // in an untrusted workspace") because process execution was the visible danger. P5 is the
-        // phase that made a cloned repository a PRODUCER for that gate -- `.winter/mcp.json` and a
+        // phase that made a cloned repository a PRODUCER for that gate -- the project `mcp.json` and a
         // project `settings.json` `mcpServers` block both feed it now -- and an http/sse server from
         // a cloned repository is a capability grant too: it receives the session's tool calls with
         // conversation-derived arguments, and its tool results and descriptions are text the model

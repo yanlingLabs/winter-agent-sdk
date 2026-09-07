@@ -41,7 +41,7 @@ export interface ScriptApiDeps {
   maxItemsPerCall: number;
   budget: BudgetSnapshot;
   agent(prompt: string, opts?: AgentOpts): Promise<AgentBridgeResult>;
-  /** Resolves a nested `workflow(nameOrRef)` to its SOURCE. Parent-side: the worker cannot read `.winter/workflows/`. */
+  /** Resolves a nested `workflow(nameOrRef)` to its SOURCE. Parent-side: the worker cannot read the project workflows dir. */
   resolveWorkflow(ref: WorkflowRef, args: unknown): Promise<WorkflowResolveResult>;
   phase(title: string): void;
   log(message: string): void;

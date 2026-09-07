@@ -252,9 +252,9 @@ export class WorkflowRuntime {
 
     const command = this.deps.workerCommand?.() ?? resolveWorkerCommand();
     // T3's Lane W item 2: `home` MUST be passed, or the `~/.winter/run` read-deny is silently absent.
-    // `winterHome` is the `.winter` directory itself, and the profile appends `.winter/run` to what it
+    // `winterHome` is the resolved winter root itself, and the profile appends its `run/` child to what it
     // is given -- so the value handed over is that directory's PARENT. Fix wave I1 (the resolved-home
-    // class): the RESOLVED root is passed too, so a `WINTER_HOME` whose basename is not `.winter` gets
+    // class): the RESOLVED root is passed too, so a `<PREFIX>HOME` whose basename is not the brand's gets
     // its own `<root>/run` deny -- the profile emits both anchors.
     const worker = this.spawnWorker(command, { home: parentOf(this.deps.session.winterHome), winterHome: this.deps.session.winterHome });
 

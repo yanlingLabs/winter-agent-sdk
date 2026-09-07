@@ -14,6 +14,7 @@
 // root later is additive; shipping it now and finding the pin disagrees would not be.
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 /**
  * The path-traversal guard, applied BEFORE any filesystem call ever sees the name -- `name` arrives
@@ -24,7 +25,13 @@ import { join } from "node:path";
  */
 const WORKFLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
-export const PROJECT_WORKFLOWS_DIR = join(".winter", "workflows");
+/** The project workflows directory for a brand -- `<brand.projectDirName>/workflows`. */
+export function projectWorkflowsDir(brand?: Pick<BrandProfile, "projectDirName">): string {
+  return join((brand ?? WINTER_BRAND).projectDirName, "workflows");
+}
+
+/** Winter's own value, for every caller that has not threaded a brand. */
+export const PROJECT_WORKFLOWS_DIR = projectWorkflowsDir();
 
 export type ResolvedWorkflowSource =
   | { ok: true; source: string; path: string | undefined; source_kind: "project" | "builtin" }
@@ -45,6 +52,8 @@ export interface ResolveWorkflowByNameOptions {
   trustedWorkspace: boolean;
   /** Injectable for the test that proves built-ins are consulted first; production passes nothing. */
   builtins?: Record<string, string>;
+  /** P7a (D19): the session's brand -- the project dot-dir workflows live under. Omitted = `WINTER_BRAND`. */
+  brand?: Pick<BrandProfile, "projectDirName">;
 }
 
 /**
@@ -66,18 +75,19 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
   const builtin = (opts.builtins ?? BUILTIN_WORKFLOWS)[name];
   if (typeof builtin === "string") return { ok: true, source: builtin, path: undefined, source_kind: "builtin" };
 
+  const workflowsDir = projectWorkflowsDir(opts.brand);
   if (!opts.trustedWorkspace) {
     return {
       ok: false,
-      error: `workflow "${name}" was not resolved: ${PROJECT_WORKFLOWS_DIR}/ is only read in a TRUSTED workspace (a project workflow is executable code, like a project agent definition -- R4-7). Pass the script inline with \`script\`, or trust the workspace.`,
+      error: `workflow "${name}" was not resolved: ${workflowsDir}/ is only read in a TRUSTED workspace (a project workflow is executable code, like a project agent definition -- R4-7). Pass the script inline with \`script\`, or trust the workspace.`,
     };
   }
-  const path = join(opts.cwd, PROJECT_WORKFLOWS_DIR, `${name}.js`);
+  const path = join(opts.cwd, workflowsDir, `${name}.js`);
   try {
     if (!statSync(path).isFile()) throw new Error("not a regular file");
     return { ok: true, source: readFileSync(path, "utf8"), path, source_kind: "project" };
   } catch {
-    return { ok: false, error: `unknown workflow "${name}": no ${PROJECT_WORKFLOWS_DIR}/${name}.js in this project, and no built-in by that name` };
+    return { ok: false, error: `unknown workflow "${name}": no ${workflowsDir}/${name}.js in this project, and no built-in by that name` };
   }
 }
 
@@ -93,7 +103,7 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
 // documented edit-then-rerun loop silently stops working.
 
 export interface SessionScriptLocation {
-  /** The `.winter` directory itself in production (`resolveWinterHome()`), whose `projects/` child this addresses. */
+  /** The resolved winter root in production (`resolveWinterHome()`), whose `projects/` child this addresses. */
   winterHome: string;
   projectKey: string;
   /** The session UUID -- the `<session-uuid>` segment of capture (3)'s path. */

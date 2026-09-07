@@ -34,7 +34,7 @@
 // "correctly-absent (v1)"). Per-tool ground truth (§2/§3) is treated as authoritative over §1.1's
 // introductory type sketch; `ToolDisposition` below widens to 5 members rather than silently
 // mis-filing those two tools under an existing value.
-import type { PermissionMode, BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionMode, BackgroundTaskMessage, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { parseRule } from "../permissions/grammar.ts";
 // Fix round 1, RULING P3-B: probeReadWouldPrompt's boolean widened to this named 3-state result --
 // imported (type-only, erased at build time; no runtime cycle since evaluator.ts never imports this
@@ -201,16 +201,26 @@ export interface ToolExecutionContext {
   cwd: string;
   home: string;
   /**
-   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root for this session (`WINTER_HOME` when set),
+   * Phase 5 fix wave, I1: the RESOLVED winter root for this session (`<PREFIX>HOME` when set),
    * DISTINCT from `home` above, which is the OS home directory.
    *
    * The two are not interchangeable and confusing them is a shipped-bug class in this codebase --
    * see `SkillIndexOptions.winterHome`'s own header. A tool that needs to name Winter's own storage
    * (the agents user tier, a seatbelt deny, the checkpoint store) reads THIS; a tool that needs the
    * user's home for a `~`-anchored path reads `home`. Absent for a hand-built context, in which case
-   * every consumer falls back to `<home>/.winter/...` -- the pre-fix behaviour.
+   * every consumer falls back to `<home>/<brand.homeDirName>/...` -- the pre-fix behaviour.
    */
   winterHome?: string;
+  /**
+   * P7a (D19): the session's RESOLVED brand profile, threaded from `RuntimeConfig.brand`.
+   *
+   * Every tool that names a Winter-owned surface from inside its own executor -- the project
+   * dot-dir a workflow/worktree/cron file lives under, an env variable, the instructions file --
+   * reads it from HERE rather than spelling one. OPTIONAL for the same reason as
+   * `insideSubagent`/`trustedWorkspace` (~25 hand-built test contexts with no shared builder);
+   * ABSENT READS AS `WINTER_BRAND`, which is byte-identical to the behaviour before this field.
+   */
+  brand?: BrandProfile;
   sessionId: string;
   readState: SessionReadState;
   // Phase 3 Task 2 (WS-06 §3.5): narrowed from Task 1's placeholder `unknown` now that the real,
@@ -281,7 +291,7 @@ export interface ToolExecutionContext {
   // ONCE by engine.ts and threaded here so no consumer re-derives one. Two independent hardcoded
   // `false`s used to answer this same question -- engine.ts's own `const trustedWorkspace` (feeding
   // the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook registry's trust
-  // gate) and `subagents/policy.ts`'s `resolveWorkspaceTrust()` (feeding `.winter/agents/*.md`
+  // gate) and `subagents/policy.ts`'s `resolveWorkspaceTrust()` (feeding project agent definitions
   // loading, RULING R4-7). Both were correct-safe, but when P5 lands a real settings/trust signal,
   // wiring one and missing the other gives a session where a checked-in agent definition loads while
   // project-scoped permission rules stay gated, or the reverse. There is now ONE producer.
@@ -315,7 +325,7 @@ export interface ToolExecutionContext {
   // (`Options.agents` -> `RuntimeConfig.agents`), surfaced to a tool executor so
   // `tools/impl/agent.ts` can pass them to `loadAgentDefinitions`'s own already-implemented
   // `programmatic` parameter. Before this field existed, only FILESYSTEM-defined agents
-  // (`~/.winter/agents/*.md`, and `.winter/agents/*.md` in a trusted workspace) were resolvable via
+  // (user-tier agent definitions, and project-tier ones in a trusted workspace) were resolvable via
   // `subagent_type` in production, silently ignoring every programmatically-supplied definition --
   // a real gap WS-10 §2's own "programmatic definitions and filesystem-defined agents MUST coexist"
   // forbids. Typed structurally (never importing subagents/definitions.ts's own type here) to keep

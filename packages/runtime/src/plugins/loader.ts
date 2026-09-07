@@ -284,7 +284,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     const manifest = manifestResult.manifest;
     // WS-11 §4's manifestless rule: a plugin directory without a manifest is named by its BASENAME.
     // A manifest `name` overrides it -- and both paths run through the identical jail, which is what
-    // makes `.winter` qualify as `.winter:<skill>` the same way whichever route named it.
+    // makes the project dot-dir qualify as `<projectDir>:<skill>` the same way whichever route named it.
     const name = typeof manifest?.name === "string" && manifest.name.length > 0 ? manifest.name : basename(root);
     if (pluginNameError(name) !== null) {
       rejected.push({ path: declaredPath, kind: "invalid-name", reason: `${JSON.stringify(name)} is not a valid plugin name (a qualified skill is "<plugin>:<skill>", so the plugin name may not contain separators)` });

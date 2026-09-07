@@ -7,7 +7,7 @@
 //
 // WHY A PARSER AND NOT AN EVALUATOR -- the security argument, carried verbatim from Norma's
 // `workflows/store.ts`: this function runs in the DAEMON process, unsandboxed, on a script the model
-// just wrote and on every `.winter/workflows/*.js` a name resolution touches. The whole reason the
+// just wrote and on every project `workflows/*.js` a name resolution touches. The whole reason the
 // script BODY runs in a seatbelted subprocess is that its contents are untrusted; running even the
 // meta block through `eval`/`new Function`/`import()` here would hand that untrusted text the
 // daemon's own capabilities, before any human has reviewed it. Norma answered this with a regex that

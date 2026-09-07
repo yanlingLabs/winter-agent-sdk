@@ -1,8 +1,8 @@
-// Phase 5 Lane S: the MCP CONFIG LOADERS -- `.winter/mcp.json` and `Settings.mcpServers`.
+// Phase 5 Lane S: the MCP CONFIG LOADERS -- the project `mcp.json` and `Settings.mcpServers`.
 //
 // THESE PRODUCE INPUT AND NOTHING ELSE. `mcp/lifecycle.ts`'s `resolveMcpServerSources` is the
 // authority on validation, precedence, duplicate reporting, the reserved `winter` name and the
-// trust gate; its own header states outright that "WHERE `.winter/mcp.json`/settings actually
+// trust gate; its own header states outright that "WHERE the project `mcp.json`/settings actually
 // get read from disk, and HOW workspace trust is computed, are integration concerns for whoever
 // assembles `McpServerSource[]`". This module is that assembler. It computes no trust, validates no
 // server config and connects to nothing.
@@ -13,11 +13,19 @@
 // trust is which ORIGIN it tags a source with -- and that is exactly the judgment call below.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { ResolvedSettingSource, SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type BrandProfile, type ResolvedSettingSource, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import type { McpConfigSourceOrigin, McpServerSource } from "../../mcp/lifecycle.ts";
 
-/** WS-01 §2.4: the Winter-native project MCP config. The official branch's `.mcp.json` is NOT read. */
-export const PROJECT_MCP_CONFIG_RELATIVE = join(".winter", "mcp.json");
+/**
+ * WS-01 §2.4: the native project MCP config, under `brand.projectDirName`. The official branch's
+ * `.mcp.json` is NOT read.
+ */
+export function projectMcpConfigRelative(brand?: Pick<BrandProfile, "projectDirName">): string {
+  return join((brand ?? WINTER_BRAND).projectDirName, "mcp.json");
+}
+
+/** Winter's own value, for every caller that has not threaded a brand. */
+export const PROJECT_MCP_CONFIG_RELATIVE = projectMcpConfigRelative();
 
 export interface RejectedMcpConfig {
   origin: McpConfigSourceOrigin;
@@ -64,13 +72,13 @@ function sourcesAllow(settingSources: SettingSource[] | undefined, tier: Setting
  * has the official branch run with `settingSources: []` and get its servers "via explicit
  * `mcpServers` options only", which is only true if this file is not read in that mode.
  *
- * NO PARENT-WALK, unlike skills. `.winter/mcp.json` names PROCESSES to run, and a walk would let a
+ * NO PARENT-WALK, unlike skills. The project `mcp.json` names PROCESSES to run, and a walk would let a
  * config committed several directories above the session's cwd start a stdio server the user never
  * looked at. The skills walk carries no such authority. Disclosed divergence from the skill tier.
  */
-export function loadProjectMcpConfig(opts: { cwd: string; settingSources?: SettingSource[] | undefined }): McpConfigLoadResult {
+export function loadProjectMcpConfig(opts: { cwd: string; settingSources?: SettingSource[] | undefined; brand?: Pick<BrandProfile, "projectDirName"> }): McpConfigLoadResult {
   if (!sourcesAllow(opts.settingSources, "project")) return { sources: [], rejected: [] };
-  const path = join(opts.cwd, PROJECT_MCP_CONFIG_RELATIVE);
+  const path = join(opts.cwd, projectMcpConfigRelative(opts.brand));
   let raw: string;
   try {
     if (!statSync(path).isFile()) return { sources: [], rejected: [] };
@@ -95,8 +103,8 @@ export function loadProjectMcpConfig(opts: { cwd: string; settingSources?: Setti
  * WHICH ORIGIN A SETTINGS TIER'S `mcpServers` BLOCK GETS -- a disclosed judgment call.
  *
  * WS-09 §1.2's precedence table ranks `settings` above `project`, where `project` is the ambient
- * `.winter/mcp.json`. Read literally, EVERY settings tier would be `settings` -- and a
- * repo-committed `.winter/settings.json` would then connect a server in an untrusted clone, because
+ * the project `mcp.json`. Read literally, EVERY settings tier would be `settings` -- and a
+ * repo-committed project `settings.json` would then connect a server in an untrusted clone, because
  * the trust gate only fires on `origin === "project"`. That is the same self-grant shape P5-A closes
  * on the permission side, arriving through a different file.
  *
@@ -123,7 +131,7 @@ const ORIGIN_BY_SETTING_SOURCE: Record<ResolvedSettingSource, McpConfigSourceOri
  * first, so ordering within an origin is all this controls. Pass the tiers highest-precedence first
  * (which is the order `resolveSettingsDetailed` already returns them in), and pass this result
  * BEFORE `loadProjectMcpConfig`'s so a project settings.json entry outranks the ambient
- * `.winter/mcp.json` while still sharing its gate.
+ * the project `mcp.json` while still sharing its gate.
  */
 export function settingsMcpServerSources(perSource: readonly SettingsMcpSourceInput[] | undefined): McpConfigLoadResult {
   const sources: McpServerSource[] = [];

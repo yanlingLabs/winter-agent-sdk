@@ -36,7 +36,7 @@ export interface WorkflowSessionRuntime {
    * registration is FIRST-WINS: see `registerWorkflowSession`.
    */
   sessionId?: string;
-  /** The `.winter` directory this session persists under -- `resolveWinterHome()`'s value, whose `projects/` child holds the session area. */
+  /** The winter root this session persists under -- `resolveWinterHome()`'s value, whose `projects/` child holds the session area. */
   winterHome: string;
   /** `compatibilityKeys(cwd).transcriptProjectKey`, after `resolveProjectDirName` -- the SAME key the transcript store uses, never a second derivation. */
   projectKey: string;

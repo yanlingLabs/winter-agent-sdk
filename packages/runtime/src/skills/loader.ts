@@ -5,9 +5,10 @@
 //
 // DEFENSIVE THROUGHOUT, Norma parity: a missing root, an unreadable directory, a malformed
 // SKILL.md, a `SKILL.md` that is itself a directory -- every one is SKIPPED, never thrown. A single
-// broken skill in a checked-in `.winter/skills/` must not be able to fail a session's startup.
+// broken skill in a checked-in project `skills/` directory must not be able to fail a session's startup.
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { parseSkillFile, type ParsedSkillFile } from "./frontmatter.ts";
 
 /** WS-11 §2.1's tier table, and `SkillListing["source"]` (context/seam.ts, R5-17) verbatim. */
@@ -84,20 +85,23 @@ export function findRepoRoot(from: string): string | undefined {
 }
 
 /**
- * WS-11 §2.1 / report §60: "project lookup walks `.winter/skills/` at cwd and parent directories up
- * to the repository root". NEAREST FIRST -- the returned order IS the precedence order, so a
- * `.winter/skills/review` beside the code shadows one at the repo root.
+ * WS-11 §2.1 / report §60: "project lookup walks `<projectDir>/skills/` at cwd and parent
+ * directories up to the repository root". NEAREST FIRST -- the returned order IS the precedence
+ * order, so a project skill beside the code shadows one at the repo root.
  *
  * With no repository root above `cwd` the walk covers `cwd` ALONE. Climbing to the filesystem root
- * in that case would let `/tmp/.winter/skills` (or a home-directory one) silently join a session
- * started in a scratch directory -- the boundary exists to stop exactly that.
+ * in that case would let a stray project dot-dir under `/tmp` (or a home directory) silently join a
+ * session started in a scratch directory -- the boundary exists to stop exactly that.
+ *
+ * P7a (D19): the dot-dir is `brand.projectDirName`; omitted = `WINTER_BRAND`, i.e. today's walk.
  */
-export function projectSkillRoots(cwd: string): string[] {
+export function projectSkillRoots(cwd: string, brand?: Pick<BrandProfile, "projectDirName">): string[] {
+  const projectDir = (brand ?? WINTER_BRAND).projectDirName;
   const repoRoot = findRepoRoot(cwd);
   const roots: string[] = [];
   let dir = cwd;
   for (;;) {
-    roots.push(join(dir, ".winter", "skills"));
+    roots.push(join(dir, projectDir, "skills"));
     if (repoRoot === undefined || dir === repoRoot) break;
     const parent = dirname(dir);
     if (parent === dir) break;
