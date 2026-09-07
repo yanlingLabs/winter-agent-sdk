@@ -22,6 +22,8 @@ import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
+import type { SandboxBrand } from "../sandbox/profile.ts";
+import type { BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { persistWorkflowScript, workflowTranscriptDir, workflowRunsDir, resolveWorkflowByName } from "./store.ts";
 import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, type WorkerInit, type WorkflowRef } from "./bridge.ts";
 import type { WorkflowSessionRuntime } from "./host-registry.ts";
@@ -62,7 +64,7 @@ export interface WorkerProcess {
   kill(): void;
 }
 
-export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string }) => WorkerProcess;
+export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand }) => WorkerProcess;
 
 /**
  * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
@@ -78,7 +80,12 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
   const sandbox = opts.sandbox ?? true;
   return (command, spawnOpts) => {
     const spawnTarget = sandbox
-      ? buildWorkerSpawn({ command, ...(spawnOpts.home !== undefined ? { home: spawnOpts.home } : {}), ...(spawnOpts.winterHome !== undefined ? { winterHome: spawnOpts.winterHome } : {}) })
+      ? buildWorkerSpawn({
+          command,
+          ...(spawnOpts.home !== undefined ? { home: spawnOpts.home } : {}),
+          ...(spawnOpts.winterHome !== undefined ? { winterHome: spawnOpts.winterHome } : {}),
+          ...(spawnOpts.brand !== undefined ? { brand: spawnOpts.brand } : {}),
+        })
       : command;
     const child = spawnProcess(spawnTarget.file, spawnTarget.args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
     return {
@@ -114,7 +121,7 @@ export interface WorkflowRuntimeDeps {
   /** Test seam over the worker COMMAND (pre-sandbox). Defaults to the compiled-vs-dev split. */
   workerCommand?: () => WorkerCommand;
   /** Overridable resolver for a nested `workflow(nameOrRef)`. Defaults to store.ts's project resolution. */
-  resolveNestedWorkflow?: (ref: WorkflowRef, ctx: { cwd: string; trustedWorkspace: boolean }) => Promise<{ ok: true; source: string } | { ok: false; error: string }>;
+  resolveNestedWorkflow?: (ref: WorkflowRef, ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile }) => Promise<{ ok: true; source: string } | { ok: false; error: string }>;
   /** Skips the `sandbox-exec` availability refusal. Only a non-default spawner has any business setting this. */
   requireSandbox?: boolean;
 }
@@ -256,7 +263,11 @@ export class WorkflowRuntime {
     // is given -- so the value handed over is that directory's PARENT. Fix wave I1 (the resolved-home
     // class): the RESOLVED root is passed too, so a `<PREFIX>HOME` whose basename is not the brand's gets
     // its own `<root>/run` deny -- the profile emits both anchors.
-    const worker = this.spawnWorker(command, { home: parentOf(this.deps.session.winterHome), winterHome: this.deps.session.winterHome });
+    const worker = this.spawnWorker(command, {
+      home: parentOf(this.deps.session.winterHome),
+      winterHome: this.deps.session.winterHome,
+      ...(this.deps.session.brand !== undefined ? { brand: this.deps.session.brand } : {}),
+    });
 
     const run: LiveRun = {
       runId,
@@ -689,7 +700,7 @@ export class WorkflowRuntime {
     const resolver = this.deps.resolveNestedWorkflow ?? defaultNestedResolver;
     let resolved: { ok: true; source: string } | { ok: false; error: string };
     try {
-      resolved = await resolver(message.ref, { cwd: run.cwd, trustedWorkspace: run.trustedWorkspace });
+      resolved = await resolver(message.ref, { cwd: run.cwd, trustedWorkspace: run.trustedWorkspace, ...(this.deps.session.brand !== undefined ? { brand: this.deps.session.brand } : {}) });
     } catch (err) {
       resolved = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -789,9 +800,9 @@ export class WorkflowRuntime {
 
 }
 
-async function defaultNestedResolver(ref: WorkflowRef, ctx: { cwd: string; trustedWorkspace: boolean }): Promise<{ ok: true; source: string } | { ok: false; error: string }> {
+async function defaultNestedResolver(ref: WorkflowRef, ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile }): Promise<{ ok: true; source: string } | { ok: false; error: string }> {
   if ("name" in ref) {
-    const resolved = resolveWorkflowByName(ref.name, { cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace });
+    const resolved = resolveWorkflowByName(ref.name, { cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }
   try {

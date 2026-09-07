@@ -22,7 +22,11 @@
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
 import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { OVERLAY_NEVER_KEYS, resolveWinterHome } from "@yanlinglabs/winter-agent-sdk";
+import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+// P7a (D19): the two process-level brand surfaces this module installs per session -- see (10b).
+import { rebrandStandingServerTools } from "./tools/registry.ts";
+import { canonicalAliases, WINTER_CANONICAL_ALIASES } from "./toolsearch/aliases.ts";
+import { setWinterIdentity } from "@yanlinglabs/winter-provider-runtime";
 import { resolveSettingsDetailed, filterEscalatingDefaultMode, providerSettingsFrom } from "./settings/resolve.ts";
 import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
@@ -129,7 +133,7 @@ function asStrictPluginOnly(v: unknown): StrictPluginOnlyCustomization | undefin
  *
  * `resolveSettings`' `effective` already applies the filter (`withoutOverlayNeverKeys`, applied to
  * the project tier only). A caller reaching for `perSource[i].values` or a raw file would let a
- * repo-committed `.winter/settings.json` set `autoMemoryDirectory` -- pointing this session's memory
+ * repo-committed project `settings.json` set `autoMemoryDirectory` -- pointing this session's memory
  * at a directory the repository chose, which is precisely the self-grant P5-A closes elsewhere.
  *
  * Asserted rather than merely documented: nothing about the two shapes differs structurally, so a
@@ -223,7 +227,7 @@ function isPlainSettings(v: unknown): v is Settings {
  * A MALFORMED RULE IS REPORTED, NEVER THROWN. `sourceRule` validates at add time and raises
  * `PermissionRuleValidationError`; that is the right behaviour for an `Options` field the host
  * controls (fail loud at startup) and the wrong one for a FILE a repository may have written --
- * a single bad string in a checked-in `.winter/settings.json` must not make the session unstartable.
+ * a single bad string in a checked-in project `settings.json` must not make the session unstartable.
  * The bad entry is dropped and named in `warnings`; every other rule in the same file still binds.
  */
 export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?: { allowDangerouslySkipPermissions?: boolean; disableBypassPermissionsMode?: boolean }): SettingsRuleSeed {
@@ -332,7 +336,7 @@ export interface ProductionWiringOptions {
   winterHome?: string;
   // NO `permissionHome` HERE, deliberately. Nothing this module builds needs the OS home: the skill
   // index, the command resolver and the settings resolution are all addressed by the RESOLVED winter
-  // root, and `loadAgentDefinitions` (the one consumer that takes an OS home and appends `.winter`
+  // root, and `loadAgentDefinitions` (the one consumer that takes an OS home and appends the dot-dir
   // itself) is called from `engine.ts` and `tools/impl/agent.ts`, both of which already hold
   // `permissionHome`. An unused option here would be a second place for the two conventions to be
   // confused -- which is the exact hazard `SkillIndexOptions.winterHome`'s own header describes.
@@ -472,7 +476,7 @@ export interface ProductionWiring {
    */
   config: RuntimeConfig;
   /**
-   * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
+   * Non-fatal problems worth telling a host about: a malformed project `mcp.json`, a plugin that
    * would not load, a `skills` option naming something unknown. NEVER thrown -- Lane S's
    * `validateSkillsOption` returns a result precisely so the decision is the caller's, and a broken
    * plugin must not take a session down (`loadPlugins` returns rejections for the same reason).
@@ -492,7 +496,15 @@ export interface ProductionWiring {
  */
 export async function buildProductionWiring(opts: ProductionWiringOptions): Promise<ProductionWiring> {
   const { config, env } = opts;
-  const winterHome = opts.winterHome ?? config.winterHome ?? resolveWinterHome(env);
+  // (0) THE BRAND (P7a, D19). THE ONE FALLBACK IN THE RUNTIME, and it is here rather than at each
+  // reader for a reason worth stating: `query()` always puts the resolved profile on the wire, so a
+  // live session's `config.brand` is never absent -- the only configs without one are the ones this
+  // repository hand-builds in tests and scripted doubles. A `?? WINTER_BRAND` at forty call sites
+  // would make "a reader forgot to thread the brand" indistinguishable from "this session is
+  // Winter", which is precisely the failure the profile exists to make impossible. One fallback,
+  // one place, and every consumer below is handed a real profile.
+  const brand = config.brand ?? WINTER_BRAND;
+  const winterHome = opts.winterHome ?? config.winterHome ?? resolveWinterHome(env, brand);
   const warnings: string[] = [];
   const settingSources: SettingSource[] | undefined = config.settingSources;
 
@@ -500,6 +512,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const resolved = await resolveSettingsDetailed({
     cwd: config.cwd,
     winterHome,
+    brand,
     env,
     ...(settingSources !== undefined ? { settingSources } : {}),
     // C1: the MANAGED tiers. Both were declared on the pinned `ResolveSettingsOptions` since T2 and
@@ -511,7 +524,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // WS-13c §5 / R-6c-16: the host-declared workspace-trust bit (RULING P5-A), which is what gates
     // an untrusted PROJECT tier's `modelSlots`/`preferredProviders`. It had no producer in
     // production, so the gate was unreachable in a live session -- a cloned repository's
-    // `.winter/settings.json` could have mapped `cheap` to the most expensive model in the catalog.
+    // a project `settings.json` could have mapped `cheap` to the most expensive model in the catalog.
     // Passed here rather than derived a second time: `defaultTrustSource(config)` (below, and in
     // engine.ts) reads exactly this field, so the two cannot disagree.
     ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
@@ -560,6 +573,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const skillIndex = SkillIndex.build({
     cwd: config.cwd,
     winterHome,
+    brand,
     ...(settingSources !== undefined ? { settingSources } : {}),
     plugins: pluginSkillContributions(plugins.bundles),
     ...(disableBundledSkills !== undefined ? { disableBundledSkills } : {}),
@@ -615,6 +629,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const commandResolver = FilesystemCommandResolver.build({
     cwd: config.cwd,
     winterHome,
+    brand,
     ...(settingSources !== undefined ? { settingSources } : {}),
     skills: skillIndex,
     plugins: pluginCommandContributions(plugins.bundles),
@@ -643,9 +658,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // the engine's (it prepends `{origin:"explicit"}`); these are the three filesystem/settings tiers
   // that follow it. ORDER 2-BEFORE-3 MATTERS: both may carry `origin:"project"`, and
   // `resolveMcpServerSources` breaks a within-origin tie by array order, so a project settings.json
-  // entry is offered before the ambient `.winter/mcp.json`.
+  // entry is offered before the ambient project `mcp.json`.
   const settingsMcp = settingsMcpServerSources(resolved.perSource);
-  const projectMcp = loadProjectMcpConfig({ cwd: config.cwd, ...(settingSources !== undefined ? { settingSources } : {}) });
+  const projectMcp = loadProjectMcpConfig({ cwd: config.cwd, brand, ...(settingSources !== undefined ? { settingSources } : {}) });
   for (const rejection of [...settingsMcp.rejected, ...projectMcp.rejected]) {
     // n3 (whole-branch review): a SENTENCE, not `JSON.stringify` of an internal record. This line
     // is the only thing an operator ever sees about a server that did not start, and it reached
@@ -659,6 +674,23 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // (10) THE ASSEMBLER (Lane C). Its `home` is the resolved winter root and its `settings` is the
   // post-OVERLAY_NEVER_KEYS effective getter (rider 24, asserted above).
   const systemPromptAssembler = createSystemPromptAssembler({ home: winterHome, settings: settingsGetter });
+
+  // (10b) THE TWO PROCESS-LEVEL SURFACES A BRAND CANNOT REACH BY PARAMETER (P7a, D19).
+  //
+  // Both are module-load-time state that predates any session's config, and both are wrong for a
+  // reuser if left alone: the standing server's two canonical twins are REGISTERED under Winter's
+  // own `mcp__<server>__*` spelling (a descriptor file runs at import), and every adapter's
+  // `User-Agent`/`originator` reads a module-level product token. Installed here, once, and
+  // withdrawn by `dispose()` below -- the same register-then-withdraw lifecycle this module already
+  // uses for the skill runtime and plugin agents.
+  //
+  // NO-OPS UNDER `WINTER_BRAND` by construction (every rename is `from === to`; the identity is the
+  // value already installed), so an unbranded session touches neither.
+  const disposeStandingServerBrand = rebrandStandingServerTools(
+    Object.entries(canonicalAliases(brand)).map(([native, target]) => ({ from: WINTER_CANONICAL_ALIASES[native] as string, to: target })),
+    brand.mcpServerName,
+  );
+  const disposeIdentity = setWinterIdentity({ product: brand.packageName, codexOriginator: brand.codexOriginator });
 
   // (11) COMPACTION (Lane K). Registered unconditionally: with no controller the engine never
   // auto-compacts and `/compact` answers "no compaction controller", which is a permanent
@@ -746,6 +778,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const styleForWarning = !isAuthoredPromptRegion(config.systemPrompt) ? null : resolveOutputStyle(initOutputStyle, {
     cwd: config.cwd,
     home: winterHome,
+    brand,
     trustedWorkspace,
     ...(settingSources !== undefined ? { settingSources } : {}),
   });
@@ -1332,6 +1365,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       credentialProbesDisposed = true;
       clearSkillSessionRuntime(skillRuntimeKey);
       clearPluginAgents(config.sessionId);
+      // P7a (D19): give the two process-level surfaces back. Both disposers are identity-checked,
+      // so a teardown that races another session's install is a no-op rather than a clobber.
+      disposeStandingServerBrand();
+      disposeIdentity();
     },
   };
 }

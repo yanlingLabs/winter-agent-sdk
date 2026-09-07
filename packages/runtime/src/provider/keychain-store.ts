@@ -7,7 +7,9 @@
 // call it accidentally.
 //
 // The store resolves ONE credential per provider/account: `account = "<providerId>:<accountId>"`,
-// JSON-encoded `CredentialMaterial`, service from `config.keychainService ?? "com.winter.core"`.
+// JSON-encoded `CredentialMaterial`, service from the session's own `brand.keychainService`
+// (P7a/D19/R-7a-8: the SINGLE source -- see `session-provider.ts`'s keychain block), falling back to
+// `DEFAULT_KEYCHAIN_SERVICE` for a caller that supplies none.
 // That retires the single fixed secret name a per-provider layer cannot live with -- two accounts on
 // the same provider, or two providers at once, need two records.
 //

@@ -1322,8 +1322,10 @@ function foldResult(result: ToolResultPayload): EngineToolResult {
 export interface RegistryToolExecutorDeps {
   sessionId: string;
   home: string;
-  /** Phase 5 fix wave, I1: the resolved `~/.winter` root -- see `ToolExecutionContext.winterHome`. */
+  /** Phase 5 fix wave, I1: the resolved winter root -- see `ToolExecutionContext.winterHome`. */
   winterHome?: string;
+  /** P7a (D19): the session's resolved brand -- see `ToolExecutionContext.brand`. */
+  brand?: BrandProfile;
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
   // SAME live value this reads, so a tool call made after a worktree switch sees the new cwd.
   getCwd: () => string;
@@ -1409,6 +1411,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         home: deps.home,
         // I1: forwarded so a tool naming Winter's own storage uses the RESOLVED root, not the OS home.
         ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
+        ...(deps.brand !== undefined ? { brand: deps.brand } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,
         emitFrame: deps.emitFrame,
