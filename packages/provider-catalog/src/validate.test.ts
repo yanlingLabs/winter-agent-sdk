@@ -270,6 +270,79 @@ describe("validateCatalog — endpoint hygiene (R6-11: generated endpoints are i
   });
 });
 
+// --- P7a (Lane D): the PER-TENANT rows — WS-13b §2/§10 --------------------------------------------
+//
+// `azure-ai` and `oci` have real, documented public APIs whose base URL is the OPERATOR'S OWN
+// resource or region. The row therefore ships NO endpoint and the host supplies one; these are the
+// rules that keep "ships no endpoint" from quietly becoming "ships a placeholder".
+describe("WS-13b §2/§10: a `requiresUserEndpoint` row ships no endpoint and documents its shape", () => {
+  const perTenant = (over: Partial<WinterProviderDescriptor> = {}): WinterProviderDescriptor =>
+    baseProvider({
+      requiresUserEndpoint: true,
+      endpointTemplate: "https://<resource>.services.ai.example/openai/v1",
+      defaultEndpoints: {},
+      ...over,
+    });
+
+  test("ACCEPTS the shape the two shipped rows use: `requiresUserEndpoint: true`, a template, and an empty `defaultEndpoints`", () => {
+    expect(validateCatalog(baseCatalog({ providers: [perTenant()] })).ok).toBe(true);
+  });
+
+  test("a `requiresUserEndpoint` row with NO `endpointTemplate` is refused — the refusal has nothing to name", () => {
+    const row = perTenant();
+    delete (row as { endpointTemplate?: string }).endpointTemplate;
+    const errors = expectRejected(baseCatalog({ providers: [row] }), "required on a `requiresUserEndpoint` row");
+    expect(errors.some((e) => e.code === "endpoint-template-missing")).toBe(true);
+  });
+
+  test("a BRACKETED sentinel in `defaultEndpoints.api` is refused — and NOT merely because it fails to parse", () => {
+    // Two independent refusals fire on this row, which is the point: the URL check would catch this
+    // one on its own, so a rule that only ever ran on unparseable strings would look correct here
+    // and be wrong on the next test's row.
+    const errors = expectRejected(
+      baseCatalog({ providers: [perTenant({ defaultEndpoints: { api: "https://<resource>.services.ai.example/openai/v1" } })] }),
+      "must ship NO `api` endpoint at all",
+    );
+    expect(errors.some((e) => e.code === "endpoint-sentinel")).toBe(true);
+  });
+
+  test("a PLAUSIBLE placeholder is refused too — the rule is presence, not shape (the dangerous case)", () => {
+    // `https://tenant.example/v1` parses, has no userinfo, no query and an https scheme: every
+    // existing endpoint-hygiene rule passes it. `connectionFrom` would then copy it into a
+    // connection profile for this multi-provider adapter and the runtime would CALL it. This is the
+    // case a shape-based reading of "a sentinel is refused as usable" would miss entirely.
+    const catalog = baseCatalog({ providers: [perTenant({ defaultEndpoints: { api: "https://tenant.example/v1" } })] });
+    const errors = expectRejected(catalog, "must ship NO `api` endpoint at all");
+    expect(errors.filter((e) => e.path.startsWith("providers[0].defaultEndpoints")).map((e) => e.code)).toEqual(["endpoint-sentinel"]);
+  });
+
+  test("a NON-`api` endpoint is still allowed on a per-tenant row — only the one the runtime copies is refused", () => {
+    expect(validateCatalog(baseCatalog({ providers: [perTenant({ defaultEndpoints: { console: "https://portal.example/ai" } })] })).ok).toBe(true);
+  });
+
+  test("an `endpointTemplate` WITHOUT `requiresUserEndpoint` is refused — a row that ships an endpoint has nothing to fill in", () => {
+    const errors = expectRejected(
+      baseCatalog({ providers: [baseProvider({ endpointTemplate: "https://<resource>.example/v1" })] }),
+      "is only meaningful on a `requiresUserEndpoint` row",
+    );
+    expect(errors.some((e) => e.code === "endpoint-template-orphan")).toBe(true);
+  });
+
+  test("`requiresUserEndpoint: false` stays refused — absence is how a row says its endpoint is usable", () => {
+    expectRejected(baseCatalog({ providers: [baseProvider({ requiresUserEndpoint: false as unknown as true })] }), "expected `true` or absence");
+  });
+
+  test("the SCHEMA carries both keys — it is `additionalProperties: false`, so a shipped row would be refused by the cross-language contract without them", () => {
+    const props = (catalogSchema as unknown as { $defs: { WinterProviderDescriptor: { additionalProperties: boolean; properties: Record<string, unknown> } } }).$defs.WinterProviderDescriptor;
+    expect(props.additionalProperties).toBe(false);
+    expect(Object.keys(props.properties)).toContain("requiresUserEndpoint");
+    expect(Object.keys(props.properties)).toContain("endpointTemplate");
+    // `const: true` rather than `type: "boolean"` — the schema says the same thing the validator
+    // does, that the negative is not spellable.
+    expect((props.properties["requiresUserEndpoint"] as { const?: unknown }).const).toBe(true);
+  });
+});
+
 describe("scanForSecrets — descriptors never contain secrets (WS-13 §6, R6-10)", () => {
   test("rejects a credential-shaped FIELD NAME regardless of its value", () => {
     for (const key of ["apiKey", "api_key", "secret", "token", "password", "privateKey", "client_secret", "authorization"]) {

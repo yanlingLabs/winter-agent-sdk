@@ -92,6 +92,15 @@
           "description": "Generated endpoints are IMMUTABLE (R6-11). An EMPTY object is legal and meaningful: Azure/Bedrock/Vertex endpoints are region-, deployment- or project-templated and have no reviewable default. No userinfo, no query string.",
           "additionalProperties": { "type": "string", "format": "uri", "pattern": "^https?://[^?#@]*$" }
         },
+        "requiresUserEndpoint": {
+          "const": true,
+          "description": "P7a (WS-13b §2/§10): this provider's base URL is PER-TENANT, so the row ships none and a host/user supplies one. Only `true` is spellable — absence already means \"the endpoint is usable as shipped\". The in-repo validator additionally requires `endpointTemplate` and REFUSES any `defaultEndpoints.api` on such a row (a sentinel standing in for an endpoint is still an endpoint the runtime would call)."
+        },
+        "endpointTemplate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "P7a (WS-13b §2/§10): the DOCUMENTED SHAPE of the per-tenant base URL, e.g. \"https://<resource>.services.ai.azure.com/openai/v1\". Documentation only — never sent, never parsed as a URL; it is what the runtime's `endpoint-required` refusal names. Meaningful only beside `requiresUserEndpoint: true`, which the in-repo validator enforces in both directions."
+        },
         "modelDiscovery": { "enum": ["none", "openai-models", "provider-native", "local"] },
         "liveCatalogAuthority": { "enum": ["authoritative", "partial", "unknown"] },
         "adapterId": { "type": "string", "minLength": 1 },
