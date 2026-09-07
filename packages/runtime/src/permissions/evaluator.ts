@@ -52,6 +52,9 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // field mapping (see that module's own header for why it lives there, not here).
 import { recognizeEditOperation, fileRulePathField, shellCommandOf } from "./edit-recognition.ts";
 import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, type ProtectedBrand } from "./protected.ts";
+// P7a fix r1 (Important-2): the reading for an evaluation context that carries no brand -- every
+// hand-built one in this package's tests, and a host driving the evaluator directly.
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 // Task 12 (WS-07 §10.1 step 2 / §6.5): the two auto/config.ts primitives evaluator.ts's own `auto`
 // mode arm and plan's classifier borrow need. This is the ONLY dependency evaluator.ts takes on
 // the auto/ package — the concrete AutoEngine implementation (auto/engine.ts) is never imported
@@ -698,9 +701,20 @@ function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext)
   if (entry.behavior !== "deny" || entry.source !== "managed") return false;
   const content = entry.ruleValue.ruleContent;
   if (typeof content !== "string") return false;
-  if (content === "~/.winter/projects" || content.startsWith("~/.winter/projects/")) return true;
+  // P7a fix r1 (Important-2): the HOME-ANCHORED form, derived rather than spelled.
+  //
+  // `buildBaselineDenyRules` emits `~/<brand.homeDirName>/projects` + `/**`, and under a rebrand
+  // with `<PREFIX>HOME` unset the resolved-root twin below is NOT emitted at all (the two anchors
+  // coincide and the dedupe drops it). So a literal `~/.winter/projects` here matched NO baseline
+  // entry for a branded session: the managed deny was never skipped, and WS-11 §1.3's documented
+  // edit-then-rerun loop -- write the persisted workflow script, re-invoke with `{scriptPath}` --
+  // was denied outright. It failed CLOSED, so a break rather than a hole; it still silently removed
+  // a documented capability under exactly the feature this lane ships. Byte-identical under the
+  // default brand: `WINTER_BRAND.homeDirName` IS the segment the literal spelled.
+  const homeAnchor = `~/${(ctx.brand ?? WINTER_BRAND).homeDirName}/projects`;
+  if (content === homeAnchor || content.startsWith(`${homeAnchor}/`)) return true;
   // Phase 5 fix wave, I1: the RESOLVED-root twin of the same baseline deny. `buildBaselineDenyRules`
-  // now emits `//<winterHome>/projects/**` alongside the `~/.winter/...` form, and the P5-B carve-out
+  // now emits `//<winterHome>/projects/**` alongside the home-anchored form, and the P5-B carve-out
   // has to skip BOTH or the new floor closes the one subtree WS-11 §1.3 requires to stay
   // model-writable -- the documented edit-then-rerun loop, broken as collateral damage.
   // `//`-anchored (paths.ts's filesystem-root form), which is why the literal below carries it.

@@ -49,6 +49,16 @@ import { sessionTempDir, resolveTempBase } from "./paths/temp.ts";
 import { resolveSessionKeychainService } from "./provider/session-provider.ts";
 import { WINTER_CODE_PRESET, winterCodePresetNames } from "./context/winter-code-preset.ts";
 import { pluginManifestDirs, CLAUDE_PLUGIN_MANIFEST_DIR } from "./plugins/manifest.ts";
+import { buildBaselineDenyRules } from "./engine.ts";
+import {
+  workflowScriptCarveOutSkip,
+  NO_OPINION_HOOK_STAGE,
+  NO_OPINION_PROMPT_STAGE,
+  NO_OPINION_AUTO_ENGINE,
+  NO_SPECIAL_CHECKS,
+  type EvaluationContext,
+} from "./permissions/evaluator.ts";
+import { emptyRuleSet } from "./permissions/ruleset.ts";
 
 // --- the host's own product ----------------------------------------------------------------------
 
@@ -266,6 +276,49 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     // An UNBRANDED session that chose nothing still chooses nothing -- absent, never Winter's name
     // substituted in, which is what keeps `authRef` byte-identical to before P7a.
     expect(resolveSessionKeychainService({ sessionId: "s", cwd: process.cwd(), model: "winter-test/echo" } as RuntimeConfig)).toBeUndefined();
+  });
+
+  test("P7a fix r1 (I-2): the P5-B workflow-script carve-out follows the brand, so a branded session can still write its own scripts", () => {
+    // WS-11 §1.3's edit-then-rerun loop -- persist the script, `Edit` it, re-invoke with
+    // `{scriptPath}` -- rests on the managed `<home>/projects/**` write deny being SKIPPED for a
+    // path inside the carve-out. `isProjectsBaselineDeny` matched `~/.winter/projects` literally,
+    // while `buildBaselineDenyRules` now emits `~/.acme/projects` for a branded session and the
+    // resolved-root twin is not emitted at all when `<PREFIX>HOME` is unset (the anchors coincide).
+    // So every baseline entry failed the test, nothing was skipped, and the loop was denied outright.
+    const home = "/synthetic/home/tester";
+    const winterHome = join(home, ACME.homeDirName);
+    const scriptPath = join(winterHome, "projects", "key", "uuid", "workflows", "scripts", "wf-abc.js");
+    const entries = buildBaselineDenyRules(undefined, ACME);
+
+    // The branded floor names the branded directory, and Winter's own is absent from it.
+    const contents = entries.map((e) => e.ruleValue.ruleContent);
+    expect(contents.some((c) => typeof c === "string" && c.startsWith("~/.acme/projects"))).toBe(true);
+    expect(contents.some((c) => typeof c === "string" && c.includes(".winter"))).toBe(false);
+
+    const ctx: EvaluationContext = {
+      policy: { mode: "default", version: 0, rules: emptyRuleSet() },
+      cwd: "/work",
+      sessionRoot: "/work",
+      home,
+      trustedWorkspace: false,
+      brand: ACME,
+      hookStage: NO_OPINION_HOOK_STAGE,
+      promptStage: NO_OPINION_PROMPT_STAGE,
+      autoEngine: NO_OPINION_AUTO_ENGINE,
+      specialChecks: NO_SPECIAL_CHECKS,
+    };
+    const skip = workflowScriptCarveOutSkip({ toolName: "Write", input: { file_path: scriptPath } }, ctx);
+    expect(skip, "a write inside the carve-out must earn a skip predicate at all").toBeDefined();
+    // EVERY managed `<home>/projects…` deny is skipped -- that is what unblocks the loop.
+    const projectsDenies = entries.filter((e) => typeof e.ruleValue.ruleContent === "string" && (e.ruleValue.ruleContent as string).startsWith("~/.acme/projects"));
+    expect(projectsDenies.length).toBeGreaterThan(0);
+    expect(projectsDenies.every((e) => skip!(e))).toBe(true);
+    // ...and nothing ELSE is: the backups floor and the run-dir denials are untouched by the skip.
+    const others = entries.filter((e) => typeof e.ruleValue.ruleContent === "string" && !(e.ruleValue.ruleContent as string).startsWith("~/.acme/projects"));
+    expect(others.some((e) => skip!(e))).toBe(false);
+
+    // A sibling under the same session -- a transcript, not a script -- earns no carve-out at all.
+    expect(workflowScriptCarveOutSkip({ toolName: "Write", input: { file_path: join(winterHome, "projects", "key", "uuid", "transcript.jsonl") } }, ctx)).toBeUndefined();
   });
 
   test("the preset's NAME follows the brand; its TEXT does not move by one byte", () => {
