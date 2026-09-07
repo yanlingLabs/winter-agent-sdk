@@ -959,9 +959,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     const raw = settingsGetter()?.modelSlots;
     if (raw === undefined) return undefined;
     const validated = validateModelSlots(raw, modelSlotsLookup);
-    // `ok: false` is "no custom slots" here rather than a warning: the provenance record
-    // (`modelSlotsIgnored: "invalid"` / `"untrusted-project"`) belongs to the settings cascade, which
-    // sees WHICH tier the set came from -- this module sees only the resolved value.
+    // `ok: false` is "no custom slots" HERE -- this is a hot getter, called on every render, and a
+    // warning pushed from it would repeat once per generation. The user-facing record is emitted
+    // ONCE at session start, beside the `claude-pinned` block below; the TIER-scoped half
+    // (`modelSlotsIgnored: "untrusted-project"`) stays the settings cascade's, which is the only
+    // layer that sees which tier the set came from.
     return validated.ok ? validated.slots : undefined;
   };
 
@@ -1052,6 +1054,31 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     warnings.push(
       "settings: `modelSlots` is configured but this session's model is a Claude model, whose Agent-tool options are pinned to fable/opus/sonnet/haiku (WS-13c D25) -- the custom set was ignored (modelSlotsIgnored: \"claude-pinned\")",
     );
+  }
+
+  // WS-13c §5: "An invalid set is ignored whole and RECORDED with the failing entry." P6.6 fix wave
+  // (whole-branch Important-2): it was ignored whole and recorded NOWHERE -- each layer deferred the
+  // record to the other. This module read the validator's verdict and treated `ok: false` as "no
+  // custom slots"; `resolve.ts` deliberately does not validate (validation is the runtime's job, and
+  // the cascade cannot see a value's VALIDITY, only its tier), so the `"invalid"` member of the
+  // `modelSlotsIgnored` union had no producer anywhere. A user who configured four options, sees the
+  // default lineup and is told nothing cannot tell a typo from a bug.
+  //
+  // Mirrors the `claude-pinned` block above exactly: evaluated ONCE, at session start, from a fresh
+  // read rather than from `customSlots()` (whose whole point is that it collapses an invalid set to
+  // `undefined`, which is indistinguishable here from no set at all). The two are naturally
+  // exclusive -- `claude-pinned` fires only when the set is VALID and the session is Claude -- so a
+  // session never collects both.
+  if (slotSurfaceLive) {
+    const rawModelSlots = settingsGetter()?.modelSlots;
+    if (rawModelSlots !== undefined) {
+      const validated = validateModelSlots(rawModelSlots, modelSlotsLookup);
+      if (!validated.ok) {
+        warnings.push(
+          `settings: \`modelSlots\` is configured but the set is invalid, so it was ignored whole and the family's default lineup is in use (modelSlotsIgnored: "invalid") -- ${validated.reason}`,
+        );
+      }
+    }
   }
 
   const settingsRules = buildSettingsRuleSeed(resolved, {

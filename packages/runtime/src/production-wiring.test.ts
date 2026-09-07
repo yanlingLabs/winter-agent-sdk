@@ -1019,6 +1019,54 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(0);
       // ...and the facing name resolves through §4 like any other slot.
       expect(wiring.engineOptions.resolveSlot!("master", undefined)).toMatchObject({ ok: true, canonicalModelId: "gpt-6-astra" });
+      // ...and nothing is recorded as ignored: a VALID set is not an invalid one (Important-2's guard
+      // must not fire on the happy path).
+      expect(wiring.warnings.filter((w) => w.includes("modelSlotsIgnored"))).toHaveLength(0);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // WS-13c §5: "An invalid set is ignored whole and RECORDED with the failing entry." P6.6 fix wave
+  // (whole-branch Important-2, probe P-I): it WAS ignored whole and recorded nowhere -- the
+  // `"invalid"` member of the `modelSlotsIgnored` union had no producer in either layer, so a user
+  // whose slot name failed the grammar saw the family default lineup and was told nothing.
+  test("an INVALID custom set is ignored whole AND recorded through the warnings channel, quoting the failing entry", async () => {
+    // Capital `M` fails the slot-name grammar (`^[a-z0-9][a-z0-9.-]{0,31}$`), so the whole set goes.
+    // A catalogued gpt session, so the fallback is the FAMILY's lineup (an uncatalogued own-model
+    // session would fall back to `own-model` and prove nothing about the family default).
+    writeSettings(join(home), { modelSlots: [{ name: "Master", model: "gpt-6-astra" }] });
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-invalid"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      // Ignored WHOLE: the family's own lineup, never a partial set built from the valid entries.
+      const active = wiring.engineOptions.activeSlotSet!(undefined);
+      expect(active.source).toBe("family-default");
+      expect(active.slots.map((s) => s.name)).not.toContain("Master");
+      // RECORDED: one warning, naming the provenance and quoting the validator's own reason so the
+      // user can see WHICH entry failed and why.
+      const recorded = wiring.warnings.filter((w) => w.includes('modelSlotsIgnored: "invalid"'));
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!).toContain("Master");
+      expect(recorded[0]!).toContain("slot name grammar");
+      // ...and NOT the claude-pinned record: this session is not on a Claude model, and the two
+      // blocks must stay exclusive.
+      expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(0);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a VALID set on a claude session records `claude-pinned` and NOT `invalid` -- the two records never both fire", async () => {
+    writeSettings(join(home), { modelSlots: [{ name: "master", model: "gpt-6-astra" }] });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-slots-pinned-only", cwd, model: "anthropic/claude-opus-5", winterHome: home, settingSources: ["user"], provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" } } } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+      provider: hermetic,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.includes("claude-pinned"))).toHaveLength(1);
+      expect(wiring.warnings.filter((w) => w.includes('modelSlotsIgnored: "invalid"'))).toHaveLength(0);
     } finally {
       wiring.dispose();
     }
