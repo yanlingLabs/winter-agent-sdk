@@ -698,7 +698,167 @@ const WIDENING_ROWS: ConformanceRow[] = [
   },
 ];
 
-const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS, ...WIDENING_ROWS];
+// --- P6.6 (WS-13c): model families and ranked slots ------------------------------------------------
+//
+// WS-13c amends WS-01 §6, WS-03 §7, WS-06 §3.3, WS-10 §3/§7 and WS-13 §8 (spec §11) rather than
+// replacing any of them, so — like WS-13b before it — its acceptance obligations are a FIFTH group in
+// this same table under this same set of guards, not a table of their own. §10 states nine numbered
+// bullets plus three named SendMessage cases (WS13c-SM1..3, spelled out in full in §8); every row
+// below cites a REAL test found by grepping the merged tree, not by trusting a lane report's prose
+// summary of one (several summaries paraphrase a title well enough to break a substring match).
+// Several of Lane A's and Lane D's own tests are already prefixed `WS13c-N:` in their titles — the
+// implementer named the row before this task existed, which is the strongest citation available.
+const WS13C = "WS-13c §10 (families)";
+
+const MODEL_FAMILIES_ROWS: ConformanceRow[] = [
+  {
+    id: "WS13c-1",
+    spec: WS13C,
+    bullet: "the enum per family: a `gpt` session advertises `astra, sol, terra, luna`; a `claude` session (Winter-driven) advertises the pinned four; an `other` session advertises its own model as one slot",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "a gpt session advertises astra, sol, terra, luna as family-default" },
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "a claude session renders the pinned four and no other name" },
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "a family without slots renders the session's own model as one slot" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-1: the Agent tool's model enum is rendered from the active family (gpt session)" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-1: a family with no curated slots advertises the session's own model as the single slot" },
+    ],
+  },
+  {
+    id: "WS13c-2",
+    spec: WS13C,
+    bullet: "the \"no false information\" tripwire: no non-`claude` active set ever contains a reserved Claude name; a custom slot named `fable` is rejected whole",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-2: a claude session advertises the pinned four and nothing else" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "no NON-claude family uses a reserved Claude name (D25: never false information)" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a reserved Claude name on another family is refused" },
+      { file: `${SDK}/settings/model-slots.test.ts`, testName: "a bad SECOND entry refuses the set whole — the valid first entry is not returned partially" },
+    ],
+    note: "The custom-slot citation exercises `opus`, not the bullet's own `fable` example — both are members of `CLAUDE_RESERVED_SLOT_NAMES` and refused by the identical check (`model-slots.ts`'s `CLAUDE_RESERVED_SLOT_NAMES.includes(name)`), so it is the same case the bullet names under a different reserved name. `model-slots.test.ts` is Lane B's file, not this task's, so the fix is naming this rather than editing it in.",
+  },
+  {
+    id: "WS13c-3",
+    spec: WS13C,
+    bullet: "re-render at `set_model` across families and at a `modelSlots` change, both at the quiescent boundary, with no restart",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-3: a set_model across families re-renders at the quiescent boundary, with no restart" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-3: a changed settingsVersion re-renders the enum at the next turn, with no restart and no model change" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "settingsVersion tracks the resolved view's identity — and nothing re-resolves it mid-session yet" },
+    ],
+  },
+  {
+    id: "WS13c-4",
+    spec: WS13C,
+    bullet: "acceptance: an active-set name; a unique foreign name (`luna` from a `claude` session); an ambiguous foreign name (`flash` from a `gpt` session) → `ambiguous-slot-name`; an unknown name → the WS-01 §6 error",
+    status: "new",
+    citations: [
+      { file: `${CATALOG}/families.test.ts`, testName: "an active-set name is advertised" },
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "a unique foreign name resolves; an ambiguous one refuses with both candidates; the Claude names always go to claude" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-4: an ambiguous foreign name refuses with its own code, never a substitution" },
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "an unknown name is a typed unknown-slot refusal, never a substitution" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "an `unknown-slot` answer passes the requested string through -- the registry stays the authority on aliases and upstream ids" },
+    ],
+  },
+  {
+    id: "WS13c-5",
+    spec: WS13C,
+    bullet: "resolution order and the `slot-unservable` refusal that names what would serve; `requestedModel`/`effectiveModel`/`effectiveProvider`/`slot` recorded on the child",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "vendor row first, subscription before token, then preferred, then the rest" },
+      { file: `${RUNTIME}/provider/slots.test.ts`, testName: "a disabled provider is skipped and named in wouldServe" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-5: an unservable slot is the Agent tool's own typed error, naming the code and what would have served it" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-4/5: a slot name becomes the catalog key that serves it, and the child records the slot it named" },
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "Fix round 1 (coordinator follow-up): recordModelEffort stamps BOTH effectiveProvider and slot from the child's own materialised identity, and omits both keys entirely when absent" },
+    ],
+  },
+  {
+    id: "WS13c-6",
+    spec: WS13C,
+    bullet: "custom slots: user tier honoured; untrusted project tier ignored and recorded; invalid set ignored whole; Claude session ignores and records `claude-pinned`",
+    status: "new",
+    citations: [
+      { file: `${SDK}/settings/resolve.test.ts`, testName: "untrusted workspace: the project's modelSlots/preferredProviders are dropped, the user tier's own values survive, the drop is recorded on the project source, and the RAW project entry still carries what the repo actually committed" },
+      { file: `${SDK}/settings/resolve.test.ts`, testName: "trustedWorkspace: true — the project tier wins with ordinary precedence, and nothing is recorded as ignored" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "a claude session ignores custom slots and RECORDS the ignore through the warnings channel" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "a NON-claude session honours the same custom set, and no ignore is recorded" },
+      { file: `${SDK}/settings/model-slots.test.ts`, testName: "a bad SECOND entry refuses the set whole — the valid first entry is not returned partially" },
+    ],
+    note: "\"invalid set ignored whole\" is proven at the validator (the fifth citation, and `model-slots.test.ts`'s WHOLE-SET describe more broadly): a malformed entry drops the ENTIRE set, never a partially-filtered one. No WIRING-level test feeds `buildProductionWiring` an invalid `modelSlots` and asserts the session falls back to `family-default`, or that anything ever actually records `modelSlotsIgnored: \"invalid\"` — `production-wiring.ts`'s own comment assigns that provenance to \"the settings cascade\", and `resolve.ts` does not derive it either (`resolve.test.ts` proves only that the key can never be SPOOFED from a file, not that it is ever genuinely produced). Flagged here rather than papered over with an invented citation.",
+  },
+  {
+    id: "WS13c-7",
+    spec: WS13C,
+    bullet: "`listModelFamilies()` shape, `active.source`, and `servable` tracking credentials and `providers.<id>.enabled`",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/family-listing.test.ts`, testName: "families carry their slots and every model grouped by canonical id with per-row servable flags" },
+      { file: `${RUNTIME}/engine.test.ts`, testName: "WS13c-7: `list_model_families` reports the family the session is CURRENTLY on, not the one it started on" },
+      { file: `${SDK}/query.test.ts`, testName: "listModelFamilies(): resolves the listing the runtime answers over the list_model_families control request" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "R-6c-27: a cold listing reports `servable: false` for a provider nobody has probed, and true for the session's own" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "`list_model_families` answers with the session's OWN active set" },
+    ],
+  },
+  {
+    id: "WS13c-SM1",
+    spec: WS13C,
+    bullet: "parent on `gpt` spawns a child with `sonnet` → parent `set_model` to a `claude` model → `SendMessage` resumes the child → the child's effective model and provider are unchanged",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM1: a claude-slot child resumed after the parent moved to claude keeps its own provider and model" },
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "Fix round 1 (coordinator follow-up): recordModelEffort stamps BOTH effectiveProvider and slot from the child's own materialised identity, and omits both keys entirely when absent" },
+    ],
+  },
+  {
+    id: "WS13c-SM2",
+    spec: WS13C,
+    bullet: "the mirror (parent on `claude`, child on `luna`, parent switches to `gpt`)",
+    status: "new",
+    citations: [{ file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM2: the mirror -- a luna child resumed after the parent moved from claude to gpt" }],
+  },
+  {
+    id: "WS13c-SM3",
+    spec: WS13C,
+    bullet: "the child's provider credential removed between spawn and resume → typed refusal, the parent's turn continues",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM3: a child whose provider lost its credential is a typed refusal on resume, never the parent's provider (a REFUSED re-resolution)" },
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM3: a child whose provider lost its credential is a typed refusal on resume, never the parent's provider (an UNRESOLVABLE re-resolution)" },
+    ],
+  },
+  {
+    id: "WS13c-8",
+    spec: WS13C,
+    bullet:
+      "catalog integrity: families data generated with zero drift; every row has `modelFamily`/`canonicalModelId`; the normaliser's fixtures (`DeepSeek-V4-Pro`, `us.anthropic.claude-opus-5-v1:0`, `claude-haiku-4-5-20251001`, `openai/gpt-oss-120b`, `MiniMax-M3`); slot rows exist; reserved names; no currency in descriptions",
+    status: "new",
+    citations: [
+      { file: `${CATALOG}/extract/pipeline.test.ts`, testName: "`buildCatalog()` and `mergeLayers(...)` produce the identical catalog" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "every model row carries a non-empty `modelFamily` and `canonicalModelId`" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "the normaliser reproduces these LIVE rows, including the one that needs an overlay override" },
+      { file: `${CATALOG}/families.test.ts`, testName: "canonicalModelIdOf — the provider's spelling removed, the vendor identity kept" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "every slot's canonical id resolves to at least one SERVABLE row" },
+    ],
+    note: "The fourth citation is a `describe` title rather than a `test`: it is the block whose `test.each` table carries all five of the bullet's own fixture strings (including `us.anthropic.claude-opus-5-v1:0`, the one the third citation's live-catalog proof does not reach), so citing it names the whole table rather than one arbitrarily-chosen row of it. Reserved names and 'no currency in descriptions' are catalog-level checks proven in `validate.test.ts`'s WS-13c block (`slot-name-reserved`, `slot-description-currency`; see WS13c-2's own citations for the reserved-name half) — not re-cited here to stay inside the 5-citation budget.",
+  },
+  {
+    id: "WS13c-9",
+    spec: WS13C,
+    bullet: "D28 in Winter alone: a `claude` slot resolves only to `anthropic` with an api-key or Console OAuth credential; a claude.ai OAuth credential ref never serves it",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "the resolver reaches the real catalog: `opus` from a non-claude session resolves into the claude family's vendor row" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "the credential view learns from the child-provider probe, and a slot nothing can serve becomes slot-unservable" },
+      { file: `${PROVIDER_RUNTIME}/adapters/anthropic/console-oauth.test.ts`, testName: "D13/D14: the CONSOLE host is what D20 speaks to — the consumer subscription host appears nowhere in the shipped constants" },
+      { file: `${RUNTIME}/provider/credential-api.test.ts`, testName: "`anthropic` runs the Console PKCE login and answers with the ref the record now occupies" },
+    ],
+    note: "\"Resolves only to anthropic\" is §4 step 3-i's VENDOR-LEADS rule, not an exclusion of every other provider: the shipped catalog carries other rows for `claude-opus-5` too (the second citation's own `rows.length` assertion is `toBeGreaterThan(1)`), and they serve the slot when `anthropic` is disabled or unpreferred — a different, legal path §4 already covers (WS13c-5). What D28 actually excludes is a CREDENTIAL KIND the resolver never even sees: `hasCredential` is presence-only, and the third/fourth citations pin that Winter's own credential surface for `anthropic` can only ever be populated by an api-key or by Winter's OWN Console OAuth flow — never by a claude.ai (consumer subscription) credential, for which this repository has no acquisition path and no storable shape under any provider id. No test asks the resolver for a claude.ai-flavoured credential BY NAME, because there is no such `CredentialMaterial` to construct; these four, spanning `runtime` and `provider-runtime`, are the closest real proof and the ones the plan's own self-review pointed at.",
+  },
+];
+
+const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS, ...WIDENING_ROWS, ...MODEL_FAMILIES_ROWS];
 
 describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
   test("every row is covered, newly tested here, or deferred with a named owning-phase reasoning -- zero unexplained bullets", () => {
@@ -767,8 +927,10 @@ describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
   test("all three §13 acceptance groups are represented -- no numbered obligation group is silently missing", () => {
     const groups = new Set(ALL_ROWS.map((r) => r.spec));
     // P6.5 adds a fourth: WS-13b amends WS-13 rather than replacing it, so its rows live in this
-    // same table and under this same set of guards.
-    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)", WS13B]);
+    // same table and under this same set of guards. P6.6 adds a fifth the same way: WS-13c amends
+    // WS-01/WS-03/WS-06/WS-10/WS-13 rather than replacing any of them. `"WS-13b …"` sorts before
+    // `"WS-13c …"` (`"b"` < `"c"`), so WS13C is last.
+    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)", WS13B, WS13C]);
   });
 
   test("CI runs the catalog regeneration check and the OFFLINE source sync (WS13-C1's other half)", () => {
