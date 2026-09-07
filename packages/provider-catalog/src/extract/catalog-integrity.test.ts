@@ -525,11 +525,52 @@ describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers
     // credential to api.openai.com. `bedrock`/`vertex` are single-provider adapters and exempt --
     // their `api` is never copied into a connection, and Azure's is a deployment template the host
     // must supply, which is why `winter.azure-openai` is exempt from THIS half only.
+    //
+    // P7a: `requiresUserEndpoint` rows are exempt BY DECLARATION rather than by id. That is the
+    // whole difference the field buys -- an endpoint-less row used to be indistinguishable from a
+    // row that lost its endpoint, and the fallback-to-api.openai.com failure above is exactly what
+    // "indistinguishable" cost. Such a row cannot reach the adapter's vendor default at all: the
+    // runtime refuses with `endpoint-required` before a provider is built (see the companion
+    // assertion below).
     const missing = catalog.providers
-      .filter((p) => APPENDING.has(p.adapterId) && p.adapterId !== "winter.azure-openai")
+      .filter((p) => APPENDING.has(p.adapterId) && p.adapterId !== "winter.azure-openai" && p.requiresUserEndpoint !== true)
       .filter((p) => (p.defaultEndpoints["api"] ?? "").length === 0)
       .map((p) => p.id);
     expect(missing).toEqual([]);
+  });
+
+  // --- P7a (WS-13b §2/§10): the per-tenant rows ---------------------------------------------------
+  //
+  // The validator enforces the per-ROW rules (template required, no `api` endpoint, no orphan
+  // template). What it cannot see is whether the SHIPPED catalog's per-tenant set is the reviewed
+  // one, and whether those rows sit where the runtime's user-endpoint path can actually reach them.
+  test("the shipped per-tenant set is exactly the two reviewed rows, and each ships a template and no endpoint", () => {
+    const perTenant = catalog.providers.filter((p) => p.requiresUserEndpoint === true);
+    expect(perTenant.map((p) => p.id).sort()).toEqual(["azure-ai", "oci"]);
+    for (const row of perTenant) {
+      // Restated on the SHIPPED document rather than left to the validator: a regeneration that
+      // dropped the field would leave a row with a template and a live endpoint, which the validator
+      // would then reject -- but only if someone ran it, and this is the file that reads the artifact.
+      expect([row.id, row.endpointTemplate?.length ?? 0]).not.toEqual([row.id, 0]);
+      expect([row.id, row.defaultEndpoints["api"]]).toEqual([row.id, undefined]);
+      // `<...>` in the template is the operator's blank. A template with nothing to fill in is a
+      // fixed endpoint wearing the wrong field.
+      expect([row.id, /<[a-z-]+>/.test(row.endpointTemplate ?? "")]).toEqual([row.id, true]);
+    }
+  });
+
+  test("no per-tenant row can reach a GENERATED endpoint: its adapter serves several providers, so nothing vouches for a URL it never named", () => {
+    // The rule this pins is WS-13 §5 / R6-L one level up from the policy. `applyPrivilegedHeaders`
+    // keys on `policy.generated`, and a generated policy is built from an endpoint the CATALOG
+    // reviewed. A per-tenant row reviews none -- so if such a row sat alone on an adapter,
+    // `generatedBaseUrlForAdapter` would hand that adapter a compiled-in vendor default, and the
+    // operator's own tenant URL would be replaced by somebody else's reviewed host (or, worse, the
+    // row's own absence of one would fall back to it). Sharing the adapter is what makes the
+    // fallback structurally unreachable.
+    for (const row of catalog.providers.filter((p) => p.requiresUserEndpoint === true)) {
+      const siblings = catalog.providers.filter((p) => p.adapterId === row.adapterId);
+      expect([row.id, siblings.length > 1]).toEqual([row.id, true]);
+    }
   });
 
   test("every endpoint strip the mapper performed is RECORDED in the ledger with both strings", () => {
@@ -661,7 +702,10 @@ describe("WS-13b §2: the widened catalog", () => {
   test("the api-key pool is widened: at least 120 apikey-category providers are now rows, and none is a website-scrape transport", () => {
     const apiKeyRows = catalog.providers.filter((p) => p.admission.basis === "api-key");
     expect(apiKeyRows.length).toBeGreaterThanOrEqual(120);
-    for (const p of apiKeyRows) expect(p.defaultEndpoints["api"]).not.toMatch(/wp-admin|api-proxy|\/threads$/);
+    // `?? ""` rather than skipping the row: a per-tenant row (P7a) ships no `api` at all, and an
+    // empty string is the honest thing to run the scrape-transport check against -- it passes, and
+    // it keeps the loop total instead of silently narrowing the cohort it sweeps.
+    for (const p of apiKeyRows) expect(p.defaultEndpoints["api"] ?? "").not.toMatch(/wp-admin|api-proxy|\/threads$/);
   });
 
   test("a subscription- or free-priced row NEVER carries a token price — the basis and the pricing agree", () => {

@@ -500,6 +500,43 @@
       "scope": "llm"
     },
     {
+      "id": "azure-ai",
+      "displayName": "Azure AI Foundry",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "requiresUserEndpoint": true,
+      "endpointTemplate": "https://<resource>.services.ai.azure.com/openai/v1",
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a SPEC RULING, not a fetched document: the vendor page named in the citation has not been read for content by this repository, so the endpoint template and the api-key path are carried from this id's own P6.5 ledger entry rather than re-confirmed. Promotion needs the fetched page AND a live-gate pass",
+          "the endpoint is the OPERATOR'S OWN and is never reviewed by Winter — it is evaluated as a user endpoint, so no privileged header rides it and no descriptor vouches for where it points",
+          "no model row and no live gate case: nothing here has been driven against a real tenant, and the OpenAI-compatible dialect at this base is the vendor's documented claim rather than an observed one"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13b §10 — user ruling, 2026-09-06: \"`azure-ai` and `oci` are per-tenant endpoints → Winter exposes a USER-ENTERED ENDPOINT FIELD for them (a settings/credential-time value, the row stays on the shared adapter)\". The credential is the operator's own key against their own Azure AI Foundry resource, a user-minted key against a public documented API, which triggers none of WS-13b §1's exclusions. Vendor documentation: https://learn.microsoft.com/azure/ai-foundry. EVIDENCE TIER: spec-ruling — the ruling admits the PATH; the endpoint template is transcribed verbatim from this id's own P6.5 allowlist ledger entry (2026-09-06), and THIS repository has not fetched the vendor page for content. Upgrading to `fetched-document` is a reviewed commit that reads the page.",
+        "tier": "spec-ruling"
+      },
+      "scope": "llm"
+    },
+    {
       "id": "azure-openai",
       "displayName": "Azure OpenAI",
       "protocols": [
@@ -3846,6 +3883,43 @@
         "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
         "tier": "pinned-upstream"
       }
+    },
+    {
+      "id": "oci",
+      "displayName": "OCI Generative AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "requiresUserEndpoint": true,
+      "endpointTemplate": "https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1",
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a SPEC RULING, not a fetched document: the vendor page named in the citation has not been read for content by this repository, so the endpoint template and the api-key path are carried from this id's own P6.5 ledger entry rather than re-confirmed. Promotion needs the fetched page AND a live-gate pass",
+          "the endpoint is the OPERATOR'S OWN and is never reviewed by Winter — it is evaluated as a user endpoint, so no privileged header rides it and no descriptor vouches for where it points",
+          "no model row and no live gate case: nothing here has been driven against a real tenant, and the OpenAI-compatible dialect at this base is the vendor's documented claim rather than an observed one"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13b §10 — user ruling, 2026-09-06: \"`azure-ai` and `oci` are per-tenant endpoints → Winter exposes a USER-ENTERED ENDPOINT FIELD for them (a settings/credential-time value, the row stays on the shared adapter)\". The credential is the operator's own key against their own OCI tenancy, a user-minted key against a public documented API, which triggers none of WS-13b §1's exclusions. Vendor documentation: https://www.oracle.com/artificial-intelligence/generative-ai. EVIDENCE TIER: spec-ruling — the ruling admits the PATH; the endpoint template is transcribed verbatim from this id's own P6.5 allowlist ledger entry (2026-09-06), and THIS repository has not fetched the vendor page for content. Upgrading to `fetched-document` is a reviewed commit that reads the page.",
+        "tier": "spec-ruling"
+      },
+      "scope": "llm"
     },
     {
       "id": "ofoxai",

@@ -433,10 +433,10 @@ does not.
 | outcome | n | what it means |
 | --- | ---: | --- |
 | **admitted** as reviewed overlay rows | **29** | a vendor documentation page was fetched and read on 2026-09-06 **and** it names a fixed API root |
+| **admitted** as reviewed **per-tenant** rows (P7a) | **2** | `azure-ai`, `oci`: the endpoint is a per-tenant template, so the row ships **none** and the host supplies one (below) |
 | refused — out of **scope** | 14 | image, video, embedding, reranking or web-extraction services. Not held pending a document: more evidence would not admit them |
 | refused — **docs reached, no fixed endpoint** | 20 | a docs page answered 200 but states no base URL, or the host answered 403/530, or the vendor documents two hosts and no single base |
 | refused — **no public fixed host at all** (enterprise) | 9 | the inference host is per-deployment or per-tenant by design, or no docs page could be reached |
-| refused — endpoint is a **template** | 2 | `azure-ai`, `oci`: `https://<resource>…` / `https://…<region>…` is not an endpoint |
 
 For the 14 admitted from the probe list, **two independent sources agree on the base**: the vendor's
 own documentation page, and the base upstream's product catalog states in its `apiHint` at the pin.
@@ -451,11 +451,37 @@ base — one vendor wearing two ids. `hcnsec` and `helixmind` declare `format: "
 trusted; the vendor's doc is the tie-breaker and neither has a readable one. `muse-code` has no
 vendor doc at all — its recorded `website` is a GitHub repository URL.
 
-**Ruling carried from round 1:** `azure-ai` and `oci` have real documented public APIs and are
-refused only because `defaultEndpoints.api` is immutable generated data (R6-11) and a per-tenant
-template is not an endpoint. A **dedicated host-supplied-endpoint adapter shape**, of the kind
-`azure-openai` already has, is a **spine item for the fix wave**; both ids are admissible the day it
-exists.
+## The per-tenant rows: a row that ships NO endpoint (P7a, WS-13b §2/§10)
+
+`azure-ai` and `oci` have real documented public APIs and were refused through P6.5 for one reason:
+`defaultEndpoints.api` is immutable generated data (R6-11) and a per-tenant template
+(`https://<resource>.services.ai.azure.com/openai/v1`,
+`https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1`) is not an endpoint. The
+round-1 ruling deferred them to "a dedicated host-supplied-endpoint adapter shape". **The user's
+ruling of 2026-09-06 replaced that with a user-entered endpoint field**, and P7a ships it:
+
+| field | what it means |
+| --- | --- |
+| `requiresUserEndpoint: true` | the row ships **no** `api` endpoint at all. The validator refuses one — presence, not shape: a plausible placeholder parses, validates, and would be copied into a connection profile and called |
+| `endpointTemplate` | the documented shape, e.g. `https://<resource>.services.ai.azure.com/openai/v1`. **Never sent, never parsed as a URL** — it is documentation, and the only thing the runtime's typed `endpoint-required` refusal has to show a user |
+
+At runtime the host's `connection.baseUrl` is **required** and is evaluated as a **USER** endpoint
+(`endpointOrigin: "user"`), so no privileged header ever rides it (WS-13 §5 / R6-L). Absent, the
+session refuses before a request exists rather than falling back to the shared adapter's vendor
+default — which, for a row on `winter.openai-chat-completions`, would have meant this provider's
+credential on the wire to `api.openai.com`.
+
+**Neither row is authored from a fetched page.** Both cite `tier: "spec-ruling"` — the user ruling
+admits the *path*, and the template is transcribed verbatim from the id's own P6.5 ledger entry.
+This repository has not read `learn.microsoft.com/azure/ai-foundry` or
+`oracle.com/artificial-intelligence/generative-ai` for content. Promotion is two-key as everywhere
+else: the fetched page (upgrading the citation to `fetched-document`) **and** a live-gate pass
+against a real tenant.
+
+**No model rows, and `modelDiscovery: "none"`.** A per-tenant surface serves whatever deployments the
+operator created; no document read here enumerates them, and seeding rows would be a claim about
+somebody else's tenant. A host reaches models with `allowUnlisted` — both rows are
+`liveCatalogAuthority: "unknown"`, which is the door R6-F opens.
 
 ## Dialect siblings, and the two keyless rows (P6.5, R6b-5 / WS-13b §8.4)
 
