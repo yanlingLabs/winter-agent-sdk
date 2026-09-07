@@ -45,7 +45,7 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
 import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
@@ -483,7 +483,10 @@ interface Endpoint {
 function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint {
   const userBase = ctx.connection.baseUrl;
   const base = (userBase ?? defaultBaseUrl).replace(/\/+$/, "");
-  const built = createEndpointPolicy(base, userBase !== undefined ? { generated: false, ...(ctx.connection.local === true ? { local: true } : {}) } : { generated: true });
+  // P7a: a profile `baseUrl` is evaluated by its ORIGIN (`connectionEndpointOptions`), so the four
+  // Anthropic-dialect sibling rows -- whose reviewed endpoint the runtime copies into the profile
+  // because this adapter serves several providers -- stay on the privileged-header path.
+  const built = createEndpointPolicy(base, userBase !== undefined ? connectionEndpointOptions(ctx.connection) : { generated: true });
   if (!built.ok) throw capabilityRefusal(built.reason);
   return { base, policy: built.policy };
 }

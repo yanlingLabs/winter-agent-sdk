@@ -325,6 +325,12 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
  * and the fixture asserts BOTH directions (`openai`/`anthropic` get no baseUrl; `deepseek` and a
  * local runner do). If a future catalog row put a second provider on `winter.openai-responses`, that
  * fixture fails loudly rather than the endpoint being demoted silently.
+ *
+ * P7a (WS-13b §10, closing the M-1 partial): every profile this function returns with a `baseUrl`
+ * now says WHERE that URL came from. The copy is `"reviewed"`; anything the operator supplied is
+ * `"user"`. Until the marker existed, the two were byte-identical strings and every adapter had to
+ * read the copy as a user endpoint — which silently took 156 rows off the privileged-header path
+ * in production while adapter fixtures, passing a generated base URL directly, kept passing.
  */
 export function connectionForProvider(config: RuntimeConfig, catalog: WinterCatalog, provider: WinterProviderDescriptor): ProviderConnectionConfig | undefined {
   const configured = config.provider?.connection;
@@ -336,13 +342,48 @@ export function connectionForProvider(config: RuntimeConfig, catalog: WinterCata
  * -- a user `baseUrl` and its headers belong to the session's own provider -- so the target reaches
  * its own generated endpoint (copied into the profile for a multi-provider adapter, per the rule
  * above; left to the adapter's reviewed default otherwise).
+ *
+ * P7a: for a `requiresUserEndpoint` provider this ALWAYS refuses. Such a target has no endpoint of
+ * its own and, by this function's own rule, may not borrow the session's -- so there is nothing to
+ * reach and the refusal is the honest answer, not an omission. A classifier, advisor or R6-17 child
+ * on `azure-ai` is exactly that shape.
  */
 export function generatedConnectionForProvider(catalog: WinterCatalog, provider: WinterProviderDescriptor): ProviderConnectionConfig | undefined {
   return connectionFrom(undefined, catalog, provider);
 }
 
 function connectionFrom(configured: ProviderConnectionConfig | undefined, catalog: WinterCatalog, provider: WinterProviderDescriptor): ProviderConnectionConfig | undefined {
-  if (configured?.baseUrl !== undefined && configured.baseUrl.length > 0) return configured;
+  const userBase = configured?.baseUrl !== undefined && configured.baseUrl.length > 0;
+  // --- P7a (WS-13b §2/§10): the PER-TENANT rows ---------------------------------------------------
+  //
+  // `azure-ai` and `oci` ship no endpoint at all, so a host MUST name one. Refusing here rather
+  // than letting the adapter discover it is not tidiness: this row sits on
+  // `winter.openai-chat-completions`, whose `resolveEndpoint` falls back to the adapter's own
+  // compiled-in vendor default when the profile carries no base — which for that adapter would mean
+  // this provider's credential on the wire to somebody else's host. The refusal is typed and lands
+  // on R6-9's deferred-refusal path (`buildSessionProvider`'s catch), so the session still starts
+  // and the first `generate()` reports it; no request is ever made.
+  //
+  // The message names the TEMPLATE and nothing else. `endpointTemplate` is documentation and is
+  // never sent, and a refusal string is one of the most reliably-logged values in any system --
+  // echoing a real endpoint back would put the operator's tenant name into every log that captures
+  // this error.
+  if (provider.requiresUserEndpoint === true && !userBase) {
+    throw new WinterProviderResolutionError(
+      "endpoint-required",
+      `provider "${provider.id}" has a PER-TENANT endpoint and ships none: its base URL is the operator's own, of the form ${JSON.stringify(provider.endpointTemplate ?? "(no template recorded)")}. Set \`connection.baseUrl\` for this session (WS-13b §2/§10). It is evaluated as a USER endpoint, so no organisation, project or account header rides it`,
+    );
+  }
+  if (userBase) {
+    // `"user"` UNCONDITIONALLY, overwriting whatever the profile arrived with. `endpointOrigin` is a
+    // statement about PROVENANCE -- "the catalog reviewed this URL" -- and the only code that can
+    // truthfully make it is the copy below. A host writing `"reviewed"` into its own profile would
+    // be vouching for its own endpoint, which is precisely how the privileged set would reach a URL
+    // the catalog never named. R6-L's escape hatch ("a host that legitimately needs an organisation
+    // header on its own endpoint must mark that endpoint generated") has no mechanism today and is
+    // deliberately not built here.
+    return { ...configured, endpointOrigin: "user" };
+  }
   const sharesAdapter = catalog.providers.filter((p) => p.adapterId === provider.adapterId).length > 1;
   if (!sharesAdapter) return configured;
   const api = provider.defaultEndpoints["api"];
@@ -350,6 +391,11 @@ function connectionFrom(configured: ProviderConnectionConfig | undefined, catalo
   return {
     ...configured,
     baseUrl: api,
+    // THE COPY IS THE ONE PLACE `"reviewed"` IS MINTED. This URL came out of
+    // `defaultEndpoints.api`, which the catalog validator has already checked for scheme, userinfo
+    // and query string, and which no host can edit -- so the endpoint policy can honestly evaluate
+    // it as generated, and `applyPrivilegedHeaders` keeps the identity set it was always meant to.
+    endpointOrigin: "reviewed",
     // A LOCAL installation is declared, not guessed: `evaluateEndpoint` refuses plain http to a
     // private address unless the profile says so, and every one of the twelve local runners is
     // exactly that shape. `modelDiscovery: "local"` is the catalog's own statement that this

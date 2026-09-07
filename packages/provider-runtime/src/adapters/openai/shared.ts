@@ -39,7 +39,7 @@
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
 import { winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicy, type RetryPolicyOptions } from "../../retry.ts";
@@ -165,9 +165,12 @@ export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOpti
   const userBase = ctx.connection.baseUrl;
   const generatedBase = options.generatedBaseUrl ?? fallbackGeneratedBaseUrl;
   if (userBase !== undefined && userBase.length > 0) {
-    const built = createEndpointPolicy(userBase, { generated: false, ...(ctx.connection.local === true ? { local: true } : {}) });
+    // P7a: `generated` is the PROFILE's answer now, not this line's assumption -- a reviewed
+    // endpoint the runtime copied in stays generated, a host-entered one is a user endpoint.
+    const opts = connectionEndpointOptions(ctx.connection);
+    const built = createEndpointPolicy(userBase, opts);
     if (!built.ok) throw capabilityRefusal(built.reason);
-    return { baseUrl: trimSlash(userBase), policy: built.policy, generated: false };
+    return { baseUrl: trimSlash(userBase), policy: built.policy, generated: opts.generated };
   }
   if (generatedBase === undefined) {
     throw capabilityRefusal(
