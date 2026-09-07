@@ -1095,6 +1095,31 @@ describe("WS-13c: the wiring's model-family surface", () => {
     }
   });
 
+  // P6.6 fix wave (whole-branch Minor-4, probe P-A) on the SHIPPED catalog -- not a fixture. Three of
+  // the four options a `gpt` session advertises resolved to rows with `pricing: null`, so a turn on
+  // them reported no cost at all: `priceUsage` returned `undefined` and `maxBudgetUsd` was inert.
+  // R-6c-24's "a turn after a cross-provider switch is still priced" fix was correct; the `undefined`
+  // was purely missing row evidence, and this asserts the evidence is there now.
+  test("Minor-4: the gpt family's `sol`/`terra`/`luna` rows are PRICED on the shipped catalog, so a turn on them reports a cost", async () => {
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-priced"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      const oneMillionEach = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+      // Published standard short-context rates per 1M tokens, retrieved 2026-09-06: input + output.
+      for (const [key, expected] of [
+        ["openai/gpt-5.6-luna", 0.2 + 1.2],
+        ["openai/gpt-5.6-terra", 2 + 12],
+        ["openai/gpt-5.6-sol", 4 + 20],
+      ] as const) {
+        const priced = wiring.providerWiring.priceUsage(key, oneMillionEach);
+        expect(priced).toBeDefined();
+        expect(priced).toMatchObject({ costBasis: "list", canonicalModel: key });
+        expect(priced!.costUsd).toBeCloseTo(expected, 6);
+      }
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("R-6c-27: a cold listing reports `servable: false` for a provider nobody has probed, and true for the session's own", async () => {
     const wiring = await buildProductionWiring({ config: gptSession("s-slots-servable"), env: {}, winterHome: home, provider: hermetic });
     try {

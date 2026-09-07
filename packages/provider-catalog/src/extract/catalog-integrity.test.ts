@@ -94,6 +94,12 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-sonnet-5",
       "google/gemini-2.5-pro",
       "openai/gpt-4.1",
+      // P6.6 fix wave (whole-branch Minor-4): the three `gpt` family SLOT rows. They were unpriced,
+      // so a session on `sol`/`terra`/`luna` -- three of the four options the Agent tool advertises to
+      // a gpt session -- reported no cost at all and `maxBudgetUsd` was inert for them.
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra",
       "openai/gpt-6-astra",
       "openai/o4-mini",
       "xai/grok-4.6",
