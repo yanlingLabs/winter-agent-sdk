@@ -96,6 +96,27 @@ tiers would be the quiet failure this field exists to prevent, so they are label
 | **fetched-document** | a page `docs/research/Provider-third-party-access-audit.md` retrieved and read on 2026-09-06, or a vendor pricing page already reviewed in-repo | the 3 frontier pricing pages, and every P6.5 **overlay** row (the audit's 51 citations) |
 | **pinned-upstream** | the vendor's own site as OmniRoute's product catalog records it at commit `5458026`, blob-pinned in `extraction-manifest.json`, plus the api-key path attested by that id's own pinned `RegistryEntry` (`authType: "apikey"`, its dialect, its base URL) | the 107 P6.5 allowlist admissions, and the 5 P6 rows T1 had left citing `spec:WS-13 §1` |
 
+The two tiers above are the two that carry the argument. The full vocabulary has five, and the
+CENSUS below is **generated from the shipped catalog** rather than counted by hand — a hand-counted
+total in a document that describes a data field is a second, unpinned copy of that field, and it is
+the copy a reader trusts. `bun run scripts/provenance-tiers.ts --check` fails when the two disagree.
+
+<!-- BEGIN GENERATED: admission-tier census (bun run scripts/provenance-tiers.ts) -->
+
+Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 165 provider rows). Do not edit by hand.
+
+| Tier | Rows | What it means |
+| --- | ---: | --- |
+| **fetched-document** | 39 | a vendor page this repository retrieved and read, on a recorded date |
+| **pinned-upstream** | 101 | the vendor's own site as the pinned upstream product catalog records it, plus that id's own pinned entry — a real, dated reference, but NOT a page read here |
+| **spec-ruling** | 3 | a ruling in an approved spec (or a user ruling recorded in one) admits the PATH; the row's own details are carried from a reviewed ledger entry — `anthropic`, `azure-ai`, `oci` |
+| **local** | 12 | a local installation on the operator's own machine — there is no third party to be admitted by — `docker-model-runner`, `lemonade`, `llama-cpp`, `llamafile`, `lm-studio`, `mlx-gemma`, `mlx-qwen`, `ollama-local`, `oobabooga`, `triton`, `vllm`, `xinference` |
+| **audit** | 10 | the in-repo third-party-access audit's own findings, which cite the documents it read — `aihorde`, `cline`, `clinepass`, `codex-oauth`, `kilocode`, `moonshot`, `opencode`, `openference`, `uncloseai`, `xai-oauth` |
+
+**Promotion is two-key** (WS-13b §1, fix-wave R-FW-3): a row leaves `pinned-upstream` only when a fetched vendor document AND a live-gate pass both exist, and no `approved` row or `supported` model may sit on that tier while it does not.
+
+<!-- END GENERATED: admission-tier census -->
+
 A pinned-upstream citation is a real, dated, verifiable reference — it names a specific blob at a
 verified commit — but it is **not** a page this repository fetched and read, and it is not the
 vendor's terms of service. Its own text says so, in every row. Two consequences are deliberate:
