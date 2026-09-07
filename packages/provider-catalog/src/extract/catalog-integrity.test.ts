@@ -88,6 +88,7 @@ describe("pricing (R6-H, R6-9)", () => {
 
   test("the cohort is priced, and every price is `official-doc` with a page URL and an instant", () => {
     expect(priced.map((m) => m.key).sort()).toEqual([
+      "anthropic/claude-fable-5-1",
       "anthropic/claude-haiku-4-5-20251001",
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-5",

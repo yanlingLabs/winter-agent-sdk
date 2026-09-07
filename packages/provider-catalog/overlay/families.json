@@ -18,11 +18,11 @@
       "slots": [
         {
           "name": "fable",
-          "canonicalModelId": "claude-fable-5",
+          "canonicalModelId": "claude-fable-5.1",
           "description": "the most capable Claude model, for the hardest reasoning and the most open-ended agentic work; the highest price.",
           "reason": "First because it is the strongest.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); points at `claude-fable-5` until the owed `claude-fable-5-1` row is verified (P6.6 Task 1b)",
+          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); VERIFIED on https://docs.anthropic.com/en/docs/about-claude/models (redirects to https://platform.claude.com/docs/en/docs/about-claude/models, retrieved 2026-09-07) — repointed from `claude-fable-5` to the owed `anthropic/claude-fable-5-1` row (P6.6 Task 1b), whose own canonicalModelId post-normaliser is `claude-fable-5.1`, not the un-normalised `claude-fable-5-1`",
           "status": "candidate"
         },
         {

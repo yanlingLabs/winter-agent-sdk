@@ -8300,6 +8300,139 @@
       "modelFamily": "claude"
     },
     {
+      "key": "anthropic/claude-fable-5-1",
+      "providerId": "anthropic",
+      "upstreamId": "claude-fable-5-1",
+      "displayName": "Claude Fable 5.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table, \"Context window\": \"1M tokens\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table, \"Max output\": \"128K tokens\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"All current models support text and image input, text output, multilingual capabilities, vision, and tool use\" (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — same sentence as inputModalities (\"...text output...\"), retrieved 2026-09-07",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"...and tool use\" listed among the capabilities every current model supports (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "same basis as toolCalling",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"Thinking\": \"Adaptive (always on)\", \"Default effort\": \"high\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1, applied per anthropic/claude-opus-5's own evidence — the Messages API returns a readable thinking summary, never the raw chain, for every current Claude model",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "derived-shapes-p6.md item (c), applied per anthropic/claude-opus-5's own evidence — ThinkingAdaptive/ThinkingEnabled `display`; a Messages API mechanic shared by every current Claude model, not specific to this page",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary, applied per anthropic/claude-opus-5's own evidence — a thinking block's signature arrives across signature_delta events, so the complete replayable block exists only at content_block_stop",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "anthropic/claude-fable-5-1"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves, applied per anthropic/claude-opus-5's own evidence. Own-state acceptance: a Claude model's own thinking blocks are replayed to it unchanged, in order, with signatures intact. Why the domain is NARROW: prior thinking/redacted_thinking blocks are tied to the model that produced them, so \"same provider\" is not automatically \"same continuation domain\" — the domain is this model alone.",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 10,
+          "outputPerMTokUsd": 50,
+          "cacheReadPerMTokUsd": 0.25
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table: \"$10 / input MTok, $50 / output MTok\" for Claude Fable 5.1; cache read = 2.5% of the base input price per the page's own footnote (\"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\") = $0.25/MTok (retrieved 2026-09-07). Cache-write, batch and long-context rates live on the separate Pricing page (platform.claude.com/docs/en/about-claude/pricing), which is outside this task's allowed page set, so they are NOT set here rather than guessed.",
+        "confidence": "declared",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5.1",
+      "modelFamily": "claude"
+    },
+    {
       "key": "anthropic/claude-haiku-4-5-20251001",
       "providerId": "anthropic",
       "upstreamId": "claude-haiku-4-5-20251001",
@@ -38245,11 +38378,11 @@
       "slots": [
         {
           "name": "fable",
-          "canonicalModelId": "claude-fable-5",
+          "canonicalModelId": "claude-fable-5.1",
           "description": "the most capable Claude model, for the hardest reasoning and the most open-ended agentic work; the highest price.",
           "reason": "First because it is the strongest.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); points at `claude-fable-5` until the owed `claude-fable-5-1` row is verified (P6.6 Task 1b)",
+          "citation": "spec:WS-13c §9 (user-ruling ORDER, winter-curated text); VERIFIED on https://docs.anthropic.com/en/docs/about-claude/models (redirects to https://platform.claude.com/docs/en/docs/about-claude/models, retrieved 2026-09-07) — repointed from `claude-fable-5` to the owed `anthropic/claude-fable-5-1` row (P6.6 Task 1b), whose own canonicalModelId post-normaliser is `claude-fable-5.1`, not the un-normalised `claude-fable-5-1`",
           "status": "candidate"
         },
         {
