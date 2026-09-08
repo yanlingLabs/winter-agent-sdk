@@ -728,8 +728,8 @@ const RESERVED_MCP_SERVER_NAMES = new Set<string>([WINTER_BRAND.mcpServerName]);
 // One host process running many sessions under one brand is the NORMAL topology, not an edge. Before
 // the ref count, the second same-brand call found every `from` already renamed, `continue`d, and
 // returned a disposer holding nothing with `reservedHere === false`; the FIRST session's disposer
-// then restored `mcp__winter__*` and dropped the reservation while the second session was still
-// live -- leaving its alias table (`canonicalAliases(brand)`) pointing at a name nobody had
+// then restored Winter's own tool names and dropped the reservation while the second session was
+// still live -- leaving its alias table (`canonicalAliases(brand)`) pointing at a name nobody had
 // registered, which is exactly the pairing the acme test guards against.
 //
 // So the rename is REF-COUNTED per target brand: it happens on the first same-brand session and is
