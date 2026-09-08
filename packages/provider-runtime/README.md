@@ -26,9 +26,11 @@ not the same as runnable on every path — these exports need the Bun runtime:
 | --- | --- | --- | --- |
 | `startCodexLogin()` | `@yanlinglabs/winter-provider-runtime` | `Bun.serve` | The authorization-code flow receives the vendor's redirect on `127.0.0.1`, which needs a real HTTP listener. |
 | `startAnthropicConsoleLogin()` | `@yanlinglabs/winter-provider-runtime` | `Bun.serve` | Same flow, same listener. |
-| `runLoginFlow()` | `@yanlinglabs/winter-provider-runtime/testing`'s siblings (internal; the two above are its callers) | `Bun.serve` | The one place this package opens a loopback listener. |
 | `startXaiOauthFake()` | `@yanlinglabs/winter-provider-runtime/testing` | `Bun.serve` | Binds a loopback server on `127.0.0.1:0` to stand in for the vendor. |
 | `startXaiChatFake()` | `@yanlinglabs/winter-provider-runtime/testing` | `Bun.serve` | Same. |
+
+(Internally all four go through one `runLoginFlow`/`Bun.serve` seam, which is not on either barrel
+and which a consumer cannot call.)
 
 Each throws `BunRequiredError` (exported from both barrels) as its FIRST action — before any network
 call, file write or credential read — naming the function, the Bun API and what to do instead. Catch
@@ -46,6 +48,15 @@ try {
   throw err;
 }
 ```
+
+### `BunRequiredError` is THIS package's own class
+
+`@yanlinglabs/winter-conformance` exports a class with the same name and shape, and the two are
+deliberately **not** the same type — the packages share no dependency, so there is no module either
+could import it from. **Catch the one you imported.** Within this package it is one type across every
+subpath: an error thrown by `./testing`'s fakes satisfies `instanceof BunRequiredError` imported from
+the main barrel, and vice versa, under Node as well as Bun (the compiled emit gives each export entry
+its own bundle, so the class carries a package-scoped `Symbol.for` brand to make that hold).
 
 **`startXaiLogin()` is NOT on this list**, deliberately: xAI's login is RFC 8628 device-code, which is
 `fetch` and polling only — no listener, no spawn — so it runs under Node like the rest of the package.

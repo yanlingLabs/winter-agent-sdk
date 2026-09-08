@@ -5,7 +5,7 @@
 // Findings 1-2 were (the pre-fix smoke legs checked only `@yanlinglabs/winter-agent-sdk` bare and
 // `@yanlinglabs/winter-conformance/trace` -- 2 of 5 packages' 10 total entry points).
 //
-// Both `.github/workflows/ci.yml` (the blocking Bun leg in `pack-smoke`, the advisory Node-18 leg in
+// Both `.github/workflows/ci.yml` (the Bun leg in `pack-smoke`, the Node-18 leg in
 // `pack-smoke-node18`) and `.github/workflows/release.yml` (the publish-gate smoke, both runtimes,
 // fully blocking) call this ONE script rather than duplicating the probe logic inline -- review r1
 // Important-4's own suggested fix names exactly this file.

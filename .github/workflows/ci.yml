@@ -63,7 +63,7 @@ jobs:
     # or workflow_dispatch and actually publishes; this job never does, so there is no reason to gate
     # it behind a release trigger). This job is the BLOCKING half -- the Bun leg, WS-02 §5's own
     # Bun-first requirement. The Node 18 leg lives in the separate `pack-smoke-node18` job below,
-    # ADVISORY per R-7a-16 (fix round 1) -- see that job's own header for why the split exists.
+    # BLOCKING since the compiled emit landed (R-7a-16 reversed) -- see that job's own header for why the split exists.
     #
     # review r1 (Important-4): both this job and `pack-smoke-node18` call the ONE shared
     # `scripts/smoke-installed.ts` rather than duplicating the pack/install/import steps inline. It

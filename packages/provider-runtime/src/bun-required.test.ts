@@ -81,6 +81,11 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
     expect(parsed.name).toBe("BunRequiredError");
     expect(parsed.isTyped).toBe(true); // the SAME class the barrel exports, not a look-alike
     expect(parsed.api).toBe("Bun.serve");
+    // F3 (round 3): the error must name the function THE CALLER INVOKED, never the internal helper.
+    // Round 2 asserted only `api` here, so `functionName: "runLoginFlow"` -- exactly what
+    // `bun-required.ts`'s own doc forbids, and not the name in the README's table -- went unnoticed.
+    expect(parsed.fn).toContain("startCodexLogin");
+    expect(parsed.fn).not.toBe("runLoginFlow");
     expect(parsed.msg).toContain("requires the Bun runtime");
     // NOT the failure it replaces.
     expect(parsed.msg).not.toContain("Bun is not defined");
@@ -238,7 +243,15 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
 // reachable from a published barrel. That claim was true when it was made by reading the tree; this
 // makes it stay true. A new `Bun.` use in a package that declares `engines.node` fails BY NAME, and
 // clearing the failure means either guarding its entry point or writing down why it needs none.
-describe("every Bun API use in a Node-declaring package is accounted for", () => {
+//
+// P7a fix wave r3 (F7): THE ROOTS ARE DERIVED, and the title is now true of them. Round 2 hand-listed
+// two of the four `engines.node` packages under a title claiming all of them. There was no hole --
+// `tsconfig.sdk-fence.json` type-checks `sdk` and `provider-catalog` production code with
+// `types: ["node"]` and NO Bun ambient globals, so a `Bun.serve` there fails `bun run typecheck` with
+// TS2868, which is a stronger gate than a text scan -- but a hand-maintained roots list under an
+// over-claiming title is how the next package gets missed. The list is now computed from the
+// manifests, and the fence's own coverage is asserted rather than assumed.
+describe("every Bun API use in a Node-declaring publishable package is accounted for", () => {
   /**
    * file -> why it is safe. Keyed on the FILE, because the guard is at that file's exported entry.
    *
@@ -253,8 +266,48 @@ describe("every Bun API use in a Node-declaring package is accounted for", () =>
     "packages/conformance/src/official/capture.ts": "`Bun.spawn` + `Bun.serve` throughout, and `runCapture` is the file's ONLY export, guarded as its first statement",
   };
 
+  /** Every publishable package that declares `engines.node`, from the manifests -- never a hand list. */
+  function nodeDeclaringRoots(): string[] {
+    const { readdirSync, readFileSync, existsSync } = require("node:fs") as typeof import("node:fs");
+    const out: string[] = [];
+    for (const entry of readdirSync(join(REPO_ROOT, "packages"), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = join(REPO_ROOT, "packages", entry.name, "package.json");
+      if (!existsSync(manifestPath)) continue;
+      const m = JSON.parse(readFileSync(manifestPath, "utf8")) as { private?: boolean; publishConfig?: unknown; engines?: Record<string, string> };
+      if (m.private === true || m.publishConfig === undefined) continue; // not publishable
+      if (m.engines?.["node"] === undefined) continue; // Bun-only whole; see the third test
+      if (!existsSync(join(REPO_ROOT, "packages", entry.name, "src"))) continue;
+      out.push(`packages/${entry.name}/src`);
+    }
+    return out.sort();
+  }
+
+  test("the roots really are every publishable `engines.node` package -- four today, derived", () => {
+    // The list round 2 hand-wrote covered two of these. Pinned by name so a package that gains or
+    // loses `engines.node` shows up here rather than silently changing what the next test scans.
+    expect(nodeDeclaringRoots()).toEqual([
+      "packages/conformance/src",
+      "packages/provider-catalog/src",
+      "packages/provider-runtime/src",
+      "packages/sdk/src",
+    ]);
+  });
+
+  test("the sdk/catalog half is covered by a STRONGER gate than this scan -- the fence, with no Bun globals", () => {
+    // Why those two need no entries below: `tsconfig.sdk-fence.json` compiles exactly their production
+    // code with `types: ["node"]`, so a `Bun.` reference is a TS2868 compile error rather than
+    // something a text scan has to notice. Asserted here so the reasoning travels with the scan.
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const fence = JSON.parse(
+      readFileSync(join(REPO_ROOT, "tsconfig.sdk-fence.json"), "utf8").replace(/^\s*\/\/.*$/gm, ""),
+    ) as { compilerOptions: { types: string[] }; include: string[] };
+    expect(fence.compilerOptions.types).toEqual(["node"]);
+    expect(fence.include).toEqual(["packages/sdk/src/**/*.ts", "packages/provider-catalog/src/**/*.ts"]);
+  });
+
   test("the tree's Bun-using non-test files are exactly the accounted-for set", () => {
-    const roots = ["packages/provider-runtime/src", "packages/conformance/src"]; // the two publishable packages declaring `engines.node` that use Bun at all
+    const roots = nodeDeclaringRoots();
     const found: string[] = [];
     const { readdirSync, readFileSync } = require("node:fs") as typeof import("node:fs");
     const walk = (dir: string, rel: string): void => {

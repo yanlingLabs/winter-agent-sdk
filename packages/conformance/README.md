@@ -42,6 +42,17 @@ try {
 }
 ```
 
+### `BunRequiredError` is THIS package's own class
+
+`@yanlinglabs/winter-provider-runtime` exports a class with the same name and shape, and the two are
+deliberately **not** the same type — the packages share no dependency, so there is no module either
+could import it from. **Catch the one you imported.** Within this package it is one type across every
+subpath: an error thrown by `./official`'s `runCapture` satisfies `instanceof BunRequiredError`
+imported from the main barrel, and vice versa, under Node as well as Bun. The same holds for
+`ChecksumMismatchError` and `OfficialCompatUnavailableError`, which are also exported from both
+entries (the compiled emit gives each export entry its own bundle, so each class carries a
+package-scoped `Symbol.for` brand to make that hold).
+
 Everything else here — the trace normalizer, the goldens and their loaders, `fetchAndVerifyUpstream`
 and the checksum helpers — is plain Node-compatible code. The goldens `runCapture` produces are
 ordinary JSON and are readable from Node whoever produced them.
