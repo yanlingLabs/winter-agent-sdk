@@ -1290,6 +1290,71 @@ describe("child-engine.ts: fix round 1 (controller review) -- M1: record.transcr
   });
 });
 
+// --- P7a fix wave item 2: a child's provider-state sidecar is DURABLE -----------------------------
+//
+// `buildChildTranscriptWriter` attaches a `providerStateSink` only when it is given a `winterHome`
+// (dialect.ts spreads it conditionally). This call site omitted it, so NO production child ever had
+// one: every child ran on an in-memory chain and its provider-state records -- R6-9's `origin`, the
+// native-state items a resume replays, the cross-family `handoff` -- died with the process. The
+// defect was invisible to every existing test because `record.transcript` (the M1 block above) named
+// the right path while nothing beside it was ever written.
+//
+// This drives a REAL spawn under a mkdtemp home with a parent that HAS a resolved provider identity
+// (that identity is what `recordAssistant` needs before it writes any record at all), then asserts
+// the file exists on disk and carries the child's own `origin` record.
+describe("child-engine.ts: P7a fix wave item 2 -- a child's provider-state sidecar is durable", () => {
+  test("a child spawned by a factory holding winterHome writes its sidecar beside its own transcript", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-p7a-child-sidecar-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-p7a-child-sidecar-cwd-"));
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome });
+      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, store, winterHome }));
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "hi", runInBackground: false };
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+      const parentConfig = baseConfig({ sessionId: "parent-sidecar", cwd });
+      const done = runEngine({
+        config: parentConfig,
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        // The parent's RESOLVED identity: `buildChildInheritance` copies it onto `inherit.provider`,
+        // the factory freezes it as the child's own, and the child engine stamps every record with
+        // it. Without an identity anywhere the engine writes no provider-state records at all -- so
+        // this is the precondition the assertion needs, not an artificial prop.
+        providerIdentity: { providerId: "winter-test", modelKey: "winter-test/echo", family: "winter-test" },
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const drainPromise = drain(host.input);
+      await waitUntil(() => liveHandles.size === 1);
+      const handle = [...liveHandles.values()][0]!;
+      await waitUntil(() => handle.status() === "completed");
+      await drainPromise;
+      await done;
+
+      // Derived INDEPENDENTLY of `record.transcript` (which the M1 block already pins) -- from the
+      // documented WS-05 §4 layout the factory itself is built on.
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const sidecar = join(winterHome, "projects", projectKey, "parent-sidecar", "subagents", `agent-${handle.record.id}.provider-state.jsonl`);
+      expect(existsSync(sidecar)).toBe(true);
+      const records = readFileSync(sidecar, "utf8").trim().split("\n").filter((l) => l.length > 0).map((l) => JSON.parse(l) as Record<string, unknown>);
+      expect(records.length).toBeGreaterThan(0);
+      // The child's OWN records, naming the identity it actually ran on -- never the parent's file.
+      expect(records[0]!.kind).toBe("origin");
+      expect(records[0]!.model).toBe("winter-test/echo");
+      // And it really is the transcript's NEIGHBOUR, which is the whole point of deriving the sidecar
+      // path from the transcript path inside dialect.ts.
+      expect(sidecar).toBe(`${handle.record.transcript.slice(0, -".jsonl".length)}.provider-state.jsonl`);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- Phase 4 fix wave: C1 (CRITICAL) + I6 -- the parent's LIVE rules bind every child ------------
 //
 // The whole-branch review's own two escapes, plus the two directions of the same omission. Every

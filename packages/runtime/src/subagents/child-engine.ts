@@ -554,7 +554,23 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const childKey = { projectKey, sessionId: runCtx.parentSessionId, subpath: childTranscriptSubpath(agentId) };
     const writer: TranscriptWriter | undefined =
       childStore !== undefined
-        ? buildChildTranscriptWriter({ store: childStore, projectKey, parentSessionId: runCtx.parentSessionId, agentId, parentToolUseId: req.parentToolUseId, cwd: workspace.root })
+        ? buildChildTranscriptWriter({
+            store: childStore,
+            projectKey,
+            parentSessionId: runCtx.parentSessionId,
+            agentId,
+            parentToolUseId: req.parentToolUseId,
+            cwd: workspace.root,
+            // P7a fix wave (item 2): `winterHome` is what makes `buildChildTranscriptWriter` attach a
+            // `providerStateSink` (dialect.ts spreads it conditionally). Omitting it here meant NO
+            // production child -- ever -- had a durable provider-state sidecar: every child ran on an
+            // in-memory chain, so a resumed child had nothing to replay natively and every
+            // cross-family handoff record it wrote was lost with the process. `deps.winterHome` is
+            // already this factory's own construction-time mirror (read three lines below for the
+            // transcript path); the sidecar path is derived from the child transcript path inside
+            // dialect.ts, so the two cannot drift.
+            ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
+          })
         : undefined;
     // Fix round 1 (finding M1): never claim a transcript that cannot exist (no store configured),
     // and prefer a genuine ABSOLUTE path (WS-05's own documented layout) over a bare, non-readable
