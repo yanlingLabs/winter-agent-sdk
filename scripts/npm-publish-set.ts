@@ -71,7 +71,12 @@ export function npmFilterArgs(root: string = REPO_ROOT): string[] {
 }
 
 if (import.meta.main) {
-  // Printed as a single line the workflow interpolates into its `pnpm publish` command, so the YAML
-  // never spells a package name.
-  process.stdout.write(npmFilterArgs().join(" "));
+  // Printed as a single line the workflow puts into `$GITHUB_OUTPUT`, so the YAML never spells a
+  // package name (review M1: a `$(…)` substitution inside the publish command degraded to an
+  // unfiltered publish when the script failed).
+  //
+  // `--format=names` is what the npm job asks for since round 3: bare package names, because that job
+  // publishes per package with `npm publish <tarball>` rather than handing `--filter` pairs to pnpm.
+  const names = process.argv.includes("--format=names");
+  process.stdout.write(names ? npmPublishSet().map((p) => p.name).join(" ") : npmFilterArgs().join(" "));
 }

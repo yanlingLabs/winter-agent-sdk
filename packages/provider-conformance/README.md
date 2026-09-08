@@ -10,9 +10,10 @@ loopback HTTP servers with `Bun.serve`, which has no Node equivalent it implemen
 ## Install
 
 **This package is published to GitHub Packages only** — it is one of the org's own test harnesses, not
-part of what a public consumer installs. (The wrapper and its runtime layer —
-`@yanlinglabs/winter-agent-sdk`, `@yanlinglabs/winter-provider-catalog`,
-`@yanlinglabs/winter-provider-runtime` — are on public npm as well.)
+part of what a public consumer installs. (Public npm carries exactly the wrapper and its runtime
+dependency closure — `@yanlinglabs/winter-agent-sdk` and `@yanlinglabs/winter-provider-catalog`.
+`@yanlinglabs/winter-provider-runtime` is GitHub Packages only too: the wrapper SPAWNS the compiled
+runtime rather than importing it.)
 
 In your project's `.npmrc`:
 
@@ -33,3 +34,7 @@ a patch.
 ## License
 
 MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.
+
+This package's xAI OAuth fake mirrors the flow Winter's provider derives from the Apache-2.0 licensed
+`xai-org/grok-build`; that attribution is in [`NOTICE`](./NOTICE), which ships in the tarball beside
+this file.

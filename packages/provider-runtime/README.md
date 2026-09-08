@@ -5,8 +5,8 @@ Chat Completions, Anthropic Messages, Google generateContent, Bedrock Converse, 
 codex/xAI/Console flows), the credential-ref surface, endpoint policy, retry/stall handling and the
 honest-identity headers every request carries.
 
-This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope) — see the
-repository root `.npmrc` and `package.json` `publishConfig` for the registry pin.
+This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope). The
+registry is chosen by the release workflow, not by a committed pin — see [`RELEASING.md`](../../RELEASING.md).
 
 ## What it ships
 
@@ -91,3 +91,7 @@ endpoint policy and the identity helpers — is plain Node-compatible code over 
 ## License
 
 MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.
+
+This package's xAI OAuth provider derives its client id, endpoints, scope set and request field names
+from the Apache-2.0 licensed `xai-org/grok-build`; that attribution is in [`NOTICE`](./NOTICE), which
+ships in the tarball beside this file.

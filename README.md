@@ -61,11 +61,24 @@ directly — which is why the monorepo needs no build to develop against itself.
 condition (`dist/`) is what a published consumer resolves, and `publishConfig.exports` drops the
 `bun` condition from the packed manifest so a tarball never names a path it does not contain.
 
+## Releasing
+
+See [`RELEASING.md`](./RELEASING.md): the packages must be packed and published with **pnpm** (npm
+ignores the `publishConfig` overrides and produces a tarball broken for every Bun consumer — a
+`prepack` guard refuses it), how the two registries are chosen, the version/tag gate, and the
+re-drive procedure when one job fails after the other succeeded.
+
 ## License
 
 MIT — see [`LICENSE`](./LICENSE). Every published package ships a copy.
 
-`packages/provider-catalog` additionally carries a [`NOTICE`](packages/provider-catalog/NOTICE) with
-third-party attribution for the upstream catalog data it derives from, and
-[`PROVENANCE.md`](packages/provider-catalog/PROVENANCE.md) recording where every row came from and
-under what evidence.
+Two `NOTICE` files carry third-party attribution, and they say opposite things on purpose:
+
+- the root [`NOTICE`](./NOTICE) records the Apache-2.0 attribution for `xai-org/grok-build`, from
+  which Winter's xAI OAuth provider derives its client id, endpoints, scope set and request field
+  names. It ships in the tarballs of the two packages that carry that code —
+  `@yanlinglabs/winter-provider-runtime` and `@yanlinglabs/winter-provider-conformance`;
+- [`packages/provider-catalog/NOTICE`](packages/provider-catalog/NOTICE) attributes the upstream
+  catalog **data**, and states that no file in that package was copied from any upstream project.
+  [`PROVENANCE.md`](packages/provider-catalog/PROVENANCE.md) beside it records where every row came
+  from and under what evidence.

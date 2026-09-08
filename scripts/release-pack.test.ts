@@ -282,6 +282,8 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
           exports: Record<string, Record<string, string>>;
           files?: string[];
           license?: string;
+          scripts?: Record<string, string>;
+          publishConfig?: Record<string, unknown>;
           repository?: { type?: string; url?: string; directory?: string };
         };
         for (const [subpath, conditions] of Object.entries(packed.exports)) {
@@ -289,6 +291,14 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
           for (const target of Object.values(conditions)) expect([p.name, subpath, target.startsWith("./dist/")]).toEqual([p.name, subpath, true]);
         }
         expect([p.name, packed.files?.includes("src")]).toEqual([p.name, false]);
+        // P7a pre-publish r3 (I1): pnpm STRIPS `scripts` from the packed manifest, so the `prepack`
+        // guard that refuses a non-pnpm packer never reaches a consumer -- which is what makes the
+        // guard free rather than a behaviour change for anyone installing these packages.
+        expect([p.name, packed.scripts ?? {}]).toEqual([p.name, {}]);
+        // M2 (r2 review, correcting the round-2 report): pnpm removes only the override keys it
+        // LIFTS -- `exports` -- so `publishConfig` SURVIVES with its remaining keys. The report said
+        // the block was stripped; it is not, and `access` is deliberately still there.
+        expect([p.name, packed.publishConfig]).toEqual([p.name, { access: "restricted" }]);
         // Item 9 + 10, on the artifact a registry actually receives.
         expect([p.name, packed.license]).toEqual([p.name, "MIT"]);
         expect([p.name, packed.repository?.url]).toEqual([p.name, "git+https://github.com/yanlingLabs/winter-agent-sdk.git"]);

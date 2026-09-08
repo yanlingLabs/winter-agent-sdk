@@ -11,9 +11,10 @@ the repository root `.npmrc` and `package.json` `publishConfig` for the registry
 ## Install
 
 **This package is published to GitHub Packages only** — it is one of the org's own test harnesses, not
-part of what a public consumer installs. (The wrapper and its runtime layer —
-`@yanlinglabs/winter-agent-sdk`, `@yanlinglabs/winter-provider-catalog`,
-`@yanlinglabs/winter-provider-runtime` — are on public npm as well.)
+part of what a public consumer installs. (Public npm carries exactly the wrapper and its runtime
+dependency closure — `@yanlinglabs/winter-agent-sdk` and `@yanlinglabs/winter-provider-catalog`.
+`@yanlinglabs/winter-provider-runtime` is GitHub Packages only too: the wrapper SPAWNS the compiled
+runtime rather than importing it.)
 
 In your project's `.npmrc`:
 
@@ -80,7 +81,7 @@ Everything else here — the trace normalizer, the goldens and their loaders, `f
 and the checksum helpers — is plain Node-compatible code. The goldens `runCapture` produces are
 ordinary JSON and are readable from Node whoever produced them.
 
-Goldens (`goldens/*.trace.json`) ship as data alongside `src/` — load them with `loadGolden`,
+Goldens (`goldens/*.trace.json`) ship as data alongside the compiled `dist/` — load them with `loadGolden`,
 `listGoldens`, and `goldenPath` from the main barrel rather than reaching into the installed
 package's directory layout by hand.
 
@@ -97,7 +98,7 @@ const diffs = compareTraces(fresh, golden);
 Per WS-02 §6 and §9: no Anthropic-derived artifact of any kind (no upstream `.d.ts`, no `sdk.mjs`,
 no native binary, no extracted prompt text). `compat/anthropic/0.3.250/` — the derived declaration
 digests and independently-authored consumer fixtures this repository uses to prove compatibility —
-is excluded from every published tarball; only `src/` and `goldens/` ship (see this package's
+is excluded from every published tarball; only `dist/` and `goldens/` ship (see this package's
 `package.json` `files` field). The `runCapture()` harness under `./official` never writes a golden
 file or persists anything from a live capture run; it prints a report for a human to read.
 

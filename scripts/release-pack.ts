@@ -178,9 +178,15 @@ async function packOne(pkg: PublishablePackage, outDir: string, root: string): P
   });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   if (exitCode !== 0) throw new Error(`pnpm pack failed for ${pkg.name} (exit ${exitCode}):\n${stderr || stdout}`);
+  // P7a pre-publish r3 (I1): the JSON is EXTRACTED, not assumed to be the whole of stdout. Since the
+  // packages gained a `prepack` guard, pnpm prints that script's own banner (`> pkg@ver prepack …`)
+  // to stdout ahead of the `--json` payload, and parsing the whole stream fails on the first line.
+  // The payload is one object and it is last, so the first `{` at column zero starts it.
   let parsed: PnpmPackJson;
+  const jsonStart = stdout.indexOf("\n{");
+  const payload = (jsonStart === -1 ? stdout : stdout.slice(jsonStart + 1)).trim();
   try {
-    parsed = JSON.parse(stdout.trim()) as PnpmPackJson;
+    parsed = JSON.parse(payload) as PnpmPackJson;
   } catch {
     throw new Error(`pnpm pack for ${pkg.name} did not print the expected JSON on stdout:\n${stdout}\n${stderr}`);
   }

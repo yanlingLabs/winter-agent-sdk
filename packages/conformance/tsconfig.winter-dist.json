@@ -9,12 +9,19 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "types": ["bun"],
+    "skipLibCheck": false,
+    "types": [
+      "bun"
+    ],
     "noEmit": true,
     "paths": {
-      "@sdk-under-test": ["../sdk/dist/index.d.ts"]
+      "@sdk-under-test": [
+        "../sdk/dist/index.d.ts"
+      ]
     }
   },
-  "include": ["consumer-fixtures/**/*.ts"]
+  "include": [
+    "consumer-fixtures/**/*.ts"
+  ],
+  "//skipLibCheck": "P7a pre-publish round 3 (review I3): FALSE, deliberately. `skipLibCheck: true` -- the repo-wide default, inherited from tsconfig.base.json by every other config -- skips type-checking `.d.ts` files, which is exactly the class this fixture exists to catch: a dangling module specifier in the PUBLISHED declarations (a `./x.js` that `rewriteDeclarationSpecifiers` mangled, a re-export of a file the emit does not contain) passed silently. Verified by planting `./zzz-does-not-exist.js` in a shipped `.d.ts`: exit 0 with skipLibCheck on, TS2307 with it off. Free today -- 0 errors -- and the one config in the repo where the cost is worth it, because it reads the emit rather than the source."
 }

@@ -29,8 +29,10 @@
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "prepack": "node -e \"if(!/\\bpnpm\\//.test(process.env.npm_config_user_agent||''))throw new Error('pack/publish this package with pnpm. publishConfig.exports is a pnpm-only feature: under npm the override is ignored, so the packed manifest keeps a bun condition pointing at src/ -- which files does not ship -- and the tarball is broken for every Bun consumer while installing fine under Node. See RELEASING.md.')\""
+  },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
     "access": "restricted",
     "exports": {
       ".": {
