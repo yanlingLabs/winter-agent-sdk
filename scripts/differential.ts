@@ -1062,6 +1062,10 @@ export async function traceWinterMessagingFacetRound(): Promise<ConformanceTrace
     // 7. THE VALIDATION REFUSAL: a malformed request is `ok:false` with a typed code, never a
     //    fabricated DeliveryOutcome -- the negative control for every guard above.
     await ask("facet-7", "messaging.deliver", { message: { messageId: "" } }, "the malformed-request refusal");
+    // 8. ...and the WRONG-DOOR refusal: `deliver` addressed at an AGENT is a malformed call, not an
+    //    `unavailable` outcome a router would retry its way around (WS-10 §10.3 gives an agent its
+    //    own two doors).
+    await ask("facet-8", "messaging.deliver", { message: message("host-5", missingChild) }, "the wrong-door refusal");
 
     proc.stdin.write(encodeFrame({ type: "control_request", requestId: "facet-end", subtype: "end_input", payload: undefined }));
     push(await need("the end_input ack"));

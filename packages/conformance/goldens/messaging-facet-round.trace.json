@@ -194,6 +194,19 @@
     "kind": "control_response",
     "payload": {
       "type": "control_response",
+      "ok": false,
+      "error": {
+        "code": "invalid_messaging_request",
+        "message": "messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)"
+      }
+    }
+  },
+  {
+    "sequence": 10,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
       "ok": true
     }
   }

@@ -3852,6 +3852,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 continue;
               }
               // The envelope carries its own fully-resolved target; there is no second id to trust.
+              // A non-SESSION target is a malformed CALL, not an outcome: `deliverToSession` on an
+              // agent address finds no peer and answers `unavailable`, which tells a router "try
+              // again later" about a request that will never be right. WS-10 §10.3 gives an agent
+              // its own two doors (`steer_child`/`resume_child`); naming that here is what keeps the
+              // router from retrying its way around a wrong door.
+              if (cf.payload.message.to.objectKind !== "session") {
+                badRequest("messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)");
+                continue;
+              }
               answer(adapter.deliverToSession(cf.payload.message.to, cf.payload.message));
               continue;
             }
