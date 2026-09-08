@@ -77,6 +77,128 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     expect(RELEASE_YML).toContain("NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
   });
 
+  // --- P7a fix wave r2 (item 2, re-review N2): the compiled emit is built EXPLICITLY ---------------
+  //
+  // Both workflows relied on a SIDE EFFECT. In ci.yml, `bun test` and the consumer-fixture `tsc` both
+  // resolve through a package's `types` condition -- `./dist/*.d.ts` since the emit -- and only
+  // compiled because some earlier test happened to build; that is how the merge's focused run failed
+  // once and passed on re-run. In release.yml, `releasePack()` builds (so the smokes pass), but
+  // `pnpm publish` does not go through `releasePack()` at all: it packs each workspace package from
+  // whatever is on disk. Both are now explicit steps, in a pinned POSITION -- a step that exists but
+  // runs after the thing it feeds is the same bug with a step in it.
+  test("ci.yml's build job runs `bun run build:packages` BEFORE `bun test` and before the consumer-fixture tsc", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const runs = doc.jobs["build"]!.steps.map((s) => s.run ?? "");
+    const buildAt = runs.findIndex((r) => r.startsWith("bun run build:packages"));
+    const testAt = runs.findIndex((r) => r.startsWith("bun test"));
+    const fixtureAt = runs.findIndex((r) => r.includes("tsconfig.winter.json"));
+    expect(buildAt, "ci.yml's build job must run `bun run build:packages`").toBeGreaterThanOrEqual(0);
+    expect(testAt).toBeGreaterThanOrEqual(0);
+    expect(fixtureAt).toBeGreaterThanOrEqual(0);
+    expect(buildAt).toBeLessThan(testAt);
+    expect(buildAt).toBeLessThan(fixtureAt);
+  });
+
+  // --- P7a fix wave r3 (F1): EVERY dist-consuming job, DERIVED --------------------------------------
+  //
+  // Round 2's two assertions above and below name their jobs by hand -- `build` and release.yml's
+  // single publish job -- and that hand-list is what let F1 through: item 1 made `compile()`'s dist
+  // guard unconditional in the same round, which turned a THIRD job (`official-fixture-compile`) red
+  // while these gates looked elsewhere. So the set of jobs that need a build is now COMPUTED from the
+  // steps themselves, and each is judged against what its own steps actually resolve.
+  //
+  // Two shapes need `dist`, and one deliberately does not:
+  //   * the consumer-fixture tsc (`tsconfig.winter.json`) -- its `paths` replaces the inherited map,
+  //     so every transitive workspace specifier resolves through `types` -> `./dist/*.d.ts`;
+  //   * `bun test`, which runs `compile-fixtures.test.ts` and `bun-required.test.ts` (both build in
+  //     `beforeAll`, but the step should not depend on that);
+  //   * `compile-official-fixture.ts` -- NEEDS NO BUILD: its generated tsconfig points
+  //     `@sdk-under-test` at the installed OFFICIAL declarations and reaches no winter package, which
+  //     `compile-fixtures.test.ts` proves by running it with every `dist` deleted.
+
+  /** A step that resolves a winter package through its `types` condition, i.e. needs `dist` on disk. */
+  const NEEDS_DIST = (run: string): boolean => run.includes("tsconfig.winter.json") || run.startsWith("bun test");
+  /** A step that calls a `compile()` consumer but needs no `dist` -- recorded so its absence is a DECISION. */
+  const COMPILE_CONSUMER_NO_DIST = (run: string): boolean => run.includes("compile-official-fixture.ts");
+
+  test("F1: every job with a dist-consuming step builds first -- derived from the steps, never a hand-listed pair", () => {
+    const offenders: string[] = [];
+    let checked = 0;
+    for (const [file, yml] of [["ci.yml", CI_YML], ["release.yml", RELEASE_YML]] as const) {
+      const doc = Bun.YAML.parse(yml) as WorkflowDoc;
+      for (const [jobName, job] of Object.entries(doc.jobs)) {
+        const runs = job.steps.map((s) => s.run ?? "");
+        const firstConsumer = runs.findIndex(NEEDS_DIST);
+        if (firstConsumer === -1) continue;
+        checked++;
+        const buildAt = runs.findIndex((r) => r.startsWith("bun run build:packages"));
+        if (buildAt === -1 || buildAt >= firstConsumer) {
+          offenders.push(`${file}:${jobName} -- first dist-consuming step is [${firstConsumer}] "${runs[firstConsumer]}", build is ${buildAt === -1 ? "ABSENT" : `at [${buildAt}]`}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    // Not vacuous: ci.yml's `build` and release.yml's publish job both qualify today.
+    expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  test("F1: `official-fixture-compile` calls a `compile()` consumer and deliberately has NO build step", () => {
+    // THE JOB ROUND 2 BROKE, named. Its step needs no `dist` -- asserted as a fact here so a future
+    // change that adds one to that path fails BY NAME, and so that the missing build reads as a
+    // decision rather than an omission. `compile-fixtures.test.ts` proves the claim by running this
+    // job's exact entry with every `dist` deleted.
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const job = doc.jobs["official-fixture-compile"];
+    expect(job, "ci.yml must still have the official-fixture-compile job").toBeDefined();
+    const runs = job!.steps.map((s) => s.run ?? "");
+    expect(runs.some(COMPILE_CONSUMER_NO_DIST)).toBe(true);
+    expect(runs.some(NEEDS_DIST), "official-fixture-compile must not acquire a dist-consuming step without a build").toBe(false);
+    expect(runs.some((r) => r.startsWith("bun run build:packages"))).toBe(false);
+  });
+
+  test("F1: every `compile()` consumer in either workflow is classified -- a new one cannot be silently unjudged", () => {
+    // The two predicates above are only as good as their coverage of the scripts that call
+    // `compile()`. This enumerates them from the SOURCE and requires each to be named by one
+    // predicate or the other, so a third caller added later fails here rather than in CI.
+    const consumers = ["scripts/compile-official-fixture.ts"]; // + compile-fixtures.test.ts, which runs under `bun test`
+    for (const consumer of consumers) {
+      const src = readFileSync(fileURLToPath(new URL(`../${consumer}`, import.meta.url)), "utf8");
+      expect([consumer, /from "\.\/compile-fixtures\.ts"/.test(src)]).toEqual([consumer, true]);
+      const step = `bun run ${consumer}`;
+      expect([consumer, NEEDS_DIST(step) || COMPILE_CONSUMER_NO_DIST(step)]).toEqual([consumer, true]);
+    }
+  });
+
+  test("release.yml builds the emit explicitly BEFORE its own gates AND immediately before the one publish command", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const runs = Object.values(doc.jobs)[0]!.steps.map((s) => s.run ?? "");
+    const firstBuild = runs.findIndex((r) => r.startsWith("bun run build:packages"));
+    const lastBuild = runs.map((r) => r.startsWith("bun run build:packages")).lastIndexOf(true);
+    const testAt = runs.findIndex((r) => r.startsWith("bun test"));
+    const fixtureAt = runs.findIndex((r) => r.includes("tsconfig.winter.json"));
+    const publishAt = runs.findIndex((r) => r.includes("pnpm publish"));
+    expect(firstBuild, "release.yml must build the compiled emit explicitly, never as a smoke step's side effect").toBeGreaterThanOrEqual(0);
+    expect(publishAt).toBeGreaterThanOrEqual(0);
+    // Its own gate sequence resolves through `types` -> `./dist/*.d.ts`, exactly as ci.yml's does.
+    expect(firstBuild).toBeLessThan(testAt);
+    expect(firstBuild).toBeLessThan(fixtureAt);
+    // ...and the bytes that SHIP are built ADJACENT to the step that publishes them. Fourteen steps
+    // run between the first build and the publish; a build separated from it by anything that could
+    // rewrite or remove `dist` would satisfy a plain ordering check and still publish wrong bytes.
+    expect(publishAt - lastBuild).toBe(1);
+  });
+
+  test("neither workflow's build step is silenced -- no continue-on-error on it", () => {
+    for (const yml of [CI_YML, RELEASE_YML]) {
+      const doc = Bun.YAML.parse(yml) as WorkflowDoc;
+      for (const job of Object.values(doc.jobs)) {
+        for (const step of job.steps) {
+          if ((step.run ?? "").startsWith("bun run build:packages")) expect(step["continue-on-error"]).toBeUndefined();
+        }
+      }
+    }
+  });
+
   test("scripts/smoke-installed.ts (which packs + scans internally) runs as a gate BEFORE the publish step", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
     const steps = Object.values(doc.jobs)[0]!.steps;
@@ -181,7 +303,7 @@ describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-
   });
 });
 
-describe("release.yml's own Node 18 smoke (R-7a-16): stays BLOCKING, unlike ci.yml's advisory leg", () => {
+describe("release.yml's own Node 18 smoke (R-7a-16): BLOCKING, as ci.yml's leg now is too", () => {
   test("the publish job has no job-level continue-on-error", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
     expect(Object.values(doc.jobs)[0]?.["continue-on-error"]).toBeUndefined();

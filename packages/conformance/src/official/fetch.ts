@@ -16,11 +16,21 @@
 // anything that re-exports it -- performs NO I/O; only *calling* `fetchAndVerifyUpstream()` does,
 // and only a repository checkout (never an installed package) can satisfy it.
 import { createHash } from "node:crypto";
+import { brandedInstanceOf } from "../bun-required.ts";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const CHECKSUM_MISMATCH_BRAND = Symbol.for("@yanlinglabs/winter-conformance:ChecksumMismatchError");
+const OFFICIAL_COMPAT_UNAVAILABLE_BRAND = Symbol.for("@yanlinglabs/winter-conformance:OfficialCompatUnavailableError");
+
 export class ChecksumMismatchError extends Error {
+  // P7a fix wave r3 (F2): this class is exported from BOTH `@yanlinglabs/winter-conformance` and
+  // `.../official`, and the compiled emit gives each entry its own copy -- so a plain prototype
+  // `instanceof` is false across subpaths under Node. See `../bun-required.ts` for the whole
+  // reasoning; the brand is package-scoped, so another package's class still does not match.
+  readonly [CHECKSUM_MISMATCH_BRAND] = true;
+  static [Symbol.hasInstance] = brandedInstanceOf(CHECKSUM_MISMATCH_BRAND);
   constructor(message: string) {
     super(message);
     this.name = "ChecksumMismatchError";
@@ -29,6 +39,9 @@ export class ChecksumMismatchError extends Error {
 
 /** Thrown by `getChecksums()` when `compat/anthropic/0.3.250/checksums.json` is absent -- i.e. this module is running from an INSTALLED package rather than a repository checkout. Never a raw ENOENT. */
 export class OfficialCompatUnavailableError extends Error {
+  // F2, same reason as `ChecksumMismatchError` above.
+  readonly [OFFICIAL_COMPAT_UNAVAILABLE_BRAND] = true;
+  static [Symbol.hasInstance] = brandedInstanceOf(OFFICIAL_COMPAT_UNAVAILABLE_BRAND);
   constructor(message: string) {
     super(message);
     this.name = "OfficialCompatUnavailableError";

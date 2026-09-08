@@ -29,6 +29,7 @@
 // the returned `OAuthTokens`, which goes straight into the `CredentialStore`.
 
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
+import { requireBunRuntime } from "../../bun-required.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import { winterUserAgent } from "../../identity.ts";
 
@@ -206,6 +207,15 @@ export function refreshTokens(tokenUrl: string, clientId: string, refreshToken: 
  * instead of completing someone else's login into this process.
  */
 export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
+  // P7a fix wave r2 (item 3, re-review N1): the ONE place this package opens a loopback listener, and
+  // therefore the one guard that covers every login built on it -- `startCodexLogin` and
+  // `startAnthropicConsoleLogin` both funnel here. Named for the CALLER's own function where one is
+  // supplied (`cfg.label`), because that is the name in their code, not this internal helper's.
+  requireBunRuntime(
+    cfg.label !== undefined ? `${cfg.label} login (runLoginFlow)` : "runLoginFlow",
+    "Bun.serve",
+    "The authorization-code flow has to receive the vendor's redirect on 127.0.0.1, which needs a real HTTP listener. Run the login under Bun (or complete it in a Bun process and pass the resulting credential ref to your Node session).",
+  );
   const { verifier, challenge } = await generatePkce();
   const state = randomBase64Url(16);
   const report = (output: string): void => cfg.onAuthStatus?.({ isAuthenticating: true, output: [output] });

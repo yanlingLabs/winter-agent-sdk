@@ -36,3 +36,6 @@ export type { ConformanceTraceEntry } from "./trace.ts";
 export { goldenPath, listGoldens, loadGolden } from "./goldens.ts";
 
 export { ChecksumMismatchError, OfficialCompatUnavailableError, fetchAndVerifyUpstream, getChecksums, resolveCacheDir, runCapture, verifyDigest, verifySha512Integrity } from "./official/index.ts";
+// P7a fix wave r2 (item 3, re-review N1): `runCapture` above is the one Bun-only export on this
+// barrel; this is the typed error it throws off Bun. See the README's "Bun-only surface" section.
+export { BunRequiredError, hasBunRuntime, requireBunRuntime } from "./bun-required.ts";

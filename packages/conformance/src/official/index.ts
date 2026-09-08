@@ -11,3 +11,6 @@
 //                  convention for the opt-in live provider gate).
 export { ChecksumMismatchError, OfficialCompatUnavailableError, fetchAndVerifyUpstream, getChecksums, resolveCacheDir, verifyDigest, verifySha512Integrity } from "./fetch.ts";
 export { runCapture } from "./capture.ts";
+// P7a fix wave r2 (item 3, re-review N1): `runCapture` is Bun-only (`Bun.spawn` + `Bun.serve`) and
+// refuses with this typed error anywhere else, rather than a `ReferenceError` from inside it.
+export { BunRequiredError, hasBunRuntime, requireBunRuntime } from "../bun-required.ts";

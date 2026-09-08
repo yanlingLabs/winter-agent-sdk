@@ -16,6 +16,47 @@ the repository root `.npmrc` and `package.json` `publishConfig` for the registry
 | `@yanlinglabs/winter-conformance/trace` | `normalizeTrace`, `compareTraces`, and the `ConformanceTraceEntry` type — strips volatile fields (session ids, timestamps, durations, costs) from a captured SDK message trace and diffs two normalized traces. |
 | `@yanlinglabs/winter-conformance/official` | The pinned-upstream mechanics: `fetchAndVerifyUpstream` (checksum-verified ephemeral fetch of the pinned official wrapper tarball) and `runCapture` (the `RUN_OFFICIAL_CAPTURE=1`-gated differential-signal harness). |
 
+## Bun-only surface
+
+This package declares `engines.node` and every entry point **imports** cleanly under Node 18+ (the
+compiled emit under `dist/` is what a non-Bun runtime resolves, via each export's `default`
+condition; Bun resolves the `bun` condition and gets the TypeScript source unchanged). Importable is
+not the same as runnable on every path — one exported function needs the Bun runtime:
+
+| Function | Import | Needs | Why |
+| --- | --- | --- | --- |
+| `runCapture()` | `@yanlinglabs/winter-conformance`, `@yanlinglabs/winter-conformance/official` | `Bun.spawn`, `Bun.serve` | It installs the pinned official SDK into a throwaway npm prefix and drives it against loopback HTTP fakes. |
+
+Called anywhere else it throws `BunRequiredError` (exported from both of those barrels) as its FIRST
+action — before the pinned tarball is fetched and before any listener is bound — naming the function,
+the Bun API and what to do instead. Catch it by identity:
+
+```ts
+import { runCapture, BunRequiredError } from "@yanlinglabs/winter-conformance";
+
+try {
+  await runCapture();
+} catch (err) {
+  if (err instanceof BunRequiredError) { /* run the capture under Bun instead */ }
+  throw err;
+}
+```
+
+### `BunRequiredError` is THIS package's own class
+
+`@yanlinglabs/winter-provider-runtime` exports a class with the same name and shape, and the two are
+deliberately **not** the same type — the packages share no dependency, so there is no module either
+could import it from. **Catch the one you imported.** Within this package it is one type across every
+subpath: an error thrown by `./official`'s `runCapture` satisfies `instanceof BunRequiredError`
+imported from the main barrel, and vice versa, under Node as well as Bun. The same holds for
+`ChecksumMismatchError` and `OfficialCompatUnavailableError`, which are also exported from both
+entries (the compiled emit gives each export entry its own bundle, so each class carries a
+package-scoped `Symbol.for` brand to make that hold).
+
+Everything else here — the trace normalizer, the goldens and their loaders, `fetchAndVerifyUpstream`
+and the checksum helpers — is plain Node-compatible code. The goldens `runCapture` produces are
+ordinary JSON and are readable from Node whoever produced them.
+
 Goldens (`goldens/*.trace.json`) ship as data alongside `src/` — load them with `loadGolden`,
 `listGoldens`, and `goldenPath` from the main barrel rather than reaching into the installed
 package's directory layout by hand.
