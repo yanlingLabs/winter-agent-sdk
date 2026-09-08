@@ -4,6 +4,7 @@
 // spawns the script, writes to the repository, or touches a home directory.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { WinterCatalog, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { CATALOG_VOCABULARIES, loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { BEGIN_MARKER, END_MARKER, PROVENANCE_PATH, renderTierTable, spliceCensus } from "./provenance-tiers.ts";
@@ -106,5 +107,42 @@ describe("provenance-tiers --check: the committed document agrees with the shipp
     expect(spliced.ok).toBe(true);
     if (!spliced.ok) throw new Error(spliced.reason);
     expect(spliced.text).toBe(document);
+  });
+});
+
+// --- P7a fix wave (item 3): the script is runnable BY NAME ---------------------------------------
+//
+// REDUCED from "add a CI step" after the Lane D review: the census drift is ALREADY gated by the
+// `--check` test above, which runs under the repository's own `bun test` in CI. A second CI step
+// would re-assert the same fact from a second place and drift from it.
+//
+// What was genuinely missing is discoverability: every other generator in this repository has a
+// root script (`provider:catalog`, `provider:sync`, `differential`, `conformance:snapshot`), so a
+// contributor who has just regenerated the catalog looks for one and finds a bare path in a comment
+// instead. This pins the script and the documented `--check` form together, because a documented
+// invocation that does not exist is worse than none.
+describe("provenance-tiers: the root package script (P7a fix wave item 3)", () => {
+  const ROOT_PACKAGE_JSON = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as { scripts: Record<string, string> };
+
+  test("`provenance:tiers` is a root script pointing at this generator", () => {
+    expect(ROOT_PACKAGE_JSON.scripts["provenance:tiers"]).toBe("bun run scripts/provenance-tiers.ts");
+  });
+
+  test("PROVENANCE.md documents BOTH forms by the script's name, and the `--check` one keeps its `--` separator", () => {
+    // `bun run provenance:tiers --check` would be consumed by bun itself; the argument only reaches
+    // the script past a `--`. A document that omitted it would send every contributor to a no-op
+    // that rewrites the file instead of checking it.
+    const document = readFileSync(PROVENANCE_PATH, "utf8");
+    expect(document).toContain("bun run provenance:tiers");
+    expect(document).toContain("bun run provenance:tiers -- --check");
+  });
+
+  test("no CI step runs this generator -- the drift gate is the test above, and there is only one of it", () => {
+    // The reduction, made enforceable. A future well-meaning addition of a `provenance:tiers` CI
+    // step would create a second gate on the same fact; this says, in the place someone would look,
+    // that the single gate is deliberate.
+    const ci = readFileSync(fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url)), "utf8");
+    const runLines = ci.split("\n").filter((line) => /^\s*-\s*run:/.test(line));
+    expect(runLines.filter((line) => line.includes("provenance"))).toEqual([]);
   });
 });

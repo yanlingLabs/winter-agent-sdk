@@ -99,7 +99,17 @@ tiers would be the quiet failure this field exists to prevent, so they are label
 The two tiers above are the two that carry the argument. The full vocabulary has five, and the
 CENSUS below is **generated from the shipped catalog** rather than counted by hand — a hand-counted
 total in a document that describes a data field is a second, unpinned copy of that field, and it is
-the copy a reader trusts. `bun run scripts/provenance-tiers.ts --check` fails when the two disagree.
+the copy a reader trusts.
+
+```sh
+bun run provenance:tiers              # rewrite the census block below from the shipped catalog
+bun run provenance:tiers -- --check   # exit 1 if the committed block has drifted from the catalog
+```
+
+The `--check` form is already gated: `scripts/provenance-tiers.test.ts` re-renders the census and
+asserts the committed block is byte-identical, and that test runs under the repository's own
+`bun test` in CI. The named script above is for a contributor who has just regenerated the catalog
+and wants to refresh this document by name — not a second gate.
 
 <!-- BEGIN GENERATED: admission-tier census (bun run scripts/provenance-tiers.ts) -->
 
