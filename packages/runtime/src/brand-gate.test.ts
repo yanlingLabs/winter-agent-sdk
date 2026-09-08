@@ -14,6 +14,18 @@
 //   * `BASELINE_ALLOWLIST` below — the files that ALREADY carried a literal when this gate landed.
 //     Each lane deletes its own entries as it sweeps them; P7a's close-out asserts the list is
 //     empty. A listed file is a debt with a name, not a permission.
+//   * CATALOG PROVENANCE VOCABULARY needs no exemption, and the reasoning is recorded here so the
+//     next reader does not re-litigate it (P7a fix wave, item 8). `provider-catalog/src/validate.ts`
+//     spells `winter-default` (an `EvidenceSource`), `winter-curated` (a `SlotBasis`) and `winter`
+//     (an `upstream.project`). Those are closed schema enum VALUES that the generated catalog, the
+//     overlay JSON and the PROVENANCE census all carry verbatim, and a rebrand MUST NOT change them
+//     — a host's brand does not rename the catalog's provenance tiers, exactly as the
+//     Claude-mirroring literals below are the official runtime's own names. NO RULE MATCHES THEM
+//     (the rules are anchored on product surfaces: dot-dirs, the instructions file, the preset, the
+//     MCP prefix, the keychain service, the temp root, the originator, the product token), so
+//     nothing has to be exempted for them. That file's baseline entry was earned by a DIFFERENT
+//     literal — `WINTER_IDENTITY_VALUE_PREFIX = "winter-agent-sdk"`, rule 9a — which the fix wave
+//     deleted rather than exempted, because the product token is exactly what this gate exists for.
 //   * CLAUDE-MIRRORING literals are never matched at all (WS-01 §5, D16/D19): `claude-<uid>`,
 //     `claude-resume-<uuid>`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_TMPDIR`, `preset: "claude_code"`,
 //     the `AgentInput.model` aliases, `.claude-plugin`, `com.anthropic.claude-code`. They are the
@@ -415,6 +427,16 @@ describe("P7a (D19): the brand sweep gate", () => {
     expect(stale).toEqual([]);
   });
 
+  // --- P7a fix wave (item 8): the CLOSE-OUT --------------------------------------------------------
+  test("BASELINE_ALLOWLIST is EMPTY -- every lane's debt is discharged", () => {
+    // WS-03's amendment ends here: the gate landed with a named debt per file, four lanes deleted
+    // their own entries, and the last one (`provider-catalog/src/validate.ts`) went with the fix
+    // wave's item 7. From now on there is no such thing as a file that may carry a brand literal:
+    // the ONLY exceptions are `brand.ts` and the by-VALUE vocabulary table, both of which are
+    // reasoned about rather than inherited.
+    expect(BASELINE_ALLOWLIST).toEqual([]);
+  });
+
   test("the baseline is sorted, unique, and every entry names a real scanned file", () => {
     expect([...BASELINE_ALLOWLIST]).toEqual([...new Set(BASELINE_ALLOWLIST)].sort());
     const scanned = new Set(collectSourceFiles());
@@ -596,3 +618,4 @@ describe("P7a: rule 9's top-level scanner (plants)", () => {
     expect(scanFileForBrandLiterals("synthetic.ts", src)).toEqual([]);
   });
 });
+
