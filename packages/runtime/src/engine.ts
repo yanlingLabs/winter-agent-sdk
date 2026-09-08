@@ -3012,6 +3012,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const resolvedSources = resolveMcpServerSources(sources, {
       ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
       trustedWorkspace,
+      // P7a fix wave (item 5, I-2): the SESSION's standing-server name. Both MCP doors and
+      // `tools/registry.ts`'s per-session reservation must read ONE name, or a branded session both
+      // spawns a child for a server it will refuse to register and refuses a name nothing occupies.
+      reservedServerName: sessionBrand.mcpServerName,
     });
     // `rejected`/`shadowed` are deliberately NOT surfaced on the wire: no frame shape exists for
     // "this server declaration lost" (WS-09 §1.2's "the losing declaration is reported" needs a
@@ -3022,6 +3026,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       servers: resolvedSources.resolved,
       envConfig: mcpEnvConfig,
       elicitationAsk: createElicitationAsker(bridge),
+      // ...and the same name onto the control seam's own `addAndConnect` guard (the live
+      // `mcp_set_servers` door), which bypasses `resolveMcpServerSources` entirely.
+      reservedServerName: sessionBrand.mcpServerName,
     });
     // WS-09 §2's three-deadline model lives entirely inside `start()`: an ordinary server connects
     // in the background and this returns immediately; `MCP_CONNECTION_NONBLOCKING=0` or an

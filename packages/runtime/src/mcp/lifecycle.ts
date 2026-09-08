@@ -139,7 +139,29 @@ export { validateServerConfig };
 // followed exactly: WHERE the project `mcp.json`/settings actually get read from disk, and HOW
 // workspace trust is computed, are integration concerns for whoever assembles `McpServerSource[]`
 // in a live session -- see this task's own report for the exact recipe).
-export function resolveMcpServerSources(sources: readonly McpServerSource[], opts: { strictMcpConfig?: boolean; trustedWorkspace: boolean }): ResolveMcpServerSourcesResult {
+/**
+ * P7a fix wave (item 5, whole-branch review I-2): the RESERVED name is the SESSION BRAND's.
+ *
+ * `WINTER_SERVER_NAME` is `WINTER_BRAND.mcpServerName` computed at module load, so under a rebrand
+ * this door and `registry.ts`'s read two different names. The registry reserves the SESSION's
+ * `brand.mcpServerName` (per session, via `rebrandStandingServerTools`); this door reserved
+ * `"winter"` forever. Consequences, both real:
+ *
+ *   - a settings/project/explicit server named `acme` passed here, got validated, CONNECTED (a stdio
+ *     child spawned, `slot.client` assigned) and only then hit `registerMcpServerTools`' own
+ *     reserved-name throw -- which is verbatim the defect control.ts records the P4 fix wave closing,
+ *     re-opened for the brand's own name;
+ *   - and a reuser could not name any live server `winter`, a stale reservation for a standing
+ *     server that under their brand is called `acme`.
+ *
+ * The parameter defaults to `WINTER_SERVER_NAME`, so every existing caller and fixture keeps today's
+ * behaviour byte for byte.
+ */
+export function resolveMcpServerSources(
+  sources: readonly McpServerSource[],
+  opts: { strictMcpConfig?: boolean; trustedWorkspace: boolean; reservedServerName?: string },
+): ResolveMcpServerSourcesResult {
+  const reservedServerName = opts.reservedServerName ?? WINTER_SERVER_NAME;
   const resolved: ResolvedMcpServerEntry[] = [];
   const shadowed: ShadowedMcpServerEntry[] = [];
   const rejected: RejectedMcpServerEntry[] = [];
@@ -174,8 +196,8 @@ export function resolveMcpServerSources(sources: readonly McpServerSource[], opt
         }
         claimed.set(name, origin);
 
-        if (name === WINTER_SERVER_NAME) {
-          rejected.push({ name, origin, reason: `"${WINTER_SERVER_NAME}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
+        if (name === reservedServerName) {
+          rejected.push({ name, origin, reason: `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
           continue;
         }
         const validated = validateServerConfig(raw);
@@ -437,6 +459,12 @@ export interface McpLifecycleDeps {
   // the actual tool bridge for that case, see this file's own header).
   inProcessServers?: Readonly<Record<string, InProcessMcpServer>>;
   discoveryCache?: McpDiscoveryCache;
+  /**
+   * P7a fix wave (item 5, I-2): the name the STANDING server occupies for this session --
+   * `brand.mcpServerName`, not the module-load default. Forwarded to the control seam, whose
+   * `addAndConnect` guard is the second door onto the same rule. Defaults to `WINTER_SERVER_NAME`.
+   */
+  reservedServerName?: string;
 }
 
 export type RefreshServerToolsResult = { ok: true; toolNames: string[] } | { ok: false; reason: string };
@@ -932,7 +960,15 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     },
   };
 
-  return { stateSource, controlSeam: createMcpControlSeam(internals), start, dispose, listConnectedServerNames, getConnectedClient, refreshServerTools };
+  return {
+    stateSource,
+    controlSeam: createMcpControlSeam(internals, { ...(deps.reservedServerName !== undefined ? { reservedServerName: deps.reservedServerName } : {}) }),
+    start,
+    dispose,
+    listConnectedServerNames,
+    getConnectedClient,
+    refreshServerTools,
+  };
 }
 
 // Exported so control.ts (a sibling file, never a circular import back into this one -- it only

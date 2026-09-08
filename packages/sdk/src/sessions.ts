@@ -14,13 +14,15 @@
 //     no "current directory" concept the way resume's cwd-scoped search does: an omitted
 //     directory is a FLAT search across every project, so >1 match is always ambiguous, never
 //     resolved by an implicit "current project wins" rule (there is no current project here).
-//   - every function honors an explicit `winterHome` (tests use this) with the resolver default
-//     (resolveWinterHome, i.e. WINTER_HOME || ~/.winter) otherwise.
+//   - every function honors an explicit `winterHome` (tests use this); otherwise the home is
+//     resolved from `opts.brand` when the caller supplies one (P7a fix wave, I-1), and from the
+//     resolver's own default -- Winter's `<PREFIX>HOME` || `~/<homeDirName>` -- when they do not.
 //   - deleteSession cascades via the store's own delete() (WS-05 §6).
 //   - listSubagents is listSubkeys filtered+stripped to the `subagents/<agentId>` convention the
 //     store's own module doc pins -- P4 is what will ever populate a real one; empty until then.
 import { WinterCompatibilitySessionStore, type SessionStoreEntry } from "./store/session-store.ts";
 import { forkSessionByKey } from "./store/fork-session.ts";
+import { resolveBrand, type BrandProfile } from "./brand.ts";
 import { resolveWinterHome } from "./paths/home.ts";
 import { compatibilityKeys } from "./paths/keys.ts";
 import { SessionNotFoundError } from "./errors.ts";
@@ -31,14 +33,37 @@ import { SessionNotFoundError } from "./errors.ts";
 interface SessionQueryOptions {
   directory?: string;
   winterHome?: string;
+  /**
+   * P7a fix wave (item 5, whole-branch review I-1): THE HOST'S OWN BRAND.
+   *
+   * These nine functions run OUTSIDE a query -- no `RuntimeConfig`, no wiring -- so the only way
+   * they can learn which product's store to open is to be told. Without this field `resolveHome`
+   * fell through to `resolveWinterHome()` with NO brand, which reads `WINTER_HOME`, `WINTER_PROFILE`
+   * and `~/.winter`: a D19 tier-1 reuser calling `listSessions()` silently addressed WINTER's store,
+   * and on a machine where Winter is also installed `deleteSession(id)` from the reuser's app
+   * deleted a Winter session.
+   *
+   * `winterHome` still wins outright -- it is an explicit path, and a caller that computed one has
+   * already made this decision. `brand` is what a caller uses INSTEAD of recomputing the path: the
+   * profile is folded onto Winter's defaults by the same `resolveBrand` `query()` uses, so a partial
+   * `{ homeDirName, envPrefix }` is enough and an invalid one refuses here rather than silently
+   * addressing the wrong store.
+   */
+  brand?: Partial<BrandProfile>;
 }
 
-function resolveHome(winterHome: string | undefined): string {
-  return winterHome ?? resolveWinterHome();
+function resolveHome(winterHome: string | undefined, brand: Partial<BrandProfile> | undefined): string {
+  if (winterHome !== undefined) return winterHome;
+  if (brand === undefined) return resolveWinterHome();
+  const resolved = resolveBrand(brand);
+  // A REFUSAL, never a silent fall back to Winter's own home. Falling back is the exact failure this
+  // field exists to prevent: the caller asked for their product's store and would get Winter's.
+  if (!resolved.ok) throw new TypeError(`sessions: invalid brand profile -- ${resolved.reason}`);
+  return resolveWinterHome(undefined, resolved.brand);
 }
 
-function openStore(winterHome: string | undefined): WinterCompatibilitySessionStore {
-  return new WinterCompatibilitySessionStore({ winterHome: resolveHome(winterHome) });
+function openStore(opts: SessionQueryOptions | undefined): WinterCompatibilitySessionStore {
+  return new WinterCompatibilitySessionStore({ winterHome: resolveHome(opts?.winterHome, opts?.brand) });
 }
 
 async function findInProject(
@@ -92,7 +117,7 @@ async function resolveSession(
 export async function listSessions(
   opts?: SessionQueryOptions,
 ): Promise<Array<{ sessionId: string; projectKey: string; mtime: number; name?: string; tags?: string[] }>> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const projectKeys = opts?.directory !== undefined ? [compatibilityKeys(opts.directory).transcriptProjectKey] : await store.listProjectKeys();
 
   const result: Array<{ sessionId: string; projectKey: string; mtime: number; name?: string; tags?: string[] }> = [];
@@ -117,7 +142,7 @@ export async function getSessionInfo(
   sessionId: string,
   opts?: SessionQueryOptions,
 ): Promise<{ sessionId: string; projectKey: string; mtime: number; entryCount: number; name?: string; tags?: string[] }> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey, mtime } = await resolveSession(store, sessionId, opts?.directory);
 
   const summaries = await store.listSessionSummaries(projectKey);
@@ -143,32 +168,32 @@ export async function getSessionInfo(
 }
 
 export async function getSessionMessages(sessionId: string, opts?: SessionQueryOptions): Promise<SessionStoreEntry[]> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   const entries = await store.load({ projectKey, sessionId });
   return entries ?? [];
 }
 
 export async function renameSession(sessionId: string, name: string, opts?: SessionQueryOptions): Promise<void> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   await store.mergeSessionMetadata({ projectKey, sessionId }, { name });
 }
 
 export async function tagSession(sessionId: string, tags: string[], opts?: SessionQueryOptions): Promise<void> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   await store.mergeSessionMetadata({ projectKey, sessionId }, { tags });
 }
 
 export async function deleteSession(sessionId: string, opts?: SessionQueryOptions): Promise<void> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   await store.delete({ projectKey, sessionId });
 }
 
 export async function forkSession(sessionId: string, opts?: SessionQueryOptions): Promise<{ sessionId: string }> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   return forkSessionByKey(store, { projectKey, sessionId });
 }
@@ -176,7 +201,7 @@ export async function forkSession(sessionId: string, opts?: SessionQueryOptions)
 const SUBAGENT_SUBPATH_PREFIX = "subagents/";
 
 export async function listSubagents(sessionId: string, opts?: SessionQueryOptions): Promise<Array<{ agentId: string }>> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   const subkeys = await store.listSubkeys({ projectKey, sessionId });
 
@@ -193,7 +218,7 @@ export async function listSubagents(sessionId: string, opts?: SessionQueryOption
 }
 
 export async function getSubagentMessages(sessionId: string, agentId: string, opts?: SessionQueryOptions): Promise<SessionStoreEntry[]> {
-  const store = openStore(opts?.winterHome);
+  const store = openStore(opts);
   const { projectKey } = await resolveSession(store, sessionId, opts?.directory);
   const entries = await store.load({ projectKey, sessionId, subpath: `${SUBAGENT_SUBPATH_PREFIX}${agentId}` });
   if (entries === null) {
