@@ -29,6 +29,7 @@ import { query, type Query, type SdkMessage } from "./query.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { testProviderByName, SUBAGENT_CHILD_PROBE_TEXT } from "winter-agent-runtime";
 import type { GlobalAgentMessage, ListedRuntimeObject } from "./messaging/index.ts";
+import type { MessagingIdleNoticePayload } from "./protocol/messaging.ts";
 import { buildSessionAddress } from "./messaging/index.ts";
 
 const FIXTURE_MODEL = "winter-test/echo";
@@ -253,6 +254,63 @@ describe("Query.messaging: a spawned session's own children, reached from the ho
     });
     expect(observed.crossSession).toContain("OWNING parent");
     expect(observed.crossSession).toContain("another session");
+  });
+
+  test("notify_when_idle round trip: subscribe -> the turn ends -> exactly ONE live notice, and the drain returns the SAME record once", async () => {
+    // The gap this closes: before it, a host could be told `subscribed` and then never hear
+    // anything -- the reference adapter files WS-10 §14's notice in an IN-PROCESS queue that nothing
+    // drained and no frame carried, so `subscribed` was a promise the facet could not keep.
+    //
+    // Both halves, in one run, because they are the same notice: the LIVE
+    // `messaging.idle_notice` frame and the CATCH-UP `messaging.read_notifications` drain, correlated
+    // by `notification_id`. The live forward deliberately does NOT consume the entry -- that is what
+    // makes WS-15 §6.4's "a host that was not listening collects what it missed" possible.
+    const live: MessagingIdleNoticePayload[] = [];
+    const { observed } = await runFacetSession({
+      whileRunning: async (q, o) => {
+        q.messaging.onIdleNotice((payload) => live.push(payload));
+        // The SESSION, not the child: WS-10 §14 refuses a subagent target outright, so the only
+        // legitimate target inside a spawned session is the session itself.
+        o.subscribed = await q.messaging.subscribeIdle(`session:${SESSION_ID}`, { messageId: "host-msg-idle-1" });
+      },
+      // The turn has ended by the time this runs, so the notice has already been queued and forwarded.
+      whenSettled: async (q, o) => {
+        o.firstDrain = await q.messaging.readNotifications();
+        o.secondDrain = await q.messaging.readNotifications();
+      },
+    });
+
+    // The subscription was ACCEPTED -- the self-peer registration is what makes a session a
+    // legitimate, idle-signalling target of its own adapter.
+    expect(observed.subscribed).toEqual({ status: "subscribed", messageId: "host-msg-idle-1" });
+
+    // EXACTLY ONE live notice. WS-10 §14's "at most one notice" is structural on the runtime side (a
+    // fired subscription is removed and can never fire again); this is the wire-level proof.
+    expect(live).toHaveLength(1);
+    expect(live[0]!.subscriberSessionId).toBe(SESSION_ID);
+    expect(live[0]!.notice.content).toContain("idle");
+
+    // The drain returns the SAME record once...
+    const first = observed.firstDrain as { notifications: Array<{ notification_id: string }>; remaining: number };
+    expect(first.notifications).toHaveLength(1);
+    expect(first.remaining).toBe(0);
+    expect(first.notifications[0]!.notification_id).toBe(live[0]!.notice.notification_id);
+    // ...and then nothing: a drain is the acknowledgement.
+    expect(observed.secondDrain).toEqual({ notifications: [], remaining: 0 });
+  });
+
+  test("a session nobody subscribed to answers an EMPTY drain and never becomes a peer -- the addendum costs an unsubscribed session nothing", async () => {
+    // The negative control for the lazy self-peer registration: without it, every session would start
+    // listing itself in `list_reachable`, which is a behaviour change for every host that never asked
+    // for an idle notice (and would have moved the differential golden's own `facet-1` answer).
+    const { observed } = await runFacetSession({
+      whenSettled: async (q, o) => {
+        o.drain = await q.messaging.readNotifications();
+        o.reachable = await q.messaging.listReachable();
+      },
+    });
+    expect(observed.drain).toEqual({ notifications: [], remaining: 0 });
+    expect((observed.reachable as ListedRuntimeObject[]).filter((r) => r.objectKind === "session")).toEqual([]);
   });
 
   test("the child really ran: the facet observed a session that produced a normal terminal result", async () => {

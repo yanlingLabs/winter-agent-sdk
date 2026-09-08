@@ -35,6 +35,19 @@ export interface NotificationRecord {
 
 export interface NotificationQueue {
   push(ownerKey: string, rec: { origin: string; content: string; queuedAtMs: number }): void;
+  /**
+   * PHASE 7B: observe every push, WITHOUT consuming it. Returns an unsubscribe.
+   *
+   * The queue is the DURABLE record a host drains; this is the live signal a host can act on
+   * immediately. They are deliberately the same notice, correlated by `notification_id`: a listener
+   * that never fires (a crashed host, a host that reconnects later) loses nothing, because the entry
+   * is still queued for the drain -- which is what makes WS-15 §6.4's restart recovery possible at
+   * all. A listener must therefore NOT drain in response; the host acknowledges by draining.
+   *
+   * OPTIONAL, so a host that supplies its own `NotificationQueue` implementation still satisfies this
+   * interface. Its absence degrades to "drain only", never to a dropped notice.
+   */
+  subscribe?(listener: (ownerKey: string, rec: NotificationRecord) => void): () => void;
   // Drains up to `max` (default: all) queued notifications for `ownerKey`, oldest first, and reports
   // how many remain -- the exact `ReadNotificationsOutput` shape (WS-06 §3.6 pinned):
   // `{notifications, remaining}`.
@@ -44,17 +57,28 @@ export interface NotificationQueue {
 
 export function createNotificationQueue(): NotificationQueue {
   const byOwner = new Map<string, NotificationRecord[]>();
+  let listeners: Array<(ownerKey: string, rec: NotificationRecord) => void> = [];
   let counter = 0;
   return {
+    subscribe(listener) {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((l) => l !== listener);
+      };
+    },
     push(ownerKey, rec) {
       const list = byOwner.get(ownerKey) ?? [];
-      list.push({
+      const record: NotificationRecord = {
         notification_id: `note-${++counter}`,
         origin: rec.origin,
         queued_at: new Date(rec.queuedAtMs).toISOString(),
         content: rec.content,
-      });
+      };
+      list.push(record);
       byOwner.set(ownerKey, list);
+      // AFTER the entry is queued, never before: a listener that throws must not be able to leave the
+      // durable record unwritten, and a listener that (wrongly) drains must find the entry there.
+      for (const listener of listeners) listener(ownerKey, record);
     },
     drain(ownerKey, max) {
       const list = byOwner.get(ownerKey) ?? [];

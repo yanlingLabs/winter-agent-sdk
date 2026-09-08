@@ -217,6 +217,57 @@
   {
     "sequence": 11,
     "direction": "runtime-to-host",
+    "kind": "control_request",
+    "payload": {
+      "type": "control_request",
+      "subtype": "messaging.idle_notice",
+      "payload": {
+        "subscriberSessionId": "differential-facet-fixture",
+        "notice": {
+          "notification_id": "note-1",
+          "origin": "session:differential-facet-fixture",
+          "queued_at": "QUEUED_AT",
+          "content": "session:differential-facet-fixture is now idle"
+        }
+      }
+    }
+  },
+  {
+    "sequence": 12,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "subscribed",
+        "messageId": "host-7"
+      }
+    }
+  },
+  {
+    "sequence": 13,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "notifications": [
+          {
+            "notification_id": "note-1",
+            "origin": "session:differential-facet-fixture",
+            "queued_at": "QUEUED_AT",
+            "content": "session:differential-facet-fixture is now idle"
+          }
+        ],
+        "remaining": 0
+      }
+    }
+  },
+  {
+    "sequence": 14,
+    "direction": "runtime-to-host",
     "kind": "control_response",
     "payload": {
       "type": "control_response",

@@ -965,6 +965,20 @@ export async function traceWinterSendMessageToChildRound(): Promise<ConformanceT
 }
 
 
+/**
+ * A queued notification carries a real wall-clock `queued_at` (ISO 8601, minted at push time), which
+ * a byte-frozen golden cannot hold -- `--update` would write a different file on every run, failing
+ * the regenerate-twice determinism WS-17 §4 requires.
+ *
+ * Replaced by a fixed token rather than stripped: the FIELD's presence is part of the shape a host
+ * reads, and a golden that dropped it would stop pinning that the notice is timestamped at all.
+ * Applied to both places one appears -- the live `messaging.idle_notice` frame and the
+ * `read_notifications` page -- since they are deliberately the same record.
+ */
+function scrubIdleNoticeTimestamps(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
+  return JSON.parse(JSON.stringify(entries).replace(/"queued_at":"[^"]*"/g, '"queued_at":"QUEUED_AT"')) as ConformanceTraceEntry[];
+}
+
 // (5) Phase 7b (R-7b-4): the per-session MESSAGING FACET's own frame vocabulary, byte-frozen.
 //
 // All six `messaging.*` control subtypes plus the malformed-request refusal, driven on the RAW frame
@@ -1017,9 +1031,21 @@ export async function traceWinterMessagingFacetRound(): Promise<ConformanceTrace
       if (!frame) throw new Error(`differential messaging facet: expected ${label}, got EOF`);
       return frame;
     };
+    // Reads until THIS request's own `control_response` arrives, pushing every frame seen on the way.
+    //
+    // Not "read exactly one frame" (the interrupt scenario's shape), because this facet can emit a
+    // RUNTIME-ORIGINATED frame in the middle of an exchange: `subscribe_idle` on an already-idle
+    // target sends its notice immediately (WS-10 §14), so a `messaging.idle_notice` control_request
+    // arrives before the subscribe answer. A one-frame-per-ask reader mislabels every frame after
+    // that point and silently drops the last -- which is exactly what happened on the first run of
+    // this scenario.
     const ask = async (requestId: string, subtype: string, payload: unknown, label: string): Promise<void> => {
       proc.stdin.write(encodeFrame({ type: "control_request", requestId, subtype, payload } as WinterFrame));
-      push(await need(label));
+      for (;;) {
+        const frame = await need(label);
+        push(frame);
+        if (frame.type === "control_response" && (frame as { requestId?: string }).requestId === requestId) return;
+      }
     };
 
     push(await need("the init frame"));
@@ -1073,10 +1099,27 @@ export async function traceWinterMessagingFacetRound(): Promise<ConformanceTrace
     const foreignChild = { objectKind: "agent", runtimeKind: "winter-agent", winterSessionId: "s_other", parentWinterSessionId: "s_other", childId: "c1" };
     await ask("facet-9", "messaging.steer_child", { id: "agent:s_other:c1", message: message("host-6", foreignChild) }, "the owning-parent refusal");
 
+    // 10/11. THE notify_when_idle RETURN PATH, both halves, on the wire.
+    //
+    //  * `subscribe_idle` on THIS SESSION is accepted -- WS-10 §14 refuses a subagent target
+    //    outright, so the session is the only legitimate target inside a spawned runtime, and the
+    //    run's own self-peer registration is what makes it one.
+    //  * the session is ALREADY IDLE here (this scenario sends no user envelope, so no turn is ever
+    //    in flight), which is WS-10 §14's "send the notice immediately when the target is already
+    //    idle" row -- so the LIVE `messaging.idle_notice` frame arrives BEFORE the subscribe answer,
+    //    and both are in the golden. That interleaving is why `ask` reads until its own requestId
+    //    rather than exactly one frame.
+    //  * `read_notifications` then returns the SAME record -- same `notification_id` -- because the
+    //    live forward deliberately does not consume the queue entry. That equality, frozen here, is
+    //    the whole contract between the two halves: a host that missed the frame still collects it,
+    //    and a host that got both dedupes on the id.
+    await ask("facet-10", "messaging.subscribe_idle", { id: `session:${sessionId}`, messageId: "host-7", subscriberSessionId: sessionId }, "the self-session subscribe answer");
+    await ask("facet-11", "messaging.read_notifications", { max: 10 }, "the notifications page");
+
     proc.stdin.write(encodeFrame({ type: "control_request", requestId: "facet-end", subtype: "end_input", payload: undefined }));
     push(await need("the end_input ack"));
 
-    return normalizeTrace(scrubWinterHome(entries, winterHome));
+    return normalizeTrace(scrubIdleNoticeTimestamps(scrubWinterHome(entries, winterHome)));
   } finally {
     proc.kill();
     await proc.exited;

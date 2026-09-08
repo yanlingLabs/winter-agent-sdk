@@ -548,6 +548,28 @@ export function createDefaultMessagingRuntime(opts: { now?: () => number; getChi
 // Idempotent and lazy: the first run to ask builds it; every later run reuses it. A host that wants
 // its own real (daemon-backed, cross-process, durable) runtime registers one BEFORE any session
 // starts and this function leaves it alone -- WS-10 §15's own split of ownership, unchanged.
+/**
+ * The registered runtime, IF it is one this file built.
+ *
+ * `getMessagingRuntime()` answers `MessagingRuntimeDeps`, which is all the router core needs and
+ * deliberately carries neither a peer directory nor an idle-transition trigger -- both are
+ * owner-specific (WS-10 §15). The engine's messaging facet needs both to serve
+ * `messaging.subscribe_idle` and `messaging.idle_notice`, so it asks THIS question instead of
+ * casting: a host that registered its OWN runtime has its own session-status event source and its
+ * own directory, and must not have this one's absence papered over with a cast that would throw at
+ * the first call.
+ *
+ * Duck-typed on the two members the engine actually uses, so a host that supplies a compatible
+ * runtime is served too -- the check is about capability, not about identity.
+ */
+export function getDefaultMessagingRuntime(): DefaultMessagingRuntime | undefined {
+  const runtime = getMessagingRuntime();
+  if (runtime === undefined) return undefined;
+  const candidate = runtime as Partial<DefaultMessagingRuntime>;
+  if (candidate.peers === undefined || typeof candidate.adapter?.firePeerIdleTransition !== "function") return undefined;
+  return runtime as DefaultMessagingRuntime;
+}
+
 export function ensureDefaultMessagingRuntimeRegistered(): MessagingRouterSeamWithRoster {
   const existing = getMessagingRuntime();
   if (existing !== undefined) return existing.seam as MessagingRouterSeamWithRoster; // a HOST-registered runtime may carry any seam; the roster contribution is best-effort for one that does not aggregate

@@ -32,6 +32,11 @@ import {
   type MessagingChildRequest,
   type MessagingDeliverRequest,
   type MessagingSubscribeIdleRequest,
+  type MessagingReadNotificationsRequest,
+  type MessagingNotificationsPage,
+  type MessagingIdleNoticePayload,
+  isMessagingIdleNoticePayload,
+  isMessagingNotificationsPage,
 } from "./protocol/messaging.ts";
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
@@ -102,6 +107,24 @@ export interface SessionMessagingFacet {
   subscribeIdle(id: string, opts: { messageId: string; subscriberSessionId?: string }): Promise<DeliveryOutcome>;
   /** This session's own sender permission class (WS-10 §13's matrix input), from its LIVE permission mode. */
   senderClass(): Promise<PermissionClassLabel>;
+  /**
+   * Drain a bounded page of queued notifications -- the CATCH-UP half of `notify_when_idle`
+   * (WS-15 §6.4's restart recovery). `remaining` says how many are still queued, so a host that
+   * reconnects drains in pages rather than in one frame whose size nothing governs.
+   *
+   * A drain is the ACKNOWLEDGEMENT: a record it returns is removed. `onIdleNotice` below carries the
+   * same notice live, with the same `notification_id`, so a host that got both dedupes on the id.
+   */
+  readNotifications(opts?: { subscriberSessionId?: string; max?: number }): Promise<MessagingNotificationsPage>;
+  /**
+   * Subscribe to LIVE idle notices for this session. Returns an unsubscribe.
+   *
+   * A handler-plus-unsubscribe rather than an async iterator, because a notice is a fire-and-forget
+   * SIGNAL, not a stream a consumer may fall behind on: an iterator would need a buffer, and the
+   * durable buffer already exists on the runtime side (`readNotifications`). A handler that is never
+   * registered, or that throws, loses no notice -- the entry stays queued for the drain.
+   */
+  onIdleNotice(handler: (payload: MessagingIdleNoticePayload) => void): () => void;
 }
 
 export interface Query extends AsyncGenerator<SdkMessage> {
@@ -1075,6 +1098,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     }
   }
 
+  // R-7b-4 addendum: live idle-notice listeners. A Set, so an unsubscribe is exact and a handler
+  // registered twice fires once.
+  const idleNoticeHandlers = new Set<(payload: MessagingIdleNoticePayload) => void>();
   const gen = iterate() as Query;
   // Task 2: real control requests, replacing the P0/P1 stubs (previously `proc.stdin.end()` for
   // interrupt; both setters were no-ops) — both now send a real control_request and resolve/reject
@@ -1178,7 +1204,45 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       const label = typeof payload === "object" && payload !== null ? (payload as { senderClass?: unknown }).senderClass : undefined;
       return isPermissionClassLabel(label) ? label : "unknown";
     },
+    async readNotifications(opts?: { subscriberSessionId?: string; max?: number }): Promise<MessagingNotificationsPage> {
+      const request: MessagingReadNotificationsRequest = {
+        ...(opts?.subscriberSessionId !== undefined ? { subscriberSessionId: opts.subscriberSessionId } : {}),
+        ...(opts?.max !== undefined ? { max: opts.max } : {}),
+      };
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.readNotifications, request);
+      // A DATA method: a malformed payload degrades to an honest empty page rather than throwing,
+      // because a rejected promise could not tell "nothing queued" from a transport fault. Safe in a
+      // way the delivery methods are not -- an empty page claims nothing about a delivery.
+      return isMessagingNotificationsPage(payload) ? payload : { notifications: [], remaining: 0 };
+    },
+    onIdleNotice(handler: (payload: MessagingIdleNoticePayload) => void): () => void {
+      idleNoticeHandlers.add(handler);
+      return () => {
+        idleNoticeHandlers.delete(handler);
+      };
+    },
   };
+  // The runtime-originated half. REGISTERED UNCONDITIONALLY, not "when a handler exists": without it
+  // the generic fallback answers `unhandled_subtype`, which reads on the runtime side as "this host
+  // does not speak the facet" rather than "no listener right now" -- and those must stay
+  // distinguishable, because only the first justifies giving up on the wire.
+  //
+  // A handler that throws is contained: the notice is still queued on the runtime side for
+  // `readNotifications`, so the LIVE signal is best-effort by construction and one bad listener can
+  // neither break the others nor lose anything.
+  controlRequestHandlers.set(MESSAGING_CONTROL_SUBTYPES.idleNotice, async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+    if (!isMessagingIdleNoticePayload(payload)) {
+      return { ok: false, error: { code: "invalid_idle_notice", message: "messaging.idle_notice requires { subscriberSessionId: string, notice: NotificationRecord }" } };
+    }
+    for (const handler of [...idleNoticeHandlers]) {
+      try {
+        handler(payload);
+      } catch (err) {
+        console.error(`winter: onIdleNotice handler threw for notification ${payload.notice.notification_id}: ${err instanceof Error ? err.message : String(err)} -- the notice is still queued for readNotifications()`);
+      }
+    }
+    return { ok: true, payload: { delivered: idleNoticeHandlers.size } };
+  });
   // Phase 5 Task 3 (R5-11, derived-shapes-p5 item (e)): `rewindFiles(userMessageId, { dryRun? })`.
   //
   // The public parameter is spelled `userMessageId` and the WIRE is snake_case and result-dropping

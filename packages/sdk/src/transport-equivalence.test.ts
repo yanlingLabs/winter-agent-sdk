@@ -78,6 +78,7 @@ import {
   type ScenarioFake,
 } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
+import type { MessagingIdleNoticePayload } from "./protocol/messaging.ts";
 
 // Task 8: every engine run in this file persists by default (RuntimeConfig.persistSession defaults
 // ON) — a SHARED per-file temp WINTER_HOME keeps every leg (inMemory/child/compiled) off the real
@@ -1795,6 +1796,90 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       steer: "delivered",
       senderClass: "prompts",
     });
+  }, 30_000);
+
+  // R-7b-4 addendum: the notify_when_idle RETURN PATH, on every leg.
+  //
+  // Registered here for the same reason the facet probe above is: `messaging.idle_notice` is a
+  // RUNTIME-ORIGINATED frame and `messaging.read_notifications` a new subtype, and a wire addition
+  // that works in-memory and not in the compiled binary is the class this suite exists for. The
+  // engine's idle fire hangs off its own turn-end boundary, which is exactly the kind of thing a
+  // compiled build can get wrong on its own.
+  test("R-7b-4: subscribing to this session's idleness delivers one live notice and one drainable record, identically on every leg", async () => {
+    async function probeIdle(leg: LegName): Promise<{ subscribed: string; live: number; drained: string[]; secondDrain: number; kinds: string[] }> {
+      const capture: { proc?: SpawnedRuntimeProcess } = {};
+      const sessionId = "facet-idle-equivalence-session";
+      const live: MessagingIdleNoticePayload[] = [];
+      const kinds: string[] = [];
+      let subscribed = "never-ran";
+      let drained: string[] = [];
+      let secondDrain = -1;
+      // A STREAMING prompt held open by a deferred. A string prompt would make query() send
+      // `end_input` and break its read loop at the terminal result -- and the engine fires idle
+      // immediately AFTER writing that result, so the notice frame would arrive at a wrapper that has
+      // stopped reading. That is a real property of single-shot mode, not a harness artifact: the
+      // return path needs a session that outlives its first turn, which is the only kind of session
+      // an idle notice means anything for.
+      let releaseInput!: () => void;
+      const inputClosed = new Promise<void>((resolve) => {
+        releaseInput = resolve;
+      });
+      async function* prompt(): AsyncGenerator<string> {
+        yield "run the subagent";
+        await inputClosed;
+      }
+      const gen = query({
+        prompt: prompt(),
+        options: {
+          model: FIXTURE_MODEL,
+          cwd: FIXTURE_CWD,
+          sessionId,
+          allowedTools: ["Agent"],
+          permissionMode: "default",
+          canUseTool: async () => {
+            gen.messaging.onIdleNotice((payload) => live.push(payload));
+            // The SESSION, never the child: WS-10 §14 refuses a subagent target outright.
+            subscribed = (await gen.messaging.subscribeIdle(`session:${sessionId}`, { messageId: "equivalence-idle-1" })).status;
+            return { behavior: "allow", updatedInput: {} };
+          },
+          spawnClaudeCodeProcess: spawnHook(leg, "subagentperm", capture),
+        },
+      });
+      try {
+        let settled = false;
+        for await (const msg of gen) {
+          kinds.push(kindOfMessage(msg));
+          if (msg.type === "result" && !settled) {
+            settled = true;
+            // NOT awaited: query()'s read loop lives inside the generator, so a control call awaited
+            // in this loop body deadlocks -- the response it waits for can only arrive through this
+            // loop.
+            void (async () => {
+              try {
+                const first = await gen.messaging.readNotifications();
+                drained = first.notifications.map((n) => n.content);
+                secondDrain = (await gen.messaging.readNotifications()).notifications.length;
+              } finally {
+                releaseInput();
+              }
+            })();
+          }
+        }
+      } finally {
+        releaseInput();
+        if (capture.proc) await capture.proc.exited;
+      }
+      return { subscribed, live: live.length, drained, secondDrain, kinds };
+    }
+
+    const a = await probeIdle(legA);
+    const b = await probeIdle(legB);
+    expect(a).toEqual(b);
+    // ...and the shared answer is the RIGHT one, not a shared failure. The subscription is accepted;
+    // exactly ONE live notice arrives (WS-10 §14's "at most one" is structural on the runtime side --
+    // a fired subscription is removed -- and this is the wire-level proof).
+    expect(a.subscribed).toBe("subscribed");
+    expect(a.live).toBe(1);
   }, 30_000);
 
   // --- Phase 6 Task 10: the PROVIDER equivalence scenarios --------------------------------------

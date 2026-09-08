@@ -43,8 +43,10 @@ import {
 // request, and the messaging contract the handler answers with.
 import {
   MESSAGING_CONTROL_SUBTYPES,
+  MESSAGING_HOST_REQUEST_SUBTYPES,
   isMessagingChildRequest,
   isMessagingDeliverRequest,
+  isMessagingReadNotificationsRequest,
   isMessagingSubscribeIdleRequest,
   resolveFacetTarget,
 } from "@yanlinglabs/winter-agent-sdk";
@@ -57,6 +59,7 @@ import {
   type RuntimeAddress,
 } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { getMessagingRuntime } from "./messaging/router.ts";
+import { getDefaultMessagingRuntime, type PeerSessionHandle } from "./messaging/reference-adapter.ts";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
 // runtime -> provider-runtime only (R6-4: provider-runtime never imports the runtime), so the seam
@@ -1668,9 +1671,77 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // allow rule.
     directories: [...(settingsRules?.directories ?? [])],
   };
-  // The six facet subtypes as a Set, so the pump's dispatch is one lookup rather than six string
-  // comparisons on every control frame a session ever receives.
-  const MESSAGING_FACET_SUBTYPES: ReadonlySet<string> = new Set<string>(Object.values(MESSAGING_CONTROL_SUBTYPES));
+  // The subtypes the RUNTIME serves, as a Set, so the pump's dispatch is one lookup rather than a
+  // string comparison per subtype on every control frame a session ever receives.
+  // `messaging.idle_notice` is deliberately NOT here: it travels the other way.
+  const MESSAGING_FACET_SUBTYPES: ReadonlySet<string> = new Set<string>(MESSAGING_HOST_REQUEST_SUBTYPES);
+  // --- R-7b-4 addendum: the notify_when_idle return path ------------------------------------------
+  //
+  // WS-10 §14's notice had nowhere to go across the wire: the reference adapter files it in an
+  // IN-PROCESS `NotificationQueue` that nothing here drained and no frame carried, so a host could be
+  // told `subscribed` and then never hear anything -- a promise the facet could not keep.
+  //
+  // Two halves, and both are needed. The LIVE half forwards each queued notice as a
+  // `messaging.idle_notice` control request; the CATCH-UP half (`messaging.read_notifications`)
+  // drains the same queue, so a host that was not listening -- crashed, restarted, not yet
+  // connected -- collects what it missed (WS-15 §6.4). The queue entry is NOT consumed by the live
+  // forward: they are the same notice, correlated by `notification_id`, and the drain is the
+  // acknowledgement.
+  //
+  // The SELF-PEER is what makes any of it reachable. WS-10 §14 refuses a subagent target outright, so
+  // the only legitimate target inside a spawned session is the SESSION -- and the in-process
+  // reference resolves a session address through its peer directory, of which a session is not a
+  // member. This run registers itself, LAZILY, at the first `subscribe_idle` naming it: a session no
+  // host ever subscribes to is byte-for-byte unchanged, including its `list_reachable` answer. It is
+  // registered by the top-level run only, structurally -- a child engine's synthetic input pair never
+  // carries a host control frame, so this code cannot run inside one.
+  let facetSelfPeer: (() => void) | undefined; // the unregister handle, present once registered
+  let facetNoticeForwarder: (() => void) | undefined;
+  const facetIdleSubscribers = new Set<string>();
+
+  function registerFacetSelfPeer(): void {
+    if (facetSelfPeer !== undefined) return; // idempotent: several subscriptions, one peer
+    const runtime = getDefaultMessagingRuntime();
+    if (runtime === undefined) return; // a host-registered runtime owns its own directory and events
+    const selfPeer: PeerSessionHandle = {
+      address: buildSessionAddress(config.sessionId),
+      // "idle" exactly while no turn is in flight -- `interruptCurrentTurn.current` is non-null for
+      // the duration of a turn and null otherwise, which is the same fact the pump already uses to
+      // decide whether a parked model switch may be applied immediately.
+      status: () => (interruptCurrentTurn.current === null ? "idle" : "running"),
+      mode: () => policyStateStore.getState().mode,
+      bypassAvailable: () => bypassAvailableToThisSession,
+      // The engine IS the session-status event source the reference adapter's own header says it
+      // lacks ("a real host would wire this to its own session-status-change event"), so this is the
+      // one place that can honestly answer `true`.
+      hasReliableIdleSignal: () => true,
+      // R-7b-4: "Top-level delivery into a LIVE session is a push into that session's input stream."
+      // Reached only once inbound policy (WS-10 §13) has already decided `accept`.
+      deliver: async (msg) => {
+        userFrames.write({ type: "user", text: msg.body });
+      },
+    };
+    facetSelfPeer = runtime.peers.register(selfPeer);
+    // Forward every notice filed for a subscriber this session knows about. WITHOUT CONSUMING IT:
+    // the queue entry stays for `messaging.read_notifications`, so a host that was not listening
+    // loses nothing. `subscribe` is optional on the interface -- a host-supplied queue without it
+    // degrades to drain-only, never to a dropped notice.
+    facetNoticeForwarder = runtime.notifications.subscribe?.((ownerKey, record) => {
+      if (!facetIdleSubscribers.has(ownerKey)) return;
+      // Fire-and-forget: an unanswered or refused notice is a dropped LIVE signal, never a dropped
+      // notice, so nothing here waits on the host or fails the run because of it.
+      void bridge.request(MESSAGING_CONTROL_SUBTYPES.idleNotice, { subscriberSessionId: ownerKey, notice: record }).catch(() => {});
+    });
+  }
+
+  // Called when this run reaches a quiescent boundary. Fires every pending idle subscription on this
+  // session exactly once (WS-10 §14's "at most one notice" is structural: a fired subscription is
+  // removed and can never fire again), which pushes into the queue, which the forwarder above turns
+  // into a wire frame. A no-op for a session nobody subscribed to.
+  function fireFacetIdle(): void {
+    if (facetSelfPeer === undefined) return;
+    getDefaultMessagingRuntime()?.adapter.firePeerIdleTransition(buildSessionAddress(config.sessionId));
+  }
   const bypassGate = {
     allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
     // C1: WS-07 §6.4's veto binds from ANY tier, not only from `Options`. Restrictive, so no trust
@@ -3852,6 +3923,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               answer(adapter.listReachable({ parent: selfAddress }));
               continue;
             }
+            if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.readNotifications) {
+              if (!isMessagingReadNotificationsRequest(cf.payload ?? {})) {
+                badRequest("messaging.read_notifications accepts { subscriberSessionId?: string, max?: number }");
+                continue;
+              }
+              const req = (cf.payload ?? {}) as { subscriberSessionId?: string; max?: number };
+              // A DRAIN, not a peek: the records it returns are removed, which is how a host
+              // acknowledges. `remaining` is what makes the page bounded rather than a frame whose
+              // size nothing governs -- the phone-transport lesson, applied before it can bite.
+              const page = req.max === undefined ? runtime.notifications.drain(req.subscriberSessionId ?? config.sessionId) : runtime.notifications.drain(req.subscriberSessionId ?? config.sessionId, req.max);
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: page });
+              continue;
+            }
             if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.senderClass) {
               // NOT `adapter.senderPermissionClass(selfAddress)`: the in-process reference resolves a
               // session address through its PEER directory, and a session is not a peer of its own
@@ -3912,7 +3996,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 badRequest(`${cf.subtype}: a child is addressable only through its OWNING parent (WS-10 §10.3); "${cf.payload.id}" names another session`);
                 continue;
               }
-              runtime.subscribers.remember(cf.payload.messageId, cf.payload.subscriberSessionId ?? config.sessionId);
+              const subscriberKey = cf.payload.subscriberSessionId ?? config.sessionId;
+              runtime.subscribers.remember(cf.payload.messageId, subscriberKey);
+              facetIdleSubscribers.add(subscriberKey);
+              // Lazily make this session a reachable, idle-signalling peer of its own adapter, and
+              // start forwarding its queue. Both are idempotent and both are no-ops for any session
+              // nobody subscribes to -- see MESSAGING_FACET_SUBTYPES' own header.
+              registerFacetSelfPeer();
               answer(adapter.subscribeIdle(idleAddr, { messageId: cf.payload.messageId }));
               continue;
             }
@@ -5795,6 +5885,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
+      // ...and the SAME boundary, for the messaging facet's own subscribers (R-7b-4 addendum). Here
+      // rather than beside the `result` write because "idle" is the fact WS-10 §14 subscribes to, and
+      // this is the one point in the loop where it is true and observable.
+      fireFacetIdle();
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials, ...costFields() } });
@@ -5857,6 +5951,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // pre-existing lifetime.
   await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
   removeChildRosterSource();
+  // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
+  // the roster contribution above -- the messaging runtime is PROCESS-level and outlives the run, so
+  // a leaked peer would keep answering `list_reachable` for a session that is gone.
+  facetSelfPeer?.();
+  facetNoticeForwarder?.();
   disposeSessionMcpLifecycle?.();
   if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});
   // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene

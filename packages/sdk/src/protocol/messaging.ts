@@ -20,21 +20,45 @@
 // interpreted within the receiving session -- `resolveFacetTarget` below is the one place that rule
 // is written, and it never falls back to display-name lookup (that is the router's rule 3, and it
 // needs the whole directory to be correct).
-import type { DeliveryOutcome, GlobalAgentMessage, ListedRuntimeObject, PermissionClassLabel, RuntimeAddress, RuntimeObjectKind, RuntimeKind } from "../messaging/index.ts";
+import type { DeliveryOutcome, GlobalAgentMessage, ListedRuntimeObject, NotificationRecord, PermissionClassLabel, RuntimeAddress, RuntimeObjectKind, RuntimeKind } from "../messaging/index.ts";
 
-/** The six subtypes, in one place, so neither side spells a literal the other does not. */
+/** Every subtype, in one place, so neither side spells a literal the other does not. */
 export const MESSAGING_CONTROL_SUBTYPES = {
+  // host -> runtime: `RuntimeMessagingAdapter`, 1:1.
   listReachable: "messaging.list_reachable",
   deliver: "messaging.deliver",
   steerChild: "messaging.steer_child",
   resumeChild: "messaging.resume_child",
   subscribeIdle: "messaging.subscribe_idle",
   senderClass: "messaging.sender_class",
+  // host -> runtime: the CATCH-UP half of notify_when_idle (WS-15 §6.4's restart recovery).
+  readNotifications: "messaging.read_notifications",
+  // runtime -> host: the LIVE half. The one subtype that travels the other way.
+  idleNotice: "messaging.idle_notice",
 } as const;
 
 export type MessagingControlSubtype = (typeof MESSAGING_CONTROL_SUBTYPES)[keyof typeof MESSAGING_CONTROL_SUBTYPES];
 
-/** Every subtype this facet serves, for a runtime-side dispatch check and for the parity test. */
+/**
+ * The subtypes the RUNTIME serves (host -> runtime). The engine dispatches on exactly this set.
+ *
+ * `idleNotice` is deliberately absent: it travels runtime -> host, is answered by the WRAPPER, and a
+ * runtime that dispatched it would be answering its own request.
+ */
+export const MESSAGING_HOST_REQUEST_SUBTYPES: readonly MessagingControlSubtype[] = [
+  MESSAGING_CONTROL_SUBTYPES.listReachable,
+  MESSAGING_CONTROL_SUBTYPES.deliver,
+  MESSAGING_CONTROL_SUBTYPES.steerChild,
+  MESSAGING_CONTROL_SUBTYPES.resumeChild,
+  MESSAGING_CONTROL_SUBTYPES.subscribeIdle,
+  MESSAGING_CONTROL_SUBTYPES.senderClass,
+  MESSAGING_CONTROL_SUBTYPES.readNotifications,
+];
+
+/** The subtypes the WRAPPER serves (runtime -> host). */
+export const MESSAGING_RUNTIME_REQUEST_SUBTYPES: readonly MessagingControlSubtype[] = [MESSAGING_CONTROL_SUBTYPES.idleNotice];
+
+/** Every subtype, both directions. */
 export const MESSAGING_CONTROL_SUBTYPE_LIST: readonly MessagingControlSubtype[] = Object.values(MESSAGING_CONTROL_SUBTYPES);
 
 // --- request payloads ----------------------------------------------------------------------------
@@ -72,6 +96,40 @@ export interface MessagingSubscribeIdleRequest {
 
 export interface MessagingSenderClassResponse {
   senderClass: PermissionClassLabel;
+}
+
+/**
+ * `messaging.read_notifications` — the CATCH-UP half of `notify_when_idle` (WS-15 §6.4).
+ *
+ * A bounded page: `max` caps how many records come back and `remaining` says how many are still
+ * queued, so a host recovering after a restart drains in pages rather than in one unbounded frame
+ * whose size nothing governs.
+ */
+export interface MessagingReadNotificationsRequest {
+  /** Whose queue to drain. Absent = the receiving session's own. */
+  subscriberSessionId?: string;
+  /** Page size. Absent = everything queued for that key. */
+  max?: number;
+}
+
+export interface MessagingNotificationsPage {
+  notifications: NotificationRecord[];
+  remaining: number;
+}
+
+/**
+ * `messaging.idle_notice` — the LIVE half, and the ONE subtype that travels runtime -> host.
+ *
+ * The SAME notice the drain returns, carrying the same `notification_id`, because the queue is the
+ * durable record and this is a signal derived from it: a host that missed the frame (crashed, not yet
+ * connected) still finds the entry via `read_notifications`, and a host that got both dedupes on the
+ * id. The runtime does NOT wait for a handler — an unanswered or refused notice is a dropped LIVE
+ * signal, never a dropped notice.
+ */
+export interface MessagingIdleNoticePayload {
+  /** The queue key the notice was filed under -- the SUBSCRIBER, not the target that went idle. */
+  subscriberSessionId: string;
+  notice: NotificationRecord;
 }
 
 // --- structural guards, run on BOTH sides ---------------------------------------------------------
@@ -153,6 +211,25 @@ export function isMessagingDeliverRequest(v: unknown): v is MessagingDeliverRequ
 
 export function isMessagingChildRequest(v: unknown): v is MessagingChildRequest {
   return isRecord(v) && typeof v.id === "string" && v.id.length > 0 && isGlobalAgentMessage(v.message);
+}
+
+export function isNotificationRecord(v: unknown): v is NotificationRecord {
+  return isRecord(v) && typeof v.notification_id === "string" && typeof v.origin === "string" && typeof v.queued_at === "string" && typeof v.content === "string";
+}
+
+export function isMessagingNotificationsPage(v: unknown): v is MessagingNotificationsPage {
+  return isRecord(v) && Array.isArray(v.notifications) && v.notifications.every(isNotificationRecord) && typeof v.remaining === "number";
+}
+
+export function isMessagingIdleNoticePayload(v: unknown): v is MessagingIdleNoticePayload {
+  return isRecord(v) && typeof v.subscriberSessionId === "string" && isNotificationRecord(v.notice);
+}
+
+export function isMessagingReadNotificationsRequest(v: unknown): v is MessagingReadNotificationsRequest {
+  if (!isRecord(v)) return false;
+  if (v.subscriberSessionId !== undefined && typeof v.subscriberSessionId !== "string") return false;
+  if (v.max !== undefined && (typeof v.max !== "number" || !Number.isFinite(v.max) || v.max < 0)) return false;
+  return true;
 }
 
 export function isMessagingSubscribeIdleRequest(v: unknown): v is MessagingSubscribeIdleRequest {

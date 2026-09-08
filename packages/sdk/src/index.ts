@@ -77,7 +77,7 @@ export { PROTOCOL_VERSION } from "./protocol/frames.ts";
 // The six control subtypes, their payload shapes and the guards both sides run. Exported from the
 // MAIN barrel rather than from `./messaging` because these are WIRE frames -- the contract and rules
 // a host implements against live on the subpath; this is how one particular transport carries them.
-export { MESSAGING_CONTROL_SUBTYPES, MESSAGING_CONTROL_SUBTYPE_LIST, resolveFacetTarget } from "./protocol/messaging.ts";
+export { MESSAGING_CONTROL_SUBTYPES, MESSAGING_CONTROL_SUBTYPE_LIST, MESSAGING_HOST_REQUEST_SUBTYPES, MESSAGING_RUNTIME_REQUEST_SUBTYPES, resolveFacetTarget } from "./protocol/messaging.ts";
 export {
   isRuntimeAddress,
   isGlobalAgentMessage,
@@ -87,6 +87,10 @@ export {
   isMessagingDeliverRequest,
   isMessagingChildRequest,
   isMessagingSubscribeIdleRequest,
+  isMessagingReadNotificationsRequest,
+  isMessagingNotificationsPage,
+  isMessagingIdleNoticePayload,
+  isNotificationRecord,
 } from "./protocol/messaging.ts";
 export type {
   MessagingControlSubtype,
@@ -94,6 +98,9 @@ export type {
   MessagingChildRequest,
   MessagingSubscribeIdleRequest,
   MessagingSenderClassResponse,
+  MessagingReadNotificationsRequest,
+  MessagingNotificationsPage,
+  MessagingIdleNoticePayload,
 } from "./protocol/messaging.ts";
 // Aliased: `SdkMessage` above is query()'s CLOSED result union (WS-03 §8). This is the wire-level
 // OPEN union frames carry (system/assistant/result + a lossless unknown-kind catch-all) — the two

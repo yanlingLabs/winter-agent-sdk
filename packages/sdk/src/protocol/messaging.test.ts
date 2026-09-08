@@ -9,6 +9,12 @@ import { describe, test, expect } from "bun:test";
 import {
   MESSAGING_CONTROL_SUBTYPES,
   MESSAGING_CONTROL_SUBTYPE_LIST,
+  MESSAGING_HOST_REQUEST_SUBTYPES,
+  MESSAGING_RUNTIME_REQUEST_SUBTYPES,
+  isMessagingIdleNoticePayload,
+  isMessagingNotificationsPage,
+  isMessagingReadNotificationsRequest,
+  isNotificationRecord,
   isDeliveryOutcome,
   isGlobalAgentMessage,
   isListedRuntimeObjectArray,
@@ -41,13 +47,65 @@ function envelope(overrides: Partial<GlobalAgentMessage> = {}): GlobalAgentMessa
   };
 }
 
-describe("the six subtypes are one closed set", () => {
+describe("the eight subtypes are one closed set, split by DIRECTION", () => {
   test("the list and the record agree, and every value is namespaced", () => {
     expect([...MESSAGING_CONTROL_SUBTYPE_LIST].sort()).toEqual(Object.values(MESSAGING_CONTROL_SUBTYPES).sort());
-    expect(MESSAGING_CONTROL_SUBTYPE_LIST).toHaveLength(6);
+    expect(MESSAGING_CONTROL_SUBTYPE_LIST).toHaveLength(8);
     // The `messaging.` prefix is what keeps these from ever colliding with the pinned subtypes
     // (`interrupt`, `set_model`, `list_models`, ...), which carry no namespace at all.
     for (const subtype of MESSAGING_CONTROL_SUBTYPE_LIST) expect(subtype.startsWith("messaging.")).toBe(true);
+  });
+
+  test("the two direction sets PARTITION the whole -- no subtype is served by both sides or by neither", () => {
+    // The split is load-bearing, not cosmetic. The runtime dispatches on
+    // `MESSAGING_HOST_REQUEST_SUBTYPES`; a subtype that leaked into it AND travelled runtime -> host
+    // would have the runtime answering its own request, and one missing from BOTH sets is a frame
+    // nobody handles -- which surfaces as the generic `unhandled_subtype`, i.e. "this peer does not
+    // speak the facet", a claim that would then be false.
+    const host = new Set(MESSAGING_HOST_REQUEST_SUBTYPES);
+    const runtime = new Set(MESSAGING_RUNTIME_REQUEST_SUBTYPES);
+    expect(host.size).toBe(7);
+    expect(runtime.size).toBe(1);
+    expect([...host].filter((s) => runtime.has(s))).toEqual([]); // disjoint
+    expect([...MESSAGING_CONTROL_SUBTYPE_LIST].filter((s) => !host.has(s) && !runtime.has(s))).toEqual([]); // exhaustive
+    // ...and the one that travels the other way is named, because it is the only one.
+    expect(MESSAGING_RUNTIME_REQUEST_SUBTYPES).toEqual([MESSAGING_CONTROL_SUBTYPES.idleNotice]);
+  });
+});
+
+describe("the notify_when_idle return-path guards", () => {
+  const record = { notification_id: "note-1", origin: "session:s_1", queued_at: "2026-01-01T00:00:00.000Z", content: "session:s_1 is now idle" };
+
+  test("isNotificationRecord requires all four fields -- a notice with no id could not be deduped against the drain", () => {
+    // The live frame and the drain deliver the SAME notice; `notification_id` is the ONLY thing that
+    // lets a host that received both recognise them as one.
+    expect(isNotificationRecord(record)).toBe(true);
+    for (const missing of ["notification_id", "origin", "queued_at", "content"]) {
+      expect([missing, isNotificationRecord({ ...record, [missing]: undefined })]).toEqual([missing, false]);
+    }
+  });
+
+  test("isMessagingIdleNoticePayload requires the SUBSCRIBER key, not just the notice", () => {
+    // The queue is keyed by subscriber; a payload without it names no queue, so a host with several
+    // subscriptions could not tell whose notice it just received.
+    expect(isMessagingIdleNoticePayload({ subscriberSessionId: "s_1", notice: record })).toBe(true);
+    expect(isMessagingIdleNoticePayload({ notice: record })).toBe(false);
+    expect(isMessagingIdleNoticePayload({ subscriberSessionId: "s_1" })).toBe(false);
+  });
+
+  test("isMessagingNotificationsPage requires `remaining` -- an absent one reads as 'nothing left' and ends a page walk early", () => {
+    expect(isMessagingNotificationsPage({ notifications: [record], remaining: 3 })).toBe(true);
+    expect(isMessagingNotificationsPage({ notifications: [], remaining: 0 })).toBe(true);
+    expect(isMessagingNotificationsPage({ notifications: [record] })).toBe(false);
+    expect(isMessagingNotificationsPage({ notifications: [{ notification_id: "x" }], remaining: 0 })).toBe(false);
+  });
+
+  test("isMessagingReadNotificationsRequest accepts an empty request and refuses a nonsense page size", () => {
+    expect(isMessagingReadNotificationsRequest({})).toBe(true);
+    expect(isMessagingReadNotificationsRequest({ subscriberSessionId: "s_2", max: 10 })).toBe(true);
+    expect(isMessagingReadNotificationsRequest({ max: -1 })).toBe(false);
+    expect(isMessagingReadNotificationsRequest({ max: Number.NaN })).toBe(false);
+    expect(isMessagingReadNotificationsRequest({ subscriberSessionId: 7 })).toBe(false);
   });
 });
 
