@@ -27,6 +27,7 @@
     "NOTICE",
     "PROVENANCE.md",
     "UPSTREAM.json",
+    "README.md",
     "!src/**/*.test.ts",
     "!src/**/*.test-support.ts"
   ],

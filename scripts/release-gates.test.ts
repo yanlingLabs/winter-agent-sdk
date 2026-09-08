@@ -438,6 +438,36 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     for (const pkg of discoverPublishablePackages()) expect([pkg.name, RELEASE_YML.includes(pkg.name)]).toEqual([pkg.name, false]);
   });
 
+  test("item 7: every publishable package SHIPS a README that documents BOTH registries honestly", () => {
+    // npm renders each package's own README, so the install instructions have to be per package --
+    // and they have to say the RIGHT thing for that package: the three npm ones document both
+    // registries, the two harnesses say GitHub Packages only. A harness whose README told a stranger
+    // to `npm install` it would be documenting a package that is not there.
+    const npmNames = new Set(npmPublishSet().map((p) => p.name));
+    for (const pkg of discoverPublishablePackages()) {
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files: string[] };
+      expect([pkg.name, manifest.files.includes("README.md")]).toEqual([pkg.name, true]);
+      const readme = readFileSync(join(pkg.dir, "README.md"), "utf8");
+      expect([pkg.name, readme.includes("## Install")]).toEqual([pkg.name, true]);
+      // GitHub Packages needs the scope pinned AND an authenticated read -- both, in every README.
+      expect([pkg.name, readme.includes("@yanlinglabs:registry=https://npm.pkg.github.com")]).toEqual([pkg.name, true]);
+      expect([pkg.name, readme.includes("read:packages")]).toEqual([pkg.name, true]);
+      // The source-visibility sentence, because the tarballs really do ship `src/`.
+      expect([pkg.name, readme.includes("tarballs contain `src/`")]).toEqual([pkg.name, true]);
+      // And the npm half is present exactly for the packages that are on npm.
+      expect([pkg.name, readme.includes(`npm install ${pkg.name}`)]).toEqual([pkg.name, npmNames.has(pkg.name)]);
+      if (!npmNames.has(pkg.name)) expect([pkg.name, readme.includes("GitHub Packages only")]).toEqual([pkg.name, true]);
+    }
+  });
+
+  test("item 7: no README leaks a literal token -- the auth lines are env-expanded", () => {
+    for (const pkg of discoverPublishablePackages()) {
+      const readme = readFileSync(join(pkg.dir, "README.md"), "utf8");
+      expect([pkg.name, /_authToken=(?!\$\{)/.test(readme)]).toEqual([pkg.name, false]);
+      expect([pkg.name, /ghp_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}/.test(readme)]).toEqual([pkg.name, false]);
+    }
+  });
+
   test("`publishConfig.access` stays `restricted` in every manifest -- npm's public-ness is a FLAG, not a file", () => {
     // If a manifest flipped to `access: public`, a GitHub Packages publish would start asserting
     // something about a registry it is not talking to, and the npm leg's explicit flag would look

@@ -8,6 +8,27 @@ in the `winter-agent-sdk` repository for the full spec, if you have it checked o
 This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope) — see
 the repository root `.npmrc` and `package.json` `publishConfig` for the registry pin.
 
+## Install
+
+**This package is published to GitHub Packages only** — it is one of the org's own test harnesses, not
+part of what a public consumer installs. (The wrapper and its runtime layer —
+`@yanlinglabs/winter-agent-sdk`, `@yanlinglabs/winter-provider-catalog`,
+`@yanlinglabs/winter-provider-runtime` — are on public npm as well.)
+
+In your project's `.npmrc`:
+
+```
+@yanlinglabs:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+…with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
+literal in the file.
+
+**The published tarballs contain `src/`.** Alongside the compiled `dist/`, every package ships its own
+TypeScript sources: Bun resolves them directly through the `bun` export condition, and they are
+readable by anyone who installs the package.
+
 ## What it ships
 
 | Import | What it is |

@@ -15,6 +15,36 @@ repository root `.npmrc` and `package.json` `publishConfig` for the registry pin
 | `@yanlinglabs/winter-provider-runtime` | The full barrel: the registry, the adapters, credential refs and stores, endpoint policy, the error taxonomy, and the identity surface. |
 | `@yanlinglabs/winter-provider-runtime/testing` | Test-support helpers a consumer's own adapter tests need: descriptor/context builders, the SigV4 and event-stream primitives, the loopback OAuth/chat fakes, and the fixture catalog. |
 
+## Install
+
+This package is published to **two registries**, and which one you want depends on who you are.
+
+### From public npm (anyone)
+
+```sh
+npm install @yanlinglabs/winter-provider-runtime
+```
+
+Nothing else is needed: the `@yanlinglabs` scope is public on npm.
+
+### From GitHub Packages (the `yanlingLabs` org)
+
+GitHub Packages needs the scope pointed at it and an authenticated read, even for a public package.
+In your project's `.npmrc`:
+
+```
+@yanlinglabs:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+…with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
+literal in the file. Then `npm install @yanlinglabs/winter-provider-runtime` as usual.
+
+**The published tarballs contain `src/`.** Alongside the compiled `dist/` a consumer resolves, every
+package ships its own TypeScript sources: Bun resolves them directly through the `bun` export
+condition, and they are readable by anyone who installs the package. Nothing in them is private —
+but treat these packages as source-visible, because they are.
+
 ## Bun-only surface
 
 This package declares `engines.node` and every entry point **imports** cleanly under Node 18+ (the
