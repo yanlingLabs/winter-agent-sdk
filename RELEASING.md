@@ -101,3 +101,11 @@ applies. No `src/` — the sources live in this repository.
 `pnpm publish` packs byte-identically to `pnpm pack` (verified: same sha1 for the same tree), which is
 what lets `releasePack()`'s scan and the installed-import smoke stand in for the artifact a registry
 receives.
+
+## Carries for the next release
+
+
+
+- **Trusted Publishing.** Both npm packages now exist, so npm Trusted Publishing (OIDC from `release.yml`, configured per package on npmjs.com against this repository and workflow) can replace the long-lived `NPM_TOKEN` secret. Adopt it for the next release, then revoke the token.
+
+- **Job 1's order is pnpm's, not topological.** `pnpm publish -r` may publish a dependent seconds before its dependency on GitHub Packages (the npm job publishes per tarball in dependency order). Accepted for the org's own registry; a per-package loop would fix it at the cost of pnpm's native `publishConfig` handling.
