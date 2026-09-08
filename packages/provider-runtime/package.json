@@ -1,11 +1,22 @@
 {
   "name": "@yanlinglabs/winter-provider-runtime",
   "version": "0.0.1",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanlingLabs/winter-agent-sdk.git",
+    "directory": "packages/provider-runtime"
+  },
+  "homepage": "https://github.com/yanlingLabs/winter-agent-sdk",
+  "bugs": {
+    "url": "https://github.com/yanlingLabs/winter-agent-sdk/issues"
+  },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,14 +31,22 @@
   },
   "files": [
     "dist",
-    "src",
     "README.md",
-    "!src/**/*.test.ts",
-    "!src/**/*.test-support.ts"
+    "LICENSE"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "access": "restricted",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./testing": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      }
+    }
   },
   "winter": {
     "publish": {
@@ -37,6 +56,5 @@
   "dependencies": {
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*"
-  },
-  "types": "./dist/index.d.ts"
+  }
 }

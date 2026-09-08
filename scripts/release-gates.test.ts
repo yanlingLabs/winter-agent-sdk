@@ -26,7 +26,7 @@
 // gives: a workflow that never publishes and one that was never SUPPOSED to look identical in a
 // diff, and only a test tells them apart.
 import { describe, test, expect } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { discoverPublishablePackages } from "./release-pack.ts";
@@ -432,6 +432,87 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     for (const pkg of discoverPublishablePackages()) expect([pkg.name, RELEASE_YML.includes(pkg.name)]).toEqual([pkg.name, false]);
   });
 
+  // --- P7a pre-publish round 2 (items 9-11) --------------------------------------------------------
+  test("item 9: MIT across the WHOLE repo -- every manifest, publishable or private, and a LICENSE beside each", () => {
+    // "Whole repo" means the private packages too: a package that is never published still carries a
+    // licence for anyone reading the source, and a missing one on the private runtime would be the
+    // first thing a lawyer asks about. The publishable five additionally SHIP the file.
+    const roots = readdirSync(fileURLToPath(new URL("../packages", import.meta.url)), { withFileTypes: true });
+    const manifests = [fileURLToPath(new URL("../package.json", import.meta.url))];
+    const walk = (relative: string): void => {
+      const abs = fileURLToPath(new URL(`../${relative}/package.json`, import.meta.url));
+      if (existsSync(abs)) manifests.push(abs);
+    };
+    for (const entry of roots) {
+      if (!entry.isDirectory()) continue;
+      walk(`packages/${entry.name}`);
+      for (const nested of readdirSync(fileURLToPath(new URL(`../packages/${entry.name}`, import.meta.url)), { withFileTypes: true })) {
+        if (nested.isDirectory()) walk(`packages/${entry.name}/${nested.name}`);
+      }
+    }
+    expect(manifests.length).toBeGreaterThanOrEqual(7); // root + 6 packages + the platform package
+    for (const path of manifests) {
+      const manifest = JSON.parse(readFileSync(path, "utf8")) as { name?: string; license?: string };
+      expect([manifest.name ?? path, manifest.license]).toEqual([manifest.name ?? path, "MIT"]);
+    }
+    // The root file itself, and one in every publishable package.
+    const rootLicense = readFileSync(fileURLToPath(new URL("../LICENSE", import.meta.url)), "utf8");
+    expect(rootLicense).toContain("MIT License");
+    expect(rootLicense).toContain("yanlingLabs");
+    for (const pkg of discoverPublishablePackages()) {
+      const own = readFileSync(join(pkg.dir, "LICENSE"), "utf8");
+      expect([pkg.name, own]).toEqual([pkg.name, rootLicense]); // the SAME licence, not a variant
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files: string[] };
+      expect([pkg.name, manifest.files.includes("LICENSE")]).toEqual([pkg.name, true]);
+    }
+  });
+
+  test("item 9: provider-catalog's NOTICE survives and its README points at it", () => {
+    // The third-party attribution for the upstream catalog data is a different document from the
+    // licence, and the one that would be quietly lost by "we added a LICENSE, done".
+    const dir = discoverPublishablePackages().find((p) => p.name === "@yanlinglabs/winter-provider-catalog")!.dir;
+    expect(readFileSync(join(dir, "NOTICE"), "utf8").length).toBeGreaterThan(0);
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    expect(readme).toContain("## License");
+    expect(readme).toContain("NOTICE");
+    const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { files: string[] };
+    expect(manifest.files).toEqual(expect.arrayContaining(["NOTICE", "PROVENANCE.md"]));
+  });
+
+  test("item 10: every publishable manifest carries the provenance prerequisites", () => {
+    // npm provenance VERIFIES the repository URL against the workflow's own origin, so a missing or
+    // wrong `repository` is not a metadata nicety -- it fails `--provenance` at publish time, after
+    // the GitHub Packages leg has already succeeded.
+    for (const pkg of discoverPublishablePackages()) {
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as {
+        repository?: { type?: string; url?: string; directory?: string };
+        homepage?: string;
+        bugs?: { url?: string };
+      };
+      expect([pkg.name, manifest.repository?.type]).toEqual([pkg.name, "git"]);
+      expect([pkg.name, manifest.repository?.url]).toEqual([pkg.name, "git+https://github.com/yanlingLabs/winter-agent-sdk.git"]);
+      // `directory` is what makes each package's npm page link at its own subtree, and it must name
+      // the real one -- derived from the package's own path, never a literal repeated five times.
+      const expectedDir = pkg.dir.replace(/\/$/, "").split("/packages/")[1]!;
+      expect([pkg.name, manifest.repository?.directory]).toEqual([pkg.name, `packages/${expectedDir}`]);
+      expect([pkg.name, manifest.homepage]).toEqual([pkg.name, "https://github.com/yanlingLabs/winter-agent-sdk"]);
+      expect([pkg.name, manifest.bugs?.url]).toEqual([pkg.name, "https://github.com/yanlingLabs/winter-agent-sdk/issues"]);
+    }
+  });
+
+  test("item 11: the ROOT README documents both registries, the dist-only contract, and the licence", () => {
+    const readme = readFileSync(fileURLToPath(new URL("../README.md", import.meta.url)), "utf8");
+    expect(readme).toContain("### From public npm");
+    expect(readme).toContain("@yanlinglabs:registry=https://npm.pkg.github.com");
+    expect(readme).toContain("read:packages");
+    expect(readme).toContain("COMPILED OUTPUT ONLY");
+    expect(readme).toContain("## License");
+    expect(readme).toContain("MIT");
+    // The sentence the ruling replaced must be gone everywhere -- the repo is about to be public, so
+    // "source is visible on npm" is both wrong and the wrong thing to advertise.
+    expect(readme).not.toContain("source-visible");
+  });
+
   test("item 7: every publishable package SHIPS a README that documents BOTH registries honestly", () => {
     // npm renders each package's own README, so the install instructions have to be per package --
     // and they have to say the RIGHT thing for that package: the three npm ones document both
@@ -446,8 +527,15 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
       // GitHub Packages needs the scope pinned AND an authenticated read -- both, in every README.
       expect([pkg.name, readme.includes("@yanlinglabs:registry=https://npm.pkg.github.com")]).toEqual([pkg.name, true]);
       expect([pkg.name, readme.includes("read:packages")]).toEqual([pkg.name, true]);
-      // The source-visibility sentence, because the tarballs really do ship `src/`.
-      expect([pkg.name, readme.includes("tarballs contain `src/`")]).toEqual([pkg.name, true]);
+      // ITEM 11: the DIST-ONLY sentence, and the source pointed at GitHub. Was: "the tarballs
+      // contain `src/`" -- true until the round-2 ruling, and now both false and the wrong thing to
+      // advertise, since the repository is about to be public.
+      expect([pkg.name, readme.includes("COMPILED OUTPUT ONLY")]).toEqual([pkg.name, true]);
+      expect([pkg.name, readme.includes("github.com/yanlingLabs/winter-agent-sdk")]).toEqual([pkg.name, true]);
+      expect([pkg.name, readme.includes("tarballs contain `src/`")]).toEqual([pkg.name, false]);
+      expect([pkg.name, readme.includes("source-visible")]).toEqual([pkg.name, false]);
+      // Item 9: a licence section per package.
+      expect([pkg.name, readme.includes("## License")]).toEqual([pkg.name, true]);
       // And the PUBLIC-npm section is present exactly for the packages that are on npm.
       //
       // Keyed on the SECTION HEADING, not on `npm install <name>`: that command is how you install

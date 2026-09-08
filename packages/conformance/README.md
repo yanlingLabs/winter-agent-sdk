@@ -25,9 +25,11 @@ In your project's `.npmrc`:
 …with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
 literal in the file.
 
-**The published tarballs contain `src/`.** Alongside the compiled `dist/`, every package ships its own
-TypeScript sources: Bun resolves them directly through the `bun` export condition, and they are
-readable by anyone who installs the package.
+**The published packages contain COMPILED OUTPUT ONLY.** Each tarball ships `dist/` — the bundled
+JavaScript a consumer imports and the `.d.ts` declarations their type-checker reads — plus its data
+files, `README.md` and `LICENSE`. It does **not** ship `src/`: the TypeScript sources live at
+<https://github.com/yanlingLabs/winter-agent-sdk>, which is where to read them, file an issue, or send
+a patch.
 
 ## What it ships
 
@@ -107,3 +109,7 @@ barrel and `./official` additionally pull in `./official/capture.ts`, which call
 install the pinned official SDK into a throwaway npm prefix) — only inside `runCapture()`'s own
 function body, never at module load, so importing the barrel itself never requires Bun; actually
 *calling* `runCapture()` does.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.

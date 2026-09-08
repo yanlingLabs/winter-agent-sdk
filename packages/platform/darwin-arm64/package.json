@@ -1,6 +1,7 @@
 {
   "name": "@yanlinglabs/winter-agent-sdk-darwin-arm64",
   "version": "0.0.1",
+  "license": "MIT",
   "os": [
     "darwin"
   ],

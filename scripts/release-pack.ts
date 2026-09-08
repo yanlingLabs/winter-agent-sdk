@@ -236,6 +236,62 @@ const NON_CREDENTIAL_SOURCE_EXTENSIONS_RE = /\.(ts|tsx|js|jsx|mjs|cjs|md)$/i;
  * negation fails the pack instead of shipping quietly.
  */
 const TEST_FILE_RE = /\.test\.ts$|\.test-support\.ts$/;
+/**
+ * P7a pre-publish round 2 (item 8): PUBLISHED TARBALLS ARE DIST-ONLY.
+ *
+ * User ruling 2026-09-08 -- "on npm I'd prefer just the ready-to-use packages; source stays on
+ * GitHub". The in-repo `exports` keep their `bun` condition pointing at `src/`, because this monorepo
+ * and the compiled binary run the TypeScript directly; the PUBLISHED manifest must not, and
+ * `publishConfig.exports` (which pnpm applies at pack time) is what drops it.
+ *
+ * Two failure modes, and the tarball is the only place either is visible:
+ *   * `src/` shipping anyway -- `files` still listing it, or a `.npmignore` appearing -- publishes
+ *     source the ruling says stays on GitHub;
+ *   * the `bun` condition surviving in the packed manifest while `src/` is gone -- WORSE, because it
+ *     names a path that is not in the tarball, so a Bun consumer's import fails at resolution with
+ *     nothing to read. That is the exact pair the `publishConfig` override exists to keep in step,
+ *     and nothing before this checked the two together.
+ */
+const SRC_ENTRY_RE = /^src\//;
+
+/**
+ * P7a pre-publish round 2 (item 8): the PACKED manifest's own `exports` map must name only what the
+ * tarball contains.
+ *
+ * Read from the extracted `package.json` rather than from the repository's, because the two are
+ * deliberately different: pnpm applies `publishConfig.exports` at pack time, and this is the check
+ * that the override actually took effect. A `bun` condition here would point at a `src/` file the
+ * tarball does not ship; any condition naming `./src/` would do the same under a different key.
+ */
+function scanPackedExports(expectedName: string, manifestPath: string): string[] {
+  let exportsField: unknown;
+  try {
+    exportsField = (JSON.parse(readFileSync(manifestPath, "utf8")) as { exports?: unknown }).exports;
+  } catch {
+    return []; // the JSON-parse failure is already reported by the caller
+  }
+  if (typeof exportsField !== "object" || exportsField === null) return [];
+  const violations: string[] = [];
+  for (const [subpath, conditions] of Object.entries(exportsField as Record<string, unknown>)) {
+    if (typeof conditions === "string") {
+      if (conditions.startsWith("./src/")) violations.push(`${expectedName}: packed exports["${subpath}"] names ${conditions}, which a dist-only tarball does not contain`);
+      continue;
+    }
+    if (typeof conditions !== "object" || conditions === null) continue;
+    for (const [condition, target] of Object.entries(conditions as Record<string, unknown>)) {
+      if (condition === "bun") {
+        violations.push(
+          `${expectedName}: packed exports["${subpath}"] still carries a \`bun\` condition (${String(target)}) -- ` +
+            `a published tarball is dist-only, so that path is not in it. Set \`publishConfig.exports\` without the \`bun\` key.`,
+        );
+      }
+      if (typeof target === "string" && target.startsWith("./src/")) {
+        violations.push(`${expectedName}: packed exports["${subpath}"].${condition} names ${target}, which a dist-only tarball does not contain`);
+      }
+    }
+  }
+  return violations;
+}
 
 /** Every file under `dir` (recursive), as paths relative to `dir` using "/" separators regardless of platform. */
 function walkFiles(dir: string, base: string = dir): string[] {
@@ -276,6 +332,7 @@ export function scanExtractedPackage(expectedName: string, packageRoot: string):
       violations.push(`${expectedName}: a credentials-shaped file shipped at ${relPath}`);
     }
     if (TEST_FILE_RE.test(name)) violations.push(`${expectedName}: a test file shipped at ${relPath} (exclude it in this package's "files")`);
+    if (SRC_ENTRY_RE.test(relPath)) violations.push(`${expectedName}: a source file shipped at ${relPath} -- published tarballs are dist-only (drop "src" from this package's "files")`);
 
     if (name === "package.json") {
       const full = join(packageRoot, ...relPath.split("/"));
@@ -292,6 +349,7 @@ export function scanExtractedPackage(expectedName: string, packageRoot: string):
       if (relPath === "package.json") {
         sawOwnManifest = true;
         if (nestedName !== expectedName) violations.push(`${expectedName}: the tarball's own package.json declares "${String(nestedName)}" instead`);
+        violations.push(...scanPackedExports(expectedName, full));
       }
     }
   }

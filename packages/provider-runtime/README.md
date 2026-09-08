@@ -33,9 +33,11 @@ In your project's `.npmrc`:
 …with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
 literal in the file. Then `npm install @yanlinglabs/winter-provider-runtime` as usual.
 
-**The published tarballs contain `src/`.** Alongside the compiled `dist/` a consumer resolves, every
-package ships its own TypeScript sources: Bun resolves them directly through the `bun` export
-condition, and they are readable by anyone who installs the package.
+**The published packages contain COMPILED OUTPUT ONLY.** Each tarball ships `dist/` — the bundled
+JavaScript a consumer imports and the `.d.ts` declarations their type-checker reads — plus its data
+files, `README.md` and `LICENSE`. It does **not** ship `src/`: the TypeScript sources live at
+<https://github.com/yanlingLabs/winter-agent-sdk>, which is where to read them, file an issue, or send
+a patch.
 
 ## Bun-only surface
 
@@ -85,3 +87,7 @@ its own bundle, so the class carries a package-scoped `Symbol.for` brand to make
 
 Everything else — the registry, every adapter's `streamTurn`, discovery, the credential stores, the
 endpoint policy and the identity helpers — is plain Node-compatible code over `fetch` and `node:*`.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.

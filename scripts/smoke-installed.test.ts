@@ -6,10 +6,12 @@
 // never through pnpm's workspace symlinks, which is exactly the gap that let review r1's Criticals
 // ship green (`bun test` and "manually verified... resolve correctly" both only ever exercised the
 // in-repo, workspace-resolved path).
-import { describe, test, expect, beforeAll } from "bun:test";
-import { readFileSync } from "node:fs";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { discoverPublishablePackages } from "./release-pack.ts";
-import { deriveImportTargets, runSmoke, runtimesFor, type SmokeResult } from "./smoke-installed.ts";
+import { assertInstalledTreeIsDistOnly, deriveImportTargets, runSmoke, runtimesFor, type SmokeResult } from "./smoke-installed.ts";
 
 // --- P7a fix wave (item 11, N-3): the pack+install legs are OPT-IN outside CI --------------------
 //
@@ -129,5 +131,58 @@ describe.skipIf(!PACK_SMOKE_ENABLED)("runSmoke: the Node leg is GREEN since the 
     expect(runtimesFor({ engines: { node: ">=18" } })).toEqual(["node", "bun"]);
     // FAIL CLOSED: a package declaring neither engine is required under both.
     expect(runtimesFor({})).toEqual(["node", "bun"]);
+  });
+});
+
+// --- P7a pre-publish round 2 (item 8): the dist-only check has teeth ------------------------------
+//
+// `runSmoke` asserts the INSTALLED tree is dist-only before it imports anything, and a check that has
+// never been shown failing is a check nobody can trust. These drive the predicate against synthetic
+// trees, so both failure modes are demonstrated without a pack.
+describe("assertInstalledTreeIsDistOnly", () => {
+  const roots: string[] = [];
+  function tree(pkg: { exports?: unknown; withSrc?: boolean }): string {
+    const probe = mkdtempSync(join(tmpdir(), "winter-distonly-"));
+    roots.push(probe);
+    const dir = join(probe, "node_modules", "@scope", "thing");
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    if (pkg.withSrc === true) mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "@scope/thing", exports: pkg.exports ?? { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } } }, null, 2));
+    return probe;
+  }
+  afterAll(() => {
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+
+  test("a clean dist-only install passes", () => {
+    expect(assertInstalledTreeIsDistOnly(tree({}), ["@scope/thing"])).toEqual([]);
+  });
+
+  test("a `src/` directory on disk is caught", () => {
+    const v = assertInstalledTreeIsDistOnly(tree({ withSrc: true }), ["@scope/thing"]);
+    expect(v).toHaveLength(1);
+    expect(v[0]).toContain("src exists");
+  });
+
+  test("a surviving `bun` condition is caught -- the failure that reads as a missing module", () => {
+    // The one the ruling makes possible: `src/` gone, the manifest still naming it. A Bun consumer
+    // then fails at RESOLUTION, which looks like a broken package rather than a manifest that lies.
+    const v = assertInstalledTreeIsDistOnly(tree({ exports: { ".": { types: "./dist/index.d.ts", bun: "./src/index.ts", default: "./dist/index.js" } } }), ["@scope/thing"]);
+    // TWO reports, because there are two independent reasons: the condition should not be there at
+    // all, and its target is not in the package. Either alone would be a violation, so both fire --
+    // asserted rather than collapsed, so a future change that drops one is visible.
+    expect(v).toHaveLength(2);
+    expect(v.some((line) => line.includes("`bun` condition"))).toBe(true);
+    expect(v.some((line) => line.includes("./src/index.ts"))).toBe(true);
+  });
+
+  test("any condition naming `./src/` is caught, whatever it is called", () => {
+    const v = assertInstalledTreeIsDistOnly(tree({ exports: { "./sub": { types: "./dist/sub.d.ts", node: "./src/sub.ts", default: "./dist/sub.js" } } }), ["@scope/thing"]);
+    expect(v).toHaveLength(1);
+    expect(v[0]).toContain("./src/sub.ts");
+  });
+
+  test("a package that is not installed at all is reported, never silently skipped", () => {
+    expect(assertInstalledTreeIsDistOnly(tree({}), ["@scope/absent"])[0]).toContain("no package.json");
   });
 });

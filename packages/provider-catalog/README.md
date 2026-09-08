@@ -33,7 +33,14 @@ In your project's `.npmrc`:
 …with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
 literal in the file. Then `npm install @yanlinglabs/winter-provider-catalog` as usual.
 
-**The published tarballs contain `src/`.** Alongside the compiled `dist/` a consumer resolves, every
-package ships its own TypeScript sources: Bun resolves them directly through the `bun` export
-condition, and they are readable by anyone who installs the package. Nothing in them is private —
-but treat these packages as source-visible, because they are.
+**The published packages contain COMPILED OUTPUT ONLY.** Each tarball ships `dist/` — the bundled
+JavaScript a consumer imports and the `.d.ts` declarations their type-checker reads — plus its data
+files, `README.md` and `LICENSE`. It does **not** ship `src/`: the TypeScript sources live at
+<https://github.com/yanlingLabs/winter-agent-sdk>, which is where to read them, file an issue, or send
+a patch.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.
+
+Third-party attribution for the upstream catalog data this package derives from is in [`NOTICE`](./NOTICE), which ships in the tarball beside this file.

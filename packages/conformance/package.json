@@ -1,11 +1,22 @@
 {
   "name": "@yanlinglabs/winter-conformance",
   "version": "0.0.1",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanlingLabs/winter-agent-sdk.git",
+    "directory": "packages/conformance"
+  },
+  "homepage": "https://github.com/yanlingLabs/winter-agent-sdk",
+  "bugs": {
+    "url": "https://github.com/yanlingLabs/winter-agent-sdk/issues"
+  },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -25,20 +36,31 @@
   },
   "files": [
     "dist",
-    "src",
     "goldens",
     "README.md",
-    "!src/**/*.test.ts",
-    "!src/**/*.test-support.ts"
+    "LICENSE"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "access": "restricted",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./trace": {
+        "types": "./dist/trace.d.ts",
+        "default": "./dist/trace.js"
+      },
+      "./official": {
+        "types": "./dist/official/index.d.ts",
+        "default": "./dist/official/index.js"
+      }
+    }
   },
   "winter": {
     "publish": {
       "npm": false
     }
-  },
-  "types": "./dist/index.d.ts"
+  }
 }
