@@ -207,6 +207,19 @@
     "kind": "control_response",
     "payload": {
       "type": "control_response",
+      "ok": false,
+      "error": {
+        "code": "invalid_messaging_request",
+        "message": "messaging.steer_child: a child is addressable only through its OWNING parent (WS-10 §10.3); \"agent:s_other:c1\" names another session"
+      }
+    }
+  },
+  {
+    "sequence": 11,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
       "ok": true
     }
   }

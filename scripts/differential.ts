@@ -1066,6 +1066,12 @@ export async function traceWinterMessagingFacetRound(): Promise<ConformanceTrace
     //    `unavailable` outcome a router would retry its way around (WS-10 §10.3 gives an agent its
     //    own two doors).
     await ask("facet-8", "messaging.deliver", { message: message("host-5", missingChild) }, "the wrong-door refusal");
+    // 9. ...and the OWNING-PARENT fence (WS-10 §10.3): a child of ANOTHER session is refused before
+    //    any adapter call. The reference adapter cannot enforce this -- `findChild` matches the
+    //    process-wide roster against the address's own claimed parent -- so the handler does, and
+    //    this step is what keeps that fence from being deleted by someone who reads only the adapter.
+    const foreignChild = { objectKind: "agent", runtimeKind: "winter-agent", winterSessionId: "s_other", parentWinterSessionId: "s_other", childId: "c1" };
+    await ask("facet-9", "messaging.steer_child", { id: "agent:s_other:c1", message: message("host-6", foreignChild) }, "the owning-parent refusal");
 
     proc.stdin.write(encodeFrame({ type: "control_request", requestId: "facet-end", subtype: "end_input", payload: undefined }));
     push(await need("the end_input ack"));

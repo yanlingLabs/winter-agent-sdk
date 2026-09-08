@@ -54,6 +54,7 @@ import {
   classifyPermissionMode,
   parseRuntimeAddress,
   type DeliveryOutcome,
+  type RuntimeAddress,
 } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { getMessagingRuntime } from "./messaging/router.ts";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
@@ -3811,6 +3812,21 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             // within THIS session). The session id is authoritative here and nowhere else, which is
             // why the rule is applied on this side of the wire.
             const targetFor = (id: string) => resolveFacetTarget(config.sessionId, id, parseRuntimeAddress, buildChildAddress);
+            // WS-10 §10.3's OWNING-PARENT FENCE, enforced here and nowhere else on this path.
+            //
+            // `resolveTarget` (the router core) applies it as resolution rule 1's own check, but the
+            // facet bypasses the router by design -- and the reference adapter's `findChild` matches
+            // the PROCESS-WIDE roster against the ADDRESS's own claimed parent, with no caller
+            // context to compare it to. So a facet call naming `agent:<another session>:<child>`
+            // would reach that other session's child whenever both live in one process, which is
+            // exactly the reach §10.3 forbids ("a child is not reachable from another parent without
+            // routing through the owner"). Moot under today's one-process-per-session spawn topology;
+            // NOT moot for a daemon-backed in-process host, which is precisely what the process-level
+            // messaging runtime exists to serve.
+            //
+            // A malformed CALL rather than a `not_found` outcome: a router holding a stale directory
+            // entry needs to learn it addressed the wrong session, not that the child vanished.
+            const outsideThisSession = (addr: RuntimeAddress): boolean => addr.objectKind === "agent" && (addr.parentWinterSessionId ?? addr.winterSessionId) !== config.sessionId;
             // Every adapter call is awaited off the pump (`void (async () => …)()`), exactly like
             // `handleIncomingControlRequest` on the wrapper side: a child's own `resume` starts a
             // whole generation, and blocking the frame pump on it would stall every other frame --
@@ -3870,6 +3886,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 continue;
               }
               const addr = targetFor(cf.payload.id);
+              if (outsideThisSession(addr)) {
+                badRequest(`${cf.subtype}: a child is addressable only through its OWNING parent (WS-10 §10.3); "${cf.payload.id}" names another session`);
+                continue;
+              }
               // WS-10 §10.3's split is the CALLER's to make and the adapter's to enforce: steer a
               // running child, resume a terminal one, never the reverse. Neither is silently
               // upgraded here -- the adapter answers `not_found` for the wrong one, which is what
@@ -3887,8 +3907,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               // ROUTER writes before calling. A remote caller cannot write into it, so the handler
               // does it on the caller's behalf -- the same step, at the only point on this side that
               // still knows who asked.
+              const idleAddr = targetFor(cf.payload.id);
+              if (outsideThisSession(idleAddr)) {
+                badRequest(`${cf.subtype}: a child is addressable only through its OWNING parent (WS-10 §10.3); "${cf.payload.id}" names another session`);
+                continue;
+              }
               runtime.subscribers.remember(cf.payload.messageId, cf.payload.subscriberSessionId ?? config.sessionId);
-              answer(adapter.subscribeIdle(targetFor(cf.payload.id), { messageId: cf.payload.messageId }));
+              answer(adapter.subscribeIdle(idleAddr, { messageId: cf.payload.messageId }));
               continue;
             }
           }

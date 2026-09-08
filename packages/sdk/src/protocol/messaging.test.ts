@@ -167,8 +167,12 @@ describe("resolveFacetTarget: the one addressing rule the facet owns", () => {
   test("a canonical address is used exactly as given -- including one owned by ANOTHER session", () => {
     expect(resolve("s_1", "agent:s_1:c_1")).toEqual(CHILD);
     expect(resolve("s_1", "session:s_2")).toEqual(buildSessionAddress("s_2"));
-    // Reach beyond the session is NOT decided here: the adapter refuses a child of another parent
-    // (WS-10 §10.3), and it must be the one that does, so the refusal is uniform for every caller.
+    // Reach beyond the session is not decided HERE -- but it IS decided. `resolveFacetTarget` is
+    // pure address arithmetic; the OWNING-PARENT fence (WS-10 §10.3) lives in the runtime's facet
+    // handler, which refuses a request whose resolved address names another session before any
+    // adapter call. It cannot live in the adapter: `findChild` matches the process-wide roster
+    // against the ADDRESS's own claimed parent and has no caller context to compare it to. The
+    // golden's `facet-9` step pins the refusal on the wire.
     expect(resolve("s_1", "agent:s_2:c_9")).toEqual(buildChildAddress("s_2", "c_9"));
   });
 

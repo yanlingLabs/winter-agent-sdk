@@ -229,6 +229,32 @@ describe("Query.messaging: a spawned session's own children, reached from the ho
     expect(observed.afterPlan).toBe("prompts");
   });
 
+  test("a child of ANOTHER session is refused before any adapter call (WS-10 §10.3's owning-parent fence)", async () => {
+    // The facet bypasses the router by design, and the reference adapter's `findChild` matches the
+    // PROCESS-WIDE roster against the ADDRESS's own claimed parent -- it has no caller context to
+    // compare it to. So the fence lives in the runtime's facet handler, and this is what proves a
+    // host cannot reach across sessions through it. Moot under today's one-process-per-session spawn
+    // topology; NOT moot for a daemon-backed in-process host, which is what the process-level
+    // messaging runtime exists to serve.
+    //
+    // An `ok:false` control response, so the wrapper REJECTS -- a malformed call, never a
+    // `not_found` outcome a router would read as "the child vanished" while still addressing the
+    // wrong session.
+    const { observed } = await runFacetSession({
+      whileRunning: async (q, o) => {
+        const foreign = { objectKind: "agent" as const, runtimeKind: "winter-agent" as const, winterSessionId: "s_other", parentWinterSessionId: "s_other", childId: "c1" };
+        try {
+          await q.messaging.steerChild("agent:s_other:c1", envelope({ messageId: "host-msg-6", to: foreign }));
+          o.crossSession = "RESOLVED -- the fence is gone";
+        } catch (err) {
+          o.crossSession = err instanceof Error ? err.message : String(err);
+        }
+      },
+    });
+    expect(observed.crossSession).toContain("OWNING parent");
+    expect(observed.crossSession).toContain("another session");
+  });
+
   test("the child really ran: the facet observed a session that produced a normal terminal result", async () => {
     // A negative control for every test above -- each asserts on a child, so a run in which the
     // Agent tool never spawned one (the "no child engine factory" failure) has to be excluded.
