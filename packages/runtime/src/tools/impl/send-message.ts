@@ -2,7 +2,7 @@
 // derivation/truncation happen HERE, never in messaging/router.ts (which receives an already-clean
 // SendMessageInput) -- this file owns the "malformed call, no messageId" tier; router.ts's own
 // sendMessage owns every outcome that DOES get a messageId once the call is well-formed
-// (messaging/addressing.ts's own header: "an invalid call never enters the messaging system").
+// (the messaging subpath's addressing header: "an invalid call never enters the messaging system").
 //
 // CLOSED by Phase 4 Task 8: `ToolExecutionContext.toolUseId` is real now (registry.ts threads
 // `EngineToolCall.id` onto every context it builds), so WS-10 §12's retry-stable messageId
@@ -10,7 +10,7 @@
 import "../descriptors/send-message.ts";
 import "../descriptors/winter-send-message.ts"; // rider 15: the canonical alias-target descriptor this file also installs an executor for.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
-import { validateToField } from "../../messaging/addressing.ts";
+import { validateToField } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { getMessagingRuntime, sendMessage, type CallerContext } from "../../messaging/router.ts";
 import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
 

@@ -132,7 +132,7 @@ function registerSpawnAndRegister(): void {
   });
 }
 
-function fakeGlobalMessage(body: string): import("../messaging/adapter.ts").GlobalAgentMessage {
+function fakeGlobalMessage(body: string): import("@yanlinglabs/winter-agent-sdk/messaging").GlobalAgentMessage {
   const addr = { objectKind: "session" as const, runtimeKind: "winter-agent" as const, winterSessionId: "s1" };
   return {
     messageId: `m-${randomUUID()}`, from: addr, fromGeneration: 1, to: addr, toGeneration: 1,

@@ -1,6 +1,6 @@
 // Task 7 (Lane D, WS-10 §14 / WS-06 §3.6): the ReadNotifications executor -- drains Winter's own
 // global-messaging notification queue (idle/exit notices from notify_when_idle subscriptions;
-// messaging/idle.ts's own header documents this as the queue's sole producer at this phase). Input
+// the messaging subpath's idle.ts header documents this as the queue's sole producer at this phase). Input
 // is `{}` (additionalProperties: false, per the pinned descriptor) -- there is nothing to validate
 // beyond "an object, if anything was even passed at all," so this executor does not reject a
 // call carrying stray fields; it simply never reads them (mirrors ListAgents's own `channel`/`q`

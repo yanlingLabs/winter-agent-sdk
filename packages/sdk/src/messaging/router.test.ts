@@ -2,9 +2,6 @@ import { describe, test, expect } from "bun:test";
 import {
   createMessagingRouterSeam,
   createSubscriberDirectory,
-  registerMessagingRuntime,
-  getMessagingRuntime,
-  resetMessagingRuntimeForTest,
   callerAddress,
   sendMessage,
   listAgents,
@@ -17,8 +14,7 @@ import {
 import { serializeRuntimeAddress, type RuntimeAddress, type ListedRuntimeObject, type DeliveryOutcome, type GlobalAgentMessage, type RuntimeMessagingAdapter } from "./adapter.ts";
 import { createNotificationQueue } from "./idle.ts";
 import { createLoopGuard, MAX_GLOBAL_MESSAGE_SIZE, RAPID_REPEAT_WINDOW_MS } from "./outcomes.ts";
-import { createFakeChildHandle } from "../subagents/test-fakes.ts";
-import { ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
+import { createFakeChild } from "./child-fake.test-support.ts";
 
 interface FakeAdapterCalls {
   listReachable: number;
@@ -107,18 +103,9 @@ describe("callerAddress", () => {
   });
 });
 
-describe("module-singleton registration (push-notification.ts precedent)", () => {
-  test("register/get/reset round-trip", () => {
-    resetMessagingRuntimeForTest();
-    expect(getMessagingRuntime()).toBeUndefined();
-    const { adapter } = createFakeAdapter();
-    const deps = makeDeps(adapter);
-    registerMessagingRuntime(deps);
-    expect(getMessagingRuntime()).toBe(deps);
-    resetMessagingRuntimeForTest();
-    expect(getMessagingRuntime()).toBeUndefined();
-  });
-});
+// R-7b-4: the module-singleton register/get/reset round-trip that used to sit here moved with the
+// singleton itself, to `packages/runtime/src/messaging/router-wiring.test.ts` -- a published library
+// hands no consumer a shared mutable slot, so the core has none to test.
 
 describe("sendMessage: idempotency (WS-10 §12)", () => {
   test("a retry with the identical (sessionId, toolUseId) returns the stored outcome without re-invoking the adapter", async () => {
@@ -148,7 +135,7 @@ describe("sendMessage: notify_when_idle target-side eligibility (WS-10 §14)", (
   test("an agent (child) target refuses the WHOLE call, including the attached message -- neither steer nor subscribe is ever called", async () => {
     const { adapter, calls } = createFakeAdapter();
     const deps = makeDeps(adapter);
-    const child = createFakeChildHandle({ id: "c1", parentSessionId: CALLER.sessionId });
+    const child = createFakeChild({ id: "c1", parentSessionId: CALLER.sessionId });
     deps.seam.children = () => [child];
     const result = await sendMessage(deps, CALLER, { to: "c1", message: "hi", notify_when_idle: true });
     expect(result.outcome.status).toBe("refused");
@@ -216,9 +203,9 @@ describe("sendMessage: resolution failures surface as the matching DeliveryOutco
   test("stale name -> refused", async () => {
     const { adapter } = createFakeAdapter();
     const deps = makeDeps(adapter);
-    const first = createFakeChildHandle({ id: "c1", name: "dup", parentSessionId: CALLER.sessionId });
-    first.simulateCompletion("done");
-    const second = createFakeChildHandle({ id: "c2", name: "dup", parentSessionId: CALLER.sessionId });
+    const first = createFakeChild({ id: "c1", name: "dup", parentSessionId: CALLER.sessionId });
+    first.setStatus("completed");
+    const second = createFakeChild({ id: "c2", name: "dup", parentSessionId: CALLER.sessionId });
     deps.seam.children = () => [first, second];
     const result = await sendMessage(deps, CALLER, { to: "dup", message: "hi" });
     expect(result.outcome.status).toBe("refused");
@@ -246,7 +233,7 @@ describe("sendMessage: steer vs resume dispatch by live child status (WS-10 §10
   test("a RUNNING child is steered, never resumed", async () => {
     const { adapter, calls } = createFakeAdapter();
     const deps = makeDeps(adapter);
-    const child = createFakeChildHandle({ id: "c1", parentSessionId: CALLER.sessionId });
+    const child = createFakeChild({ id: "c1", parentSessionId: CALLER.sessionId });
     deps.seam.children = () => [child];
     const result = await sendMessage(deps, CALLER, { to: "c1", message: "steer me" });
     expect(result.outcome.status).toBe("delivered");
@@ -256,8 +243,8 @@ describe("sendMessage: steer vs resume dispatch by live child status (WS-10 §10
   test("a TERMINAL child is resumed, never steered", async () => {
     const { adapter, calls } = createFakeAdapter();
     const deps = makeDeps(adapter);
-    const child = createFakeChildHandle({ id: "c1", parentSessionId: CALLER.sessionId });
-    child.simulateCompletion("done");
+    const child = createFakeChild({ id: "c1", parentSessionId: CALLER.sessionId });
+    child.setStatus("completed");
     deps.seam.children = () => [child];
     const result = await sendMessage(deps, CALLER, { to: "c1", message: "resume me" });
     expect(result.outcome.status).toBe("resumed_and_delivered");
@@ -266,16 +253,38 @@ describe("sendMessage: steer vs resume dispatch by live child status (WS-10 §10
   });
 });
 
-describe("sendMessage: RULING P4-D surfaces legibly on resume", () => {
-  test("a ChildResumeModeIncomparableError from resume() becomes a refused outcome carrying the error's own message", async () => {
-    const err = new ChildResumeModeIncomparableError("dontAsk", "auto");
+// R-7b-4: the classification of a THROW out of an adapter is the owner's, supplied as
+// `MessagingRuntimeDeps.classifyDeliveryError`. The core's job is to honour it in both directions;
+// the WINTER RUNTIME's own end-to-end pin -- that RULING P4-D's real
+// `ChildResumeModeIncomparableError` reaches `refused` through `createDefaultMessagingRuntime` --
+// lives beside that wiring, in `packages/runtime/src/messaging/router-wiring.test.ts`, because the
+// class is the runtime's and this package must not import it.
+describe("sendMessage: a POLICY refusal thrown by an adapter surfaces legibly, never as uncertain", () => {
+  class FakePolicyRefusal extends Error {}
+
+  test("a throw the owner's classifier calls a policy refusal becomes a refused outcome carrying the error's own message", async () => {
+    const err = new FakePolicyRefusal("these two modes are INCOMPARABLE; refusing rather than guessing");
     const { adapter } = createFakeAdapter({ resumeThrows: err });
     const deps = makeDeps(adapter);
-    const child = createFakeChildHandle({ id: "c1", parentSessionId: CALLER.sessionId });
-    child.simulateCompletion("done");
+    deps.classifyDeliveryError = (e) => (e instanceof FakePolicyRefusal ? "refused" : "uncertain");
+    const child = createFakeChild({ id: "c1", parentSessionId: CALLER.sessionId });
+    child.setStatus("completed");
     deps.seam.children = () => [child];
     const result = await sendMessage(deps, CALLER, { to: "c1", message: "resume me" });
     expect(result.outcome).toEqual({ status: "refused", messageId: result.outcome.messageId, reason: err.message });
+  });
+
+  test("with NO classifier the SAME throw is delivery_uncertain -- absence means the conservative reading, never a silent refusal", async () => {
+    // The negative control the default has to earn: `classifyDeliveryError` absent must not quietly
+    // behave like a refusal, because "refused" asserts the effect did NOT happen.
+    const err = new FakePolicyRefusal("same error, no classifier");
+    const { adapter } = createFakeAdapter({ resumeThrows: err });
+    const deps = makeDeps(adapter);
+    const child = createFakeChild({ id: "c1", parentSessionId: CALLER.sessionId });
+    child.setStatus("completed");
+    deps.seam.children = () => [child];
+    const result = await sendMessage(deps, CALLER, { to: "c1", message: "resume me" });
+    expect(result.outcome.status).toBe("delivery_uncertain");
   });
 });
 

@@ -22,6 +22,11 @@
       "types": "./dist/index.d.ts",
       "bun": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./messaging": {
+      "types": "./dist/messaging/index.d.ts",
+      "bun": "./src/messaging/index.ts",
+      "default": "./dist/messaging/index.js"
     }
   },
   "files": [
@@ -38,6 +43,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./messaging": {
+        "types": "./dist/messaging/index.d.ts",
+        "default": "./dist/messaging/index.js"
       }
     }
   },

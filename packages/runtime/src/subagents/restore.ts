@@ -23,7 +23,7 @@ import type { SessionStore } from "@yanlinglabs/winter-agent-sdk";
 import type { ChildHandle, ChildResult, ChildSessionRecord } from "./child-handle.ts";
 import { rebuildChildRoster, successfulRecords, type RosterKey } from "./roster.ts";
 import { ensureDefaultMessagingRuntimeRegistered } from "../messaging/reference-adapter.ts";
-import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts";
+import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging";
 import type { RecordedModelEffort } from "./resolution.ts";
 
 // The one place a rebuilt RECORD becomes a ChildHandle the messaging layer can list and address.

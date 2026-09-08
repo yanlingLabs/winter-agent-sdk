@@ -115,7 +115,7 @@ import type {
   ChildEngineFactory,
   ChildEngineRunContext,
 } from "./child-handle.ts";
-import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts";
+import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { checkAndRegisterSpawn, releaseSpawn } from "./limits.ts";
 import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
 import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";

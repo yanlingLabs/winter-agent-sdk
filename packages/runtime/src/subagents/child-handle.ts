@@ -17,7 +17,7 @@ import type { McpServerStateSource } from "../mcp/state.ts"; // type-only -- see
 import type { McpControlSeam } from "../mcp/control-seam.ts"; // type-only
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
 import type { ProviderMessage } from "../engine.ts"; // type-only -- see this file's own header; no runtime cycle (Bun/tsc erase `import type` entirely)
-import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts"; // type-only; see messaging/adapter.ts's own header for why this is a safe mutual reference
+import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging"; // type-only; the messaging contract is published (R-7b-4), so this is an ordinary one-way import now
 
 // --- Lane C implements; Lane D consumes ONLY these (verbatim from the brief's Interfaces block) ---
 

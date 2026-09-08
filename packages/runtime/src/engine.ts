@@ -951,7 +951,7 @@ export interface EngineOptions {
   contextAccountant?: ContextAccountant;
   // Phase 4 Task 3 (MUST 8): called ONCE, synchronously, near the start of the run, handing the
   // caller a live getter over this run's own child roster -- the ONE exposure point
-  // MessagingRouterSeam.children() (messaging/adapter.ts) is meant to be built from. No routing
+  // MessagingRouterSeam.children() (@yanlinglabs/winter-agent-sdk/messaging) is meant to be built from. No routing
   // logic lives in the engine; this is purely "here is where the children actually are."
   onChildRosterReady?: (getChildren: () => readonly ChildHandle[]) => void;
   // NEW-3 (P4 residual round): the same shape as `onChildRosterReady` above, over the set of
@@ -2063,7 +2063,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   const costFields = (): Record<string, unknown> => (costLedger.priced ? { total_cost_usd: costLedger.totalUsd, modelUsage: Object.fromEntries(costLedger.models) } : {});
   const budgetExceeded = (): boolean => config.maxBudgetUsd !== undefined && costLedger.priced && costLedger.totalUsd > config.maxBudgetUsd;
   // Phase 4 Task 3 (MUST 8): the live child roster this run's own spawns append to -- what
-  // `MessagingRouterSeam.children()` (messaging/adapter.ts) is defined to read from. No routing
+  // `MessagingRouterSeam.children()` (@yanlinglabs/winter-agent-sdk/messaging) is defined to read from. No routing
   // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
   // ONE exposure point, called once below, for whichever host-level code constructs Lane D's own
   // real MessagingRouterSeam to wire its `children()` against.
