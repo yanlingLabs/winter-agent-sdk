@@ -27,7 +27,7 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { resolveBrand, WINTER_BRAND, envName, mcpToolName, type BrandProfile, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
@@ -336,6 +336,18 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     const others = entries.filter((e) => typeof e.ruleValue.ruleContent === "string" && !(e.ruleValue.ruleContent as string).startsWith("~/.acme/projects"));
     expect(others.some((e) => skip!(e))).toBe(false);
 
+    // P7a fix wave (item 10, N-2): THE NEGATIVE CASE, and it cannot be read off `others` -- the
+    // assertion four lines above proves no `.winter` entry is IN `entries` at all, so `others` is
+    // structurally incapable of carrying one. A synthetic rule is the only way to ask the question.
+    //
+    // What it pins: the carve-out follows the SESSION's brand and nothing else. A managed deny that
+    // literally names `~/.winter/projects` under a branded session is somebody ELSE's floor, and
+    // skipping it would let a branded session write through a deny it was never granted a carve-out
+    // from -- the exact inverse of the I-2 bug, and the direction a "make it match either name" fix
+    // would introduce.
+    const winterLiteralDeny = { behavior: "deny" as const, source: "managed" as const, ruleValue: { ruleContent: "~/.winter/projects/**" } };
+    expect(skip!(winterLiteralDeny as unknown as (typeof entries)[number])).toBe(false);
+
     // A sibling under the same session -- a transcript, not a script -- earns no carve-out at all.
     expect(workflowScriptCarveOutSkip({ toolName: "Write", input: { file_path: join(winterHome, "projects", "key", "uuid", "transcript.jsonl") } }, ctx)).toBeUndefined();
   });
@@ -364,9 +376,11 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     const config = acmeConfig({ cwd, plugins: [{ type: "local", path: pluginRoot }] });
     await withWiring(config, { ACME_HOME: acmeHome }, (wiring) => {
       const names = wiring.engineOptions.initPlugins.map((p) => p.name);
-      expect(names).toContain("named-by-its-acme-manifest");
-      // The basename is what a MISSED manifest would have produced.
-      expect(names).not.toContain(basename(pluginRoot));
+      // P7a fix wave (item 10, N-3): the `not.toContain(basename(pluginRoot))` assertion that used
+      // to sit here is DELETED, not reworded. It was inert: `names` is a one-element array whose
+      // single member the line above already pins exactly, so the negative could not fail without
+      // the positive failing first -- an assertion that reads like a second guard and is not one.
+      expect(names).toEqual(["named-by-its-acme-manifest"]);
       expect(wiring.warnings.filter((w) => w.includes("was not loaded"))).toEqual([]);
     });
   });

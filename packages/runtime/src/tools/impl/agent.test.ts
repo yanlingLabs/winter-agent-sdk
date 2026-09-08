@@ -19,6 +19,7 @@ import { taskOutputExecutor } from "./task-output.ts";
 import { resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
+import { resolveBrand, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 function fakeRecord(overrides: Partial<ChildSessionRecord> = {}): ChildSessionRecord {
   return {
@@ -59,6 +60,8 @@ function fakeHandle(result: Promise<ChildResult>, recordOverrides: Partial<Child
 interface CtxOptions {
   cwd?: string;
   home?: string;
+  /** P7a fix wave (item 10, N-1): the SESSION's brand, which is what decides the agents directory this tool reads. */
+  brand?: BrandProfile;
   spawnChild?: (req: SpawnChildRequest) => Promise<ChildHandle>;
 }
 
@@ -75,6 +78,7 @@ function makeCtx(opts: CtxOptions = {}): { ctx: ToolExecutionContext; frames: un
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-agent-test-temp",
     sandboxSettings: {},
+    ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
     session: {
       setCwd() {},
       addBoundedRoot() {},
@@ -185,6 +189,59 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     expect(capturedReq?.definition?.description).toBe("reviews code");
     expect(capturedReq?.definition?.tools).toEqual(["Read", "Grep"]);
     expect(capturedReq?.definition?.prompt).toBe("You are a careful reviewer.");
+  });
+
+  // --- P7a fix wave (item 10, N-1): the BRANDED directory read ------------------------------------
+  //
+  // `agent.ts:305` threads `ctx.brand` into `loadAgentDefinitions`, and until now nothing drove the
+  // Agent tool under a brand at all -- `makeCtx` never set one. This is the FIFTH site of the r1
+  // sweep and the only one whose fix had no test behind it, and it is a real DIRECTORY READ rather
+  // than prose: without the thread a branded session's Agent tool looks in `<home>/.winter/agents`,
+  // which a reuser's product does not have.
+  const ACME: BrandProfile = (() => {
+    const resolved = resolveBrand({ productName: "Acme", homeDirName: ".acme", projectDirName: ".acme", instructionsFile: "ACME.md", envPrefix: "ACME_", mcpServerName: "acme", codexOriginator: "acme", tempRootName: "acme", pluginManifestDir: ".acme-plugin", packageName: "acme" });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    return resolved.brand;
+  })();
+
+  test("P7a (N-1): a BRANDED session reads `<home>/.acme/agents`, and a `.winter/agents` definition beside it is invisible", async () => {
+    const home = mkTempDir("winter-agent-test-home-");
+    // BOTH directories exist and BOTH declare a `reviewer`, with different bodies. A tool that read
+    // the wrong one would still resolve a definition -- the whole class of bug here is a read that
+    // silently succeeds against the wrong product's directory -- so the DECOY is what makes this
+    // test able to fail.
+    mkdirSync(join(home, ".acme", "agents"), { recursive: true });
+    writeFileSync(join(home, ".acme", "agents", "reviewer.md"), "---\ndescription: the ACME reviewer\n---\nAcme body.");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\ndescription: the WINTER decoy\n---\nWinter body.");
+
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({
+      home,
+      brand: ACME,
+      spawnChild: async (req) => {
+        capturedReq = req;
+        return fakeHandle(Promise.resolve({ status: "completed", content: "reviewed" }));
+      },
+    });
+    const result = await agentExecutor.execute({ description: "review", prompt: "p", subagent_type: "reviewer" }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(capturedReq?.definition?.description).toBe("the ACME reviewer");
+    expect(capturedReq?.definition?.prompt).toBe("Acme body.");
+  });
+
+  test("P7a (N-1): and the MODEL-FACING message names the branded directory, not `~/.winter/agents`", async () => {
+    // The other half of the r1 fix. A message naming a directory the reuser's product does not have
+    // teaches the model to look in the wrong place, and it is the half a directory-read assertion
+    // alone would never catch.
+    const home = mkTempDir("winter-agent-test-home-");
+    let called = false;
+    const { ctx } = makeCtx({ home, brand: ACME, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent" }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(".acme/agents");
+    expect(result.output).not.toContain(".winter/agents");
+    expect(called).toBe(false);
   });
 
   test(".winter/agents/*.md in the CURRENT (untrusted) workspace does NOT resolve -- resolveWorkspaceTrust() is false", async () => {
