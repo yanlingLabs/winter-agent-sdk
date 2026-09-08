@@ -39,6 +39,23 @@ import {
   envName,
   type BrandProfile,
 } from "@yanlinglabs/winter-agent-sdk";
+// R-7b-4: the per-session messaging facet's wire shapes + the guards this side runs on an incoming
+// request, and the messaging contract the handler answers with.
+import {
+  MESSAGING_CONTROL_SUBTYPES,
+  isMessagingChildRequest,
+  isMessagingDeliverRequest,
+  isMessagingSubscribeIdleRequest,
+  resolveFacetTarget,
+} from "@yanlinglabs/winter-agent-sdk";
+import {
+  buildChildAddress,
+  buildSessionAddress,
+  classifyPermissionMode,
+  parseRuntimeAddress,
+  type DeliveryOutcome,
+} from "@yanlinglabs/winter-agent-sdk/messaging";
+import { getMessagingRuntime } from "./messaging/router.ts";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
 // runtime -> provider-runtime only (R6-4: provider-runtime never imports the runtime), so the seam
@@ -1650,15 +1667,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // allow rule.
     directories: [...(settingsRules?.directories ?? [])],
   };
-  const policyStateStore = new PolicyStateStore(
-    { mode: initialMode, rules: initialRules },
-    {
-      allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
-      // C1: WS-07 §6.4's veto binds from ANY tier, not only from `Options`. Restrictive, so no trust
-      // question arises and `true` anywhere wins.
-      disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true || settingsRules?.disableBypassPermissionsMode === true,
-    },
-  );
+  // The six facet subtypes as a Set, so the pump's dispatch is one lookup rather than six string
+  // comparisons on every control frame a session ever receives.
+  const MESSAGING_FACET_SUBTYPES: ReadonlySet<string> = new Set<string>(Object.values(MESSAGING_CONTROL_SUBTYPES));
+  const bypassGate = {
+    allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
+    // C1: WS-07 §6.4's veto binds from ANY tier, not only from `Options`. Restrictive, so no trust
+    // question arises and `true` anywhere wins.
+    disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true || settingsRules?.disableBypassPermissionsMode === true,
+  };
+  // WS-10 §13: "plan is classified as bypassing when bypass permissions are AVAILABLE to that
+  // session." Extracted from the gate above (rather than re-derived from a mode name) because it is
+  // the same fact `PolicyStateStore` enforces on every `setMode` -- one answer, two consumers.
+  const bypassAvailableToThisSession = bypassGate.allowDangerouslySkipPermissions && !bypassGate.disableBypassPermissionsMode;
+  const policyStateStore = new PolicyStateStore({ mode: initialMode, rules: initialRules }, bypassGate);
   // Task 6: the resolved, fixed-at-startup home directory used for `~`-anchored file rules
   // (WS-07 §3.1). A plain `os.homedir()` read — no WINTER_HOME-style override exists for this at P2
   // (it is the invoking OS user's real home, exactly like every other tool would see it; tests that
@@ -3750,6 +3772,116 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           if (cf.subtype === "account_info") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: accountInfo?.() ?? {} });
             continue;
+          }
+          // --- Phase 7b (R-7b-4): the per-session MESSAGING FACET ------------------------------
+          //
+          // `RuntimeMessagingAdapter` (WS-10 §15) on the wire, 1:1. The router package runs in the
+          // HOST process and owns the RuntimeDirectory; a spawned Winter session's children live in
+          // THIS process behind a pipe, so without these six subtypes the router can address the
+          // session and nothing inside it (WS-15 §6.2's "running/terminal Winter child" rows).
+          //
+          // SERVED FROM THE PROCESS-LEVEL RUNTIME the engine already registered
+          // (`ensureDefaultMessagingRuntimeRegistered`, called below with this run's child roster),
+          // so the facet sees exactly what this session's own `SendMessage` sees -- one adapter, one
+          // roster, never a second view that could disagree with the model's.
+          //
+          // NOTHING HERE ROUTES. No name resolution, no dedupe, no hold/refuse bookkeeping, no
+          // message-id allocation: all of that runs once, in the host's router, above both runtimes.
+          // A `messageId` on the wire is the CALLER's, and is echoed back on the outcome.
+          if (MESSAGING_FACET_SUBTYPES.has(cf.subtype)) {
+            const runtime = getMessagingRuntime();
+            if (runtime === undefined) {
+              // Structurally unreachable in a real run (the registration below is unconditional and
+              // happens before the first frame is read), but a host that registered its own runtime
+              // and then cleared it would otherwise get a silent hang instead of an answer.
+              output.write({
+                type: "control_response",
+                requestId: cf.requestId,
+                ok: false,
+                error: { code: "messaging_unavailable", message: "no messaging runtime is registered in this process" },
+              });
+              continue;
+            }
+            const adapter = runtime.adapter;
+            const selfAddress = buildSessionAddress(config.sessionId);
+            const badRequest = (message: string): void => {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_messaging_request", message } });
+            };
+            // `id` -> address by the ONE published rule (a canonical address, else a bare child id
+            // within THIS session). The session id is authoritative here and nowhere else, which is
+            // why the rule is applied on this side of the wire.
+            const targetFor = (id: string) => resolveFacetTarget(config.sessionId, id, parseRuntimeAddress, buildChildAddress);
+            // Every adapter call is awaited off the pump (`void (async () => …)()`), exactly like
+            // `handleIncomingControlRequest` on the wrapper side: a child's own `resume` starts a
+            // whole generation, and blocking the frame pump on it would stall every other frame --
+            // including the interrupt that might be trying to stop it.
+            const answer = (outcome: Promise<DeliveryOutcome> | Promise<unknown>): void => {
+              void outcome.then(
+                (payload) => output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload }),
+                (err: unknown) => {
+                  // An adapter that THREW is the router's crash window (WS-10 §12), but the router
+                  // cannot classify a throw it never saw -- so it is reported as a failed CALL and
+                  // the router applies its own `classifyDeliveryError` to the rejection.
+                  output.write({
+                    type: "control_response",
+                    requestId: cf.requestId,
+                    ok: false,
+                    error: { code: "messaging_adapter_threw", message: err instanceof Error ? err.message : String(err) },
+                  });
+                },
+              );
+            };
+
+            if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.listReachable) {
+              answer(adapter.listReachable({ parent: selfAddress }));
+              continue;
+            }
+            if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.senderClass) {
+              // NOT `adapter.senderPermissionClass(selfAddress)`: the in-process reference resolves a
+              // session address through its PEER directory, and a session is not a peer of its own
+              // adapter -- it would answer "unknown" from a process that knows its own mode exactly.
+              // WS-10 §13's classifier over this session's LIVE mode and its own bypass gate is the
+              // answer the receiver's matrix actually needs.
+              const senderClass = classifyPermissionMode(policyStateStore.getState().mode, { bypassAvailable: bypassAvailableToThisSession });
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { senderClass } });
+              continue;
+            }
+            if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.deliver) {
+              if (!isMessagingDeliverRequest(cf.payload)) {
+                badRequest("messaging.deliver requires { message: GlobalAgentMessage }");
+                continue;
+              }
+              // The envelope carries its own fully-resolved target; there is no second id to trust.
+              answer(adapter.deliverToSession(cf.payload.message.to, cf.payload.message));
+              continue;
+            }
+            if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.steerChild || cf.subtype === MESSAGING_CONTROL_SUBTYPES.resumeChild) {
+              if (!isMessagingChildRequest(cf.payload)) {
+                badRequest(`${cf.subtype} requires { id: string, message: GlobalAgentMessage }`);
+                continue;
+              }
+              const addr = targetFor(cf.payload.id);
+              // WS-10 §10.3's split is the CALLER's to make and the adapter's to enforce: steer a
+              // running child, resume a terminal one, never the reverse. Neither is silently
+              // upgraded here -- the adapter answers `not_found` for the wrong one, which is what
+              // tells the router its directory entry is stale.
+              answer(cf.subtype === MESSAGING_CONTROL_SUBTYPES.steerChild ? adapter.steerChild(addr, cf.payload.message) : adapter.resumeChild(addr, cf.payload.message));
+              continue;
+            }
+            if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.subscribeIdle) {
+              if (!isMessagingSubscribeIdleRequest(cf.payload)) {
+                badRequest("messaging.subscribe_idle requires { id: string, messageId: string, subscriberSessionId?: string }");
+                continue;
+              }
+              // WS-10 §15's `subscribeIdle(addr, {messageId})` names no subscriber, and the
+              // in-process reference answers that gap with a directory keyed by messageId that the
+              // ROUTER writes before calling. A remote caller cannot write into it, so the handler
+              // does it on the caller's behalf -- the same step, at the only point on this side that
+              // still knows who asked.
+              runtime.subscribers.remember(cf.payload.messageId, cf.payload.subscriberSessionId ?? config.sessionId);
+              answer(adapter.subscribeIdle(targetFor(cf.payload.id), { messageId: cf.payload.messageId }));
+              continue;
+            }
           }
           if (cf.subtype === "set_permission_mode") {
             // Task 6 (WS-07 §2/§6.4) upgrade over T2's minimal handler: still validates the payload

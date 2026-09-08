@@ -1,0 +1,200 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "init",
+    "payload": {
+      "type": "init",
+      "protocolVersion": "1.0",
+      "cwd": "/winter-fixture",
+      "model": "winter-test/echo",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Workflow",
+        "Write"
+      ]
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "winter-test/echo",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Workflow",
+        "Write"
+      ],
+      "apiKeySource": "none",
+      "slash_commands": [
+        "compact"
+      ],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": []
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "senderClass": "prompts"
+      }
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "not_found",
+        "messageId": "host-1",
+        "reason": "child no longer reachable"
+      }
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "not_found",
+        "messageId": "host-2",
+        "reason": "child no longer reachable"
+      }
+    }
+  },
+  {
+    "sequence": 6,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-3",
+        "reason": "notify_when_idle targets a top-level session only (WS-10 §14)"
+      }
+    }
+  },
+  {
+    "sequence": 7,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "unavailable",
+        "messageId": "host-4",
+        "retryable": false,
+        "reason": "target session is not reachable in-process (a real cross-process peer is a P8/host-integration concern)"
+      }
+    }
+  },
+  {
+    "sequence": 8,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": false,
+      "error": {
+        "code": "invalid_messaging_request",
+        "message": "messaging.deliver requires { message: GlobalAgentMessage }"
+      }
+    }
+  },
+  {
+    "sequence": 9,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true
+    }
+  }
+]

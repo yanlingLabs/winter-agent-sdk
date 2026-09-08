@@ -965,6 +965,115 @@ export async function traceWinterSendMessageToChildRound(): Promise<ConformanceT
 }
 
 
+// (5) Phase 7b (R-7b-4): the per-session MESSAGING FACET's own frame vocabulary, byte-frozen.
+//
+// All six `messaging.*` control subtypes plus the malformed-request refusal, driven on the RAW frame
+// stream (the `interrupt` scenario's shape) rather than through `query()`, because a facet exchange
+// IS a pair of control frames and `query()`'s iteration only ever yields SdkMessages -- a
+// `for await` scenario would record none of it.
+//
+// DELIBERATELY CHILDLESS, and that is what makes it a golden. A session with a real child would put
+// its per-run minted child id inside `agent:<session>:<child>` in three of these seven payloads, and
+// a golden cannot hold a value that changes every run (the sibling `sendmessage-child-round` scrubs
+// exactly that id out of the Agent tool_result for the same reason). What this file CAN pin
+// perfectly is the shape of every frame and the exact typed answer for every miss -- which is the
+// half a router integrating against this wire reads first. The WITH-A-CHILD behaviour is proven
+// where it belongs: `packages/sdk/src/messaging-facet.test.ts` (a real child, running and terminal)
+// and `transport-equivalence.test.ts`'s own facet scenario (the same, on every leg including the
+// compiled binary).
+//
+// Every requestId is a fixed literal, like the interrupt scenario's, so nothing in the recorded
+// trace is minted per run.
+export async function traceWinterMessagingFacetRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-facet-"));
+  const sessionId = "differential-facet-fixture";
+  const config: RuntimeConfig = { sessionId, cwd: FIXTURE_CWD, model: FIXTURE_MODEL };
+  const proc = inMemoryProcess(["--run", "--config-json", JSON.stringify(config)], undefined, undefined, { WINTER_HOME: winterHome });
+  try {
+    let carry = "";
+    const pending: WinterFrame[] = [];
+    const it = proc.stdout[Symbol.asyncIterator]();
+    async function nextFrame(): Promise<WinterFrame | null> {
+      while (pending.length === 0) {
+        const { value, done } = await it.next();
+        if (done) return null;
+        const split = splitFrames(value, carry);
+        carry = split.carry;
+        pending.push(...split.frames);
+      }
+      return pending.shift() ?? null;
+    }
+    const entries: ConformanceTraceEntry[] = [];
+    const push = (frame: WinterFrame): void => {
+      if (frame.type === "data") {
+        const message = (frame as { message: { type: string; subtype?: string } }).message;
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(message), payload: message });
+      } else {
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: frame.type, payload: frame });
+      }
+    };
+    const need = async (label: string): Promise<WinterFrame> => {
+      const frame = await nextFrame();
+      if (!frame) throw new Error(`differential messaging facet: expected ${label}, got EOF`);
+      return frame;
+    };
+    const ask = async (requestId: string, subtype: string, payload: unknown, label: string): Promise<void> => {
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId, subtype, payload } as WinterFrame));
+      push(await need(label));
+    };
+
+    push(await need("the init frame"));
+    push(await need("the system/init data frame"));
+
+    // A synthetic envelope from a HOST-side router session -- the exact shape `Query.messaging` puts
+    // on the wire, with a target this session genuinely does not have.
+    const missingChild = { objectKind: "agent", runtimeKind: "winter-agent", winterSessionId: sessionId, parentWinterSessionId: sessionId, childId: "no-such-child" };
+    const message = (messageId: string, to: unknown) => ({
+      messageId,
+      from: { objectKind: "session", runtimeKind: "winter-agent", winterSessionId: "s_host_router" },
+      fromGeneration: 0,
+      to,
+      toGeneration: 0,
+      body: "from the host router",
+      notifyWhenIdle: false,
+      createdAt: 0,
+      expiresAt: 0,
+      hopCount: 0,
+      senderPermissionClass: "prompts",
+    });
+
+    // 1. list_reachable on a childless session: an empty listing, never an error.
+    await ask("facet-1", "messaging.list_reachable", undefined, "the list_reachable answer");
+    // 2. sender_class: WS-10 §13's matrix input, read from this session's LIVE permission mode.
+    await ask("facet-2", "messaging.sender_class", undefined, "the sender_class answer");
+    // 3/4. steer/resume a child that does not exist: the typed `not_found` that tells a router its
+    //      directory entry is stale -- never a throw, and never each other's answer.
+    await ask("facet-3", "messaging.steer_child", { id: "no-such-child", message: message("host-1", missingChild) }, "the steer_child answer");
+    await ask("facet-4", "messaging.resume_child", { id: "no-such-child", message: message("host-2", missingChild) }, "the resume_child answer");
+    // 5. subscribe_idle on an AGENT: WS-10 §14 refuses the entire call for a subagent target.
+    await ask("facet-5", "messaging.subscribe_idle", { id: "no-such-child", messageId: "host-3", subscriberSessionId: "s_host_router" }, "the subscribe_idle answer");
+    // 6. deliver to a session this process does not hold: `unavailable`, non-retryable.
+    await ask(
+      "facet-6",
+      "messaging.deliver",
+      { message: message("host-4", { objectKind: "session", runtimeKind: "winter-agent", winterSessionId: "s_not_here" }) },
+      "the deliver answer",
+    );
+    // 7. THE VALIDATION REFUSAL: a malformed request is `ok:false` with a typed code, never a
+    //    fabricated DeliveryOutcome -- the negative control for every guard above.
+    await ask("facet-7", "messaging.deliver", { message: { messageId: "" } }, "the malformed-request refusal");
+
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "facet-end", subtype: "end_input", payload: undefined }));
+    push(await need("the end_input ack"));
+
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
+    proc.kill();
+    await proc.exited;
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // --- Phase 5 Task 8: the P5-family differential scenarios ----------------------------------------
 //
 // Each is the hermetic, in-memory-only, byte-frozen half of a shape `transport-equivalence.test.ts`
@@ -1171,6 +1280,7 @@ const SCENARIOS: Scenario[] = [
   { name: "subagent-spawn-round", trace: traceWinterSubagentSpawnRound, goldenFile: "subagent-spawn-round.trace.json" },
   { name: "subagent-permission-round", trace: traceWinterSubagentPermissionRound, goldenFile: "subagent-permission-round.trace.json" },
   { name: "sendmessage-child-round", trace: traceWinterSendMessageToChildRound, goldenFile: "sendmessage-child-round.trace.json" },
+  { name: "messaging-facet-round", trace: traceWinterMessagingFacetRound, goldenFile: "messaging-facet-round.trace.json" },
   // Phase 5 Task 8: five new goldens, one per deterministic P5 family -- see each trace function's
   // own header for its scope, and the block header above for why the workflow and checkpoint rounds
   // are proved cross-leg instead of frozen here.

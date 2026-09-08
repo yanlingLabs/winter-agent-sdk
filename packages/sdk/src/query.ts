@@ -20,6 +20,19 @@ import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type 
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError, InvalidBrandError } from "./errors.ts";
 import { envName, resolveBrand, WINTER_BRAND, type BrandProfile } from "./brand.ts";
 import { resolveKeychainServiceForProfile } from "./paths/home.ts";
+// R-7b-4: the facet's own contract types + the guards this side runs on the runtime's answers. The
+// `id` -> RuntimeAddress rule (`resolveFacetTarget`) is applied on the RUNTIME side, where the
+// session id is authoritative -- this side puts the caller's id on the wire verbatim.
+import { deliveryUncertain, type DeliveryOutcome, type GlobalAgentMessage, type ListedRuntimeObject, type PermissionClassLabel } from "./messaging/index.ts";
+import {
+  MESSAGING_CONTROL_SUBTYPES,
+  isDeliveryOutcome,
+  isListedRuntimeObjectArray,
+  isPermissionClassLabel,
+  type MessagingChildRequest,
+  type MessagingDeliverRequest,
+  type MessagingSubscribeIdleRequest,
+} from "./protocol/messaging.ts";
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
 // catch-all for lossless pass-through of unknown message kinds, Task 5). The SDK's public surface
@@ -51,6 +64,44 @@ export interface QueryInternal {
   // forever, which has no timeout, WS-04 §3). Transport-compatible low-level API only — a product
   // approval broker always returns a typed PermissionResult from the callback itself (WS-07 §7.2).
   respondPermission(requestId: string, result: PermissionResult): void;
+}
+
+/**
+ * R-7b-4: the per-session MESSAGING FACET -- `RuntimeMessagingAdapter` (WS-10 §15) reached over this
+ * session's own control channel.
+ *
+ * WHO CALLS IT: `@yanlinglabs/winter-runtime-sdk`, from the HOST process. A spawned Winter session's
+ * children live inside that session's process, behind a pipe; without this facet the router owns a
+ * RuntimeDirectory that can address the session and nothing inside it, so WS-15 §6.2's "running
+ * Winter child" and "terminal Winter child" rows have no mechanism at all.
+ *
+ * WHAT IT IS NOT: the router. Every rule that needs the whole directory -- WS-10 §11's resolution
+ * order, ambiguity, staleness, §12's dedupe/retry ledger and loop guard, §13's hold/refuse policy --
+ * runs ABOVE this, in the host, once, for both runtimes. This is the six owner-specific operations
+ * the router delegates to whichever runtime actually holds the object.
+ *
+ * WINTER-ONLY, disclosed: the pinned official SDK has no messaging surface of any kind (its `Query`
+ * declares none), so there is no counterpart to mirror and nothing here is a divergence FROM one.
+ */
+export interface SessionMessagingFacet {
+  /** Every object this session can currently reach: its own children, plus the reachable live peers its adapter knows (WS-10 §10.2 -- never exited transcripts). */
+  listReachable(): Promise<ListedRuntimeObject[]>;
+  /** Deliver a fully-addressed envelope. The target is `msg.to`; the receiver's inbound policy (WS-10 §13) runs inside. */
+  deliver(msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
+  /** Steer a RUNNING child (WS-10 §10.3). `id` is a canonical address or a bare child id within this session. */
+  steerChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
+  /** Resume a TERMINAL, addressable child (WS-10 §10.3). Never the reverse of `steerChild`. */
+  resumeChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
+  /**
+   * Subscribe to a target going idle (WS-10 §14). `opts.messageId` is the CALLER's -- the facet never
+   * allocates one, because allocation is keyed to the sender session plus tool-call id (§12) and a
+   * second allocator across the pipe would break the retry idempotency that key exists for.
+   * `subscriberSessionId` names whose notification queue the eventual notice belongs to; absent means
+   * the receiving session itself.
+   */
+  subscribeIdle(id: string, opts: { messageId: string; subscriberSessionId?: string }): Promise<DeliveryOutcome>;
+  /** This session's own sender permission class (WS-10 §13's matrix input), from its LIVE permission mode. */
+  senderClass(): Promise<PermissionClassLabel>;
 }
 
 export interface Query extends AsyncGenerator<SdkMessage> {
@@ -104,6 +155,13 @@ export interface Query extends AsyncGenerator<SdkMessage> {
   // (e.g. a non-TS caller, or a deliberately-cast test value) and gets a typed `invalid_mode`
   // control-response rejection there, unchanged from before this tightening.
   setPermissionMode(mode: PermissionMode): Promise<void>;
+  /**
+   * R-7b-4: this session's messaging facet, backed by the six `messaging.*` control subtypes.
+   *
+   * ADDITIVE and Winter-only: the pinned `Query` contract loses nothing, and the official SDK has no
+   * member this could collide with. See `SessionMessagingFacet` for what it is and is not.
+   */
+  messaging: SessionMessagingFacet;
   // Optional (not every hand-built Query-shaped test double needs to carry it) — query() itself
   // always sets it.
   __internal?: QueryInternal;
@@ -1064,6 +1122,62 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   };
   gen.setPermissionMode = async (mode: PermissionMode) => {
     await sendControlRequest("set_permission_mode", mode); // WS-04 §3.1: bare PermissionMode value
+  };
+  // --- R-7b-4: the messaging facet ---------------------------------------------------------------
+  //
+  // Six thin translations, one per `RuntimeMessagingAdapter` method, each validating the runtime's
+  // answer before handing it to a host that will branch on it.
+  //
+  // THE DEGRADATION POSTURE IS PER METHOD, and the difference is deliberate:
+  //
+  //   * the two DATA methods (`listReachable`, `senderClass`) degrade to an honest empty/unknown
+  //     answer on a malformed payload, exactly like `supportedModels`/`listModelFamilies`: they
+  //     return data, so a rejected promise could not tell "nothing to report" from a transport fault.
+  //   * every DELIVERY method degrades to `delivery_uncertain` instead. A malformed payload means the
+  //     request DID reach the runtime and the runtime DID answer -- we simply cannot read the answer,
+  //     which is precisely WS-10 §12's crash window ("a crash between invoking and recording MUST
+  //     surface as delivery_uncertain"). Returning `refused` or `not_found` there would assert the
+  //     effect did not happen, which is exactly the claim we cannot make; throwing would leave the
+  //     router with no outcome to record at all.
+  //
+  // A control response with `ok: false` still REJECTS (sendControlRequest's own contract) -- that is
+  // the runtime saying the CALL was malformed or unserved, which is a caller error, not an outcome.
+  async function deliveryCall(subtype: string, payload: unknown, messageId: string): Promise<DeliveryOutcome> {
+    const answer = await sendControlRequest(subtype, payload);
+    return isDeliveryOutcome(answer) ? answer : deliveryUncertain(messageId, `the runtime returned a malformed delivery outcome for '${subtype}'`);
+  }
+  gen.messaging = {
+    async listReachable(): Promise<ListedRuntimeObject[]> {
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.listReachable, undefined);
+      return isListedRuntimeObjectArray(payload) ? payload : [];
+    },
+    deliver(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      const request: MessagingDeliverRequest = { message: msg };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.deliver, request, msg.messageId);
+    },
+    steerChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      const request: MessagingChildRequest = { id, message: msg };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.steerChild, request, msg.messageId);
+    },
+    resumeChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      const request: MessagingChildRequest = { id, message: msg };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.resumeChild, request, msg.messageId);
+    },
+    subscribeIdle(id: string, opts: { messageId: string; subscriberSessionId?: string }): Promise<DeliveryOutcome> {
+      const request: MessagingSubscribeIdleRequest = {
+        id,
+        messageId: opts.messageId,
+        // Spread rather than set, so an omitted subscriber never puts an explicit `undefined` on the
+        // wire (the same discipline `setModel`/`rewindFiles` follow above).
+        ...(opts.subscriberSessionId !== undefined ? { subscriberSessionId: opts.subscriberSessionId } : {}),
+      };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.subscribeIdle, request, opts.messageId);
+    },
+    async senderClass(): Promise<PermissionClassLabel> {
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.senderClass, undefined);
+      const label = typeof payload === "object" && payload !== null ? (payload as { senderClass?: unknown }).senderClass : undefined;
+      return isPermissionClassLabel(label) ? label : "unknown";
+    },
   };
   // Phase 5 Task 3 (R5-11, derived-shapes-p5 item (e)): `rewindFiles(userMessageId, { dryRun? })`.
   //
