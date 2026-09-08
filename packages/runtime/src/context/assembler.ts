@@ -242,7 +242,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       const userContextBlocks: string[] = [];
       if (region.excludeDynamicSections) userContextBlocks.push(dynamic);
       for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
-      if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir));
+      if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir, brand.instructionsFile));
 
       // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,
       // not only on `resolveOutputStyle`'s return value -- which no host calls and no frame carries,

@@ -202,6 +202,65 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     expect(getRegisteredTool(acmeSend)).toBeUndefined();
   });
 
+  // --- P7a fix wave (item 5, whole-branch review M-2) ---------------------------------------------
+  //
+  // TWO OVERLAPPING SESSIONS UNDER ONE BRAND -- the normal topology for a host process, not an edge.
+  // Before the ref count, the SECOND same-brand call found every `from` already renamed, `continue`d,
+  // and returned a disposer holding nothing; the FIRST session's disposer then restored
+  // `mcp__winter__*` and dropped the reservation while the second session was still live, leaving
+  // its alias table pointing at a name nobody had registered -- exactly the pairing the test above
+  // guards against, reached by teardown order instead of by a missing derivation.
+  test("P7a (M-2): with two overlapping ACME sessions, the FIRST teardown leaves the second's names intact", async () => {
+    const cwd = tempDirNamed("p7a-cwd-");
+    const homeA = tempDirNamed("p7a-acme-home-a-");
+    const homeB = tempDirNamed("p7a-acme-home-b-");
+    const acmeSend = mcpToolName(ACME, "send_message");
+    const winterSend = mcpToolName(WINTER_BRAND, "send_message");
+
+    const first = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: homeA }, provider: { credentials: createMemoryCredentialStore([]) } });
+    const second = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: homeB }, provider: { credentials: createMemoryCredentialStore([]) } });
+    try {
+      expect(getRegisteredTool(acmeSend)).toBeDefined();
+
+      // The first session goes away while the second is STILL LIVE.
+      first.dispose();
+
+      // The second session's own tool must still be there, under its own spelling -- and Winter's
+      // must NOT be back, because nothing has finished with the brand yet.
+      expect(getRegisteredTool(acmeSend)?.descriptor.canonicalName).toBe(acmeSend);
+      expect(getRegisteredTool(winterSend)).toBeUndefined();
+      // The pairing, restated at the level that actually breaks: the alias table's canonical target
+      // still resolves to a registered tool.
+      expect(getRegisteredTool(effectiveAliasTable(undefined, ACME)["SendMessage"] as string)).toBeDefined();
+    } finally {
+      second.dispose();
+    }
+
+    // ...and the LAST disposer is the one that restores Winter's names.
+    expect(getRegisteredTool(winterSend)).toBeDefined();
+    expect(getRegisteredTool(acmeSend)).toBeUndefined();
+  });
+
+  test("P7a (M-2): the disposers are idempotent and order-independent -- a double dispose cannot drop the count twice", async () => {
+    const cwd = tempDirNamed("p7a-cwd-");
+    const acmeSend = mcpToolName(ACME, "send_message");
+    const winterSend = mcpToolName(WINTER_BRAND, "send_message");
+    const first = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: tempDirNamed("p7a-acme-home-c-") }, provider: { credentials: createMemoryCredentialStore([]) } });
+    const second = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: tempDirNamed("p7a-acme-home-d-") }, provider: { credentials: createMemoryCredentialStore([]) } });
+    try {
+      // Dispose the SECOND first (reverse order), twice. A count that a double dispose could drop
+      // twice would restore Winter's names here, while `first` is still live.
+      second.dispose();
+      second.dispose();
+      expect(getRegisteredTool(acmeSend)).toBeDefined();
+      expect(getRegisteredTool(winterSend)).toBeUndefined();
+    } finally {
+      first.dispose();
+    }
+    expect(getRegisteredTool(winterSend)).toBeDefined();
+    expect(getRegisteredTool(acmeSend)).toBeUndefined();
+  });
+
   test("the shared temp root is `<realpath of /tmp>/acme-<uid>` -- computed as a STRING, never created", () => {
     // `/tmp` (`/private/tmp` on macOS, `/tmp` itself on Linux -- hence the realpath on BOTH sides) is
     // shared between every user on the machine and this suite must not mkdir into it (D18's own

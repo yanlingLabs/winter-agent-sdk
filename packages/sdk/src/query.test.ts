@@ -1915,6 +1915,67 @@ test("P7a: the DEPRECATED keychainService option wins over brand.keychainService
   }
 });
 
+// --- P7a fix wave (item 5, whole-branch review M-3): the dev profile's OTHER half ----------------
+//
+// `<PREFIX>PROFILE=dev` already selected `~/<homeDirName>-dev`. WS-01's Phase 6 amendment pairs the
+// profile with a `.dev` Keychain service too, and only the home half had landed -- so an
+// env-selected dev session got its own home and its own transcript store while reading and WRITING
+// the DIST service, which is the one piece of state a developer most needs separated from the copy
+// they actually use. Asserted at `query()` because that is the single producer of
+// `RuntimeConfig.brand`, which is what every runtime consumer reads.
+test("P7a (M-3): WINTER_PROFILE=dev folds `.dev` onto the keychain service, on BOTH surfaces", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { env: { WINTER_PROFILE: "dev" }, spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.winter.core.dev");
+  // The deprecated top-level key is emitted too, because the service now differs from the default --
+  // the two surfaces agree, which is fix r1's Important-1 rule applied to this new producer.
+  expect(config["keychainService"]).toBe("com.winter.core.dev");
+});
+
+test("P7a (M-3): the BRAND's own profile variable selects it -- `ACME_PROFILE`, not `WINTER_PROFILE`", async () => {
+  const acme = { productName: "Acme", homeDirName: ".acme", projectDirName: ".acme", instructionsFile: "ACME.md", envPrefix: "ACME_", mcpServerName: "acme", codexOriginator: "acme", tempRootName: "acme", packageName: "acme", pluginManifestDir: ".acme-plugin" };
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { brand: acme, env: { WINTER_PROFILE: "dev" }, spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  // Winter's own variable must not move a reuser's service.
+  expect((capture.get()["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.winter.core");
+
+  const capture2 = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { brand: acme, env: { ACME_PROFILE: "dev" }, spawnClaudeCodeProcess: capture2.hook } })) {
+    /* drain */
+  }
+  expect((capture2.get()["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.winter.core.dev");
+});
+
+test("P7a (M-3): a HOST-SET keychain service is never rewritten by the dev profile", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: { brand: { keychainService: "com.acme.core" }, env: { WINTER_PROFILE: "dev" }, spawnClaudeCodeProcess: capture.hook },
+  })) {
+    /* drain */
+  }
+  // They named a service. Appending to it would be rewriting a host's own decision -- the same
+  // precedence an explicit `<PREFIX>HOME` has over the profile.
+  expect((capture.get()["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core");
+});
+
+test("P7a (M-3): with NO profile the service is untouched -- the default path stays byte-identical", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { env: {}, spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.winter.core");
+  // ...and the deprecated top-level key stays ABSENT, which is what keeps an unbranded session's
+  // `authRef` byte-identical to before P7a.
+  expect(config["keychainService"]).toBeUndefined();
+});
+
 test("P7a: setting BOTH keychain services to the SAME value warns about nothing", async () => {
   const warned: string[] = [];
   const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {

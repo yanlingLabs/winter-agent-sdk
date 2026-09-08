@@ -44,3 +44,36 @@ export function resolveWinterHome(env?: Record<string, string | undefined>, bran
   const dirName = profile !== undefined && profile.trim() === "dev" ? `${b.homeDirName}-dev` : b.homeDirName;
   return join(homedir(), dirName);
 }
+
+/**
+ * P7a fix wave (item 5, whole-branch review M-3): THE OTHER HALF OF THE DEV PROFILE.
+ *
+ * WS-01's Phase 6 amendment pairs `<PREFIX>PROFILE=dev` with BOTH `~/<homeDirName>-dev` and a
+ * `.dev`-suffixed Keychain service, and assigns the fold "to whichever phase introduces the
+ * profile" -- this one. Only the home half landed: an env-selected dev session got its own home and
+ * its own transcript store while reading and WRITING the dist Keychain service, which is the one
+ * piece of state a developer most needs separated from the copy they actually use.
+ *
+ * It lives here, immediately beside `resolveWinterHome`, because the two are one rule read from two
+ * fields -- putting them in different files is how they came to disagree in the first place.
+ *
+ * AN EXPLICIT VALUE IS NEVER REWRITTEN. `hostSetKeychainService` is true when the host passed
+ * `brand.keychainService` or the deprecated `keychainService` alias: they named a service, and a
+ * runtime that silently appended to it would be rewriting a host's own decision -- the same
+ * precedence `resolveWinterHome` gives an explicit `<PREFIX>HOME` over the profile.
+ *
+ * The suffix is applied only when the result still satisfies `BrandProfile`'s own service grammar
+ * (64 chars); a longer name is left alone rather than made invalid, since an invalid service reaches
+ * the Keychain as a lookup that can never match.
+ */
+export function resolveKeychainServiceForProfile(
+  brand: Pick<BrandProfile, "envPrefix" | "keychainService">,
+  env: Record<string, string | undefined> | undefined,
+  hostSetKeychainService: boolean,
+): string {
+  if (hostSetKeychainService) return brand.keychainService;
+  const profile = (env ?? process.env)[envName(brand, "PROFILE")];
+  if (profile === undefined || profile.trim() !== "dev") return brand.keychainService;
+  const suffixed = `${brand.keychainService}.dev`;
+  return suffixed.length <= 64 ? suffixed : brand.keychainService;
+}

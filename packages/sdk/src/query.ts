@@ -18,7 +18,8 @@ import type {
 } from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError, InvalidBrandError } from "./errors.ts";
-import { resolveBrand, WINTER_BRAND } from "./brand.ts";
+import { envName, resolveBrand, WINTER_BRAND, type BrandProfile } from "./brand.ts";
+import { resolveKeychainServiceForProfile } from "./paths/home.ts";
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
 // catch-all for lossless pass-through of unknown message kinds, Task 5). The SDK's public surface
@@ -421,7 +422,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // Global Constraint of this phase). The reason clause, the option names and the ordering are the
   // captured ones.
   if (options.sessionStore !== undefined && options.persistSession === false) {
-    throw new Error("sessionStore cannot be used with persistSession: false -- the storage adapter requires local writes to mirror from. Use WINTER_HOME=/tmp for ephemeral local writes with external mirroring.");
+    // P7a fix wave (item 5, M-1): the remedy names a BRAND-DERIVED env var, and this message is
+    // read by the HOST -- a reuser told to set `WINTER_HOME` has been handed a variable their
+    // runtime does not read. Derived from the partial profile the caller just supplied (the full
+    // resolution happens below, and this throw precedes it), falling back to Winter's own prefix.
+    const homeVar = envName({ envPrefix: options.brand?.envPrefix ?? WINTER_BRAND.envPrefix }, "HOME");
+    throw new Error(`sessionStore cannot be used with persistSession: false -- the storage adapter requires local writes to mirror from. Use ${homeVar}=/tmp for ephemeral local writes with external mirroring.`);
   }
   if (options.sessionStore !== undefined && options.enableFileCheckpointing === true) {
     throw new Error("enableFileCheckpointing is not yet supported with sessionStore (backup blobs are not mirrored, so rewindFiles() fails after a store-backed resume).");
@@ -457,7 +463,18 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.keychainService !== undefined ? { keychainService: options.keychainService } : {}),
   });
   if (!brandResolution.ok) throw new InvalidBrandError(brandResolution.reason);
-  const brand = brandResolution.brand;
+  // P7a fix wave (item 5, M-3): the DEV PROFILE's other half. `<PREFIX>PROFILE=dev` already selects
+  // `~/<homeDirName>-dev`; WS-01's Phase 6 amendment pairs it with a `.dev` Keychain service too,
+  // and only the home half had landed -- so an env-selected dev session got its own home and its own
+  // transcript store while reading and WRITING the dist service. Applied HERE, on the resolved
+  // profile, because `RuntimeConfig.brand` is what every consumer reads (`resolveSessionKeychainService`
+  // included), so folding once at the wrapper leaves exactly one producer. A host that named a
+  // service explicitly is never rewritten.
+  const hostSetKeychainService = options.brand?.keychainService !== undefined || options.keychainService !== undefined;
+  const brand: BrandProfile = {
+    ...brandResolution.brand,
+    keychainService: resolveKeychainServiceForProfile(brandResolution.brand, options.env, hostSetKeychainService),
+  };
 
   // Task 10: computed once, ahead of `config`, so it can be conditionally spread into it below.
   const runtimeHooksConfig = buildRuntimeHooksConfig(options.hooks);

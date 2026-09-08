@@ -63,6 +63,23 @@ export interface WinterIdentity {
 
 const DEFAULT_IDENTITY: Readonly<WinterIdentity> = Object.freeze({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator, contactUrl: WINTER_BRAND.contactUrl });
 
+/**
+ * The INSTALLED FRAMES, innermost last. `activeIdentity` is always the last frame's value, or the
+ * default when the stack is empty.
+ *
+ * A STACK RATHER THAN A `previous` POINTER (P7a fix wave, item 5, found while testing M-2). The old
+ * shape captured `previous` per call and restored it, with the disposer no-oping when its own value
+ * was no longer active. That is correct for STRICTLY NESTED teardown and leaks for any other order,
+ * which two concurrent sessions produce routinely: install A, install B, dispose A (a no-op, since B
+ * is active), dispose B (restores `previous` -- which is A's value, not the default). The process
+ * then presents as the LAST BRAND FOREVER, with no session live at all: a subsequent unbranded
+ * session would put a reuser's product token and contact URL on the wire.
+ *
+ * Removing a frame from the middle is exactly what "a session ended" means, and the last remaining
+ * frame is exactly "whoever is still running". Frames are compared by IDENTITY (the frozen object),
+ * so a disposer can only ever remove its own -- the same guarantee the identity check gave.
+ */
+const IDENTITY_FRAMES: Array<Readonly<WinterIdentity>> = [];
 let activeIdentity: Readonly<WinterIdentity> = DEFAULT_IDENTITY;
 
 /** What this process is currently presenting as. Winter's own values until a branded session sets it. */
@@ -71,21 +88,24 @@ export function activeWinterIdentity(): Readonly<WinterIdentity> {
 }
 
 /**
- * Install a session's identity; the returned disposer restores what was there before.
+ * Install a session's identity; the returned disposer withdraws THIS session's frame.
  *
- * Restore-what-was-there rather than restore-to-default, so nested/overlapping sessions unwind in
- * the order they were installed. A disposer whose value has since been replaced is a no-op, the
- * same identity check `registerHostGeneratedTool` uses for the identical reason.
+ * The value in force is the innermost frame still installed, so overlapping sessions unwind
+ * correctly in ANY order (see `IDENTITY_FRAMES`). Idempotent: a second call on the same disposer
+ * does nothing, so a host that disposes twice cannot pop somebody else's frame.
  */
 export function setWinterIdentity(next: WinterIdentity): () => void {
-  const previous = activeIdentity;
   const installed: Readonly<WinterIdentity> = Object.freeze({ ...next });
+  IDENTITY_FRAMES.push(installed);
   activeIdentity = installed;
   let disposed = false;
   return () => {
-    if (disposed || activeIdentity !== installed) return;
+    if (disposed) return;
     disposed = true;
-    activeIdentity = previous;
+    const at = IDENTITY_FRAMES.lastIndexOf(installed);
+    if (at === -1) return;
+    IDENTITY_FRAMES.splice(at, 1);
+    activeIdentity = IDENTITY_FRAMES[IDENTITY_FRAMES.length - 1] ?? DEFAULT_IDENTITY;
   };
 }
 

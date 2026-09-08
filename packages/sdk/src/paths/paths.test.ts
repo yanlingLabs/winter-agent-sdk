@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { resolveWinterHome } from "./home.ts";
+import { resolveKeychainServiceForProfile, resolveWinterHome } from "./home.ts";
 // P7a spine, Step 3 (D19): the brand profile the home resolver derives its env name and dir from.
-import { resolveBrand, type BrandProfile } from "../brand.ts";
+import { resolveBrand, WINTER_BRAND, type BrandProfile } from "../brand.ts";
 import { transcriptProjectKey } from "./project-key.ts";
 import { compatibilityKeys } from "./keys.ts";
 
@@ -295,5 +295,47 @@ describe("compatibilityKeys", () => {
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+// --- P7a fix wave (item 5, whole-branch review M-3): the dev profile's OTHER HALF ------------------
+//
+// `<PREFIX>PROFILE=dev` already selected `~/<homeDirName>-dev`; WS-01's Phase 6 amendment pairs the
+// profile with a `.dev` Keychain service too and assigns the fold to whichever phase introduces the
+// profile. Only the home half had landed, so an env-selected dev session got its own home and its
+// own transcript store while reading and WRITING the dist service -- the one piece of state a
+// developer most needs separated from the copy they actually use.
+describe("resolveKeychainServiceForProfile (P7a fix wave, M-3)", () => {
+  const WINTER = { envPrefix: WINTER_BRAND.envPrefix, keychainService: WINTER_BRAND.keychainService };
+  const ACME = { envPrefix: "ACME_", keychainService: "com.acme.core" };
+
+  test("no profile -> the service is untouched", () => {
+    expect(resolveKeychainServiceForProfile(WINTER, {}, false)).toBe(WINTER_BRAND.keychainService);
+    expect(resolveKeychainServiceForProfile(WINTER, { WINTER_PROFILE: "" }, false)).toBe(WINTER_BRAND.keychainService);
+    expect(resolveKeychainServiceForProfile(WINTER, { WINTER_PROFILE: "prod" }, false)).toBe(WINTER_BRAND.keychainService);
+  });
+
+  test("PROFILE=dev appends `.dev`, in the SAME condition the home gains `-dev`", () => {
+    expect(resolveKeychainServiceForProfile(WINTER, { WINTER_PROFILE: "dev" }, false)).toBe(`${WINTER_BRAND.keychainService}.dev`);
+    // Whitespace is trimmed exactly as `resolveWinterHome` trims it -- the two halves read one rule.
+    expect(resolveKeychainServiceForProfile(WINTER, { WINTER_PROFILE: " dev " }, false)).toBe(`${WINTER_BRAND.keychainService}.dev`);
+    expect(resolveWinterHome({ WINTER_PROFILE: "dev" }, WINTER_BRAND).endsWith("-dev")).toBe(true);
+  });
+
+  test("the env NAME is the BRAND's, never Winter's -- `ACME_PROFILE` selects, `WINTER_PROFILE` does not", () => {
+    expect(resolveKeychainServiceForProfile(ACME, { ACME_PROFILE: "dev" }, false)).toBe("com.acme.core.dev");
+    expect(resolveKeychainServiceForProfile(ACME, { WINTER_PROFILE: "dev" }, false)).toBe("com.acme.core");
+  });
+
+  test("a HOST-SET service is never rewritten -- the same precedence an explicit <PREFIX>HOME has", () => {
+    expect(resolveKeychainServiceForProfile(ACME, { ACME_PROFILE: "dev" }, true)).toBe("com.acme.core");
+  });
+
+  test("a service that would exceed the profile's own 64-char grammar is left alone, never made invalid", () => {
+    // An invalid service reaches the Keychain as a lookup that can never match -- strictly worse
+    // than an unsuffixed one.
+    const long = { envPrefix: "ACME_", keychainService: `com.${"a".repeat(58)}` };
+    expect(long.keychainService.length).toBe(62);
+    expect(resolveKeychainServiceForProfile(long, { ACME_PROFILE: "dev" }, false)).toBe(long.keychainService);
   });
 });

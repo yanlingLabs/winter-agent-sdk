@@ -146,6 +146,24 @@ const TOP_LEVEL_ENV_RE = new RegExp(`process\\.env\\.WINTER_(?:${PRODUCT_ENV_SUF
  * declared before either pattern can be built.
  */
 const LITERAL_ENV_NAME_RE = new RegExp(`(?:\\.|\\[\\s*["'\`])WINTER_(?:${PRODUCT_ENV_SUFFIXES.join("|")})\\b`);
+
+/**
+ * P7a fix wave (item 5, M-1): rules 2b and 10b -- a brand-owned name spelled INSIDE A STRING LITERAL.
+ *
+ * The eight raw rules are anchored on a QUOTE (`"WINTER.md"`, `".winter/"`), which is what keeps an
+ * English sentence out of the net -- and is exactly why every survivor the whole-branch review found
+ * was invisible: the token sat in the MIDDLE of a sentence that is itself a string. Three of them
+ * were model-facing prose (the memory guidance, the classifier prompt) and one was a host-facing
+ * remedy (`Use WINTER_HOME=/tmp ...`).
+ *
+ * So these two are matched only where `inString` is set: a COMMENT naming `WINTER.md` is prose about
+ * the mechanism (this file's own header is full of it, as is every module that explains the
+ * rebrand), while the same token inside a string is text that LEAVES THE PROCESS and must be derived.
+ */
+const IN_STRING_RULES: ReadonlyArray<{ name: string; re: RegExp }> = [
+  { name: "rule 2b: the instructions file named inside a STRING (brand.instructionsFile)", re: new RegExp("\\bWINTER\\.md\\b", "g") },
+  { name: "rule 10b: a product env name spelled bare inside a STRING (envName(brand, ...))", re: new RegExp(`\\bWINTER_(?:${PRODUCT_ENV_SUFFIXES.join("|")})\\b`, "g") },
+];
 (RAW_RULES as Array<{ name: string; re: RegExp }>)[RAW_RULES.length - 1]!.re = LITERAL_ENV_NAME_RE;
 
 // ================================================================================================
@@ -168,6 +186,19 @@ export interface ScanMask {
   functionDepths: Int32Array;
   /** Whether each index is REAL CODE — not inside a string, template, comment or regex literal. */
   inCode: Uint8Array;
+  /**
+   * Whether each index is inside a STRING LITERAL (single, double or template) — never a comment.
+   *
+   * P7a fix wave (item 5, M-1). `inCode` alone cannot express "a literal, but not a comment", and
+   * that distinction is the whole of rules 2b and 10b: a COMMENT naming `WINTER.md` is prose about
+   * the mechanism (this file's own header is full of it), while the same token inside a string is
+   * text that leaves the process — sent to the model, or handed to the host in an error — where a
+   * brand-derived name must be derived.
+   *
+   * A `${...}` template EXPRESSION is NOT in-string: it is code, and its own literals get their own
+   * spans, so the mask never reports the interpolation itself as text.
+   */
+  inString: Uint8Array;
 }
 
 /**
@@ -199,6 +230,7 @@ export interface ScanMask {
 export function computeScanMask(src: string): ScanMask {
   const functionDepths = new Int32Array(src.length);
   const inCode = new Uint8Array(src.length);
+  const inString = new Uint8Array(src.length);
   type State = "code" | "line" | "block" | "sq" | "dq" | "tmpl" | "regex";
   /** What each open `{` was: a function body (a scope), anything else, or a template expression. */
   type BraceKind = "fn" | "other" | "tmpl";
@@ -251,6 +283,7 @@ export function computeScanMask(src: string): ScanMask {
     // itself already "not code" only from the next index on -- which is what we want: the match
     // this mask gates starts at `process`, never at a delimiter.
     inCode[i] = state === "code" ? 1 : 0;
+    inString[i] = state === "sq" || state === "dq" || state === "tmpl" ? 1 : 0;
     const c = src[i] as string;
     const n = i + 1 < src.length ? (src[i + 1] as string) : "";
     switch (state) {
@@ -319,7 +352,7 @@ export function computeScanMask(src: string): ScanMask {
       prevSigIdx = i;
     }
   }
-  return { functionDepths, inCode };
+  return { functionDepths, inCode, inString };
 }
 
 // ================================================================================================
@@ -361,12 +394,21 @@ export function scanFileForBrandLiterals(relPath: string, src: string): BrandOff
       if (rule.re.test(line)) found.push({ file: relPath, rule: rule.name, line: i + 1, text: line.trim().slice(0, 160) });
     }
   }
-  const { functionDepths, inCode } = computeScanMask(src);
+  const { functionDepths, inCode, inString } = computeScanMask(src);
   TOP_LEVEL_ENV_RE.lastIndex = 0;
   for (let m = TOP_LEVEL_ENV_RE.exec(src); m !== null; m = TOP_LEVEL_ENV_RE.exec(src)) {
     if (functionDepths[m.index] !== 0 || inCode[m.index] !== 1) continue;
     const line = src.slice(0, m.index).split("\n").length;
     found.push({ file: relPath, rule: "MODULE-LOAD read of a product env name (rule 9)", line, text: m[0] });
+  }
+  // Rules 2b/10b: in a STRING LITERAL only (never a comment) -- see IN_STRING_RULES' own note.
+  for (const rule of IN_STRING_RULES) {
+    rule.re.lastIndex = 0;
+    for (let m = rule.re.exec(src); m !== null; m = rule.re.exec(src)) {
+      if (inString[m.index] !== 1) continue;
+      const line = src.slice(0, m.index).split("\n").length;
+      found.push({ file: relPath, rule: rule.name, line, text: m[0] });
+    }
   }
   return found;
 }
@@ -575,7 +617,14 @@ describe("P7a: rule 9's top-level scanner (plants)", () => {
     const rules = (src: string): string[] => scanFileForBrandLiterals("synthetic.ts", src).map((o) => o.rule);
     expect(rules('const d = ".winter";\n')).toHaveLength(1);
     expect(rules('const d = join(cwd, ".winter", "settings.json");\n')).toHaveLength(1);
-    expect(rules('const f = "WINTER.md";\n')).toHaveLength(1);
+    // TWO rules, since the fix wave: the quote-anchored rule 2 and the in-string rule 2b both see a
+    // bare `"WINTER.md"`. That overlap is deliberate -- 2b exists for the token in the MIDDLE of a
+    // sentence, which rule 2's quote anchor cannot reach -- and a plant that expected one would be
+    // asserting the widening never happened.
+    expect(rules('const f = "WINTER.md";\n')).toEqual([
+      "instructions file (brand.instructionsFile)",
+      "rule 2b: the instructions file named inside a STRING (brand.instructionsFile)",
+    ]);
     expect(rules('const p = "winter_code";\n')).toHaveLength(1);
     expect(rules("const t = `mcp__winter__advisor`;\n")).toHaveLength(1);
     expect(rules('const k = "com.winter.core.dev";\n')).toHaveLength(1);
@@ -590,7 +639,12 @@ describe("P7a: rule 9's top-level scanner (plants)", () => {
     expect(rules("const root = join(base, `winter-${uid}`);\n")).toHaveLength(1); // paths/temp.ts:103
     expect(rules('const prefix = "winter-agent-sdk";\n')).toHaveLength(1); // validate.ts:92, identity.ts:74
     expect(rules("const v = (env ?? process.env).WINTER_TMPDIR;\n")).toHaveLength(1); // paths/temp.ts:71
-    expect(rules('const v = env["WINTER_HOME"];\n')).toHaveLength(1);
+    // Rule 10 (the property/key form) AND rule 10b (bare, in a string) both fire here -- the key IS
+    // a string literal. The overlap is the same deliberate one as rule 2/2b above.
+    expect(rules('const v = env["WINTER_HOME"];\n')).toEqual([
+      "product env name spelled literally (envName(brand, ...))",
+      "rule 10b: a product env name spelled bare inside a STRING (envName(brand, ...))",
+    ]);
     expect(rules("const v = e.WINTER_PROJECT_DIR_NAME;\n")).toHaveLength(1); // paths/project-dir-name.ts:28
 
     // Near misses: an English sentence, a differently-suffixed file, another product's originator,
@@ -602,6 +656,29 @@ describe("P7a: rule 9's top-level scanner (plants)", () => {
     expect(rules("const v = env.WINTER_TEST_PROVIDER;\n")).toEqual([]);
     expect(rules('const v = env["WINTER_COMPILED_BIN"];\n')).toEqual([]);
     expect(rules("const v = env.WINTER_HOMEBREW;\n")).toEqual([]); // the \b anchor, not a prefix match
+
+    // --- P7a fix wave (item 5, M-1): rules 2b and 10b, each on the shape that survived every other
+    // rule -- the token in the MIDDLE of a sentence, inside a string, with no quote beside it.
+    expect(rules('const g = "Code, configuration and WINTER.md are durable on their own.";\n')).toEqual([
+      "rule 2b: the instructions file named inside a STRING (brand.instructionsFile)",
+    ]);
+    expect(rules('throw new Error("Use WINTER_HOME=/tmp for ephemeral local writes.");\n')).toEqual([
+      "rule 10b: a product env name spelled bare inside a STRING (envName(brand, ...))",
+    ]);
+    expect(rules("const s = `The project's loaded WINTER.md guidance:`;\n")).toEqual([
+      "rule 2b: the instructions file named inside a STRING (brand.instructionsFile)",
+    ]);
+
+    // ...and the OTHER HALF of the ruling: a COMMENT saying the same thing is prose about the
+    // mechanism, not text that leaves the process. Every module explaining the rebrand is full of it
+    // (this file's own header included), and a rule that flagged comments would make the widening
+    // unusable rather than useful.
+    expect(rules("// WINTER.md is the instructions file; WINTER_HOME resolves the home.\n")).toEqual([]);
+    expect(rules("/* The remedy names WINTER_HOME; see envName(brand, \"HOME\"). */\n")).toEqual([]);
+    // A `${...}` expression is CODE, so an interpolated derivation inside a branded sentence is clean.
+    expect(rules("const s = `Code and ${brand.instructionsFile} are durable.`;\n")).toEqual([]);
+    // A harness variable is never a product surface, in a string or anywhere else.
+    expect(rules('const s = "set WINTER_TEST_PACK_SMOKE=1 to run the pack legs";\n')).toEqual([]);
   });
 
   test("CLAUDE-MIRRORING literals are never matched — they are not ours to rebrand", () => {

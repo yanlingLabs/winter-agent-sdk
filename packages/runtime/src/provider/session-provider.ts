@@ -884,6 +884,9 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       classifier = createModelClassifier({
         provider: buildProvider(classifierResolved, classifierRouteRaw.authRef !== undefined ? { authRef: classifierRouteRaw.authRef } : {}),
         model: classifierResolved.providerModelId,
+        // P7a fix wave (item 5, M-1): the SESSION's own instructions file, so the classifier prompt
+        // labels the operator's `ACME.md` block as theirs instead of naming Winter's.
+        ...(config.brand !== undefined ? { instructionsFile: config.brand.instructionsFile } : {}),
       });
     } catch (err) {
       classifier = undefined;
@@ -893,7 +896,11 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       };
     }
   } else if (classifierRouteRaw.kind === "worker-eligible") {
-    classifier = createModelClassifier({ provider: buildProvider(resolved), model: resolved.providerModelId });
+    classifier = createModelClassifier({
+      provider: buildProvider(resolved),
+      model: resolved.providerModelId,
+      ...(config.brand !== undefined ? { instructionsFile: config.brand.instructionsFile } : {}),
+    });
     classifierIdentity = { modelKey: resolved.modelKey };
   }
 

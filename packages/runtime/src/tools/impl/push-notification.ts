@@ -17,7 +17,10 @@ import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type Too
 import "../descriptors/index.ts";
 
 const MAX_MESSAGE_LENGTH = 199; // WS-06 §3.3: "message <200 chars" -- matches the descriptor's own maxLength: 199.
-const DISABLED_REASON = "winter transport unconfigured";
+// P7a fix wave (item 5, M-1 trivia): the reason is MODEL-FACING and named the product. WS-15's
+// device transport is nobody's brand in particular until it exists, so the sentence describes the
+// thing that is missing rather than whose it would be.
+const DISABLED_REASON = "push transport unconfigured";
 
 export type PushNotifier = (message: string) => void;
 
