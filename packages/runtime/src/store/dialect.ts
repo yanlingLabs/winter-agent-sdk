@@ -827,6 +827,12 @@ export class TranscriptWriter implements SessionPersistence {
   }
 }
 
+// PHASE 7B: `version:sync` now RESTAMPS this line (scripts/sync-version.ts's own
+// `stampRuntimeEngineVersion`). The parity test below stays as the proof -- but it used to be the
+// only mechanism, which meant every bump broke the suite until someone edited this by hand, i.e. the
+// protection reported the drift instead of preventing it. Still hardcoded, for the compiled-binary
+// reason the paragraph below gives; only the way it gets its value changed.
+//
 // Task 8: "use the runtime package's real version... document your source." Chosen source:
 // packages/runtime/package.json's own "version" field (currently independent of the root VERSION
 // file's #.#.### convention — that mismatch already exists on main and is out of this task's
@@ -838,7 +844,7 @@ export class TranscriptWriter implements SessionPersistence {
 // `bun test` — never compiled — so a real fs read there is safe) gets the same drift protection
 // without touching the compiled path at all. verify:compiled is the proof this constant survives
 // the real compiled binary unchanged.
-export const RUNTIME_ENGINE_VERSION = "0.0.1";
+export const RUNTIME_ENGINE_VERSION = "0.0.2";
 
 // Task 9: what runEngine actually needs once resume/continue/fork/resumeSessionAt (or none of them)
 // have been resolved — a persistence sink (or none, when persistSession:false), the prior

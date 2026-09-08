@@ -17,6 +17,24 @@ export function computeSyncedManifests(version: string, manifests: Manifest[]): 
   });
 }
 
+/**
+ * `RUNTIME_ENGINE_VERSION`, the ONE version string that is not in a manifest.
+ *
+ * `packages/runtime/src/store/dialect.ts` hardcodes the runtime's engine version rather than reading
+ * its own package.json, and its header explains why: `main.ts` compiles to a single-file `$bunfs`
+ * binary that cannot do a relative fs read of a manifest at run time. The drift protection was a
+ * test-time parity check alone -- which WORKS (it caught this at 0.0.2) but only AFTER the bump, as
+ * a red suite in the middle of a release, fixed by hand every time.
+ *
+ * So `version:sync` restamps it, and the parity test in `dialect.test.ts` stays as the proof. The
+ * rewrite is anchored on the exact `export const NAME = "..."` line, so it cannot touch prose that
+ * merely mentions the constant, and it returns the source UNCHANGED when the line is absent (a
+ * caller then sees no write rather than a silent corruption).
+ */
+export function stampRuntimeEngineVersion(source: string, semver: string): string {
+  return source.replace(/(export const RUNTIME_ENGINE_VERSION = ")[^"]*(")/, `$1${semver}$2`);
+}
+
 if (import.meta.main) {
   const version = readFileSync(new URL("../VERSION", import.meta.url), "utf8").trim();
   const cwd = import.meta.dir.replace(/\/scripts$/, "");
@@ -24,5 +42,9 @@ if (import.meta.main) {
     .filter((p) => !p.includes("node_modules"));
   const manifests = paths.map((p) => ({ path: p, json: JSON.parse(readFileSync(`${cwd}/${p}`, "utf8")) }));
   for (const m of computeSyncedManifests(version, manifests)) writeFileSync(`${cwd}/${m.path}`, JSON.stringify(m.json, null, 2) + "\n");
-  console.log(`synced ${manifests.length} manifests to ${version}`);
+  const dialectPath = `${cwd}/packages/runtime/src/store/dialect.ts`;
+  const dialectBefore = readFileSync(dialectPath, "utf8");
+  const dialectAfter = stampRuntimeEngineVersion(dialectBefore, toSemver(version));
+  if (dialectAfter !== dialectBefore) writeFileSync(dialectPath, dialectAfter);
+  console.log(`synced ${manifests.length} manifests${dialectAfter !== dialectBefore ? " + RUNTIME_ENGINE_VERSION" : ""} to ${version}`);
 }
