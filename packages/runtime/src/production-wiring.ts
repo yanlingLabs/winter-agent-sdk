@@ -690,7 +690,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     Object.entries(canonicalAliases(brand)).map(([native, target]) => ({ from: WINTER_CANONICAL_ALIASES[native] as string, to: target })),
     brand.mcpServerName,
   );
-  const disposeIdentity = setWinterIdentity({ product: brand.packageName, codexOriginator: brand.codexOriginator });
+  const disposeIdentity = setWinterIdentity({ product: brand.packageName, codexOriginator: brand.codexOriginator, contactUrl: brand.contactUrl });
 
   // (11) COMPACTION (Lane K). Registered unconditionally: with no controller the engine never
   // auto-compacts and `/compact` answers "no compaction controller", which is a permanent

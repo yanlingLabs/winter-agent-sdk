@@ -282,15 +282,20 @@ export interface WinterProviderDescriptor {
    *     invent a header name, and it may certainly not name a vendor's product-identity field —
    *     that is the exact thing WS-13 §5 and D21 forbid, and a free-text name field would be a hole
    *     straight through both.
-   *   - the VALUE must begin with the PRODUCT TOKEN — either the `<product>` placeholder (preferred
-   *     since P7a) or the literal Winter package name. Winter names ITSELF in every identity field;
-   *     a value naming an editor, a CLI or a first-party product is not a configuration mistake to
-   *     fix later, it is impersonation.
-   *   - TWO PLACEHOLDERS are substituted by the adapter at request time (provider-runtime's
+   *   - the VALUE must begin with the `<product>` PLACEHOLDER. The running product names ITSELF in
+   *     every identity field; a value naming an editor, a CLI or a first-party product is not a
+   *     configuration mistake to fix later, it is impersonation. The literal Winter package name was
+   *     accepted here until the P7a fix wave, for "rows written before the profile existed" — no row
+   *     was ever written that way, and a hard-coded product token is precisely what this rule calls
+   *     impersonation when somebody else does it.
+   *   - THREE PLACEHOLDERS are substituted by the adapter at request time (provider-runtime's
    *     `renderIdentityHeaders`): `<version>` with this build's own version, so a release cannot
-   *     leave a stale number on the wire, and `<product>` (P7a, D19) with the running brand's
-   *     `packageName`, so a REUSER's identity header names the reuser rather than Winter. A row that
-   *     hard-codes the Winter token still validates and still works; it simply cannot be rebranded.
+   *     leave a stale number on the wire; `<product>` (P7a, D19) with the running brand's
+   *     `packageName`, so a REUSER's identity header names the reuser rather than Winter; and
+   *     `<contact>` (P7a fix wave) with `brand.contactUrl`. The contact is the half of the
+   *     `<name>:<version>:<contact>` triple a vendor actually acts on, so a row hard-coding a
+   *     repository URL sends every reuser's traffic to whoever owns that repository — the same
+   *     untruth as the product token, and less visible, because the row still LOOKS rebranded.
    *
    * NOT routed through `applyPrivilegedHeaders`. This is Winter's own identity, the same class as
    * the `User-Agent` beside it — it discloses nothing about the operator, and gating it on a

@@ -391,8 +391,7 @@ function sweep(): BrandOffence[] {
  */
 const BASELINE_ALLOWLIST: readonly string[] = [
   // --- packages/provider-catalog (Lane D owns validate.ts's rules) ------------------------------
-  "packages/provider-catalog/src/validate.ts",
-  // --- packages/provider-runtime (Lane A: identity.ts's body, the codex originator, the keychain service) 
+  // --- packages/provider-runtime (Lane A: identity.ts's body, the codex originator, the keychain service)
   // --- packages/runtime (Lane A unless another lane's ownership row names the file) -------------
   // --- scripts (Lane A) -------------------------------------------------------------------------
 ];

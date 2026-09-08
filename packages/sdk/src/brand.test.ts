@@ -44,6 +44,7 @@ describe("WINTER_BRAND: WS-01 §2's values, byte for byte", () => {
       codexOriginator: "winter",
       tempRootName: "winter",
       pluginManifestDir: ".winter-plugin",
+      contactUrl: "https://github.com/yanlingLabs/winter-agent-sdk",
     });
   });
 
@@ -116,6 +117,14 @@ describe("resolveBrand: every validation rule refuses something", () => {
     ["keychainService in mixed case", { keychainService: "com.Acme.core" }, "keychainService"],
     ["an empty productName", { productName: "" }, "productName"],
     ["a productName over 64 characters", { productName: "a".repeat(65) }, "productName"],
+    // P7a fix wave (item 7). `contactUrl` is PARSED rather than pattern-matched, so the refusing
+    // cases are about what a URL parser and a scheme check reject -- and the http/mailto pair is
+    // the point: both parse cleanly, and neither may be published to a vendor as a contact.
+    ["a contactUrl that is not a URL at all", { contactUrl: "github.com/acme" }, "contactUrl"],
+    ["a plaintext http contactUrl", { contactUrl: "http://acme.example/support" }, "contactUrl"],
+    ["a mailto contactUrl", { contactUrl: "mailto:support@acme.example" }, "contactUrl"],
+    ["a javascript: contactUrl", { contactUrl: "javascript:alert(1)" }, "contactUrl"],
+    ["an empty contactUrl", { contactUrl: "" }, "contactUrl"],
   ];
   for (const [label, partial, field] of cases) {
     test(`refuses ${label}`, () => {
@@ -155,6 +164,27 @@ describe("resolveBrand: every validation rule refuses something", () => {
   test("the FIRST refusal names one field -- a profile wrong in two places still refuses", () => {
     const resolved = resolveBrand({ envPrefix: "acme", homeDirName: "acme" });
     expect(resolved.ok).toBe(false);
+  });
+
+  test("P7a fix wave (item 7): a real https contactUrl is ACCEPTED, path/port/query and all", () => {
+    // The positive leg for the parse. Without it every refusal above would pass just as happily
+    // against a validator that rejected every contact URL, which is a different bug.
+    for (const url of ["https://acme.example", "https://acme.example/support", "https://acme.example:8443/support?team=agents", "https://github.com/acme/acme-agent-sdk"]) {
+      const resolved = resolveBrand({ contactUrl: url });
+      expect([url, resolved.ok]).toEqual([url, true]);
+      expect(resolved.ok && resolved.brand.contactUrl).toBe(url);
+    }
+  });
+
+  test("P7a fix wave (item 7): a contactUrl carrying a raw control byte is refused -- it is written into a header", () => {
+    // Header injection, and the reason the check is not just `protocol === "https:"`: `new URL`
+    // accepts several C0 bytes (stripping or percent-encoding them), and this value is written
+    // verbatim into a request header by `renderIdentityHeaders`.
+    for (const byte of [0x00, 0x0a, 0x0d, 0x1b]) {
+      const url = `https://acme.example/${String.fromCharCode(byte)}x`;
+      const resolved = resolveBrand({ contactUrl: url });
+      expect([byte, resolved.ok]).toEqual([byte, false]);
+    }
   });
 });
 

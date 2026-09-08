@@ -7,7 +7,7 @@
       "protocols": [
         "openai-chat-completions"
       ],
-      "$comment": "WS-13b §8.4 / audit §5.1: a KEYLESS row. THE ANONYMOUS KEY IS NOT EMBEDDED ANYWHERE — not here, not in an adapter, not in a fixture. The catalog records only that a documented anonymous default EXISTS and cites the document that names it; supplying it (or, preferably, a registered key, which buys queue priority) is the HOST's act through the ordinary credential path, which is why `authKinds` is `api-key` rather than a keyless kind. WS-13 §6 is categorical that descriptors never contain secrets, and `scanForSecrets` fails the build on the shape regardless. The adapter must send `Client-Agent: winter-agent-sdk/<version>:<contact>` — the vendor's own honest-identity field — which is lane L's to assert on a recorded request; nothing in this row can enforce it. Latency is MINUTES (a shared volunteer queue), throughput depends on how many workers are online rather than on a quota, and audit §5.1 notes workers are community-shared: exclude from any sensitive-content floor.",
+      "$comment": "WS-13b §8.4 / audit §5.1: a KEYLESS row. THE ANONYMOUS KEY IS NOT EMBEDDED ANYWHERE — not here, not in an adapter, not in a fixture. The catalog records only that a documented anonymous default EXISTS and cites the document that names it; supplying it (or, preferably, a registered key, which buys queue priority) is the HOST's act through the ordinary credential path, which is why `authKinds` is `api-key` rather than a keyless kind. WS-13 §6 is categorical that descriptors never contain secrets, and `scanForSecrets` fails the build on the shape regardless. The adapter must send `Client-Agent: <product>:<version>:<contact>` (all three tokens substituted at request time from the running brand profile) — the vendor's own honest-identity field — which is lane L's to assert on a recorded request; nothing in this row can enforce it. Latency is MINUTES (a shared volunteer queue), throughput depends on how many workers are online rather than on a quota, and audit §5.1 notes workers are community-shared: exclude from any sensitive-content floor.",
       "authKinds": [
         "api-key"
       ],
@@ -39,7 +39,7 @@
       },
       "scope": "llm",
       "identityHeaders": {
-        "Client-Agent": "<product>:<version>:https://github.com/yanlingLabs/winter-agent-sdk"
+        "Client-Agent": "<product>:<version>:<contact>"
       }
     },
     {

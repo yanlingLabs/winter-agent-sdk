@@ -43,15 +43,25 @@ import pkg from "../package.json";
 // multi-tenant host is a WS-15 concern. It is NOT configurable by the model or by a host header —
 // only by the validated brand profile, whose `codexOriginator` is refused if it names a first party.
 
-/** The two identity tokens a running product puts on the wire. */
+/** The identity tokens a running product puts on the wire. */
 export interface WinterIdentity {
   /** The product token in `User-Agent` and in a row's `<product>` placeholder — `brand.packageName`. */
   product: string;
   /** The codex backend's `originator` — `brand.codexOriginator`, validated never to be first-party. */
   codexOriginator: string;
+  /**
+   * P7a fix wave (item 7): WHERE TO REACH the running product — a row's `<contact>` placeholder,
+   * `brand.contactUrl`.
+   *
+   * A vendor identity field is a `<name>:<version>:<contact>` triple. `product` moved with the brand
+   * from the day the profile landed; the contact did not, so a rebranded product's honest-identity
+   * header still named Winter's repository — a false statement in the one field whose entire purpose
+   * is being true, and the only part of it a vendor would actually act on.
+   */
+  contactUrl: string;
 }
 
-const DEFAULT_IDENTITY: Readonly<WinterIdentity> = Object.freeze({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator });
+const DEFAULT_IDENTITY: Readonly<WinterIdentity> = Object.freeze({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator, contactUrl: WINTER_BRAND.contactUrl });
 
 let activeIdentity: Readonly<WinterIdentity> = DEFAULT_IDENTITY;
 
@@ -122,15 +132,26 @@ const VERSION_PLACEHOLDER = "<version>";
  * purpose is honest identity. `<product>` is what makes a catalog row truthful under every brand.
  */
 const PRODUCT_PLACEHOLDER = "<product>";
+/**
+ * P7a fix wave (item 7): the token a row's value carries in place of the running brand's CONTACT URL.
+ *
+ * The third field of the `<name>:<version>:<contact>` triple, and the one a vendor actually uses: it
+ * is how an operator whose workers are misbehaving reaches whoever wrote the client. A row that
+ * hard-codes Winter's repository points every reuser's traffic at Winter, which is exactly as untrue
+ * as hard-coding the product name — it was simply less visible, because the row still LOOKED
+ * rebranded once `<product>` had moved.
+ */
+const CONTACT_PLACEHOLDER = "<contact>";
 
-/** What a row's identity-header value is rendered against: this build's version and this run's product. */
+/** What a row's identity-header value is rendered against: this build's version, and this run's product and contact. */
 export interface IdentityRenderContext {
   version: string;
   product: string;
+  contact: string;
 }
 
 /**
- * Substitutes BOTH placeholders in one row's declared identity headers.
+ * Substitutes ALL THREE placeholders in one row's declared identity headers.
  *
  * The seam Lane A needs, extracted from `winterIdentityHeaders` so the brand can be threaded in one
  * place: everything about WHICH headers a row declares stays in the lookup, and everything about
@@ -139,7 +160,13 @@ export interface IdentityRenderContext {
 export function renderIdentityHeaders(declared: Record<string, string>, ctx: IdentityRenderContext): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(declared)) {
-    out[name] = value.split(PRODUCT_PLACEHOLDER).join(ctx.product).split(VERSION_PLACEHOLDER).join(ctx.version);
+    out[name] = value
+      .split(PRODUCT_PLACEHOLDER)
+      .join(ctx.product)
+      .split(VERSION_PLACEHOLDER)
+      .join(ctx.version)
+      .split(CONTACT_PLACEHOLDER)
+      .join(ctx.contact);
   }
   return out;
 }
@@ -154,7 +181,7 @@ export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLook
 }
 
 /**
- * The identity headers for one row, with `<product>` and `<version>` substituted — or `{}`.
+ * The identity headers for one row, with `<product>`, `<version>` and `<contact>` substituted — or `{}`.
  *
  * `{}` for a row with none, for an adapter constructed without a lookup (every unit fixture), and
  * for an unknown id. An absent second identity field is the normal case: only a vendor that NAMES
@@ -163,5 +190,5 @@ export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLook
 export function winterIdentityHeaders(lookup: IdentityHeaderLookup | undefined, providerId: string): Record<string, string> {
   const declared = lookup?.(providerId);
   if (declared === undefined) return {};
-  return renderIdentityHeaders(declared, { version: pkg.version, product: activeIdentity.product });
+  return renderIdentityHeaders(declared, { version: pkg.version, product: activeIdentity.product, contact: activeIdentity.contactUrl });
 }

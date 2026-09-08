@@ -30,7 +30,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { resolveBrand, WINTER_BRAND, envName, mcpToolName, type BrandProfile, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
-import { activeWinterIdentity, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { activeWinterIdentity, renderIdentityHeaders, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 // DEEP RELATIVE IMPORTS, and only into TEST-facing surfaces. The codex adapter, its quota manager
 // and the Responses scenario table are not on `@yanlinglabs/winter-provider-runtime`'s or
 // `…/winter-provider-conformance`'s public index -- the corpus test that already drives this exact
@@ -75,6 +76,7 @@ const ACME_PARTIAL: Partial<BrandProfile> = {
   tempRootName: "acme",
   keychainService: "com.acme.core",
   pluginManifestDir: ".acme-plugin",
+  contactUrl: "https://acme.example/support",
 };
 
 const resolvedAcme = resolveBrand(ACME_PARTIAL);
@@ -229,8 +231,24 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     try {
       await withWiring(acmeConfig({ cwd }), { ACME_HOME: acmeHome }, async () => {
         // The identity the whole adapter family reads, installed by the session's own wiring.
-        expect(activeWinterIdentity()).toEqual({ product: "acme", codexOriginator: "acme" });
+        expect(activeWinterIdentity()).toEqual({ product: "acme", codexOriginator: "acme", contactUrl: "https://acme.example/support" });
         expect(winterUserAgent().startsWith("acme/")).toBe(true);
+
+        // P7a fix wave (item 7, Lane A review M-4): THE CONTACT MOVED TOO. A vendor identity field
+        // is `<name>:<version>:<contact>`, and until this fix only the first two tokens followed the
+        // brand -- so a rebranded product's honest-identity header still pointed AI Horde's
+        // operators at Winter's issue tracker for traffic Winter never sent. `renderIdentityHeaders`
+        // is the one seam every adapter family goes through, so rendering the SHIPPED row's declared
+        // value here is the same substitution a real request makes.
+        const shippedRow = loadCatalog().providers.find((p) => p.id === "aihorde")!;
+        const rendered = renderIdentityHeaders(shippedRow.identityHeaders!, {
+          version: "9.9.9",
+          product: activeWinterIdentity().product,
+          contact: activeWinterIdentity().contactUrl,
+        });
+        expect(rendered).toEqual({ "Client-Agent": "acme:9.9.9:https://acme.example/support" });
+        expect(rendered["Client-Agent"]).not.toContain("winter");
+        expect(rendered["Client-Agent"]).not.toContain("yanlingLabs");
 
         const ref = { kind: "keychain", account: `codex-oauth:${codexFake.FAKE_ACCOUNT_ID}` } as const;
         const credentials = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: codexFake.FAKE_ACCESS_TOKEN, refreshToken: codexFake.FAKE_REFRESH_TOKEN, accountId: codexFake.FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
@@ -262,7 +280,7 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     }
 
     // The identity is a per-session installation, given back on teardown.
-    expect(activeWinterIdentity()).toEqual({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator });
+    expect(activeWinterIdentity()).toEqual({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator, contactUrl: WINTER_BRAND.contactUrl });
   });
 
   test("R-7a-8: the keychain store and the cross-provider `authRef` read ONE source -- `com.acme.core`", () => {

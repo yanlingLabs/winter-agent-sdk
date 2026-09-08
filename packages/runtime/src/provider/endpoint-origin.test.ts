@@ -364,7 +364,7 @@ describe("P7a fix wave (item 4): `endpoint-required` reaches the caller as the T
       credentials: createMemoryCredentialStore(),
       resolveSlot: (requested) =>
         requested === "tenant"
-          ? { ok: true, modelKey: "tenantrow/m1", providerId: "tenantrow", canonicalModelId: "m1", slot: { family: "openai", name: "tenant", source: "default" }, viaSlotName: true }
+          ? { ok: true, modelKey: "tenantrow/m1", providerId: "tenantrow", canonicalModelId: "m1", slot: { family: "openai", name: "tenant", source: "family-default" }, viaSlotName: true }
           : { ok: false, code: "unknown-slot", message: `no slot named "${requested}"`, wouldServe: [] },
     });
     expect(wiring.resolutionError).toBeUndefined();

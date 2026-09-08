@@ -707,20 +707,23 @@ describe("WS-13b §2: the widened catalog", () => {
     // `provider-conformance/src/corpus/cross-vendor-headers.test.ts`, "aihorde sends its declared
     // identity header, with `<version>` substituted".
     const aihorde = byId.get("aihorde");
-    // P7a (D19): the product token is the `<product>` PLACEHOLDER now, not Winter's literal name —
-    // substituted at request time with the running brand's `packageName`, so a reuser's identity
-    // header names the reuser. A row that hard-coded Winter's name would put OUR identity on THEIR
-    // request, in the one field whose whole purpose is honest identity.
-    expect(aihorde?.identityHeaders).toEqual({ "Client-Agent": "<product>:<version>:https://github.com/yanlingLabs/winter-agent-sdk" });
+    // P7a (D19) + the fix wave (item 7): ALL THREE tokens are placeholders now, not Winter's own
+    // strings — `<product>` and `<contact>` are substituted at request time from the running brand,
+    // so a reuser's identity header names the reuser AND points at the reuser's own contact. The
+    // contact was the half left behind: a row still carrying Winter's repository URL sends every
+    // reuser's traffic to Winter's issue tracker, in the one field whose whole purpose is honest
+    // identity, while LOOKING rebranded because the product token had moved.
+    expect(aihorde?.identityHeaders).toEqual({ "Client-Agent": "<product>:<version>:<contact>" });
     expect(aihorde?.admission.citation).toContain("Client-Agent");
-    // Every declared identity header names THE PRODUCT, on every row that has one — the `<product>`
-    // placeholder (which resolves to whatever brand is running) or, for a row written before the
-    // profile existed, Winter's own literal token. `validateCatalog` refuses anything else; this is
-    // the assertion over the SHIPPED artifact.
+    // No shipped row may carry a hard-coded product token or a hard-coded contact: both are brand
+    // surfaces, and a literal is truthful for exactly one brand. `validateCatalog` refuses a value
+    // that does not START with `<product>`; this is the assertion over the SHIPPED artifact, and it
+    // additionally forbids the repository URL anywhere in the value.
     for (const provider of catalog.providers) {
       for (const [name, value] of Object.entries(provider.identityHeaders ?? {})) {
         expect([provider.id, name]).toEqual([provider.id, "Client-Agent"]);
-        expect([provider.id, value.startsWith("<product>") || value.startsWith("winter-agent-sdk")]).toEqual([provider.id, true]);
+        expect([provider.id, value.startsWith("<product>")]).toEqual([provider.id, true]);
+        expect([provider.id, /winter|yanling/i.test(value)]).toEqual([provider.id, false]);
       }
     }
   });
