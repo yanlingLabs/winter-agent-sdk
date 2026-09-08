@@ -1,10 +1,21 @@
 // P7a pre-publish (item 5; user ruling 2026-09-08): WHICH PACKAGES GO TO PUBLIC npm.
 //
 // Every publishable package goes to GitHub Packages -- that is the org's own registry and the whole
-// set belongs there. npm is different: it is what a PUBLIC consumer installs, so it gets the WRAPPER
-// and its runtime dependency closure and nothing else. `@yanlinglabs/winter-conformance` and
-// `@yanlinglabs/winter-provider-conformance` are the org's own test harnesses; publishing them
-// publicly would offer a stranger a package whose only purpose is testing this repository.
+// set belongs there. npm is different: it is what a PUBLIC consumer installs, so it gets EXACTLY the
+// wrapper and its transitive workspace `dependencies` closure -- `@yanlinglabs/winter-agent-sdk` and
+// `@yanlinglabs/winter-provider-catalog` -- and nothing else (user ruling 2026-09-08).
+//
+// NO EXCEPTIONS MECHANISM, deliberately. An earlier draft carried a ruled-extras list so
+// `winter-provider-runtime` could sit on npm without being in the closure; the ruling removed both the
+// package and the concept. "Exactly the closure" is a property a test can state in one sentence and
+// check in both directions; "the closure plus a list" is a property that degrades every time the list
+// grows, and the list is precisely where a harness would eventually be added by someone in a hurry.
+//
+// So `winter-provider-runtime`, `winter-conformance` and `winter-provider-conformance` are GitHub
+// Packages only. The two conformance packages are the org's own test harnesses -- publishing them
+// publicly would offer a stranger a package whose only purpose is testing this repository -- and
+// `winter-provider-runtime` is the PRIVATE `winter-agent-runtime`'s dependency: the wrapper SPAWNS the
+// compiled runtime rather than importing it, so a public consumer of the wrapper never needs it.
 //
 // THE SET IS DATA (`winter.publish.npm` in each manifest), read here and turned into the `--filter`
 // arguments the npm job passes to `pnpm publish`. It is not a list in the YAML, because a list in
@@ -33,6 +44,11 @@ export function npmPublishSet(root: string = REPO_ROOT): PublishablePackage[] {
  * `dependencies` and not `devDependencies` or `optionalDependencies`: the question is what a consumer
  * needs at RUN TIME after `npm install @yanlinglabs/winter-agent-sdk`. The platform binary package is
  * an `optionalDependency` and is not published at 7a (R-7-2), so it is correctly outside this set.
+ *
+ * THIS IS THE WHOLE DEFINITION of the npm set since the ruling: `npmPublishSet()` (the manifest flag,
+ * which is what the workflow filters on) must equal this exactly, and `release-gates.test.ts` asserts
+ * it in both directions -- a new runtime dependency of the wrapper cannot be forgotten, and nothing
+ * else can be added.
  */
 export function npmRequiredClosure(root: string = REPO_ROOT): string[] {
   const byName = new Map(discoverPublishablePackages(root).map((p) => [p.name, p]));
@@ -48,26 +64,6 @@ export function npmRequiredClosure(root: string = REPO_ROOT): string[] {
   visit(NPM_ROOT_PACKAGE);
   return [...seen].sort();
 }
-
-/**
- * Packages on npm that the wrapper's `dependencies` closure does NOT reach, each with the ruling.
- *
- * MEASURED, not assumed: the wrapper's own closure is `{winter-agent-sdk, winter-provider-catalog}`.
- * `winter-provider-runtime` is a dependency of the PRIVATE `winter-agent-runtime` (the compiled
- * `winter` binary), not of the wrapper -- the wrapper spawns that binary rather than importing it --
- * so a closure computed from `dependencies` alone will never contain it. It is on npm because the
- * user ruled it in: it is the provider layer a public host uses DIRECTLY (adapters, credential
- * stores, endpoint policy) and it is `engines.node`-importable, which is the whole point of the
- * compiled emit.
- *
- * The list is the ONE place a package may be on npm without being in the closure, so the parity test
- * can still be exact in both directions: nothing in the closure may be missing, and nothing outside
- * `closure ∪ this` may be present.
- */
-export const NPM_RULED_EXTRAS: Readonly<Record<string, string>> = {
-  "@yanlinglabs/winter-provider-runtime":
-    "user ruling 2026-09-08: the provider layer a public host uses directly (adapters, credential stores, endpoint policy). Not in the wrapper's `dependencies` closure because the wrapper SPAWNS the compiled runtime rather than importing it -- `winter-provider-runtime` is the private `winter-agent-runtime`'s dependency, and that package is never published.",
-};
 
 /** `--filter <name>` per package, in the order `pnpm publish` should receive them. */
 export function npmFilterArgs(root: string = REPO_ROOT): string[] {

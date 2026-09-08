@@ -17,19 +17,12 @@ repository root `.npmrc` and `package.json` `publishConfig` for the registry pin
 
 ## Install
 
-This package is published to **two registries**, and which one you want depends on who you are.
+**This package is published to GitHub Packages only.** It is the provider layer the compiled `winter`
+runtime uses; the wrapper a public consumer installs — `@yanlinglabs/winter-agent-sdk` — SPAWNS that
+runtime rather than importing this package, so it is not part of what `npm install
+@yanlinglabs/winter-agent-sdk` needs. Public npm carries exactly the wrapper and its runtime
+dependency closure (`@yanlinglabs/winter-agent-sdk`, `@yanlinglabs/winter-provider-catalog`).
 
-### From public npm (anyone)
-
-```sh
-npm install @yanlinglabs/winter-provider-runtime
-```
-
-Nothing else is needed: the `@yanlinglabs` scope is public on npm.
-
-### From GitHub Packages (the `yanlingLabs` org)
-
-GitHub Packages needs the scope pointed at it and an authenticated read, even for a public package.
 In your project's `.npmrc`:
 
 ```
@@ -42,8 +35,7 @@ literal in the file. Then `npm install @yanlinglabs/winter-provider-runtime` as 
 
 **The published tarballs contain `src/`.** Alongside the compiled `dist/` a consumer resolves, every
 package ships its own TypeScript sources: Bun resolves them directly through the `bun` export
-condition, and they are readable by anyone who installs the package. Nothing in them is private —
-but treat these packages as source-visible, because they are.
+condition, and they are readable by anyone who installs the package.
 
 ## Bun-only surface
 

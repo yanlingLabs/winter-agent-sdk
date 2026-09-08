@@ -31,7 +31,7 @@
   },
   "winter": {
     "publish": {
-      "npm": true
+      "npm": false
     }
   },
   "dependencies": {

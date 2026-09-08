@@ -119,14 +119,17 @@ jobs:
   # plan cannot do). Scoped packages on npm's free plan are public -- the user has ruled that they
   # are published publicly, and the packages are source-visible either way (the tarballs ship `src/`).
   #
-  # NOT THE WHOLE SET (user ruling 2026-09-08). npm gets the WRAPPER and what a public consumer needs
-  # -- `winter-agent-sdk`, `winter-provider-catalog`, `winter-provider-runtime`; the two conformance
-  # HARNESSES are the org's own test tooling and stay GitHub-Packages-only. The set is DATA
-  # (`winter.publish.npm` per manifest) and this job asks `scripts/npm-publish-set.ts` for the
-  # `--filter` arguments at run time: a package name written HERE would be a second copy of a fact the
-  # manifests already carry, and the copy that drifts. `release-gates.test.ts` pins the data against
-  # the wrapper's own transitive `dependencies` closure in both directions, so a new runtime
-  # dependency cannot be forgotten and a harness cannot leak.
+  # NOT THE WHOLE SET (user ruling 2026-09-08). npm gets EXACTLY the wrapper and its transitive
+  # workspace `dependencies` closure -- what installing the wrapper by name needs at run time -- and
+  # nothing else. The provider runtime and the two conformance harnesses stay
+  # GitHub-Packages-only: the harnesses are the org's own test tooling, and the wrapper SPAWNS the
+  # compiled runtime rather than importing it, so a public consumer never needs that package.
+  #
+  # The set is DATA (`winter.publish.npm` per manifest) and this job asks `scripts/npm-publish-set.ts`
+  # for the `--filter` arguments at run time: a package name written HERE would be a second copy of a
+  # fact the manifests already carry, and the copy that drifts. `release-gates.test.ts` asserts the
+  # flagged set EQUALS that closure -- exactly, in both directions, with no exceptions mechanism -- so
+  # a new runtime dependency cannot be forgotten and nothing else can be added.
   #
   # `--provenance` attaches a signed npm provenance statement, which is why this job -- and ONLY this
   # job -- carries `id-token: write`. `contents: read` is repeated explicitly beside it; nothing here

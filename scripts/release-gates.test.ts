@@ -30,7 +30,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { discoverPublishablePackages } from "./release-pack.ts";
-import { NPM_RULED_EXTRAS, npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
+import { npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
 
 const WORKFLOWS_DIR = fileURLToPath(new URL("../.github/workflows/", import.meta.url));
 const RELEASE_YML_PATH = join(WORKFLOWS_DIR, "release.yml");
@@ -383,48 +383,42 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     expect(job.permissions).toEqual({ "id-token": "write", contents: "read" });
   });
 
-  test("item 5 (ruling): the npm set is DATA, and it is exactly the wrapper's closure plus the ruled extras", () => {
-    // npm gets the WRAPPER and what a public consumer needs; GitHub Packages gets everything. The set
-    // lives in `winter.publish.npm` per manifest rather than as a list in this YAML, and this is the
-    // test that keeps the data honest in BOTH directions:
-    //   * nothing in the wrapper's transitive workspace `dependencies` closure may be MISSING -- a
-    //     new runtime dependency that nobody flags breaks `npm install @yanlinglabs/winter-agent-sdk`;
-    //   * nothing outside `closure ∪ NPM_RULED_EXTRAS` may be PRESENT -- a harness that gains the
-    //     flag by copy-paste would be published publicly, and npm cannot take a version back.
+  test("item 5 (ruling): the npm set is DATA, and it is EXACTLY the wrapper's dependency closure", () => {
+    // npm gets what a PUBLIC consumer installs and nothing else: the wrapper plus its transitive
+    // workspace `dependencies`. GitHub Packages gets the whole set. The npm set lives in
+    // `winter.publish.npm` per manifest rather than as a list in this YAML, and this test keeps the
+    // data honest in BOTH directions against the closure ALONE:
+    //   * nothing in the closure may be MISSING -- a new runtime dependency that nobody flags breaks
+    //     `npm install @yanlinglabs/winter-agent-sdk`;
+    //   * nothing outside it may be PRESENT -- a harness (or anything else) that gains the flag by
+    //     copy-paste would be published publicly, and npm cannot take a version back.
+    //
+    // EXACT EQUALITY, with no exceptions mechanism (user ruling 2026-09-08). An earlier draft carried
+    // a ruled-extras list so `winter-provider-runtime` could sit on npm without being in the closure;
+    // both the package and the concept were removed, because "the closure plus a list" is a property
+    // that degrades every time the list grows -- and the list is exactly where a harness would
+    // eventually be added by someone in a hurry.
     const flagged = npmPublishSet().map((p) => p.name).sort();
     const closure = npmRequiredClosure();
-    const allowed = new Set([...closure, ...Object.keys(NPM_RULED_EXTRAS)]);
-
-    expect(closure.filter((name) => !flagged.includes(name))).toEqual([]);
-    expect(flagged.filter((name) => !allowed.has(name))).toEqual([]);
-    // The set as it stands today, pinned so a change is a deliberate edit here too.
-    expect(flagged).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog", "@yanlinglabs/winter-provider-runtime"]);
+    expect(flagged).toEqual(closure);
+    // The set as it stands, pinned so a change is a deliberate edit here too.
     expect(closure).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog"]);
   });
 
-  test("item 5 (ruling): the two conformance HARNESSES are GitHub Packages only", () => {
+  test("item 5 (ruling): the harnesses AND the provider runtime are GitHub Packages only", () => {
     // Named, because "not in the set" is the property that matters and it is easiest to lose by
-    // accident: these are the org's own test tooling, and publishing them publicly would offer a
-    // stranger a package whose only purpose is testing this repository.
+    // accident. The two conformance packages are the org's own test tooling; `winter-provider-runtime`
+    // is the PRIVATE `winter-agent-runtime`'s dependency -- the wrapper SPAWNS the compiled runtime
+    // rather than importing it, so a public consumer of the wrapper never needs it.
     const flagged = new Set(npmPublishSet().map((p) => p.name));
-    for (const harness of ["@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]) {
-      expect([harness, flagged.has(harness)]).toEqual([harness, false]);
-      // ...and they are still publishable AT ALL -- GitHub Packages gets the whole set.
-      expect([harness, discoverPublishablePackages().some((p) => p.name === harness)]).toEqual([harness, true]);
+    for (const ghOnly of ["@yanlinglabs/winter-provider-runtime", "@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]) {
+      expect([ghOnly, flagged.has(ghOnly)]).toEqual([ghOnly, false]);
+      // ...and each is still publishable AT ALL -- GitHub Packages gets the whole set.
+      expect([ghOnly, discoverPublishablePackages().some((p) => p.name === ghOnly)]).toEqual([ghOnly, true]);
     }
-  });
-
-  test("item 5 (ruling): every NPM_RULED_EXTRA is real, flagged, and carries the ruling", () => {
-    const flagged = new Set(npmPublishSet().map((p) => p.name));
-    const closure = new Set(npmRequiredClosure());
-    expect(Object.keys(NPM_RULED_EXTRAS).length).toBeGreaterThan(0);
-    for (const [name, why] of Object.entries(NPM_RULED_EXTRAS)) {
-      expect([name, flagged.has(name)]).toEqual([name, true]);
-      // An extra that JOINS the closure must leave this list -- otherwise the list stops meaning
-      // "outside the closure" and the parity above weakens without anyone noticing.
-      expect([name, closure.has(name)]).toEqual([name, false]);
-      expect([name, why.length > 60]).toEqual([name, true]);
-    }
+    // Two on npm, five on GitHub Packages: the sets are deliberately different sizes.
+    expect(flagged.size).toBe(2);
+    expect(discoverPublishablePackages()).toHaveLength(5);
   });
 
   test("item 5 (ruling): the npm job FILTERS by the data -- no package name is spelled in the YAML", () => {
@@ -454,9 +448,19 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
       expect([pkg.name, readme.includes("read:packages")]).toEqual([pkg.name, true]);
       // The source-visibility sentence, because the tarballs really do ship `src/`.
       expect([pkg.name, readme.includes("tarballs contain `src/`")]).toEqual([pkg.name, true]);
-      // And the npm half is present exactly for the packages that are on npm.
-      expect([pkg.name, readme.includes(`npm install ${pkg.name}`)]).toEqual([pkg.name, npmNames.has(pkg.name)]);
-      if (!npmNames.has(pkg.name)) expect([pkg.name, readme.includes("GitHub Packages only")]).toEqual([pkg.name, true]);
+      // And the PUBLIC-npm section is present exactly for the packages that are on npm.
+      //
+      // Keyed on the SECTION HEADING, not on `npm install <name>`: that command is how you install
+      // from GitHub Packages too (the registry is chosen by `.npmrc`, not by the verb), so matching
+      // the command would call every README an npm README. The heading is the claim being made.
+      expect([pkg.name, readme.includes("### From public npm")]).toEqual([pkg.name, npmNames.has(pkg.name)]);
+      if (!npmNames.has(pkg.name)) {
+        expect([pkg.name, readme.includes("GitHub Packages only")]).toEqual([pkg.name, true]);
+        // ...and it must not tell a reader the public registry has it.
+        expect([pkg.name, readme.includes("registry.npmjs.org")]).toEqual([pkg.name, false]);
+      } else {
+        expect([pkg.name, readme.includes(`npm install ${pkg.name}`)]).toEqual([pkg.name, true]);
+      }
     }
   });
 
