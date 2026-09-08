@@ -34,10 +34,40 @@ export interface ImportTarget {
   /** The exact specifier to import, e.g. "@yanlinglabs/winter-agent-sdk" or "@yanlinglabs/winter-conformance/trace". */
   specifier: string;
   packageName: string;
+  /** The runtimes this target must import under, from its package's own `engines` (see `runtimesFor`). */
+  runtimes: SmokeRuntime[];
 }
 
 interface ExportsField {
   exports?: Record<string, unknown> | string;
+  engines?: Record<string, string>;
+}
+
+/**
+ * P7a fix wave (item 1 + item 11 N-1): WHICH RUNTIMES A TARGET MUST IMPORT UNDER, from its package's
+ * own `engines`.
+ *
+ * Before the compiled emit, EVERY package failed under Node and the Node leg was carried as a
+ * disclosed advisory (R-7a-16). It is blocking now -- but "every target under both runtimes" is not
+ * the right assertion either, and never was: `@yanlinglabs/winter-provider-conformance` stands up
+ * loopback servers with `Bun.serve` (`fakes/server.ts` imports `serve` from `"bun"`), which is a
+ * DELIBERATE design decision `tsconfig.sdk-fence.json` already records in prose. A compiled emit
+ * cannot change that and should not try.
+ *
+ * So the requirement is DECLARED, per package, in the one field npm already has for it. `engines.node`
+ * means "a Node consumer may import this" and the Node leg asserts it; `engines.bun` alone means
+ * Bun-only. A package declaring NEITHER is required under both -- fail closed, so a new package
+ * cannot opt out of the gate by omission.
+ */
+export function runtimesFor(manifest: ExportsField): SmokeRuntime[] {
+  const engines = manifest.engines ?? {};
+  const declaresNode = engines["node"] !== undefined;
+  const declaresBun = engines["bun"] !== undefined;
+  if (!declaresNode && !declaresBun) return ["node", "bun"];
+  const out: SmokeRuntime[] = [];
+  if (declaresNode) out.push("node");
+  out.push("bun"); // Bun runs everything this repo produces, declared or not
+  return out;
 }
 
 /**
@@ -50,14 +80,15 @@ export function deriveImportTargets(packages: readonly PublishablePackage[] = di
   const targets: ImportTarget[] = [];
   for (const pkg of packages) {
     const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as ExportsField;
+    const runtimes = runtimesFor(manifest);
     const exportsField = manifest.exports;
     if (exportsField === undefined || typeof exportsField === "string") {
-      targets.push({ specifier: pkg.name, packageName: pkg.name });
+      targets.push({ specifier: pkg.name, packageName: pkg.name, runtimes });
       continue;
     }
     for (const key of Object.keys(exportsField)) {
       const specifier = key === "." ? pkg.name : `${pkg.name}/${key.replace(/^\.\//, "")}`;
-      targets.push({ specifier, packageName: pkg.name });
+      targets.push({ specifier, packageName: pkg.name, runtimes });
     }
   }
   return targets.sort((a, b) => a.specifier.localeCompare(b.specifier));
@@ -105,6 +136,10 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
 
     for (const runtime of runtimes) {
       for (const target of targets) {
+        if (!target.runtimes.includes(runtime)) {
+          console.log(`smoke-installed SKIP: ${runtime} import of "${target.specifier}" -- that package declares no \`engines.${runtime}\``);
+          continue;
+        }
         const result = await importUnder(runtime, target.specifier, probeDir);
         results.push({ specifier: target.specifier, runtime, ok: result.ok, output: result.output });
         if (!result.ok) {

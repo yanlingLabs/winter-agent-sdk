@@ -15,6 +15,7 @@
     "provider:sync": "bun run scripts/provider-source-sync.ts",
     "provenance:tiers": "bun run scripts/provenance-tiers.ts",
     "build:runtime": "bun run scripts/build-runtime.ts",
+    "build:packages": "bun run scripts/build-packages.ts",
     "verify:compiled": "bun run scripts/verify-protocol-compiled.ts",
     "verify:workflow": "bun run scripts/verify-workflow.ts",
     "release:pack": "bun run scripts/release-pack.ts",

@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationMap": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "rewriteRelativeImportExtensions": true,
+    "paths": {}
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test-support.ts",
+    "src/corpus/anthropic.ts",
+    "src/corpus/bedrock.ts",
+    "src/corpus/google.ts",
+    "src/corpus/openai.ts",
+    "src/corpus/vertex.ts",
+    "src/corpus/openai-scenarios.ts"
+  ]
+}

@@ -284,9 +284,18 @@ export function scanExtractedPackage(expectedName: string, packageRoot: string):
   return { violations, filesScanned: relPaths.length };
 }
 
-export async function releasePack(opts: { outDir?: string; root?: string } = {}): Promise<ReleasePackResult> {
+export async function releasePack(opts: { outDir?: string; root?: string; build?: boolean } = {}): Promise<ReleasePackResult> {
   const root = opts.root ?? REPO_ROOT;
   const outDir = opts.outDir ?? DEFAULT_OUT_DIR;
+  // P7a fix wave (item 1): THE COMPILED EMIT IS BUILT FIRST, always. Every manifest's `default`
+  // condition points into `dist/`, so packing without building would produce a tarball whose Node
+  // entry point is a file that is not in it -- and the tarball scan cannot see a MISSING file. A
+  // stale dist is the quieter version of the same failure, which is why the build cleans before it
+  // writes rather than overlaying. `build: false` exists only for a caller that has just built.
+  if (opts.build !== false) {
+    const { buildPackages } = await import("./build-packages.ts");
+    await buildPackages({ root });
+  }
   mkdirSync(outDir, { recursive: true });
 
   const targets = discoverPublishablePackages(root);

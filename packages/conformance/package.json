@@ -2,20 +2,38 @@
   "name": "@yanlinglabs/winter-conformance",
   "version": "0.0.1",
   "type": "module",
-  "main": "./src/index.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts",
-    "./trace": "./src/trace.ts",
-    "./official": "./src/official/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./trace": {
+      "types": "./dist/trace.d.ts",
+      "bun": "./src/trace.ts",
+      "default": "./dist/trace.js"
+    },
+    "./official": {
+      "types": "./dist/official/index.d.ts",
+      "bun": "./src/official/index.ts",
+      "default": "./dist/official/index.js"
+    }
   },
   "files": [
+    "dist",
     "src",
     "goldens",
+    "README.md",
     "!src/**/*.test.ts",
     "!src/**/*.test-support.ts"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"
-  }
+  },
+  "types": "./dist/index.d.ts"
 }
