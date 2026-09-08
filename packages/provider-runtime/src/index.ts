@@ -79,6 +79,12 @@ export type { DeviceCodeConfig } from "./adapters/oauth/device-code.ts";
 // reach it by package name. Exported from HERE rather than from `adapters/index.ts` — which the
 // star-export below already republishes — because the widening lanes edit that file concurrently and
 // this is the one place the two additions cannot collide.
+// P7a fix wave r2 (item 3, re-review N1): the typed refusal a Bun-only export throws off Bun.
+// `engines.node` on this package means IMPORTABLE under Node, not runnable on every path -- and the
+// compiled emit is what made that distinction reachable, since a Node consumer now gets past
+// `import`. Exported so a caller can `catch (e) { if (e instanceof BunRequiredError) ... }` rather
+// than matching a message. The Bun-only functions are listed in this package's README.
+export { BunRequiredError, hasBunRuntime, requireBunRuntime } from "./bun-required.ts";
 export { CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS, anthropicCredentialRef, startAnthropicConsoleLogin } from "./adapters/anthropic/index.ts";
 export type { AnthropicConsoleLoginOptions, AnthropicConsoleLoginResult } from "./adapters/anthropic/index.ts";
 export { parseSse } from "./sse.ts";

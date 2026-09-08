@@ -29,7 +29,10 @@ export { parseAuthorization } from "./adapters/bedrock/sigv4.ts";
 
 export { FAST_RETRY, descriptor, testContext, testDiscoveryContext } from "./adapters/openai/testing.ts";
 export type { DescriptorOverrides, TestContextOptions } from "./adapters/openai/testing.ts";
-export { startXaiOauthFake } from "./adapters/openai/xai-oauth.testing.ts";
+// P7a fix wave r2 (item 3): the loopback fakes below need Bun; this is the typed refusal they throw
+// elsewhere, re-exported here so a `./testing` consumer need not also import the main barrel.
+export { BunRequiredError } from "./bun-required.ts";
+export { startXaiChatFake, startXaiOauthFake } from "./adapters/openai/xai-oauth.testing.ts";
 export type { XaiOauthFake, XaiOauthFakeOptions, XaiRecordedRequest } from "./adapters/openai/xai-oauth.testing.ts";
 export { CODEX } from "./adapters/openai/codex-config.ts";
 export { QuotaManager } from "./adapters/openai/quota.ts";

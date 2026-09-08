@@ -64,6 +64,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fetchAndVerifyUpstream } from "./fetch.ts";
+import { requireBunRuntime } from "../bun-required.ts";
 import { normalizeTrace, type ConformanceTraceEntry } from "../trace.ts";
 
 type OfficialQueryFn = (args: { prompt: unknown; options: Record<string, unknown> }) => AsyncIterable<{ type: string; subtype?: string }>;
@@ -1853,6 +1854,16 @@ async function runCostCapture(officialSdk: OfficialSdk): Promise<void> {
 }
 
 export async function runCapture(): Promise<void> {
+  // P7a fix wave r2 (item 3, re-review N1): FIRST, before the pinned tarball is fetched and before
+  // any listener is bound. This function installs the official SDK with `Bun.spawn` and drives it
+  // against `Bun.serve` loopback fakes; under Node it used to die with `ReferenceError: Bun is not
+  // defined` deep inside `installOfficialSdk`, which reads as a bug in this package rather than as
+  // the documented limit of the one function that has it.
+  requireBunRuntime(
+    "runCapture",
+    "Bun.spawn and Bun.serve",
+    "It installs the pinned official SDK into a throwaway npm prefix and drives it against loopback fakes. Run the capture under Bun (`bun run scripts/capture-official-golden.ts`); the GOLDENS it produces are plain JSON and are readable from Node.",
+  );
   // Scenario filter: RUN_OFFICIAL_CAPTURE_ONLY=F,H runs only those. Empty/unset runs everything.
   // The ephemeral install happens once either way; this only skips the scenarios themselves, so an
   // iteration on one scenario does not re-run the other nine.

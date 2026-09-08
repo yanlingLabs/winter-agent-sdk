@@ -13,6 +13,9 @@
 // NO REAL CREDENTIALS. Every token here is `test-token-xai-…` and the account id is the fixture's
 // own `acct-x`. Binds `127.0.0.1:0`; callers stop it in a `finally`.
 
+// P7a fix wave r2 (item 3): both starters below bind a real loopback listener.
+import { requireBunRuntime } from "../../bun-required.ts";
+
 /** Only what an assertion needs. Header names are lowercased; an `authorization` value would be redacted, though these two endpoints carry none. */
 export interface XaiRecordedRequest {
   method: string;
@@ -84,6 +87,7 @@ function fakeIdToken(sub: string = ACCOUNT_ID): string {
  * side of a dependency direction this package cannot import across.
  */
 export async function startXaiChatFake(opts: { freshBearer?: string } = {}): Promise<XaiChatFake> {
+  requireBunRuntime("startXaiChatFake", "Bun.serve", "It binds a loopback HTTP server on 127.0.0.1:0 to stand in for the vendor. Drive it from a Bun test process; a Node consumer has no fake to start.");
   const requests: XaiRecordedRequest[] = [];
   const fresh = opts.freshBearer ?? REFRESHED_ACCESS_TOKEN;
   let sawFreshBearer = false;
@@ -120,6 +124,7 @@ export async function startXaiChatFake(opts: { freshBearer?: string } = {}): Pro
 }
 
 export async function startXaiOauthFake(opts: XaiOauthFakeOptions = {}): Promise<XaiOauthFake> {
+  requireBunRuntime("startXaiOauthFake", "Bun.serve", "It binds a loopback HTTP server on 127.0.0.1:0 to stand in for the vendor. Drive it from a Bun test process; a Node consumer has no fake to start.");
   const requests: XaiRecordedRequest[] = [];
   let polls = 0;
 
