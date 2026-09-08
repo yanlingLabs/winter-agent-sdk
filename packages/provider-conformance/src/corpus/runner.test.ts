@@ -8,6 +8,8 @@
 // Every fake is closed in a `finally` (via `withFake`), and every one binds 127.0.0.1 port 0.
 import { test, expect, describe } from "bun:test";
 import { MODEL_REASON_CODE_PREFIX, describeCaseFailure, describeReasonCode } from "./classifier-safety.ts";
+// Stays relative (review r1 Critical-2): `winter-agent-runtime` is `"private": true`, never
+// published -- irrelevant here since `.test.ts` files never ship as reachable code.
 import { CLASSIFIER_NO_VERDICT_REASONS, MODEL_REASON_CODE_PREFIX as RUNTIME_MODEL_REASON_CODE_PREFIX } from "../../../runtime/src/provider/classifier/verdict-schema.ts";
 import {
   errorResponse,

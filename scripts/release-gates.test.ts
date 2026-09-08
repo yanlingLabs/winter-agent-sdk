@@ -1,0 +1,224 @@
+// P7a Lane C: the release/publish pipeline's own YAML tripwires, in `scripts/ci-gates.test.ts`'s
+// PATTERN -- a separate file, not an addition to that one, because ci-gates.test.ts's own header
+// already names its exact Phase-6 scope (the catalog/provider-sync gates and the live-gate absence)
+// and mixing this phase's publish-pipeline assertions into it would blur two independently-owned
+// concerns under one title.
+//
+// Three things live entirely in YAML, which has no compiler:
+//   1. `release.yml`'s `on:` block MUST be exactly `{ push: { tags: ["v*"] }, workflow_dispatch: {} }`
+//      -- Global Constraints: "the publish job fires ONLY on v* tags or workflow_dispatch -- never
+//      on phase-* tags (a CI assertion pins the on: block)". Every earlier phase of this arc tags
+//      its own merge commits `phase-N-...`; if release.yml's trigger ever widened to match those,
+//      finishing an unrelated phase would silently publish.
+//   2. NO workflow file other than release.yml may run an actual `pnpm publish`/`npm publish`
+//      COMMAND (Global Constraints: "NO other workflow contains publish"). Checked at the COMMAND
+//      level, comments stripped -- not a bare substring search over the whole file, because this
+//      file's own header (and ci.yml's `pack-smoke` job comments) legitimately use the English word
+//      "publish" to explain what does and does not do it; a naive `.includes("publish")` would trip
+//      on prose describing the constraint, not on anything that could actually publish.
+//   3. ci.yml's `pack-smoke` + `pack-smoke-node18` jobs (WS-02 §9 item 3) exist, run on every push
+//      (ci.yml's own top-level trigger, not gated behind a release tag), and together cover both
+//      Node 18 and Bun via the one shared `scripts/smoke-installed.ts` (fix round 2, review r1
+//      Important-4) -- which packs, scans, installs once offline, and imports every publishable
+//      package's full exports map internally.
+//
+// Absence is the one that genuinely needs a test, for the same reason ci-gates.test.ts's own header
+// gives: a workflow that never publishes and one that was never SUPPOSED to look identical in a
+// diff, and only a test tells them apart.
+import { describe, test, expect } from "bun:test";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+
+const WORKFLOWS_DIR = fileURLToPath(new URL("../.github/workflows/", import.meta.url));
+const RELEASE_YML_PATH = join(WORKFLOWS_DIR, "release.yml");
+const RELEASE_YML = readFileSync(RELEASE_YML_PATH, "utf8");
+const CI_YML = readFileSync(join(WORKFLOWS_DIR, "ci.yml"), "utf8");
+
+function workflowFiles(): string[] {
+  return readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+}
+
+/** Strips a trailing `#...` comment (YAML or shell -- both use `#`), keyed on the `#` being preceded by start-of-line or whitespace so it never eats a real token. */
+function stripComment(line: string): string {
+  const idx = line.search(/(^|\s)#/);
+  return idx === -1 ? line : line.slice(0, idx);
+}
+
+/** True iff the file's ACTUAL command text (comments stripped) runs `pnpm publish` or `npm publish` anywhere -- not merely mentions the word "publish" in prose. */
+function containsPublishCommand(yamlText: string): boolean {
+  return yamlText
+    .split("\n")
+    .map(stripComment)
+    .some((line) => /\b(pnpm|npm)\s+publish\b/.test(line));
+}
+
+describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only", () => {
+  test("the parsed `on:` block is EXACTLY { push: { tags: [\"v*\"] }, workflow_dispatch: {} }", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as { on: unknown };
+    expect(doc.on).toEqual({ push: { tags: ["v*"] }, workflow_dispatch: {} });
+  });
+
+  test("no `push: branches` trigger -- a plain branch push must never publish", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as { on: { push?: { branches?: unknown } } };
+    expect(doc.on.push?.branches).toBeUndefined();
+  });
+
+  test("the publish job's permissions are exactly packages:write and contents:read -- nothing broader", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { permissions?: Record<string, string> }> };
+    const jobs = Object.values(doc.jobs);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.permissions).toEqual({ packages: "write", contents: "read" });
+  });
+
+  test("it actually publishes via `pnpm publish -r --no-git-checks`, with NODE_AUTH_TOKEN from secrets.GITHUB_TOKEN", () => {
+    expect(containsPublishCommand(RELEASE_YML)).toBe(true);
+    expect(RELEASE_YML).toContain("pnpm publish -r --no-git-checks");
+    expect(RELEASE_YML).toContain("NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
+  });
+
+  test("scripts/smoke-installed.ts (which packs + scans internally) runs as a gate BEFORE the publish step", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
+    const steps = Object.values(doc.jobs)[0]!.steps;
+    const runLines = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
+    const smokeIndex = runLines.findIndex((r) => r.includes("smoke-installed.ts"));
+    const publishIndex = runLines.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
+    expect(smokeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(smokeIndex);
+  });
+});
+
+describe("release.yml is the ONLY workflow allowed to publish", () => {
+  test("there are at least two workflow files, so this sweep is not vacuous", () => {
+    expect(workflowFiles().length).toBeGreaterThanOrEqual(2);
+    expect(workflowFiles()).toContain("release.yml");
+    expect(workflowFiles()).toContain("ci.yml");
+  });
+
+  test("every OTHER workflow file's actual command text never runs pnpm/npm publish", () => {
+    for (const file of workflowFiles()) {
+      if (file === "release.yml") continue;
+      const content = readFileSync(join(WORKFLOWS_DIR, file), "utf8");
+      expect(containsPublishCommand(content)).toBe(false);
+    }
+  });
+
+  test("the check above is discriminating, not vacuously true: it DOES flag a publish command when one is present", () => {
+    expect(containsPublishCommand("      - run: pnpm publish -r --no-git-checks\n")).toBe(true);
+    expect(containsPublishCommand("      # this comment mentions pnpm publish but never runs it\n")).toBe(false);
+  });
+});
+
+// Shared shape for the handful of tests below that need to inspect `continue-on-error` and `with`
+// at both the job and step level.
+interface WorkflowStep {
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, unknown>;
+  ["continue-on-error"]?: boolean;
+}
+interface WorkflowJob {
+  steps: WorkflowStep[];
+  ["continue-on-error"]?: boolean;
+}
+interface WorkflowDoc {
+  on: unknown;
+  jobs: Record<string, WorkflowJob>;
+}
+
+describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-7a-16, fix round 1)", () => {
+  test("both jobs exist and run on ci.yml's own top-level trigger (every push/PR), not a release tag", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    expect(doc.jobs).toHaveProperty("pack-smoke");
+    expect(doc.jobs).toHaveProperty("pack-smoke-node18");
+    expect(doc.on).toEqual(["push", "pull_request"]);
+  });
+
+  test("R-7a-16: pack-smoke-node18 is ADVISORY -- `continue-on-error: true` at the JOB level", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    expect(doc.jobs["pack-smoke-node18"]?.["continue-on-error"]).toBe(true);
+  });
+
+  test("R-7a-16: pack-smoke (the Bun leg) stays BLOCKING -- no continue-on-error on the job or on any of its steps", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const job = doc.jobs["pack-smoke"]!;
+    expect(job["continue-on-error"]).toBeUndefined();
+    for (const step of job.steps) expect(step["continue-on-error"]).toBeUndefined();
+  });
+
+  // review r1 (Important-4): both jobs now call the ONE shared scripts/smoke-installed.ts, which
+  // packs, scans, installs (one offline npm install), and imports EVERY publishable package's full
+  // exports map internally -- deriveImportTargets()'s own test (scripts/smoke-installed.test.ts)
+  // proves that coverage property; these YAML-level tests only need to prove each job invokes the
+  // right script with the right --runtime flag, since the coverage itself is no longer expressible
+  // as grep-able inline `node -e`/`bun -e` text.
+  test("pack-smoke-node18 pins Node 18 explicitly and calls smoke-installed.ts --runtime=node; pack-smoke has NO setup-node and calls it --runtime=bun", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const node18Job = doc.jobs["pack-smoke-node18"]!;
+    const setupNode = node18Job.steps.find((s) => s.uses?.startsWith("actions/setup-node"));
+    expect(setupNode?.with).toEqual({ "node-version": 18 });
+    expect(node18Job.steps.some((s) => s.run?.includes("smoke-installed.ts") && s.run?.includes("--runtime=node"))).toBe(true);
+
+    const bunJob = doc.jobs["pack-smoke"]!;
+    expect(bunJob.steps.some((s) => s.uses?.startsWith("actions/setup-node"))).toBe(false);
+    expect(bunJob.steps.some((s) => s.run?.includes("smoke-installed.ts") && s.run?.includes("--runtime=bun"))).toBe(true);
+  });
+
+  test("the advisory job's own step name documents WHY, by name, citing R-7a-16", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const names = doc.jobs["pack-smoke-node18"]!.steps.map((s) => s.name).filter((n): n is string => typeof n === "string");
+    expect(names.some((n) => n.toLowerCase().includes("advisory") && n.includes("R-7a-16"))).toBe(true);
+  });
+});
+
+describe("release.yml's own Node 18 smoke (R-7a-16): stays BLOCKING, unlike ci.yml's advisory leg", () => {
+  test("the publish job has no job-level continue-on-error", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    expect(Object.values(doc.jobs)[0]?.["continue-on-error"]).toBeUndefined();
+  });
+
+  test("no step in the publish job sets continue-on-error -- including the Node 18 smoke steps specifically", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    for (const step of Object.values(doc.jobs)[0]!.steps) expect(step["continue-on-error"]).toBeUndefined();
+  });
+
+  test("it runs a Node 18 smoke via scripts/smoke-installed.ts, pinned via actions/setup-node, strictly before publish", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const steps = Object.values(doc.jobs)[0]!.steps;
+    const setupNode = steps.find((s) => s.uses?.startsWith("actions/setup-node"));
+    expect(setupNode?.with).toEqual({ "node-version": 18 });
+
+    const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
+    const nodeSmokeIndex = runValues.findIndex((r) => r.includes("smoke-installed.ts") && r.includes("--runtime=node"));
+    const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
+    expect(nodeSmokeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(nodeSmokeIndex);
+  });
+
+  test("the Bun leg runs too (WS-02 §9 item 3 names both runtimes), also strictly before publish", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const steps = Object.values(doc.jobs)[0]!.steps;
+    const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
+    const bunSmokeIndex = runValues.findIndex((r) => r.includes("smoke-installed.ts") && r.includes("--runtime=bun"));
+    const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
+    expect(bunSmokeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(bunSmokeIndex);
+  });
+});
+
+describe("WINTER_PACKAGES_TOKEN (scripts/verify-published-install.ts's gate) is EXPLICITLY ABSENT from every workflow", () => {
+  test("no workflow file's ACTUAL command/expression text ever references the variable -- comments stripped, exactly like the publish-command check above, since ci.yml's own comment documents the absence BY NAME (checked separately below)", () => {
+    for (const file of workflowFiles()) {
+      const content = readFileSync(join(WORKFLOWS_DIR, file), "utf8");
+      const liveText = content.split("\n").map(stripComment).join("\n");
+      expect(liveText).not.toContain("WINTER_PACKAGES_TOKEN");
+    }
+  });
+
+  test("the absence is documented in ci.yml rather than left to be re-derived, so the next reader knows it is a decision", () => {
+    expect(CI_YML).toContain("verify-published-install.ts");
+    expect(CI_YML).toContain("WINTER_PACKAGES_TOKEN");
+    expect(CI_YML.toLowerCase()).toContain("deliberately absent");
+  });
+});

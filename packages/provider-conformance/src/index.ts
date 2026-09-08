@@ -11,8 +11,9 @@
 // OWNERSHIP. This package's SPINE files are `src/fakes/server.ts` (the shared loopback fake base)
 // and `src/corpus/runner.ts` (the scenario runner) — Task 3's deliverables, frozen on its merge
 // (R6-12). Adapter lanes then ADD `src/fakes/<family>.ts` and `src/corpus/<family>.ts` beside them,
-// never editing the base. This barrel is the spine's package skeleton; T3 re-exports the fake base
-// and the runner from here.
+// never editing the base. This barrel is the spine's package skeleton; T3's runner is re-exported
+// directly from here, and `server.ts` plus every fake are re-exported via the dedicated
+// `./fakes/index.ts` subpath barrel (P7a Lane C) — see that file's own header.
 //
 // TEST-ONLY, and structurally so: nothing in the shipped runtime imports this package. Its fakes
 // bind `127.0.0.1` on port 0, close in a `finally` with an explicit deadline, and log every request
@@ -23,23 +24,10 @@
 /** The package's own identity, so a scenario report can name what produced it. */
 export const PROVIDER_CONFORMANCE_PACKAGE = "@yanlinglabs/winter-provider-conformance";
 
-// --- Phase 6 Task 3: the spine's two frozen files, re-exported ------------------------------------
+// --- Phase 6 Task 3: the spine's frozen corpus runner, re-exported ---------------------------------
 //
 // A lane imports from this barrel rather than reaching into `fakes/`/`corpus/` by path, so the
 // package's own public surface is what R6-12 freezes and a lane's added file is what it adds.
-export {
-  errorResponse,
-  jsonResponse,
-  noRequestContains,
-  redirectResponse,
-  requestsTo,
-  scenarioTable,
-  sseResponse,
-  stalledResponse,
-  startFake,
-  withFake,
-} from "./fakes/server.ts";
-export type { FakeRoute, FakeServer, RecordedRequest, ScenarioResponder, ScenarioTableOptions, SseFrame, SseResponseOptions, StartFakeOptions } from "./fakes/server.ts";
 export { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./corpus/runner.ts";
 export type { CorpusCaseContext, CorpusCaseId, CorpusCaseImpl, CorpusCaseOutcome, CorpusCaseResult, CorpusCaseSpec, CorpusReport, RunAdapterCorpusOptions } from "./corpus/runner.ts";
 
@@ -71,10 +59,10 @@ export type {
 export { LIVE_CASES, LiveCaseAssertionError, formatLiveReport, formatLiveRow, liveRowSummary, runLiveCases, runLiveTarget } from "./live/index.ts";
 export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveReport, LiveRowSummary, LiveRowSummaryOptions, LiveTargetKindLabel, RunLiveCasesOptions } from "./live/index.ts";
 
-// --- Phase 6 Task 10: the per-family fakes and corpora, as NAMESPACES ----------------------------
+// --- Phase 6 Task 10: the per-family corpora, as NAMESPACES ----------------------------------------
 //
-// Four adapter lanes added `fakes/<family>.ts` and `corpus/<family>.ts` beside the spine's two frozen
-// files exactly as R6-12 told them to — and this barrel, frozen for the same reason, could not name
+// Four adapter lanes added `fakes/<family>.ts` and `corpus/<family>.ts` beside the spine's frozen
+// runner exactly as R6-12 told them to — and this barrel, frozen for the same reason, could not name
 // them. So every cross-package consumer reached them by relative path, which is the drift a barrel
 // exists to prevent.
 //
@@ -84,23 +72,40 @@ export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveRe
 // publish a surface that quietly omits three names each lane genuinely uses. A namespace per module
 // is collision-proof by construction, and it keeps `anthropicCorpus.foldTurn` readable at the call
 // site about which family's fold it is.
-export * as anthropicCorpus from "./corpus/anthropic.ts";
 export * as azureCorpus from "./corpus/azure.ts";
-export * as bedrockCorpus from "./corpus/bedrock.ts";
-export * as googleCorpus from "./corpus/google.ts";
-export * as openaiCorpus from "./corpus/openai.ts";
-export * as openaiScenarios from "./corpus/openai-scenarios.ts";
-export * as vertexCorpus from "./corpus/vertex.ts";
 
-export * as anthropicConsoleOauthFake from "./fakes/anthropic-console-oauth.ts";
-export * as anthropicFake from "./fakes/anthropic-messages.ts";
-export * as azureFake from "./fakes/azure-openai.ts";
-export * as bedrockFake from "./fakes/bedrock.ts";
-export * as codexFake from "./fakes/codex-oauth.ts";
-export * as geminiFake from "./fakes/gemini.ts";
-export * as openaiChatFake from "./fakes/openai-chat.ts";
-export * as openaiModelsFake from "./fakes/openai-models.ts";
-export * as openaiResponsesFake from "./fakes/openai-responses.ts";
-export * as vertexFake from "./fakes/vertex.ts";
-export * as xaiOauthFake from "./fakes/xai-oauth.ts";
-export { OPAQUE_FIELD_NAMES, redactOpaqueFields } from "./fakes/redact-opaque.ts";
+// `anthropicCorpus`, `bedrockCorpus`, `googleCorpus`, `openaiCorpus`, `vertexCorpus` and
+// `openaiScenarios` are DELIBERATELY NOT re-exported here (review r1 Critical Finding 2's actual
+// fix, not a Phase 6 omission). `corpus/{anthropic,bedrock,google,openai}.ts` import
+// `foldProviderStream`/`adapterAsProvider` from `packages/runtime/src/provider/bridge.ts` — a
+// relative path into `winter-agent-runtime`, which is `"private": true` and never published (WS-02
+// §3: "not published directly"). `bridge.ts`'s own header explains why that conversion can only ever
+// live in the runtime engine package (a one-way runtime -> provider-runtime dependency, never
+// reversed), so no package-specifier spelling of that import could ever be resolved by an external
+// installer. `corpus/vertex.ts` and `corpus/openai-scenarios.ts` are excluded TRANSITIVELY: neither
+// touches `packages/runtime` itself, but `vertex.ts` imports real VALUES (not just types) from
+// `google.ts`, and `openai-scenarios.ts` imports real values from `openai.ts` -- an ES module import
+// always evaluates the entire target file, so pulling in either one still requires the broken file's
+// own top-level import to resolve. (`azure.ts`'s own reach into `openai.ts` is `import type` only,
+// which Bun/tsc elide entirely -- confirmed the one case that is actually safe to keep.) A bare
+// `import("@yanlinglabs/winter-provider-conformance")` crashed immediately once packed and installed
+// standalone (`Cannot find module '../../../runtime/src/provider/bridge.ts'`), reproduced against a
+// real packed tarball via `scripts/smoke-installed.ts` -- which is what caught the vertex/
+// openai-scenarios cases specifically, after fixing the first four made the obvious ones green.
+//
+// Removing these six names from the PUBLISHED barrel is a no-op for every real consumer: nothing
+// anywhere in this monorepo (or the pipeline's own conformance matrix) imports them by package name
+// — every genuine consumer, including each corpus file's own `.test.ts`, reaches its implementation
+// by a direct same-directory relative import (e.g. `anthropic.test.ts` imports
+// `anthropicCorpusCases` from `"./anthropic.ts"`, never `anthropicCorpus` from this barrel) and is
+// completely unaffected. The six `corpus/*.ts` files themselves are untouched and keep working
+// exactly as before for every in-monorepo consumer; only their re-export from THIS published
+// surface is gone.
+
+// --- P7a Lane C: every fake, via the dedicated `./fakes` subpath barrel ----------------------------
+//
+// Moved out of this file and into `fakes/index.ts` (WS-02 §9 Step 2: "exports maps ./fakes"), which
+// this line re-exports in full so nothing importing a fake from the package's TOP LEVEL (as
+// `verify-provider-live.test.ts` does) needs to change. A consumer who wants ONLY the fakes can
+// import `@yanlinglabs/winter-provider-conformance/fakes` directly instead.
+export * from "./fakes/index.ts";

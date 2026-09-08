@@ -15,7 +15,7 @@
 // `CryptoKey` that only this fake holds.
 import { errorResponse, jsonResponse, type FakeRoute, type RecordedRequest } from "./server.ts";
 import { findFunctionResponseOrderingViolation, findRoleAlternationViolation, geminiError, geminiModelOf, type GeminiFakeOptions } from "./gemini.ts";
-import { base64UrlEncode } from "../../../provider-runtime/src/adapters/google/index.ts";
+import { base64UrlEncode } from "@yanlinglabs/winter-provider-runtime/testing"; // review r1 (Critical-2): package specifier, not a relative escape
 import { verifyRs256Jwt } from "./jwt-verify.ts";
 
 /** A keypair for one test run. NEVER committed: this generates a fresh one every call. */

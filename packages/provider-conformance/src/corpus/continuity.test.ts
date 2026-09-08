@@ -12,11 +12,14 @@
 
 import { describe, expect, test } from "bun:test";
 import { CONTINUITY_CASES, claudeTurn, createContinuityWorld, formatContinuityReport, openaiTurn, runContinuityCorpus } from "./continuity.ts";
-import { createHistoryRenderer } from "../../../provider-runtime/src/continuity/index.ts";
+// `adapterAsProvider`/`ProviderMessage`/`ProviderStreamSink` stay relative (review r1 Critical-2):
+// `winter-agent-runtime` is `"private": true`, never published, so no package-specifier form could
+// ever resolve outside this monorepo -- irrelevant here since `.test.ts` files never ship as
+// reachable code (M-6, close-out's own debt), and this file only ever runs under `bun test`.
 import { adapterAsProvider, type HistoryRenderer } from "../../../runtime/src/provider/bridge.ts";
-import { scriptedAdapter } from "../../../provider-runtime/src/continuity/fixtures.ts";
 import type { ProviderMessage, ProviderStreamSink } from "../../../runtime/src/engine.ts";
-import type { ProviderContext, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
+import { createHistoryRenderer, type ProviderContext, type ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
+import { scriptedAdapter } from "@yanlinglabs/winter-provider-runtime/testing";
 
 describe("the continuity corpus (report §12.3 + §12.4)", () => {
   test("every case passes, and none is missing", async () => {

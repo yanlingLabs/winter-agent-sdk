@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createRegistry } from "../../../provider-runtime/src/registry.ts";
+import { createRegistry, createBedrockConverseAdapter, signRequest, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "@yanlinglabs/winter-provider-runtime/testing";
+// `adapterAsProvider`/`foldProviderStream` stay relative (review r1 Critical-2): `winter-agent-runtime`
+// is `"private": true`, never published -- irrelevant here since `.test.ts` files never ship as
+// reachable code.
 import { adapterAsProvider, foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
-import { createBedrockConverseAdapter } from "../../../provider-runtime/src/adapters/bedrock/converse.ts";
-import { signRequest } from "../../../provider-runtime/src/adapters/bedrock/sigv4.ts";
-import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { noRequestContains } from "../fakes/server.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { FAKE_ACCESS_KEY_ID, FAKE_SECRET_ACCESS_KEY, bedrockError, eventStreamResponse, startBedrockFake, textTurnFrames } from "../fakes/bedrock.ts";
 import {
   BEDROCK_CORPUS_MODEL,

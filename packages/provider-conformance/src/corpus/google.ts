@@ -11,11 +11,17 @@
 //     `finishReason`;
 //   - a `functionCall` arrives COMPLETE in one part, so `tool-call-fragmented` is a recorded SKIP
 //     with a reason -- a fact about the family, never a case quietly declined.
+// review r1 (Critical-2): `createGoogleGenerateContentAdapter` now comes through
+// `@yanlinglabs/winter-provider-runtime`'s own public barrel. `foldProviderStream` stays a relative
+// import into `packages/runtime` -- `winter-agent-runtime` is `"private": true`, never published, so
+// no package-specifier spelling of it could ever be installed externally -- which is why this file's
+// `googleCorpus` namespace is NO LONGER re-exported from `../index.ts` (nothing outside this
+// package's own `.test.ts` files ever imported it by package name; see `corpus/anthropic.ts`'s own
+// header for the full reasoning, identical here).
 import type { ReasoningCapabilities, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
-import { createMemoryCredentialStore, createRegistry, discoverModels } from "@yanlinglabs/winter-provider-runtime";
+import { createMemoryCredentialStore, createRegistry, discoverModels, createGoogleGenerateContentAdapter } from "@yanlinglabs/winter-provider-runtime";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { createGoogleGenerateContentAdapter } from "../../../provider-runtime/src/adapters/google/index.ts";
 import { foldProviderStream, type FoldedProviderTurn } from "../../../runtime/src/provider/bridge.ts";
 import { assertGeminiRequest, geminiBody, geminiContents, geminiError, geminiFakeRoutes, geminiSseFrames, geminiStreamResponse, partKind, type GeminiPart } from "../fakes/gemini.ts";
 import { jsonResponse, sseResponse, stalledResponse, type FakeRoute, type FakeServer, type RecordedRequest } from "../fakes/server.ts";

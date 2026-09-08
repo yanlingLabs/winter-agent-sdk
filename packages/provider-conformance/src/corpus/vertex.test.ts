@@ -10,20 +10,20 @@ import { noRequestContains, requestsTo, withFake } from "../fakes/server.ts";
 import { geminiBody, geminiContents } from "../fakes/gemini.ts";
 import { VERTEX_TEST_ACCESS_TOKEN, assertVertexRequest, generateTestKeyPair } from "../fakes/vertex.ts";
 import { verifyRs256Jwt } from "../fakes/jwt-verify.ts";
+import { VERTEX_ADAPTER_ID, createVertexGeminiAdapter, vertexEndpointUrl, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import {
   GCP_CLOUD_PLATFORM_SCOPE,
-  VERTEX_ADAPTER_ID,
   createServiceAccountTokenSource,
-  createVertexGeminiAdapter,
   importRs256PrivateKey,
   pkcs8DerFromPem,
   signRs256Jwt,
-  vertexEndpointUrl,
   vertexModelPath,
-} from "../../../provider-runtime/src/adapters/google/index.ts";
+} from "@yanlinglabs/winter-provider-runtime/testing";
+// `foldProviderStream` stays relative (review r1 Critical-2): `winter-agent-runtime` is
+// `"private": true`, never published -- irrelevant here since `.test.ts` files never ship as
+// reachable code.
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { GOOGLE_MODELS, GOOGLE_SIGNATURE } from "./google.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import {
   VERTEX_LOCATION,

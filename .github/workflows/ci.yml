@@ -46,6 +46,76 @@ jobs:
                                                       # `launch()` still refuses outright in production when the
                                                       # sandbox is required and unavailable.
 
+  pack-smoke:
+    # P7a Lane C, Step 3 (WS-02 §9 item 3): proves a consumer can actually INSTALL and IMPORT what
+    # release-pack.ts packs -- runs on every push (unlike release.yml, which fires only on a `v*` tag
+    # or workflow_dispatch and actually publishes; this job never does, so there is no reason to gate
+    # it behind a release trigger). This job is the BLOCKING half -- the Bun leg, WS-02 §5's own
+    # Bun-first requirement. The Node 18 leg lives in the separate `pack-smoke-node18` job below,
+    # ADVISORY per R-7a-16 (fix round 1) -- see that job's own header for why the split exists.
+    #
+    # review r1 (Important-4): both this job and `pack-smoke-node18` call the ONE shared
+    # `scripts/smoke-installed.ts` rather than duplicating the pack/install/import steps inline. It
+    # packs fresh (running the tarball scan), does ONE `npm install --offline` of every tarball into
+    # a throwaway project outside the repo (`npm` alone correctly cross-resolves each package's
+    # inter-dependency against the other tarballs on the same command line -- `bun install` does not,
+    # confirmed empirically while first building this job), then imports EVERY publishable package's
+    # bare entry AND every declared `exports` subpath -- derived at run time from each package's own
+    # manifest, so a new subpath can never be silently left unchecked (this is the exact gap that let
+    # review r1's two Critical findings ship undetected: the pre-fix version of this job checked only
+    # 2 of 5 packages' entry points).
+    #
+    # `scripts/verify-published-install.ts` (the opt-in cross-repo acceptance step, gated on
+    # WINTER_PACKAGES_TOKEN) is deliberately absent from every job in this file: it needs a real
+    # GitHub Packages read token this workflow never holds, and it installs from the REAL registry
+    # rather than a local tarball, which only makes sense after an actual publish has happened. It is
+    # a local operator step, never a CI step; release-gates.test.ts pins that the variable name never
+    # appears anywhere in .github/workflows/.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: pnpm install
+      - run: bun run scripts/smoke-installed.ts --runtime=bun   # WS-02 §5's Bun-first requirement -- BLOCKING
+
+  pack-smoke-node18:
+    # R-7a-16 (fix round 1): ADVISORY, not blocking -- `continue-on-error: true` on the whole job.
+    #
+    # The finding is real and ACCEPTED, not disputed: `packages/sdk` (and provider-catalog,
+    # provider-runtime, conformance) ship `main`/`exports` pointing directly at raw `./src/index.ts`.
+    # Node 18 has no TypeScript support at all, and even a modern Node's `--experimental-strip-types`
+    # additionally refuses to strip types for a file under `node_modules`
+    # (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, verified empirically against a real
+    # packed-and-installed tree while this job was first written). Giving those packages a real
+    # compiled-emit build step whose output the manifests point at is spine-owned manifest work
+    # landing in this phase's fix wave -- not something this publish-pipeline lane does.
+    #
+    # A hard-red job here would turn main's own CI red the moment this branch merges, on every push,
+    # for every lane -- CI is the per-merge HEAVY gate, not the publish gate, and the compiled emit
+    # this finding calls for has not landed yet. So this job still RUNS on every push (it is not
+    # deleted, skipped, or silenced) but is allowed to fail without failing the workflow run. The day
+    # the compiled emit lands, this job starts reporting green on its own; nothing here has to be
+    # remembered or removed for that to become visible.
+    #
+    # release.yml's OWN Node 18 smoke (a separate step in the `publish` job, also calling
+    # scripts/smoke-installed.ts) stays BLOCKING, with no `continue-on-error` anywhere in that job:
+    # publishing is exactly where WS-02 §9 item 3 ("gates every publish") must hold, and a publish
+    # must fail until the emit exists.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
+      - run: pnpm install
+      - name: "pack-smoke-node18 (advisory until the compiled emit lands — R-7a-16)"
+        run: bun run scripts/smoke-installed.ts --runtime=node
+
   official-fixture-compile:
     # Task 11 (WS-03 §14 dual-compile, official half): a SEPARATE job (not a step on `build`) so its
     # ephemeral ~200MB official-package install (native optionalDependency included — accepted here,

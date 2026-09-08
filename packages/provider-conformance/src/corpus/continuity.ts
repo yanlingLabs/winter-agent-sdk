@@ -15,10 +15,13 @@
 // EVIDENCE through the registry and decides what may cross. A loopback fake would add a socket to a
 // test whose entire subject is a policy decision.
 //
-// IMPORT NOTE (disclosed deviation, Lane C report §deviations): the continuity module is reached by
-// relative path because `provider-runtime`'s package barrel is frozen and does not re-export it. When
-// T10 adds the one re-export line, this becomes a package-name import and nothing else changes.
-
+// review r1 (Critical-2): T10's re-export line landed (this repo's `src/index.ts` now re-exports
+// `continuity/index.ts` in full, see that barrel's own "UNFROZEN AT CLOSE" section), so the
+// continuity module itself is a package-name import below. `continuity/fixtures.ts` was NOT part of
+// that re-export and still isn't on the main barrel -- it comes through the new
+// `@yanlinglabs/winter-provider-runtime/testing` subpath instead (review r1's one granted manifest
+// edit), since these are generic in-memory catalog/adapter fixtures for testing, not part of the
+// package's production adapter surface.
 import {
   buildPortableHandoff,
   classifySwitch,
@@ -29,9 +32,11 @@ import {
   summaryRequestOf,
   type ContinuityEndpoint,
   type HistoryTarget,
-} from "../../../provider-runtime/src/continuity/index.ts";
-import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "../../../provider-runtime/src/continuity/fixtures.ts";
-import { createRegistry, type ProviderMessageLike, type ProviderRegistry } from "@yanlinglabs/winter-provider-runtime";
+  createRegistry,
+  type ProviderMessageLike,
+  type ProviderRegistry,
+} from "@yanlinglabs/winter-provider-runtime";
+import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "@yanlinglabs/winter-provider-runtime/testing";
 
 /** The case ids. Stable strings: a report names them and a reader can trace each to its clause of the report. */
 export type ContinuityCaseId =

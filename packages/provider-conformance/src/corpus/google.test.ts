@@ -5,11 +5,10 @@
 import { describe, expect, test } from "bun:test";
 import { noRequestContains, requestsTo, withFake } from "../fakes/server.ts";
 import { assertGeminiRequest, geminiBody, geminiContents, geminiFakeRoutes, geminiStreamResponse } from "../fakes/gemini.ts";
-import { createGoogleGenerateContentAdapter, GOOGLE_ADAPTER_ID, GOOGLE_DEFAULT_BASE_URL, mapGoogleEffort, toContents } from "../../../provider-runtime/src/adapters/google/index.ts";
+import { createGoogleGenerateContentAdapter, GOOGLE_ADAPTER_ID, GOOGLE_DEFAULT_BASE_URL, mapGoogleEffort, toContents, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "@yanlinglabs/winter-provider-runtime/testing";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { GOOGLE_MODELS, GOOGLE_SIGNATURE, GOOGLE_TEST_KEY, foldTurn, googleContext, googleCorpusCases, googleCorpusRoutes, testGoogleAdapter, testGoogleCatalog } from "./google.ts";
 
 describe("Google GenerateContent: the live request", () => {
@@ -51,7 +50,8 @@ describe("Google GenerateContent: the live request", () => {
 
   test("`hostHeaders`: a CREDENTIAL name is dropped on BOTH endpoint kinds; a non-credential identity name only on a user one (F-3 / M-4)", async () => {
     const { createEndpointPolicy, CREDENTIAL_HEADER_NAMES } = await import("@yanlinglabs/winter-provider-runtime");
-    const { hostHeaders, PRIVILEGED_IDENTITY_HEADERS } = await import("../../../provider-runtime/src/adapters/privileged-headers.ts");
+    const { hostHeaders } = await import("@yanlinglabs/winter-provider-runtime/testing");
+    const { PRIVILEGED_IDENTITY_HEADERS } = await import("@yanlinglabs/winter-provider-runtime");
     const generated = createEndpointPolicy(GOOGLE_DEFAULT_BASE_URL, { generated: true });
     const user = createEndpointPolicy("https://example.invalid", { generated: false });
     expect(generated.ok && user.ok).toBe(true);
@@ -290,7 +290,7 @@ describe("Google GenerateContent: a thought part's signature is never re-keyed (
     // "I do not know what this row meant" and "I know and cannot honour it safely" are different
     // states. The first gets the default -- which can only ever capture LATER, never earlier -- and
     // Lane A's own row carries exactly such a value (`response.completed`) for a different family.
-    const { googleCompletionMarker } = await import("../../../provider-runtime/src/adapters/google/index.ts");
+    const { googleCompletionMarker } = await import("@yanlinglabs/winter-provider-runtime/testing");
     const row = testGoogleCatalog().models.find((m) => m.upstreamId === GOOGLE_MODELS.main)!;
     const unrecognised = { ...row, reasoning: { ...row.reasoning!, completionEvent: { value: "response.completed", source: "upstream-static" as const, confidence: "declared" as const } } };
     expect(googleCompletionMarker(unrecognised)).toEqual({ ok: true, marker: "finish-reason" });

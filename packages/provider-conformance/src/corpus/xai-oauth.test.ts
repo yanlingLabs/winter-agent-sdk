@@ -12,18 +12,26 @@
 import { describe, expect, test } from "bun:test";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { createXaiOauthAdapter, XAI_OAUTH, XAI_OAUTH_ADAPTER_ID } from "../../../provider-runtime/src/adapters/openai/xai-oauth.ts";
-import { DERIVED_XAI, DERIVED_XAI_COMMIT } from "../../../provider-runtime/src/adapters/openai/xai-derived-shapes.ts";
-import { createShippedAdapters } from "../../../provider-runtime/src/adapters/index.ts";
-import { FAST_RETRY, descriptor, testContext } from "../../../provider-runtime/src/adapters/openai/testing.ts";
-import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
+import {
+  createXaiOauthAdapter,
+  XAI_OAUTH,
+  XAI_OAUTH_ADAPTER_ID,
+  DERIVED_XAI,
+  DERIVED_XAI_COMMIT,
+  createShippedAdapters,
+  createMemoryCredentialStore,
+  winterUserAgent,
+  WinterProviderResolutionError,
+} from "@yanlinglabs/winter-provider-runtime";
+import { FAST_RETRY, descriptor, testContext } from "@yanlinglabs/winter-provider-runtime/testing";
 import { startOpenAiChatFake } from "../fakes/openai-chat.ts";
 import { crossVendorViolationsIn } from "./cross-vendor-headers.ts";
 import { chatCorpusScenarios } from "./openai-scenarios.ts";
 import { SCENARIO, bodyOf, turnRequests } from "./openai.ts";
-import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+// `createSelectionRegistry`/`resolveSessionProvider` stay relative (review r1 Critical-2):
+// `winter-agent-runtime` is `"private": true`, never published -- irrelevant here since `.test.ts`
+// files never ship as reachable code.
 import { createSelectionRegistry, resolveSessionProvider } from "../../../runtime/src/provider/selection.ts";
 
 const catalog = loadCatalog();

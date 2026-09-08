@@ -32,6 +32,9 @@ import { loadCatalog, type WinterCatalog } from "@yanlinglabs/winter-provider-ca
 import type { CredentialRef, CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+// `buildSessionProvider` stays relative (review r1 Critical-2): `winter-agent-runtime` is
+// `"private": true`, never published -- irrelevant here since `.test.ts` files never ship as
+// reachable code.
 import { buildSessionProvider } from "../../../runtime/src/provider/session-provider.ts";
 import { anthropicFakeRoutes, anthropicTurnResponse } from "../fakes/anthropic-messages.ts";
 import { chatStream } from "../fakes/openai-chat.ts";

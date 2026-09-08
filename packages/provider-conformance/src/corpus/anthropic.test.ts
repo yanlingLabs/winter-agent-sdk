@@ -18,14 +18,24 @@ import {
   FAKE_CONSOLE_REFRESH_TOKEN,
   startAnthropicConsoleOauthFake,
 } from "../fakes/anthropic-console-oauth.ts";
-import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import {
+  createMemoryCredentialStore,
+  createAnthropicMessagesAdapter,
+  ANTHROPIC_ADAPTER_ID,
+  ANTHROPIC_DEFAULT_BASE_URL,
+  CONSOLE_OAUTH,
+  anthropicCredentialRef,
+  mapAnthropicEffort,
+  winterUserAgent,
+} from "@yanlinglabs/winter-provider-runtime";
 import { anthropicError, anthropicFakeRoutes, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks } from "../fakes/anthropic-messages.ts";
-import { createAnthropicMessagesAdapter, ANTHROPIC_ADAPTER_ID, ANTHROPIC_DEFAULT_BASE_URL, CONSOLE_OAUTH, anthropicCredentialRef, mapAnthropicEffort } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "@yanlinglabs/winter-provider-runtime/testing";
+// `foldProviderStream` stays relative (review r1 Critical-2): `winter-agent-runtime` is
+// `"private": true`, never published -- irrelevant here since `.test.ts` files never ship as
+// reachable code.
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { ANTHROPIC_MODELS, ANTHROPIC_TEST_KEY, anthropicCorpusCases, anthropicCorpusRoutes, foldTurn, testAnthropicAdapter, testAnthropicCatalog, testContext } from "./anthropic.ts";
 
 describe("Anthropic Messages: the live request", () => {
