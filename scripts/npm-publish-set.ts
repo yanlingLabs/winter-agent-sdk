@@ -69,7 +69,7 @@ export function npmRequiredClosure(root: string = REPO_ROOT): string[] {
  * The npm set in PUBLISH ORDER: every package after the workspace dependencies it declares.
  *
  * P7a pre-publish round 4 (review I1). `discoverPublishablePackages()` sorts ALPHABETICALLY, so the
- * npm job published `winter-agent-sdk` BEFORE `winter-provider-catalog` -- the dependency its own
+ * npm job published the WRAPPER before the catalog it depends on -- the dependency its own
  * packed manifest pins at that exact version. For the interval between the two uploads, npm served
  * the one package a public consumer installs by name declaring a dependency that did not exist, and
  * `npm install @yanlinglabs/winter-agent-sdk` 404'd on it. If the second upload then failed, that
