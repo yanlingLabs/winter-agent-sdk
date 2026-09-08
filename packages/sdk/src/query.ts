@@ -23,7 +23,7 @@ import { resolveKeychainServiceForProfile } from "./paths/home.ts";
 // R-7b-4: the facet's own contract types + the guards this side runs on the runtime's answers. The
 // `id` -> RuntimeAddress rule (`resolveFacetTarget`) is applied on the RUNTIME side, where the
 // session id is authoritative -- this side puts the caller's id on the wire verbatim.
-import { deliveryUncertain, type DeliveryOutcome, type GlobalAgentMessage, type ListedRuntimeObject, type PermissionClassLabel } from "./messaging/index.ts";
+import { deliveryUncertain, refused as refusedOutcome, unavailable as unavailableOutcome, type DeliveryOutcome, type GlobalAgentMessage, type ListedRuntimeObject, type PermissionClassLabel } from "./messaging/index.ts";
 import {
   MESSAGING_CONTROL_SUBTYPES,
   isDeliveryOutcome,
@@ -87,6 +87,27 @@ export interface QueryInternal {
  *
  * WINTER-ONLY, disclosed: the pinned official SDK has no messaging surface of any kind (its `Query`
  * declares none), so there is no counterpart to mirror and nothing here is a divergence FROM one.
+ *
+ * FOUR THINGS A CONSUMER MUST KNOW, because none of them is visible in the signatures:
+ *
+ *  1. NO DELIVERY METHOD REJECTS. `deliver`, `steerChild`, `resumeChild` and `subscribeIdle` always
+ *     RESOLVE with a typed `DeliveryOutcome` -- a caller that must record an outcome for every
+ *     message (WS-10 §12's ledger) is never left with nothing to write down. A refusal the runtime
+ *     could name arrives as `refused`; an unregistered messaging runtime as non-retryable
+ *     `unavailable`; every other failure, including a transport fault, as `delivery_uncertain`,
+ *     because from the host's side that is genuinely indistinguishable from "it already happened".
+ *  2. THIS FACET SERVES ONE SESSION -- its own, and its own children. A target naming another session
+ *     is refused, even though the runtime could reach it in a shared process: cross-session delivery
+ *     belongs to the router, through its directory, which is the one party that holds every session's
+ *     entry and can pick the right adapter for it.
+ *  3. THE RECEIVER RE-RUNS INBOUND POLICY on the `senderPermissionClass` YOU stamped (WS-10 §13), so
+ *     a caller-side decision to deliver can still come back `held` or `refused`. The envelope's class
+ *     is an input to the receiver's matrix, never a verdict.
+ *  4. NOTIFICATIONS ARE NAMESPACED. `subscribeIdle` and `readNotifications` default to the FACET's own
+ *     queue key (`host:<sessionId>`), deliberately separate from the one the session's own model
+ *     drains with its `ReadNotifications` tool -- a drain REMOVES, so a shared key would have
+ *     whichever side read first silently eat the other's notices. Passing
+ *     `subscriberSessionId: <the session's own id>` opts into the model's bucket on purpose.
  */
 export interface SessionMessagingFacet {
   /** Every object this session can currently reach: its own children, plus the reachable live peers its adapter knows (WS-10 §10.2 -- never exited transcripts). */
@@ -1168,13 +1189,40 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   //
   // A control response with `ok: false` still REJECTS (sendControlRequest's own contract) -- that is
   // the runtime saying the CALL was malformed or unserved, which is a caller error, not an outcome.
+  // Fix r1 (M4): a DELIVERY method NEVER rejects. Every failure becomes a typed `DeliveryOutcome`,
+  // because the caller is a router that must RECORD an outcome for the message either way -- a
+  // rejection leaves it with nothing to write down, and WS-10 §12's whole ledger is built on there
+  // always being something.
+  //
+  // The mapping is by what the failure PROVES, never by convenience:
+  //   * `invalid_messaging_request` -> `refused`. Every producer of it (the wrong door, the
+  //     cross-session fence, an unattributable sender, a malformed payload) checks BEFORE touching an
+  //     adapter, so nothing happened and the router may record that.
+  //   * `messaging_unavailable` -> `unavailable`, non-retryable: no messaging runtime is registered
+  //     in that process, which retrying cannot change.
+  //   * ANYTHING ELSE -- `messaging_adapter_threw`, a transport fault, a closed connection, a payload
+  //     this wrapper cannot read -- is `delivery_uncertain`. From here "the call failed" and "the
+  //     effect happened and then the call failed" are indistinguishable, which is exactly the crash
+  //     window §12 names, and the conservative reading is the only honest one.
   async function deliveryCall(subtype: string, payload: unknown, messageId: string): Promise<DeliveryOutcome> {
-    const answer = await sendControlRequest(subtype, payload);
+    let answer: unknown;
+    try {
+      answer = await sendControlRequest(subtype, payload);
+    } catch (err) {
+      const code = err instanceof WinterRpcError ? err.code : "";
+      const message = err instanceof Error ? err.message : String(err);
+      if (code === "invalid_messaging_request") return refusedOutcome(messageId, message);
+      if (code === "messaging_unavailable") return unavailableOutcome(messageId, false, message);
+      return deliveryUncertain(messageId, `'${subtype}' failed: ${message}`);
+    }
     return isDeliveryOutcome(answer) ? answer : deliveryUncertain(messageId, `the runtime returned a malformed delivery outcome for '${subtype}'`);
   }
   gen.messaging = {
     async listReachable(): Promise<ListedRuntimeObject[]> {
-      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.listReachable, undefined);
+      // A DATA method: it degrades to an honest empty answer rather than throwing, on a malformed
+      // payload AND on an `ok:false` -- a rejected promise could not tell "nothing reachable" from a
+      // transport fault, and an empty listing claims nothing about a delivery.
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.listReachable, undefined).catch(() => undefined);
       return isListedRuntimeObjectArray(payload) ? payload : [];
     },
     deliver(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
@@ -1200,7 +1248,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       return deliveryCall(MESSAGING_CONTROL_SUBTYPES.subscribeIdle, request, opts.messageId);
     },
     async senderClass(): Promise<PermissionClassLabel> {
-      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.senderClass, undefined);
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.senderClass, undefined).catch(() => undefined);
       const label = typeof payload === "object" && payload !== null ? (payload as { senderClass?: unknown }).senderClass : undefined;
       return isPermissionClassLabel(label) ? label : "unknown";
     },
@@ -1209,7 +1257,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
         ...(opts?.subscriberSessionId !== undefined ? { subscriberSessionId: opts.subscriberSessionId } : {}),
         ...(opts?.max !== undefined ? { max: opts.max } : {}),
       };
-      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.readNotifications, request);
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.readNotifications, request).catch(() => undefined);
       // A DATA method: a malformed payload degrades to an honest empty page rather than throwing,
       // because a rejected promise could not tell "nothing queued" from a transport fault. Safe in a
       // way the delivery methods are not -- an empty page claims nothing about a delivery.

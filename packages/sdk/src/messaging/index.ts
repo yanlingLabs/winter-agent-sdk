@@ -22,6 +22,19 @@
 //   * the model-facing `SendMessage`/`ListAgents` tool schemas (WS-10 §10.1/§10.2) — those are a
 //     runtime's tool surface, not a messaging seam.
 
+// THE ONE THING A ROUTER MUST NOT ASSUME: A SERIALIZED ADDRESS CARRIES NO RUNTIME KIND.
+//
+// WS-10 §11's opaque form is `session:<id>` / `agent:<parent>:<child>` and nothing else -- runtime
+// kind and backend ids "live in the directory record". So `parseRuntimeAddress`,
+// `buildSessionAddress` and `buildChildAddress` can only ever stamp a DEFAULT (`winter-agent`), and a
+// consumer that picks an adapter by `address.runtimeKind` on an address it parsed would send every
+// Claude-driven session to the Winter branch.
+//
+// `resolveTarget` carries the row's DECLARED `runtimeKind` through wherever a `ListedRuntimeObject`
+// is available, because there the row IS the directory record. Everywhere else -- an address a router
+// builds by hand from its own entry -- the router must overlay the kind itself. `sameAddress` is
+// unaffected: it compares serializations, which never carry the kind.
+
 // --- the contract: addresses, listings, outcomes, the envelope, the adapter, the child boundary ---
 export {
   serializeRuntimeAddress,

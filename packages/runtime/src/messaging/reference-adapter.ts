@@ -358,7 +358,15 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
       const acceptedOk = mailbox.accept(receiverKey);
       if (!acceptedOk) return refused(msg.messageId, "accepted-message queue is full (cap 50, WS-10 §13); refused visibly rather than silently dropped");
       const wasRunning = peer.status() === "running";
-      await peer.deliver(msg);
+      try {
+        await peer.deliver(msg);
+      } catch (err) {
+        // A peer may REFUSE at the push (fix r1, I3: an unattributable `agent:`-origin envelope). The
+        // accepted slot must come back either way, or the 50-cap leaks one entry per refusal until a
+        // long-lived receiver stops accepting anything.
+        mailbox.releaseAccepted(receiverKey);
+        throw err;
+      }
       // This reference's own `deliver` call is synchronous-complete (a direct, fire-and-forget call
       // into the fake/real peer) -- a real host's own queue would drain this over time (P8); this
       // reference releases the accepted-slot immediately rather than pretending to model that delay.
@@ -505,7 +513,23 @@ export interface DefaultMessagingRuntime extends MessagingRuntimeDeps {
  * Exported so `router-wiring.test.ts` can pin both directions on the REAL class.
  */
 export function classifyDeliveryError(err: unknown): "refused" | "uncertain" {
-  return err instanceof ChildResumeModeIncomparableError ? "refused" : "uncertain";
+  if (err instanceof ChildResumeModeIncomparableError) return "refused";
+  if (err instanceof UnattributableSenderError) return "refused";
+  return "uncertain";
+}
+
+/**
+ * Fix r1 (I3): a message into a session's input stream whose sender cannot be ATTRIBUTED.
+ *
+ * A clean, side-effect-free refusal -- nothing has been written -- so it classifies as `refused`
+ * rather than as WS-10 §12's crash window. Thrown from a session peer's own `deliver`, which is the
+ * only point that knows both the envelope and the stream it would be written to.
+ */
+export class UnattributableSenderError extends Error {
+  constructor(reason: string) {
+    super(`cross-session delivery refused: ${reason}`);
+    this.name = "UnattributableSenderError";
+  }
 }
 
 // Builds a complete, self-consistent MessagingRuntimeDeps: the real seam (the SDK subpath) + the reference

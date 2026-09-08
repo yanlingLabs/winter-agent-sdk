@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { resolveTarget, childToListedRuntimeObject, type ResolutionInputs } from "./resolution.ts";
 import { serializeRuntimeAddress, type ListedRuntimeObject } from "./adapter.ts";
+import { sameAddress } from "./addressing.ts";
 import { createFakeChild } from "./child-fake.test-support.ts";
 import type { ChildLike } from "./adapter.ts";
 
@@ -163,5 +164,48 @@ describe("resolveTarget: not_found", () => {
   test("an unrecognized name/id with nothing registered is not_found", () => {
     const result = resolveTarget(baseInputs({ to: "nobody-by-this-name" }));
     expect(result.kind).toBe("not_found");
+  });
+});
+
+// --- Fix r1 (I2): a resolved address carries the ROW's declared runtime kind -------------------------
+//
+// The finding: `parseRuntimeAddress` can only ever stamp a default, because WS-10 §11's serialized
+// form deliberately carries no runtime kind. `resolveTarget` used to hand that default straight back,
+// so a `claude-agent` peer row resolved to a `winter-agent`-typed address -- and the router picks its
+// ADAPTER by that field, which would have sent every Claude-driven session to the Winter branch.
+describe("runtime kind: the peer ROW is authoritative, never the parsed address", () => {
+  const claudePeer = peerRow({ winterSessionId: "s_claude", name: "reviewer", runtimeKind: "claude-agent" });
+
+  test("resolving a claude-agent peer BY NAME yields a claude-agent address", () => {
+    const result = resolveTarget(baseInputs({ to: "reviewer", peers: [claudePeer] }));
+    expect(result.kind).toBe("resolved");
+    if (result.kind !== "resolved") return;
+    expect(result.address.runtimeKind).toBe("claude-agent");
+    expect(result.address.winterSessionId).toBe("s_claude");
+  });
+
+  test("resolving the SAME peer by its CANONICAL address yields it too -- both branches carry the kind", () => {
+    // Rule 1 and rule 3 are separate code paths and only one of them used to be wrong in a way a test
+    // would notice; pinning both is what keeps a future edit from fixing one and leaving the other.
+    const result = resolveTarget(baseInputs({ to: claudePeer.address, peers: [claudePeer] }));
+    expect(result.kind).toBe("resolved");
+    if (result.kind !== "resolved") return;
+    expect(result.address.runtimeKind).toBe("claude-agent");
+  });
+
+  test("a CHILD still resolves as winter-agent -- a child of a Winter session is one by construction", () => {
+    const child = createFakeChild({ id: "c1", name: "worker" });
+    const result = resolveTarget(baseInputs({ to: "worker", children: [child] }));
+    expect(result.kind).toBe("resolved");
+    if (result.kind !== "resolved") return;
+    expect(result.address.runtimeKind).toBe("winter-agent");
+  });
+
+  test("sameAddress is unaffected: two addresses differing ONLY in runtimeKind are the same object", () => {
+    // The serialized form carries no kind, which is why the overlay is needed at all -- and why
+    // identity comparisons must not start disagreeing now that the field actually varies.
+    const winter = { objectKind: "session" as const, runtimeKind: "winter-agent" as const, winterSessionId: "s_claude" };
+    const claude = { ...winter, runtimeKind: "claude-agent" as const };
+    expect(sameAddress(winter, claude)).toBe(true);
   });
 });

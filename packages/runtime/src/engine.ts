@@ -55,11 +55,14 @@ import {
   buildSessionAddress,
   classifyPermissionMode,
   parseRuntimeAddress,
+  refused as refusedOutcome,
+  serializeRuntimeAddress,
   type DeliveryOutcome,
+  type GlobalAgentMessage,
   type RuntimeAddress,
 } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { getMessagingRuntime } from "./messaging/router.ts";
-import { getDefaultMessagingRuntime, type PeerSessionHandle } from "./messaging/reference-adapter.ts";
+import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDeliveryError, type PeerSessionHandle } from "./messaging/reference-adapter.ts";
 // Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
 // `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
 // runtime -> provider-runtime only (R6-4: provider-runtime never imports the runtime), so the seam
@@ -1697,18 +1700,68 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // carries a host control frame, so this code cannot run inside one.
   let facetSelfPeer: (() => void) | undefined; // the unregister handle, present once registered
   let facetNoticeForwarder: (() => void) | undefined;
+  // Fix r1 (M6): set at both `userFrames.end()` sites. A write after the channel has ended lands in a
+  // buffer whose iterator has already returned -- so the frame is DROPPED while `status()` would
+  // still say "idle" and `deliverToSession` would answer `delivered`. Reporting a delivery that did
+  // not happen is the one claim WS-10 §12's machinery exists to avoid, so the peer reports `exited`
+  // from that moment and the adapter's own non-retryable `unavailable` takes over.
+  let facetInputEnded = false;
+  /**
+   * The queue key the FACET files and drains notifications under (fix r1, I1).
+   *
+   * DELIBERATELY NOT `config.sessionId`. The model's own `ReadNotifications` tool drains
+   * `notifications.drain(ctx.sessionId)`, and a drain REMOVES -- so a shared key means whichever side
+   * reads first silently eats the other's notices. Two namespaces, one queue, no collision. A caller
+   * that passes `subscriberSessionId: <the session's own id>` opts INTO the model's bucket
+   * deliberately, which is the only way to reach it and is documented on `SessionMessagingFacet`.
+   */
+  const FACET_NOTIFICATION_KEY = `host:${config.sessionId}`;
   const facetIdleSubscribers = new Set<string>();
 
+  /**
+   * Fix r1 (I3): render a delivered envelope as an ATTRIBUTED turn, never as a bare user turn.
+   *
+   * The finding this closes: a session peer's `deliver` used to write `msg.body` verbatim, so a CHILD
+   * that `SendMessage`d its own parent pushed unattributed text into the conversation that supervises
+   * it -- indistinguishable, to the parent's model, from something its human typed. Every gate on the
+   * way was passed legitimately (not a self-target, prompts x prompts accepts), which is exactly why
+   * the fix belongs at the push rather than at one of them.
+   *
+   * The envelope's `from` is authored by the ROUTER, never by the sending model (WS-10 §15: "the
+   * daemon authors canonical addresses"), so it is the trustworthy field -- and an envelope whose
+   * `from` cannot be serialized into a canonical address is refused rather than rendered without one.
+   */
+  function renderAttributedTurn(msg: GlobalAgentMessage): string {
+    let from: string;
+    try {
+      from = serializeRuntimeAddress(msg.from);
+    } catch {
+      throw new UnattributableSenderError("the envelope's `from` is not a canonical address, so the message cannot be attributed to a sender");
+    }
+    if (msg.from.objectKind === "agent") {
+      // A child is addressable only through its owning parent (WS-10 §10.3); a claimed child of some
+      // OTHER session cannot be attributed by this session at all, so it is refused rather than
+      // rendered with an address this process cannot vouch for.
+      const owner = msg.from.parentWinterSessionId ?? msg.from.winterSessionId;
+      if (owner !== config.sessionId) {
+        throw new UnattributableSenderError(`the envelope claims to come from "${from}", which this session does not own`);
+      }
+    }
+    const summary = msg.summary !== undefined ? `\n<summary>${msg.summary}</summary>` : "";
+    return `<agent-message from="${from}" message-id="${msg.messageId}" sender-permission-class="${msg.senderPermissionClass}">${summary}\n${msg.body}\n</agent-message>`;
+  }
+
   function registerFacetSelfPeer(): void {
-    if (facetSelfPeer !== undefined) return; // idempotent: several subscriptions, one peer
+    if (facetSelfPeer !== undefined) return; // idempotent
     const runtime = getDefaultMessagingRuntime();
     if (runtime === undefined) return; // a host-registered runtime owns its own directory and events
     const selfPeer: PeerSessionHandle = {
       address: buildSessionAddress(config.sessionId),
       // "idle" exactly while no turn is in flight -- `interruptCurrentTurn.current` is non-null for
       // the duration of a turn and null otherwise, which is the same fact the pump already uses to
-      // decide whether a parked model switch may be applied immediately.
-      status: () => (interruptCurrentTurn.current === null ? "idle" : "running"),
+      // decide whether a parked model switch may be applied immediately. "exited" once the input
+      // channel has ended (M6): a write past that point would be silently dropped.
+      status: () => (facetInputEnded ? "exited" : interruptCurrentTurn.current === null ? "idle" : "running"),
       mode: () => policyStateStore.getState().mode,
       bypassAvailable: () => bypassAvailableToThisSession,
       // The engine IS the session-status event source the reference adapter's own header says it
@@ -1716,9 +1769,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // one place that can honestly answer `true`.
       hasReliableIdleSignal: () => true,
       // R-7b-4: "Top-level delivery into a LIVE session is a push into that session's input stream."
-      // Reached only once inbound policy (WS-10 §13) has already decided `accept`.
+      // Reached only once inbound policy (WS-10 §13) has already decided `accept` -- and ATTRIBUTED
+      // (I3), or refused.
       deliver: async (msg) => {
-        userFrames.write({ type: "user", text: msg.body });
+        userFrames.write({ type: "user", text: renderAttributedTurn(msg) });
       },
     };
     facetSelfPeer = runtime.peers.register(selfPeer);
@@ -3633,6 +3687,23 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // -running closure) — `.current` on an object sidesteps that narrowing.
   const interruptCurrentTurn: { current: (() => void) | null } = { current: null };
 
+  // Fix r1 (controller ruling): the self-peer is registered UNCONDITIONALLY -- not lazily at the
+  // first `subscribe_idle`. Lazy registration made the facet's own surface conditional on a call a
+  // host might never make: `messaging.deliver` addressed at a live Winter session answered
+  // `unavailable` until something had subscribed to its idleness, an asymmetry no consumer could have
+  // predicted from the contract. The cost is that a session is a reachable peer of every other
+  // session in its process from frame 1 -- the intended daemon shape, and the reason the attribution
+  // fix (I3) and the cross-session fence (M2) land in this same commit.
+  //
+  // HERE rather than beside the child-roster contribution (which is where the ruling points, ~1400
+  // lines up) for a reason a test found: the peer's `status()` closes over `interruptCurrentTurn` and
+  // its `deliver` over `userFrames`, both declared just above. Registering earlier publishes a handle
+  // into a PROCESS-LEVEL directory that another session can call into immediately -- and it did:
+  // another test's `ListAgents` reached this peer's `status()` and got
+  // "Cannot access 'interruptCurrentTurn' before initialization". A registration is a publication, so
+  // it happens once the thing published is whole.
+  registerFacetSelfPeer();
+
   // Ruling P2-B: an explicit, engine-controlled shutdown signal for the pump — resolved exactly
   // once, from OUTSIDE the pump (after the turn loop below fully drains; see that call site's own
   // comment) — because a `for await` loop can only be `break`-ed by code physically inside it, and
@@ -3754,6 +3825,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
             // Ruling P2-B: "no more USER envelopes," NOT "stop reading frames" — see this const's
             // own header. `continue`, never `break`: the pump keeps pumping past this point.
+            facetInputEnded = true; // M6: a write past this point is silently dropped -- the self-peer must stop reporting "idle"
             userFrames.end();
             continue;
           }
@@ -3879,6 +3951,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             const badRequest = (message: string): void => {
               output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_messaging_request", message } });
             };
+            // M4: a refusal a DELIVERY method can name resolves as a typed `DeliveryOutcome`, never as
+            // an `ok:false` the wrapper would turn into a rejection. `refused` is the honest status:
+            // every producer below is side-effect-free (a fence, a wrong door, an unattributable
+            // sender), so the caller can record "this did not happen" rather than "this might have".
+            // A malformed payload with NO recoverable messageId still answers `ok:false` -- there is
+            // no id to echo -- and the wrapper maps that onto the caller's own id.
+            const refuseDelivery = (messageId: string, reason: string): void => {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: refusedOutcome(messageId, reason) });
+            };
             // `id` -> address by the ONE published rule (a canonical address, else a bare child id
             // within THIS session). The session id is authoritative here and nowhere else, which is
             // why the rule is applied on this side of the wire.
@@ -3897,18 +3978,39 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             //
             // A malformed CALL rather than a `not_found` outcome: a router holding a stale directory
             // entry needs to learn it addressed the wrong session, not that the child vanished.
-            const outsideThisSession = (addr: RuntimeAddress): boolean => addr.objectKind === "agent" && (addr.parentWinterSessionId ?? addr.winterSessionId) !== config.sessionId;
+            // Fix r1 (M2): SESSION targets too, not only agents. The facet is per-session by name and
+            // its reach was process-wide: `deliver`/`subscribe_idle` at `session:<B>` reached B
+            // through A's facet. Nothing was BYPASSED (B's own inbound policy still ran), but
+            // cross-session delivery belongs to the ROUTER, through its directory, which is the one
+            // party that holds every session's entry and can pick the right adapter. A facet that
+            // also does it is a second, narrower router that only works inside one process.
+            const outsideThisSession = (addr: RuntimeAddress): boolean =>
+              addr.objectKind === "agent" ? (addr.parentWinterSessionId ?? addr.winterSessionId) !== config.sessionId : addr.winterSessionId !== config.sessionId;
             // Every adapter call is awaited off the pump (`void (async () => …)()`), exactly like
             // `handleIncomingControlRequest` on the wrapper side: a child's own `resume` starts a
             // whole generation, and blocking the frame pump on it would stall every other frame --
             // including the interrupt that might be trying to stop it.
+            // The caller's own messageId, for the one path that needs to name it in a refusal it did
+            // not construct (an adapter throw). Empty for the two payload-free subtypes, which can
+            // never reach that path.
+            const messageIdForRefusal =
+              typeof cf.payload === "object" && cf.payload !== null
+                ? ((cf.payload as { messageId?: unknown }).messageId as string | undefined) ??
+                  (((cf.payload as { message?: { messageId?: unknown } }).message?.messageId as string | undefined) ?? "")
+                : "";
             const answer = (outcome: Promise<DeliveryOutcome> | Promise<unknown>): void => {
               void outcome.then(
                 (payload) => output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload }),
                 (err: unknown) => {
-                  // An adapter that THREW is the router's crash window (WS-10 §12), but the router
-                  // cannot classify a throw it never saw -- so it is reported as a failed CALL and
-                  // the router applies its own `classifyDeliveryError` to the rejection.
+                  // M4/I3: a throw THIS runtime recognises as a clean POLICY refusal resolves as the
+                  // typed outcome -- the caller must be able to record "this did not happen". Anything
+                  // else is the router's crash window (WS-10 §12) and is reported as a failed CALL,
+                  // because from here "the call failed" and "the effect already happened" are
+                  // indistinguishable and the wrapper maps it onto `delivery_uncertain`.
+                  if (classifyDeliveryError(err) === "refused") {
+                    output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: refusedOutcome(messageIdForRefusal, err instanceof Error ? err.message : String(err)) });
+                    return;
+                  }
                   output.write({
                     type: "control_response",
                     requestId: cf.requestId,
@@ -3920,7 +4022,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             };
 
             if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.listReachable) {
-              answer(adapter.listReachable({ parent: selfAddress }));
+              // Fix r1: the session's OWN row is filtered out -- the same rule the router core's
+              // `listAgents` already applies ("what SendMessage can reach -- never yourself",
+              // WS-10 §10.2). Load-bearing since the self-peer became unconditional: without it every
+              // session would start listing itself as a reachable peer, which is both wrong (a
+              // session does not reach itself) and a silent change to every host's listing.
+              const selfKey = serializeRuntimeAddress(selfAddress);
+              answer(adapter.listReachable({ parent: selfAddress }).then((rows) => rows.filter((row) => row.address !== selfKey)));
               continue;
             }
             if (cf.subtype === MESSAGING_CONTROL_SUBTYPES.readNotifications) {
@@ -3932,7 +4040,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               // A DRAIN, not a peek: the records it returns are removed, which is how a host
               // acknowledges. `remaining` is what makes the page bounded rather than a frame whose
               // size nothing governs -- the phone-transport lesson, applied before it can bite.
-              const page = req.max === undefined ? runtime.notifications.drain(req.subscriberSessionId ?? config.sessionId) : runtime.notifications.drain(req.subscriberSessionId ?? config.sessionId, req.max);
+              const key = req.subscriberSessionId ?? FACET_NOTIFICATION_KEY; // I1: never the model's key by default
+              const page = req.max === undefined ? runtime.notifications.drain(key) : runtime.notifications.drain(key, req.max);
               output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: page });
               continue;
             }
@@ -3958,7 +4067,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               // its own two doors (`steer_child`/`resume_child`); naming that here is what keeps the
               // router from retrying its way around a wrong door.
               if (cf.payload.message.to.objectKind !== "session") {
-                badRequest("messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)");
+                refuseDelivery(cf.payload.message.messageId, "messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)");
+                continue;
+              }
+              if (outsideThisSession(cf.payload.message.to)) {
+                refuseDelivery(cf.payload.message.messageId, `messaging.deliver: this facet serves session "${config.sessionId}" only; cross-session delivery is the router's, through its directory`);
                 continue;
               }
               answer(adapter.deliverToSession(cf.payload.message.to, cf.payload.message));
@@ -3971,7 +4084,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               }
               const addr = targetFor(cf.payload.id);
               if (outsideThisSession(addr)) {
-                badRequest(`${cf.subtype}: a child is addressable only through its OWNING parent (WS-10 §10.3); "${cf.payload.id}" names another session`);
+                refuseDelivery(cf.payload.message.messageId, `${cf.subtype}: a child is addressable only through its OWNING parent (WS-10 §10.3); "${cf.payload.id}" names another session`);
                 continue;
               }
               // WS-10 §10.3's split is the CALLER's to make and the adapter's to enforce: steer a
@@ -3993,16 +4106,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               // still knows who asked.
               const idleAddr = targetFor(cf.payload.id);
               if (outsideThisSession(idleAddr)) {
-                badRequest(`${cf.subtype}: a child is addressable only through its OWNING parent (WS-10 §10.3); "${cf.payload.id}" names another session`);
+                refuseDelivery(cf.payload.messageId, `${cf.subtype}: this facet serves session "${config.sessionId}" and its own children only; "${cf.payload.id}" names another session`);
                 continue;
               }
-              const subscriberKey = cf.payload.subscriberSessionId ?? config.sessionId;
+              // I1: the FACET's own queue namespace by default -- never the model's.
+              const subscriberKey = cf.payload.subscriberSessionId ?? FACET_NOTIFICATION_KEY;
               runtime.subscribers.remember(cf.payload.messageId, subscriberKey);
               facetIdleSubscribers.add(subscriberKey);
-              // Lazily make this session a reachable, idle-signalling peer of its own adapter, and
-              // start forwarding its queue. Both are idempotent and both are no-ops for any session
-              // nobody subscribes to -- see MESSAGING_FACET_SUBTYPES' own header.
-              registerFacetSelfPeer();
               answer(adapter.subscribeIdle(idleAddr, { messageId: cf.payload.messageId }));
               continue;
             }
@@ -4106,6 +4216,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // erroring.
       }
     } finally {
+      facetInputEnded = true; // M6, the pump's own teardown -- see the `end_input` site
       userFrames.end();
       // Deliberately NOT calling iterator.return() here: at the moment the pump is cancelled via
       // stopSignal, the LOSING `iterator.next()` call is typically still pending, with the
@@ -5885,14 +5996,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
-      // ...and the SAME boundary, for the messaging facet's own subscribers (R-7b-4 addendum). Here
-      // rather than beside the `result` write because "idle" is the fact WS-10 §14 subscribes to, and
-      // this is the one point in the loop where it is true and observable.
-      fireFacetIdle();
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials, ...costFields() } });
     }
+    // Fix r1 (M1): the messaging facet's own quiescent boundary, fired on BOTH branches. It used to
+    // sit inside the success arm beside `emitNotification("idle", ...)`, which is also success-only --
+    // but WS-10 §14 subscribes to IDLENESS, and an interrupted session is idle: `interruptCurrentTurn`
+    // is already null by here and the self-peer's own `status()` says so. A subscriber on an
+    // interrupted turn otherwise waited for the next completed turn, or for the 12-hour expiry.
+    fireFacetIdle();
     await flushStore();
   }
 

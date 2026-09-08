@@ -1078,12 +1078,14 @@ export async function traceWinterMessagingFacetRound(): Promise<ConformanceTrace
     await ask("facet-4", "messaging.resume_child", { id: "no-such-child", message: message("host-2", missingChild) }, "the resume_child answer");
     // 5. subscribe_idle on an AGENT: WS-10 §14 refuses the entire call for a subagent target.
     await ask("facet-5", "messaging.subscribe_idle", { id: "no-such-child", messageId: "host-3", subscriberSessionId: "s_host_router" }, "the subscribe_idle answer");
-    // 6. deliver to a session this process does not hold: `unavailable`, non-retryable.
+    // 6. deliver at ANOTHER session: the cross-session fence (fix r1, M2) refuses it as a typed
+    //    `refused` that RESOLVES (M4), never an `unavailable` a router would retry its way around.
+    //    Cross-session delivery belongs to the router, through its directory.
     await ask(
       "facet-6",
       "messaging.deliver",
       { message: message("host-4", { objectKind: "session", runtimeKind: "winter-agent", winterSessionId: "s_not_here" }) },
-      "the deliver answer",
+      "the cross-session deliver refusal",
     );
     // 7. THE VALIDATION REFUSAL: a malformed request is `ok:false` with a typed code, never a
     //    fabricated DeliveryOutcome -- the negative control for every guard above.
@@ -1113,7 +1115,10 @@ export async function traceWinterMessagingFacetRound(): Promise<ConformanceTrace
     //    live forward deliberately does not consume the queue entry. That equality, frozen here, is
     //    the whole contract between the two halves: a host that missed the frame still collects it,
     //    and a host that got both dedupes on the id.
-    await ask("facet-10", "messaging.subscribe_idle", { id: `session:${sessionId}`, messageId: "host-7", subscriberSessionId: sessionId }, "the self-session subscribe answer");
+    // NO `subscriberSessionId`: both halves default to the FACET's own queue key
+    // (`host:<sessionId>`, fix r1 I1), so the subscribe and the drain below name the same bucket --
+    // and neither touches the one the session's own model drains with `ReadNotifications`.
+    await ask("facet-10", "messaging.subscribe_idle", { id: `session:${sessionId}`, messageId: "host-7" }, "the self-session subscribe answer");
     await ask("facet-11", "messaging.read_notifications", { max: 10 }, "the notifications page");
 
     proc.stdin.write(encodeFrame({ type: "control_request", requestId: "facet-end", subtype: "end_input", payload: undefined }));

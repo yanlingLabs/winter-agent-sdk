@@ -168,10 +168,9 @@
       "type": "control_response",
       "ok": true,
       "payload": {
-        "status": "unavailable",
+        "status": "refused",
         "messageId": "host-4",
-        "retryable": false,
-        "reason": "target session is not reachable in-process (a real cross-process peer is a P8/host-integration concern)"
+        "reason": "messaging.deliver: this facet serves session \"differential-facet-fixture\" only; cross-session delivery is the router's, through its directory"
       }
     }
   },
@@ -194,10 +193,11 @@
     "kind": "control_response",
     "payload": {
       "type": "control_response",
-      "ok": false,
-      "error": {
-        "code": "invalid_messaging_request",
-        "message": "messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)"
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-5",
+        "reason": "messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)"
       }
     }
   },
@@ -207,10 +207,11 @@
     "kind": "control_response",
     "payload": {
       "type": "control_response",
-      "ok": false,
-      "error": {
-        "code": "invalid_messaging_request",
-        "message": "messaging.steer_child: a child is addressable only through its OWNING parent (WS-10 §10.3); \"agent:s_other:c1\" names another session"
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-6",
+        "reason": "messaging.steer_child: a child is addressable only through its OWNING parent (WS-10 §10.3); \"agent:s_other:c1\" names another session"
       }
     }
   },
@@ -222,7 +223,7 @@
       "type": "control_request",
       "subtype": "messaging.idle_notice",
       "payload": {
-        "subscriberSessionId": "differential-facet-fixture",
+        "subscriberSessionId": "host:differential-facet-fixture",
         "notice": {
           "notification_id": "note-1",
           "origin": "session:differential-facet-fixture",
