@@ -9,12 +9,23 @@ loopback HTTP servers with `Bun.serve`, which has no Node equivalent it implemen
 
 ## Install
 
-**This package is published to GitHub Packages only** — it is one of the org's own test harnesses, not
-part of what a public consumer installs. (Public npm carries exactly the wrapper and its runtime
-dependency closure — `@yanlinglabs/winter-agent-sdk` and `@yanlinglabs/winter-provider-catalog`.
-`@yanlinglabs/winter-provider-runtime` is GitHub Packages only too: the wrapper SPAWNS the compiled
-runtime rather than importing it.)
+Published to **both** registries. This is one of the org's own test harnesses rather than something a
+consumer of the wrapper installs — and it is on public npm deliberately: the router package
+`@yanlinglabs/winter-runtime-sdk` lives in its own repository and needs these loopback provider fakes as a dev dependency, and
+reaching GitHub Packages from that repository's CI would mean a cross-repo `read:packages` token
+whose only purpose is fetching test fixtures.
 
+### From public npm (anyone)
+
+```sh
+npm install @yanlinglabs/winter-provider-conformance
+```
+
+Nothing else is needed: the `@yanlinglabs` scope is public on npm.
+
+### From GitHub Packages (the `yanlingLabs` org)
+
+GitHub Packages needs the scope pointed at it and an authenticated read, even for a public package.
 In your project's `.npmrc`:
 
 ```
@@ -23,7 +34,7 @@ In your project's `.npmrc`:
 ```
 
 …with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
-literal in the file.
+literal in the file. Then `npm install @yanlinglabs/winter-provider-conformance` as usual.
 
 **The published packages contain COMPILED OUTPUT ONLY.** Each tarball ships `dist/` — the bundled
 JavaScript a consumer imports and the `.d.ts` declarations their type-checker reads — plus its data

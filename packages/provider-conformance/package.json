@@ -53,7 +53,8 @@
   },
   "winter": {
     "publish": {
-      "npm": false
+      "npm": true,
+      "harness": true
     }
   },
   "dependencies": {

@@ -10,13 +10,16 @@ corpus of committed golden traces rather than asserted in prose.
 | --- | --- | --- |
 | [`@yanlinglabs/winter-agent-sdk`](packages/sdk) | The wrapper: `query()`, the `Options` surface, session management, settings, the transcript store, the brand profile. | npm + GitHub Packages |
 | [`@yanlinglabs/winter-provider-catalog`](packages/provider-catalog) | The provider/model catalog as inert validated data — 165 providers, 604 models, with provenance. | npm + GitHub Packages |
-| [`@yanlinglabs/winter-provider-runtime`](packages/provider-runtime) | The provider layer: adapters, credential refs, endpoint policy, retry and identity headers. | GitHub Packages |
-| [`@yanlinglabs/winter-conformance`](packages/conformance) | The drop-in conformance corpus: trace normalizer, goldens, pinned-upstream mechanics. | GitHub Packages |
-| [`@yanlinglabs/winter-provider-conformance`](packages/provider-conformance) | The provider-layer conformance harness and its loopback fakes. Bun only. | GitHub Packages |
+| [`@yanlinglabs/winter-provider-runtime`](packages/provider-runtime) | The provider layer: adapters, credential refs, endpoint policy, retry and identity headers. | npm + GitHub Packages |
+| [`@yanlinglabs/winter-conformance`](packages/conformance) | The drop-in conformance corpus: trace normalizer, goldens, pinned-upstream mechanics. | npm + GitHub Packages |
+| [`@yanlinglabs/winter-provider-conformance`](packages/provider-conformance) | The provider-layer conformance harness and its loopback fakes. Bun only. | npm + GitHub Packages |
 
-Public npm carries exactly the wrapper and its runtime dependency closure — what
-`npm install @yanlinglabs/winter-agent-sdk` needs. The provider runtime and the two conformance
-harnesses are the org's own tooling and stay on GitHub Packages.
+Public npm carries the **closure of two kinds of root**: the wrapper — what
+`npm install @yanlinglabs/winter-agent-sdk` needs at run time — and the two conformance harnesses,
+which are the org's own test tooling but are consumed out of this repository by the router package
+`@yanlinglabs/winter-runtime-sdk`, whose CI would otherwise need a cross-repo token solely to fetch
+test fixtures. `@yanlinglabs/winter-provider-runtime` follows by closure: the provider-conformance
+harness imports it, and a published manifest pins its dependencies at an exact version.
 
 ## Install
 

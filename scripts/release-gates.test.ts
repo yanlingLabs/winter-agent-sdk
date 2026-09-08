@@ -25,12 +25,13 @@
 // Absence is the one that genuinely needs a test, for the same reason ci-gates.test.ts's own header
 // gives: a workflow that never publishes and one that was never SUPPOSED to look identical in a
 // diff, and only a test tells them apart.
-import { describe, test, expect } from "bun:test";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { describe, test, expect, afterAll } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { discoverPublishablePackages } from "./release-pack.ts";
-import { npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
+import { npmExpectedSet, npmHarnessSet, npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
 import { npmPublishArgs } from "./publish-npm-set.ts";
 
 const WORKFLOWS_DIR = fileURLToPath(new URL("../.github/workflows/", import.meta.url));
@@ -442,42 +443,150 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     expect(job.permissions).toEqual({ "id-token": "write", contents: "read" });
   });
 
-  test("item 5 (ruling): the npm set is DATA, and it is EXACTLY the wrapper's dependency closure", () => {
-    // npm gets what a PUBLIC consumer installs and nothing else: the wrapper plus its transitive
-    // workspace `dependencies`. GitHub Packages gets the whole set. The npm set lives in
-    // `winter.publish.npm` per manifest rather than as a list in this YAML, and this test keeps the
-    // data honest in BOTH directions against the closure ALONE:
-    //   * nothing in the closure may be MISSING -- a new runtime dependency that nobody flags breaks
-    //     `npm install @yanlinglabs/winter-agent-sdk`;
-    //   * nothing outside it may be PRESENT -- a harness (or anything else) that gains the flag by
-    //     copy-paste would be published publicly, and npm cannot take a version back.
+  test("item 5 / R-7b-5: the npm set is DATA, and it is EXACTLY the closure of {wrapper} + {harness roots}", () => {
+    // npm gets what an out-of-repo consumer installs and nothing else. Two kinds of ROOT:
+    //   * THE WRAPPER -- `npm install @yanlinglabs/winter-agent-sdk` must work;
+    //   * THE HARNESS ROOTS (R-7b-5) -- `@yanlinglabs/winter-runtime-sdk` lives in its own repository
+    //     and needs both conformance harnesses as dev dependencies; without them on npm its CI would
+    //     need a cross-repo `read:packages` token whose only purpose is fetching test fixtures.
+    // ...and then the CLOSURE of those roots, because a published manifest pins its `dependencies` at
+    // an exact version: a root on npm whose dependency is not there is an install that 404s.
     //
-    // EXACT EQUALITY, with no exceptions mechanism (user ruling 2026-09-08). An earlier draft carried
-    // a ruled-extras list so `winter-provider-runtime` could sit on npm without being in the closure;
-    // both the package and the concept were removed, because "the closure plus a list" is a property
-    // that degrades every time the list grows -- and the list is exactly where a harness would
-    // eventually be added by someone in a hurry.
+    // Checked in BOTH directions against that closure ALONE:
+    //   * nothing in it may be MISSING -- a runtime dependency nobody flags breaks a consumer's install;
+    //   * nothing outside it may be PRESENT -- a package that gains the flag by copy-paste would be
+    //     published publicly, and npm cannot take a version back.
+    //
+    // STILL NO EXCEPTIONS MECHANISM, which is what P7a's exact-closure ruling was protecting. The
+    // `harness` flag is not a list of extras: it names what a package IS, and the closure does the
+    // rest. `npm: true` on a package that is neither a root nor reachable from one is a refusal.
     const flagged = npmPublishSet().map((p) => p.name).sort();
-    const closure = npmRequiredClosure();
-    expect(flagged).toEqual(closure);
+    expect(flagged).toEqual(npmExpectedSet());
     // The set as it stands, pinned so a change is a deliberate edit here too.
-    expect(closure).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog"]);
+    expect(npmExpectedSet()).toEqual([
+      "@yanlinglabs/winter-agent-sdk",
+      "@yanlinglabs/winter-conformance",
+      "@yanlinglabs/winter-provider-catalog",
+      "@yanlinglabs/winter-provider-conformance",
+      "@yanlinglabs/winter-provider-runtime",
+    ]);
+    // The two roles stay distinct: `provider-runtime` is on npm BY CLOSURE (provider-conformance
+    // imports values from it), never by being a harness.
+    expect(npmHarnessSet()).toEqual(["@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]);
+    expect(npmRequiredClosure(undefined, ["@yanlinglabs/winter-agent-sdk"])).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog"]);
   });
 
-  test("item 5 (ruling): the harnesses AND the provider runtime are GitHub Packages only", () => {
-    // Named, because "not in the set" is the property that matters and it is easiest to lose by
-    // accident. The two conformance packages are the org's own test tooling; `winter-provider-runtime`
-    // is the PRIVATE `winter-agent-runtime`'s dependency -- the wrapper SPAWNS the compiled runtime
-    // rather than importing it, so a public consumer of the wrapper never needs it.
-    const flagged = new Set(npmPublishSet().map((p) => p.name));
-    for (const ghOnly of ["@yanlinglabs/winter-provider-runtime", "@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]) {
-      expect([ghOnly, flagged.has(ghOnly)]).toEqual([ghOnly, false]);
-      // ...and each is still publishable AT ALL -- GitHub Packages gets the whole set.
-      expect([ghOnly, discoverPublishablePackages().some((p) => p.name === ghOnly)]).toEqual([ghOnly, true]);
-    }
-    // Two on npm, five on GitHub Packages: the sets are deliberately different sizes.
-    expect(flagged.size).toBe(2);
+  test("R-7b-5: the harness ROOTS are exactly the two conformance packages, by name", () => {
+    // Named, because "which packages are roots" is the judgement R-7b-5 actually made and the one
+    // easiest to widen by accident. The PREVIOUS form of this test asserted the two harnesses were
+    // NOT on npm; the ruling reversed that, and the property worth keeping is the narrower one: the
+    // flag says what a package IS, and only these two are it.
+    const harness = npmHarnessSet();
+    expect(harness).toEqual(["@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]);
+    for (const name of harness) expect([name, discoverPublishablePackages().some((p) => p.name === name)]).toEqual([name, true]);
+    // Every publishable package is now on npm -- which is exactly why the plants below exist: on THIS
+    // tree the rule and "all of them" give the same answer, so only a synthetic tree can show it
+    // refusing anything.
+    expect(npmPublishSet()).toHaveLength(5);
     expect(discoverPublishablePackages()).toHaveLength(5);
+    // The packages outside the publishable set are outside it for reasons that have nothing to do
+    // with this flag: the PRIVATE runtime, and R-7-2's unbuilt platform package.
+    expect(discoverPublishablePackages().some((p) => p.name === "winter-agent-runtime")).toBe(false);
+    expect(discoverPublishablePackages().some((p) => p.name.endsWith("-darwin-arm64"))).toBe(false);
+  });
+
+  // --- the PLANTS ---------------------------------------------------------------------------------
+  //
+  // Every assertion above is evaluated against the ONE tree the rule was written for, where it now
+  // selects every publishable package -- so "flagged equals the closure" is currently
+  // indistinguishable from "flagged equals everything", and a rule nobody has seen REFUSE is not a
+  // rule. These drive the same functions over synthetic trees (the `check-release-version.test.ts`
+  // fixture-root pattern) where the right answer is known AND different from "all of them".
+  describe("the closure rule is falsifiable: synthetic trees where it must refuse", () => {
+    interface FixturePkg {
+      dir: string;
+      name: string;
+      deps?: string[];
+      devDeps?: string[];
+      npm?: boolean;
+      harness?: boolean;
+    }
+    const madeRoots: string[] = [];
+    function fixtureRoot(packages: FixturePkg[]): string {
+      const root = mkdtempSync(join(tmpdir(), "winter-npmset-"));
+      madeRoots.push(root);
+      for (const pkg of packages) {
+        mkdirSync(join(root, "packages", pkg.dir), { recursive: true });
+        writeFileSync(
+          join(root, "packages", pkg.dir, "package.json"),
+          JSON.stringify(
+            {
+              name: pkg.name,
+              version: "0.0.0",
+              publishConfig: { access: "restricted" },
+              ...(pkg.deps ? { dependencies: Object.fromEntries(pkg.deps.map((d) => [d, "workspace:*"])) } : {}),
+              ...(pkg.devDeps ? { devDependencies: Object.fromEntries(pkg.devDeps.map((d) => [d, "workspace:*"])) } : {}),
+              winter: { publish: { ...(pkg.npm !== undefined ? { npm: pkg.npm } : {}), ...(pkg.harness ? { harness: true } : {}) } },
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      return `${root}/`;
+    }
+    afterAll(() => {
+      for (const root of madeRoots) rmSync(root, { recursive: true, force: true });
+    });
+
+    test("a HARNESS's own runtime dependency is REQUIRED -- the five-not-four correction, on a tree where it is not everything", () => {
+      // The exact shape this repository has: a harness importing a package the wrapper does not.
+      // Under closure-of-roots `@t/lib` is required; under a closure-UNION-list rule it is not, and
+      // `npm install @t/harness` 404s on it. `@t/unrelated` is the control that keeps the expected
+      // answer from being "all of them".
+      const root = fixtureRoot([
+        { dir: "w", name: "@t/wrapper", deps: ["@t/cat"] },
+        { dir: "c", name: "@t/cat" },
+        { dir: "h", name: "@t/harness", deps: ["@t/lib"], harness: true },
+        { dir: "l", name: "@t/lib" },
+        { dir: "x", name: "@t/unrelated" },
+      ]);
+      expect(npmHarnessSet(root)).toEqual(["@t/harness"]);
+      expect(npmRequiredClosure(root, ["@t/wrapper", ...npmHarnessSet(root)])).toEqual(["@t/cat", "@t/harness", "@t/lib", "@t/wrapper"]);
+    });
+
+    test("REFUSAL 1 (the LEAK direction): a package flagged `npm` that is neither a root nor reachable from one", () => {
+      const root = fixtureRoot([
+        { dir: "w", name: "@t/wrapper", deps: ["@t/cat"], npm: true },
+        { dir: "c", name: "@t/cat", npm: true },
+        { dir: "x", name: "@t/unrelated", npm: true }, // the copy-pasted flag
+      ]);
+      const flagged = npmPublishSet(root).map((p) => p.name).sort();
+      const expected = npmRequiredClosure(root, ["@t/wrapper", ...npmHarnessSet(root)]);
+      expect(flagged).toEqual(["@t/cat", "@t/unrelated", "@t/wrapper"]);
+      expect(expected).toEqual(["@t/cat", "@t/wrapper"]);
+      expect(flagged).not.toEqual(expected); // ...which is the failure the real gate reports
+    });
+
+    test("REFUSAL 2 (the 404 direction): a root's dependency that nobody flagged is MISSING", () => {
+      const root = fixtureRoot([
+        { dir: "w", name: "@t/wrapper", deps: ["@t/cat"], npm: true },
+        { dir: "c", name: "@t/cat" }, // publishable, depended on, NOT flagged
+      ]);
+      const flagged = npmPublishSet(root).map((p) => p.name).sort();
+      const expected = npmRequiredClosure(root, ["@t/wrapper", ...npmHarnessSet(root)]);
+      expect(flagged).toEqual(["@t/wrapper"]);
+      expect(expected).toEqual(["@t/cat", "@t/wrapper"]);
+      expect(flagged).not.toEqual(expected);
+    });
+
+    test("`devDependencies` never widen the set -- the question is what a consumer needs at RUN time", () => {
+      const root = fixtureRoot([
+        { dir: "w", name: "@t/wrapper", devDeps: ["@t/tooling"], npm: true },
+        { dir: "t", name: "@t/tooling" },
+      ]);
+      expect(npmRequiredClosure(root, ["@t/wrapper"])).toEqual(["@t/wrapper"]);
+    });
   });
 
   test("item 5 (ruling): the npm job FILTERS by the data -- no package name is spelled in the YAML", () => {
@@ -574,9 +683,11 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
 
   test("item 7: every publishable package SHIPS a README that documents BOTH registries honestly", () => {
     // npm renders each package's own README, so the install instructions have to be per package --
-    // and they have to say the RIGHT thing for that package: the three npm ones document both
-    // registries, the two harnesses say GitHub Packages only. A harness whose README told a stranger
-    // to `npm install` it would be documenting a package that is not there.
+    // and they have to say the RIGHT thing for that package. The discriminator is DERIVED from
+    // `npmPublishSet()` rather than spelled, so it kept working when R-7b-5 moved all five packages
+    // onto npm: the "### From public npm" heading must be present exactly for the packages that are
+    // there, and the "GitHub Packages only" sentence exactly for the ones that are not (today: none,
+    // and the branch stays because a package leaving the npm set must re-earn its README).
     const npmNames = new Set(npmPublishSet().map((p) => p.name));
     for (const pkg of discoverPublishablePackages()) {
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files: string[] };
@@ -682,11 +793,20 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // that is NOT on npm must never appear near an npm claim in any README.
     const npmNames = new Set(npmPublishSet().map((p) => p.name));
     const nonNpm = discoverPublishablePackages().map((p) => p.name).filter((name) => !npmNames.has(name));
-    expect(nonNpm.length).toBeGreaterThan(0);
 
     // A sentence that both names a non-npm package and claims npm carriage, on one line or across a
     // wrapped paragraph -- so the check survives reflowing.
     const NPM_CLAIM = /(on|to|from)\s+(public\s+)?npm|npm install|registry\.npmjs\.org/i;
+
+    // R-7b-5 EMPTIED `nonNpm`: every publishable package is on npm now, so the sweep below is
+    // vacuously true on this tree. The scanner still has to be shown WORKING, or it will have rotted
+    // silently by the time a package leaves the set again -- so it is planted here against a
+    // synthetic README and a synthetic non-npm name. (The original finding it exists for: both
+    // harness READMEs listed a three-package npm set naming `winter-provider-runtime` as "on public
+    // npm as well" -- a claim about ANOTHER package, which the item-7 discriminators cannot see.)
+    const plantReadme = "The `@t/gh-only` package is available on public npm as well.\n\n`@t/gh-only` is GitHub Packages only.";
+    const plantParagraphs = plantReadme.split(/\n\s*\n/).filter((para) => para.includes("@t/gh-only"));
+    expect(plantParagraphs.map((para) => NPM_CLAIM.test(para))).toEqual([true, false]);
     for (const pkg of discoverPublishablePackages()) {
       const readme = readFileSync(join(pkg.dir, "README.md"), "utf8");
       const paragraphs = readme.split(/\n\s*\n/);

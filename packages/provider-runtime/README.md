@@ -17,12 +17,24 @@ registry is chosen by the release workflow, not by a committed pin — see [RELE
 
 ## Install
 
-**This package is published to GitHub Packages only.** It is the provider layer the compiled `winter`
-runtime uses; the wrapper a public consumer installs — `@yanlinglabs/winter-agent-sdk` — SPAWNS that
-runtime rather than importing this package, so it is not part of what `npm install
-@yanlinglabs/winter-agent-sdk` needs. Public npm carries exactly the wrapper and its runtime
-dependency closure (`@yanlinglabs/winter-agent-sdk`, `@yanlinglabs/winter-provider-catalog`).
+Published to **both** registries — but not because a consumer of the wrapper needs it. The wrapper
+`@yanlinglabs/winter-agent-sdk` SPAWNS the compiled `winter` runtime rather than importing this
+package, so `npm install @yanlinglabs/winter-agent-sdk` does not pull it in. It is on public npm
+because `@yanlinglabs/winter-provider-conformance` — a harness the out-of-repo router package uses as
+a dev dependency — imports it, and a published manifest pins its dependencies at an exact version: a
+harness on npm whose own dependency is not there is an install that 404s.
 
+### From public npm (anyone)
+
+```sh
+npm install @yanlinglabs/winter-provider-runtime
+```
+
+Nothing else is needed: the `@yanlinglabs` scope is public on npm.
+
+### From GitHub Packages (the `yanlingLabs` org)
+
+GitHub Packages needs the scope pointed at it and an authenticated read, even for a public package.
 In your project's `.npmrc`:
 
 ```

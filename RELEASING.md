@@ -30,7 +30,7 @@ pnpm strips `scripts` from the packed manifest, so the published package carries
 | Registry | Job | Packages | Credential |
 | --- | --- | --- | --- |
 | GitHub Packages | `publish` | all five | `secrets.GITHUB_TOKEN`, `packages: write` |
-| public npm | `publish-npm` | the wrapper and its runtime dependency closure — two today | `secrets.NPM_TOKEN`, `id-token: write` for provenance |
+| public npm | `publish-npm` | the closure of the wrapper + the two harness roots — all five today | `secrets.NPM_TOKEN`, `id-token: write` for provenance |
 
 Neither registry is chosen on a command line. `--registry` sets only `registries.default`, and both
 pnpm and npm consult the **scope** binding first — a committed `@yanlinglabs:registry` line would
@@ -38,8 +38,19 @@ therefore beat it, which is why the project `.npmrc` pins nothing. Each job bind
 credential with `actions/setup-node` (`registry-url` + `scope`), and
 `scripts/publish-routing.test.ts` proves the routing with real `npm publish --dry-run` runs.
 
-The npm set is **data** (`winter.publish.npm` per manifest), asserted to equal the wrapper's
-transitive workspace `dependencies` closure exactly.
+The npm set is **data** (`winter.publish.npm` per manifest), asserted to equal the transitive
+workspace `dependencies` closure of the ROOTS: the wrapper, plus every package flagged
+`winter.publish.harness` (R-7b-5 — the two conformance harnesses, which the out-of-repo router
+package `@yanlinglabs/winter-runtime-sdk` needs as dev dependencies). `winter-provider-runtime` is on
+npm by closure, not as a harness: `winter-provider-conformance` imports values from it, and a
+published manifest pins its dependencies at an exact version, so a harness on npm whose dependency is
+absent is an install that 404s.
+
+Two flags, not one wider flag, because that is what keeps the rule falsifiable: `npm: true` on a
+package that is neither a root nor reachable from one is still a refusal, and
+`scripts/release-gates.test.ts` shows the rule refusing on synthetic trees rather than only agreeing
+on this one. The npm job publishes in **topological order** (`npmPublishOrder`), so npm never serves
+a package whose declared dependency is not there yet.
 
 ## Before pushing the tag
 

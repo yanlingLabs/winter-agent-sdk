@@ -115,13 +115,29 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
       const pkg = packed.find((p) => p.name === name)!;
       lines.push(`${name} :: ${await dryRunTarget(pkg.tarballPath, userconfig, ["--access", "public"])}`);
     }
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain("@yanlinglabs/winter-provider-catalog");
-    expect(lines[1]).toContain("@yanlinglabs/winter-agent-sdk");
+    // R-7b-5 took this from two lines to five. Asserted as a PROPERTY of the order rather than by
+    // position: every package's line must come AFTER the line of each of its in-set workspace
+    // dependencies, read from the PACKED manifests (which is where the exact-version pin that makes
+    // the order load-bearing actually lives). Position assertions would have to be rewritten every
+    // time the set grows, and rewriting an order assertion is exactly how one stops being checked.
+    expect(lines).toHaveLength(5);
     for (const line of lines) expect(line).toContain(NPMJS);
+    const indexOf = (name: string): number => lines.findIndex((l) => l.startsWith(`${name} ::`));
+    for (const name of order) {
+      const dir = mkdtempSync(join(scratch, "packed-"));
+      const proc = Bun.spawn(["tar", "-xzf", packed.find((p) => p.name === name)!.tarballPath, "-C", dir], { stdout: "pipe", stderr: "pipe" });
+      expect(await proc.exited).toBe(0);
+      const manifest = JSON.parse(readFileSync(join(dir, "package", "package.json"), "utf8")) as { dependencies?: Record<string, string> };
+      for (const dep of Object.keys(manifest.dependencies ?? {})) {
+        if (indexOf(dep) === -1) continue; // not in the npm set -- a different problem, caught by release-gates
+        expect([name, dep, indexOf(dep) < indexOf(name)]).toEqual([name, dep, true]);
+      }
+    }
 
     // ...and the sdk really does pin the catalog at this exact version in its PACKED manifest, which
-    // is what makes the order load-bearing rather than cosmetic.
+    // is what makes the order load-bearing rather than cosmetic. (The loop above already proves this
+    // for every edge; this keeps the ORIGINAL finding's own pair named, since it is the one that
+    // actually 404'd.)
     const dirSdk = mkdtempSync(join(scratch, "manifest-"));
     const sdk = packed.find((p) => p.name === "@yanlinglabs/winter-agent-sdk")!;
     const proc = Bun.spawn(["tar", "-xzf", sdk.tarballPath, "-C", dirSdk], { stdout: "pipe", stderr: "pipe" });
@@ -134,7 +150,7 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
     const dir = mkdtempSync(join(scratch, "npm-"));
     const userconfig = setupNodeUserconfig(dir, NPMJS);
     const npmNames = new Set(npmPublishSet().map((p) => p.name));
-    expect(npmNames.size).toBe(2);
+    expect(npmNames.size).toBe(5); // R-7b-5: the wrapper's closure plus the two harness roots and what they pull in
     for (const pkg of packed.filter((p) => npmNames.has(p.name))) {
       // `--access public` because `publishConfig.access` stays `restricted` (GitHub Packages'
       // setting) and npm filters a `publishConfig` key that is also a CLI flag.
