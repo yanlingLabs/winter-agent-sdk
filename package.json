@@ -1,5 +1,6 @@
 {
   "name": "winter-agent-sdk-workspace",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "engines": {

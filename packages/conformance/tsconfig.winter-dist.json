@@ -1,0 +1,27 @@
+{
+  "//": "P7a pre-publish (item 3): the fixture compiled ENTIRELY against the BUILT declarations -- the one link no other gate crosses. `tsconfig.winter.json` beside this file maps `@sdk-under-test` onto the sdk SOURCE, so it proves the fixture type-checks against the sdk's AUTHORED api; an installed consumer instead resolves `@yanlinglabs/winter-agent-sdk` through `types: ./dist/index.d.ts`, i.e. through `tsc --emitDeclarationOnly` plus `rewriteDeclarationSpecifiers`. `smoke-installed.ts` proves the emitted JS IMPORTS under both runtimes but type-checks nothing; `conformance:snapshot --check` reads the upstream OFFICIAL tarball's declarations, not winter's own emit. This closes that gap.",
+  "//extends": "DELIBERATELY EXTENDS NOTHING. `tsconfig.base.json` carries repo-wide `paths` mapping every `@yanlinglabs/*` specifier onto its SOURCE -- inheriting them would silently defeat the whole point of this file, since a `paths` hit never consults `exports`. Every option below is therefore spelled out; they are base's own values, minus `paths` and minus `allowImportingTsExtensions` (nothing here imports a `.ts` specifier).",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": false,
+    "types": [
+      "bun"
+    ],
+    "noEmit": true,
+    "paths": {
+      "@sdk-under-test": [
+        "../sdk/dist/index.d.ts"
+      ]
+    }
+  },
+  "include": [
+    "consumer-fixtures/**/*.ts"
+  ],
+  "//skipLibCheck": "P7a pre-publish round 3 (review I3): FALSE, deliberately. `skipLibCheck: true` -- the repo-wide default, inherited from tsconfig.base.json by every other config -- skips type-checking `.d.ts` files, which is exactly the class this fixture exists to catch: a dangling module specifier in the PUBLISHED declarations (a `./x.js` that `rewriteDeclarationSpecifiers` mangled, a re-export of a file the emit does not contain) passed silently. Verified by planting `./zzz-does-not-exist.js` in a shipped `.d.ts`: exit 0 with skipLibCheck on, TS2307 with it off. Free today -- 0 errors -- and the one config in the repo where the cost is worth it, because it reads the emit rather than the source."
+}

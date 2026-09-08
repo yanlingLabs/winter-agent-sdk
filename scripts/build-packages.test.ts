@@ -146,15 +146,25 @@ describe.skipIf(!BUILD_ENABLED)("build-packages: the real build", () => {
     // the consumer's own node_modules resolving a real dependency, while the catalog's
     // `generated/*.json` is bundled in (it is a relative import, and a tarball that shipped a
     // dangling relative JSON reference would fail only at first use).
+    // READ ACROSS THE WHOLE `dist` TREE, not just the entry file (P7a pre-publish item 2). Since
+    // `--splitting`, an entry is often a thin re-export and the bundled body lives in a shared chunk
+    // beside it -- so an assertion pinned to `dist/index.js` measures the wrong file.
+    const allJs = (dir: string): string =>
+      walk(join(dir, "dist"))
+        .filter((f) => f.endsWith(".js"))
+        .map((f) => readFileSync(join(dir, "dist", f), "utf8"))
+        .join("\n");
+
     const runtime = result.packages.find((p) => p.name === "@yanlinglabs/winter-provider-runtime")!;
-    const js = readFileSync(join(runtime.dir, "dist/index.js"), "utf8");
+    const js = allJs(runtime.dir);
     expect(js).toContain("@yanlinglabs/winter-provider-catalog");
     expect(js).toMatch(/from\s*["']node:/);
 
     const catalog = result.packages.find((p) => p.name === "@yanlinglabs/winter-provider-catalog")!;
-    const catalogJs = readFileSync(join(catalog.dir, "dist/index.js"), "utf8");
+    const catalogJs = allJs(catalog.dir);
     // No relative IMPORT of the JSON is left (asserted on the specifier, not on the string: the
-    // inlined catalog data itself mentions the filename in its own provenance citations)...
+    // inlined catalog data itself mentions the filename in its own provenance citations). Chunk
+    // imports ARE relative and ARE `.js`, which is why the pattern is anchored on `.json`.
     expect(/(?:\bfrom\s*|\bimport\s*\(\s*)(["'])\.[^"']*\.json\1/.test(catalogJs)).toBe(false);
     // ...and the data really is in the bundle, not merely absent.
     expect(catalogJs).toContain("ollama-local");
@@ -179,6 +189,22 @@ describe.skipIf(!BUILD_ENABLED)("build-packages: the real build", () => {
       .map((line) => line.slice(3).trim())
       .filter((path) => path.endsWith(".d.ts") && !path.includes("/dist/"));
     expect(untracked).toEqual([]);
+  });
+
+  test("item 2: every package emits SHARED CHUNKS, and each entry keeps its own mirrored path", () => {
+    // The structural half of the `instanceof` fix, at the artifact. One `bun build --splitting` per
+    // package (all entries in one invocation) hoists a module reached by more than one entry into a
+    // chunk both import, so it is evaluated ONCE -- which is what makes a class one object across
+    // subpaths under Node. Per-entry `--outfile` builds inlined a copy into each.
+    for (const pkg of result.packages) {
+      const files = walk(join(pkg.dir, "dist")).filter((f) => f.endsWith(".js"));
+      for (const entry of pkg.entries) expect([pkg.name, entry.js, files]).toEqual([pkg.name, entry.js, expect.arrayContaining([entry.js.replace(/^dist\//, "")])]);
+      // A single-entry package has nothing to share, so chunks are expected only where 2+ entries exist.
+      if (pkg.entries.length > 1) {
+        const chunks = files.filter((f) => /-[a-z0-9]{8,}\.js$/.test(f));
+        expect([pkg.name, chunks.length > 0]).toEqual([pkg.name, true]);
+      }
+    }
   });
 
   test("the dist tree MIRRORS src, so two entries both named index.ts cannot collide", () => {

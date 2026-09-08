@@ -145,6 +145,10 @@ export async function startAnthropicConsoleLogin(store: CredentialStore, options
     callbackPort: options.callbackPort ?? CONSOLE_OAUTH.callbackPort,
     callbackPath: CONSOLE_OAUTH.callbackPath,
     label: "Anthropic Console",
+    // P7a pre-publish (N1): the DEVELOPER-facing identifier, kept separate from the prose above.
+    // Round 3 derived the guard's `functionName` from `label`, so this login's typed error read
+    // "Anthropic Console login (runLoginFlow)" -- a sentence, not the symbol in the caller's code.
+    functionName: "startAnthropicConsoleLogin",
     // R-A2-1: JSON, because that is the ONLY encoding this endpoint is observed receiving, and
     // `state` on the grant, because the artifact's own authorization-code request carries it. Both
     // are opt-in on `LoginConfig` so that matching THIS endpoint changes nothing about codex's.

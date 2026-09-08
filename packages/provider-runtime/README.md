@@ -5,8 +5,8 @@ Chat Completions, Anthropic Messages, Google generateContent, Bedrock Converse, 
 codex/xAI/Console flows), the credential-ref surface, endpoint policy, retry/stall handling and the
 honest-identity headers every request carries.
 
-This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope) — see the
-repository root `.npmrc` and `package.json` `publishConfig` for the registry pin.
+This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope). The
+registry is chosen by the release workflow, not by a committed pin — see [RELEASING.md](https://github.com/yanlingLabs/winter-agent-sdk/blob/main/RELEASING.md).
 
 ## What it ships
 
@@ -14,6 +14,30 @@ repository root `.npmrc` and `package.json` `publishConfig` for the registry pin
 | --- | --- |
 | `@yanlinglabs/winter-provider-runtime` | The full barrel: the registry, the adapters, credential refs and stores, endpoint policy, the error taxonomy, and the identity surface. |
 | `@yanlinglabs/winter-provider-runtime/testing` | Test-support helpers a consumer's own adapter tests need: descriptor/context builders, the SigV4 and event-stream primitives, the loopback OAuth/chat fakes, and the fixture catalog. |
+
+## Install
+
+**This package is published to GitHub Packages only.** It is the provider layer the compiled `winter`
+runtime uses; the wrapper a public consumer installs — `@yanlinglabs/winter-agent-sdk` — SPAWNS that
+runtime rather than importing this package, so it is not part of what `npm install
+@yanlinglabs/winter-agent-sdk` needs. Public npm carries exactly the wrapper and its runtime
+dependency closure (`@yanlinglabs/winter-agent-sdk`, `@yanlinglabs/winter-provider-catalog`).
+
+In your project's `.npmrc`:
+
+```
+@yanlinglabs:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+…with `GITHUB_TOKEN` in the environment — a personal access token carrying `read:packages`, never a
+literal in the file. Then `npm install @yanlinglabs/winter-provider-runtime` as usual.
+
+**The published packages contain COMPILED OUTPUT ONLY.** Each tarball ships `dist/` — the bundled
+JavaScript a consumer imports and the `.d.ts` declarations their type-checker reads — plus its data
+files, `README.md` and `LICENSE`. It does **not** ship `src/`: the TypeScript sources live at
+<https://github.com/yanlingLabs/winter-agent-sdk>, which is where to read them, file an issue, or send
+a patch.
 
 ## Bun-only surface
 
@@ -63,3 +87,11 @@ its own bundle, so the class carries a package-scoped `Symbol.for` brand to make
 
 Everything else — the registry, every adapter's `streamTurn`, discovery, the credential stores, the
 endpoint policy and the identity helpers — is plain Node-compatible code over `fetch` and `node:*`.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.
+
+This package's xAI OAuth provider derives its client id, endpoints, scope set and request field names
+from the Apache-2.0 licensed `xai-org/grok-build`; that attribution is in [`NOTICE`](./NOTICE), which
+ships in the tarball beside this file.

@@ -100,11 +100,22 @@ describe("scanExtractedPackage: a synthetic dirty fixture proves the scan has te
     // P7a fix wave (item 9): the test-file category, both spellings...
     expect(violations.some((v) => v.includes("a test file shipped at src/thing.test.ts"))).toBe(true);
     expect(violations.some((v) => v.includes("a test file shipped at src/raw-fake.test-support.ts"))).toBe(true);
-    // ...and NOT the controls. `*.testing.ts` is PRODUCT (provider-runtime's public `./testing`
-    // subpath re-exports three of them), and a source file is a source file whatever it is called --
-    // a rule that swept either would silently break the published `./testing` entry point.
-    expect(violations.some((v) => v.includes("testing.ts"))).toBe(false);
-    expect(violations.some((v) => v.includes("latest.ts"))).toBe(false);
+    // ...and NOT the controls, scoped to the TEST-FILE rule. `*.testing.ts` is PRODUCT
+    // (provider-runtime's public `./testing` subpath re-exports three of them), and a source file is
+    // a source file whatever it is called -- a rule that swept either would silently break the
+    // published `./testing` entry point.
+    //
+    // NARROWED in the pre-publish round: since item 8 every `src/` entry is also a violation under a
+    // DIFFERENT rule, so a bare `.includes("testing.ts")` now matches that one and would assert the
+    // opposite of what this line means. The control is about which RULE fires, not whether the path
+    // appears anywhere in the output.
+    const testFileHits = violations.filter((v) => v.includes("a test file shipped at"));
+    expect(testFileHits.some((v) => v.includes("testing.ts") && !v.includes(".test"))).toBe(false);
+    expect(testFileHits.some((v) => v.includes("latest.ts"))).toBe(false);
+    // P7a pre-publish r2 (item 8): a published tarball is DIST-ONLY, so every `src/` entry is a
+    // violation in its own right -- the fixture's `src/*` files above are each reported.
+    expect(violations.some((v) => v.includes("a source file shipped at src/latest.ts"))).toBe(true);
+    expect(violations.filter((v) => v.includes("a source file shipped at")).length).toBeGreaterThanOrEqual(5);
   });
 
   test("a mismatched root package.json (right scope, wrong package) is caught by the identity check", () => {
@@ -237,6 +248,66 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
     expect(result.violations).toEqual([]);
   });
 
+  test("P7a pre-publish r2 (item 8): NO tarball ships `src/` at all -- verified via `tar -tzf`", async () => {
+    // The user ruling: "on npm I'd prefer just the ready-to-use packages; source stays on GitHub".
+    // `tar -tzf` rather than the scanner's own answer, so a bug shared between the two cannot pass
+    // both. The in-repo `exports` still carry a `bun` condition pointing at `src/` -- that is what
+    // this monorepo and the compiled binary run -- and `publishConfig.exports` is what drops it from
+    // the PACKED manifest; the next test is that half.
+    for (const p of result.packages) {
+      const proc = Bun.spawn(["tar", "-tzf", p.tarballPath], { stdout: "pipe" });
+      const listing = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const paths = listing.trim().split("\n");
+      expect([p.name, paths.filter((f) => /^package\/src\//.test(f))]).toEqual([p.name, []]);
+      // ...and `dist/` really is there, so "no src" is not "nothing at all".
+      expect([p.name, paths.some((f) => f.startsWith("package/dist/"))]).toEqual([p.name, true]);
+      // Every tarball carries its own licence (item 9) and README.
+      expect([p.name, paths.includes("package/LICENSE")]).toEqual([p.name, true]);
+      expect([p.name, paths.includes("package/README.md")]).toEqual([p.name, true]);
+    }
+  });
+
+  test("P7a pre-publish r2 (item 8): the PACKED manifest has no `bun` condition -- publishConfig.exports applied", async () => {
+    // The half that would otherwise fail silently and late: `src/` gone while the manifest still
+    // names it. A Bun consumer then fails at RESOLUTION, which reads as a missing module rather than
+    // as a manifest that lies. Read out of the extracted tarball, since the repo's own manifest is
+    // deliberately different.
+    for (const p of result.packages) {
+      const dir = mkdtempSync(join(tmpdir(), "winter-packed-manifest-"));
+      try {
+        const proc = Bun.spawn(["tar", "-xzf", p.tarballPath, "-C", dir], { stdout: "pipe", stderr: "pipe" });
+        expect(await proc.exited).toBe(0);
+        const packed = JSON.parse(readFileSync(join(dir, "package", "package.json"), "utf8")) as {
+          exports: Record<string, Record<string, string>>;
+          files?: string[];
+          license?: string;
+          scripts?: Record<string, string>;
+          publishConfig?: Record<string, unknown>;
+          repository?: { type?: string; url?: string; directory?: string };
+        };
+        for (const [subpath, conditions] of Object.entries(packed.exports)) {
+          expect([p.name, subpath, Object.keys(conditions)]).toEqual([p.name, subpath, ["types", "default"]]);
+          for (const target of Object.values(conditions)) expect([p.name, subpath, target.startsWith("./dist/")]).toEqual([p.name, subpath, true]);
+        }
+        expect([p.name, packed.files?.includes("src")]).toEqual([p.name, false]);
+        // P7a pre-publish r3 (I1): pnpm STRIPS `scripts` from the packed manifest, so the `prepack`
+        // guard that refuses a non-pnpm packer never reaches a consumer -- which is what makes the
+        // guard free rather than a behaviour change for anyone installing these packages.
+        expect([p.name, packed.scripts ?? {}]).toEqual([p.name, {}]);
+        // M2 (r2 review, correcting the round-2 report): pnpm removes only the override keys it
+        // LIFTS -- `exports` -- so `publishConfig` SURVIVES with its remaining keys. The report said
+        // the block was stripped; it is not, and `access` is deliberately still there.
+        expect([p.name, packed.publishConfig]).toEqual([p.name, { access: "restricted" }]);
+        // Item 9 + 10, on the artifact a registry actually receives.
+        expect([p.name, packed.license]).toEqual([p.name, "MIT"]);
+        expect([p.name, packed.repository?.url]).toEqual([p.name, "git+https://github.com/yanlingLabs/winter-agent-sdk.git"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("P7a fix wave (item 9): NO tarball ships a test file -- verified via `tar -tzf`, independently of the scanner", async () => {
     // Before this fix every tarball carried its own suite: provider-runtime 32 `.test.ts` against 59
     // sources, sdk 17 of 39, 72 across the five. `tar -tzf` rather than `result.violations` on
@@ -251,25 +322,47 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
     }
   });
 
-  test("P7a fix wave (item 9): provider-runtime STILL ships the `*.testing.ts` files its public `./testing` subpath re-exports", async () => {
-    // The control on the exclusion. `src/testing.ts` re-exports `startXaiOauthFake` and friends from
-    // `adapters/openai/xai-oauth.testing.ts`; an exclusion pattern written one character wider
-    // (`*test*.ts`) would take them with it and break a DECLARED entry point -- which the installed
-    // smoke would catch, but only in the leg that imports that exact subpath.
+  test("P7a pre-publish r2 (item 8): provider-runtime's `./testing` subpath ships as COMPILED output", async () => {
+    // Was: "still ships the `*.testing.ts` SOURCES". Since the dist-only ruling it ships their
+    // compiled form instead -- the declared entry point is unchanged, the artifact behind it is not.
+    // Kept as a test rather than deleted, because the property that matters is the same one: a
+    // declared subpath must have a file behind it, and an exclusion written one character wider
+    // would still break it.
     const runtime = result.packages.find((p) => p.name === "@yanlinglabs/winter-provider-runtime")!;
     const proc = Bun.spawn(["tar", "-tzf", runtime.tarballPath], { stdout: "pipe" });
     const listing = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
-    expect(listing).toContain("package/src/testing.ts");
-    expect(listing).toContain("package/src/adapters/openai/xai-oauth.testing.ts");
+    expect(listing).toContain("package/dist/testing.js");
+    expect(listing).toContain("package/dist/testing.d.ts");
+    expect(listing).not.toContain("xai-oauth.testing.ts");
   });
 
-  test("P7a fix wave (item 9): every publishable manifest DECLARES the exclusion -- a new package cannot forget it", () => {
-    // The declaration half. The two assertions above are about the OUTPUT of today's five packages;
-    // this one fails the moment a sixth is added without the negation, before anybody packs.
+  test("P7a pre-publish r2 (item 8): every publishable manifest declares a DIST-ONLY `files`, and a publishConfig.exports without `bun`", () => {
+    // The declaration half. The assertions above are about the OUTPUT of today's five packages; this
+    // one fails the moment a sixth is added wrong, before anybody packs.
+    //
+    // Was: `files` must CONTAIN `src` plus two test negations. The dist-only ruling inverts it --
+    // `src` must be absent, and the negations went with it (nothing to prune once no source ships).
     for (const pkg of discoverPublishablePackages()) {
-      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files?: string[] };
-      expect([pkg.name, manifest.files]).toEqual([pkg.name, expect.arrayContaining(["src", "!src/**/*.test.ts", "!src/**/*.test-support.ts"])]);
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as {
+        files: string[];
+        exports: Record<string, Record<string, string>>;
+        publishConfig: { exports?: Record<string, Record<string, string>> };
+      };
+      expect([pkg.name, manifest.files]).toEqual([pkg.name, expect.arrayContaining(["dist", "README.md", "LICENSE"])]);
+      expect([pkg.name, manifest.files.some((f) => f === "src" || f.startsWith("!src/"))]).toEqual([pkg.name, false]);
+
+      // The IN-REPO map keeps its `bun` condition -- this monorepo and the compiled binary run source.
+      for (const conditions of Object.values(manifest.exports)) expect([pkg.name, Object.keys(conditions)]).toEqual([pkg.name, ["types", "bun", "default"]]);
+      // The PUBLISHED map drops it, entry for entry, naming the same compiled targets.
+      const published = manifest.publishConfig.exports;
+      expect([pkg.name, published !== undefined]).toEqual([pkg.name, true]);
+      expect([pkg.name, Object.keys(published!)]).toEqual([pkg.name, Object.keys(manifest.exports)]);
+      for (const [subpath, conditions] of Object.entries(published!)) {
+        expect([pkg.name, subpath, Object.keys(conditions)]).toEqual([pkg.name, subpath, ["types", "default"]]);
+        expect([pkg.name, subpath, conditions["types"]]).toEqual([pkg.name, subpath, manifest.exports[subpath]!["types"]]);
+        expect([pkg.name, subpath, conditions["default"]]).toEqual([pkg.name, subpath, manifest.exports[subpath]!["default"]]);
+      }
     }
   });
 });

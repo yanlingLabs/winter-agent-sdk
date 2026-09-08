@@ -23,7 +23,7 @@
 //   bun run scripts/smoke-installed.ts                  # both runtimes
 //   bun run scripts/smoke-installed.ts --runtime=bun     # Bun only
 //   bun run scripts/smoke-installed.ts --runtime=node    # Node only
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverPublishablePackages, releasePack, type PublishablePackage } from "./release-pack.ts";
@@ -106,6 +106,36 @@ async function importUnder(runtime: SmokeRuntime, specifier: string, probeDir: s
   return { ok: exitCode === 0, output: (stdout + stderr).trim() };
 }
 
+/**
+ * Every violation of the dist-only contract in an INSTALLED tree: a `src/` directory on disk, or a
+ * manifest whose `exports` still names one (a `bun` condition, or any condition under `./src/`).
+ *
+ * Exported so `smoke-installed.test.ts` can drive it against a synthetic tree rather than only
+ * against the real one -- a check that has never been shown failing is a check nobody can trust.
+ */
+export function assertInstalledTreeIsDistOnly(probeDir: string, packageNames: readonly string[]): string[] {
+  const violations: string[] = [];
+  for (const name of packageNames) {
+    const pkgDir = join(probeDir, "node_modules", ...name.split("/"));
+    if (existsSync(join(pkgDir, "src"))) violations.push(`  ${name}: node_modules/${name}/src exists -- a published package ships compiled output only`);
+    const manifestPath = join(pkgDir, "package.json");
+    if (!existsSync(manifestPath)) {
+      violations.push(`  ${name}: installed but has no package.json`);
+      continue;
+    }
+    const exportsField = (JSON.parse(readFileSync(manifestPath, "utf8")) as { exports?: Record<string, unknown> | string }).exports;
+    if (typeof exportsField !== "object" || exportsField === null) continue;
+    for (const [subpath, conditions] of Object.entries(exportsField)) {
+      const targets = typeof conditions === "string" ? { default: conditions } : (conditions as Record<string, unknown>);
+      for (const [condition, target] of Object.entries(targets)) {
+        if (condition === "bun") violations.push(`  ${name}: installed exports["${subpath}"] still carries a \`bun\` condition (${String(target)}), which points outside a dist-only package`);
+        if (typeof target === "string" && target.startsWith("./src/")) violations.push(`  ${name}: installed exports["${subpath}"].${condition} names ${target}, which is not in a dist-only package`);
+      }
+    }
+  }
+  return violations;
+}
+
 export interface SmokeResult {
   ok: boolean;
   /** Every (runtime, target) pair attempted, in order, up to and including the first failure. */
@@ -133,6 +163,15 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
     if (install.exitCode !== 0) {
       throw new Error(`npm install --offline failed (exit ${install.exitCode}):\n${decode(install.stdout)}${decode(install.stderr)}`);
     }
+
+    // P7a pre-publish round 2 (item 8): the INSTALLED tree is dist-only, asserted before a single
+    // import is attempted. `releasePack`'s scan reads the tarballs; this reads what npm actually
+    // WROTE -- the same fact one step further along, and the step a consumer lives in. A `bun`
+    // condition surviving here would send Bun to a `src/` path that is not on disk, which is the one
+    // failure the source-condition design makes possible and the one no import test would attribute
+    // correctly (it looks like a missing module, not a manifest that lies).
+    const distOnly = assertInstalledTreeIsDistOnly(probeDir, packed.packages.map((p) => p.name));
+    if (distOnly.length > 0) throw new Error(`the installed tree is not dist-only:\n${distOnly.join("\n")}`);
 
     for (const runtime of runtimes) {
       for (const target of targets) {

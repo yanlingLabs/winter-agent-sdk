@@ -10,12 +10,14 @@
 //
 // THE SHAPE. Two emitters, because they answer two different questions:
 //
-//   * JS -- `bun build <entry> --target=node --format=esm --packages=external`, one invocation per
-//     EXPORT ENTRY (never per source file). `--packages=external` keeps every bare specifier
-//     (workspace peers, `@modelcontextprotocol/sdk`) as a real import that the consumer's own
-//     node_modules resolves, while RELATIVE imports -- including the catalog's `generated/*.json`
-//     module imports -- are bundled in. That is what makes one `.js` per entry a complete, Node-
-//     loadable module with no `.ts` specifier left anywhere in it.
+//   * JS -- ONE `bun build` per PACKAGE, listing every export entry, with `--splitting --outdir dist`
+//     (P7a pre-publish item 2; it was one `--outfile` invocation per entry). `--packages=external`
+//     keeps every bare specifier (workspace peers, `@modelcontextprotocol/sdk`) as a real import that
+//     the consumer's own node_modules resolves, while RELATIVE imports -- including the catalog's
+//     `generated/*.json` module imports -- are bundled in. `--splitting` hoists a module reached by
+//     more than one entry into a SHARED CHUNK, so it is evaluated once: without it every entry
+//     inlined its own copy, and a class declared in one source file was N distinct classes at
+//     runtime, making `instanceof` false across subpaths of one package under Node.
 //   * Declarations -- `tsc --emitDeclarationOnly`, per package, over the whole `src` tree, followed by
 //     `rewriteDeclarationSpecifiers`. It has to be tsc (`bun build` emits no types), and a `.d.ts`
 //     whose relative specifiers still ended in `.ts` would be exactly the original defect one layer
@@ -211,15 +213,45 @@ export async function buildPackages(opts: { root?: string; packages?: readonly P
     rmSync(distDir, { recursive: true, force: true });
     mkdirSync(distDir, { recursive: true });
 
+    // ONE MULTI-ENTRY BUILD PER PACKAGE, WITH CODE SPLITTING (P7a pre-publish, item 2).
+    //
+    // This was one `bun build --outfile` PER ENTRY, and that is what made a class declared in one
+    // source file exist as N distinct classes at runtime: each entry bundle inlined its own copy of
+    // every internal module it reached. Under Node -- where a consumer resolves the `default`
+    // condition -- `instanceof` across two subpaths of ONE package was therefore false, which the fix
+    // wave papered over with `Symbol.for` branding (kept: it is a public contract now, and it also
+    // covers the cross-realm case splitting cannot).
+    //
+    // `--splitting` with every entry in one invocation is the structural answer: a module reached by
+    // more than one entry is hoisted into a SHARED CHUNK that both entries import, so it is evaluated
+    // once and its classes are one object. `--outdir` (not `--outfile`) is required for it, and bun
+    // names each entry's output by its path relative to the common root of the entrypoints -- all of
+    // which live under `src/`, so the emitted tree MIRRORS src exactly as the per-entry build did
+    // (`src/official/index.ts` -> `dist/official/index.js`). Chunks land beside them as
+    // `<name>-<hash>.js`, imported by relative specifier, so nothing about the `exports` map moves.
+    //
+    // `--packages=external` still keeps every bare specifier a real import the consumer resolves;
+    // only RELATIVE imports are bundled, and now deduplicated across entries.
+    const entryPlan = entriesFor(pkg);
+    for (const { sourceRelative } of entryPlan) mkdirSync(dirname(join(pkg.dir, distPathFor(sourceRelative, ".js"))), { recursive: true });
+    const buildCommand = [
+      "bun",
+      "build",
+      ...entryPlan.map((e) => e.sourceRelative),
+      "--target=node",
+      "--format=esm",
+      "--packages=external",
+      "--splitting",
+      "--outdir",
+      "dist",
+    ];
+    commands.push(`(${pkg.name}) ${buildCommand.join(" ")}`);
+    await run(buildCommand, pkg.dir);
+
     const entries: BuiltEntry[] = [];
-    for (const { subpath, sourceRelative } of entriesFor(pkg)) {
+    for (const { subpath, sourceRelative } of entryPlan) {
       const jsRelative = distPathFor(sourceRelative, ".js");
-      const outfile = join(pkg.dir, jsRelative);
-      mkdirSync(dirname(outfile), { recursive: true });
-      const command = ["bun", "build", sourceRelative, "--target=node", "--format=esm", "--packages=external", "--outfile", jsRelative];
-      commands.push(`(${pkg.name}) ${command.join(" ")}`);
-      await run(command, pkg.dir);
-      if (!existsSync(outfile)) throw new Error(`build:packages: ${pkg.name} ${subpath}: bun build produced no ${jsRelative}`);
+      if (!existsSync(join(pkg.dir, jsRelative))) throw new Error(`build:packages: ${pkg.name} ${subpath}: bun build produced no ${jsRelative}`);
       entries.push({ subpath, source: relative(root, join(pkg.dir, sourceRelative)), js: jsRelative, types: distPathFor(sourceRelative, ".d.ts") });
     }
 

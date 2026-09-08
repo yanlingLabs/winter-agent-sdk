@@ -84,22 +84,51 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
     // F3 (round 3): the error must name the function THE CALLER INVOKED, never the internal helper.
     // Round 2 asserted only `api` here, so `functionName: "runLoginFlow"` -- exactly what
     // `bun-required.ts`'s own doc forbids, and not the name in the README's table -- went unnoticed.
-    expect(parsed.fn).toContain("startCodexLogin");
-    expect(parsed.fn).not.toBe("runLoginFlow");
+    //
+    // PRE-PUBLISH N1: and it must be the BARE symbol, not a sentence. Round 3 supplied it through
+    // `LoginConfig.label`, which is user-facing prose, so this read
+    // `"startCodexLogin login (runLoginFlow)"` -- and, worse, put the same string into the timeout
+    // message a user sees (asserted separately below).
+    expect(parsed.fn).toBe("startCodexLogin");
     expect(parsed.msg).toContain("requires the Bun runtime");
     // NOT the failure it replaces.
     expect(parsed.msg).not.toContain("Bun is not defined");
   }, 60_000);
 
+  test("N1: the guard's identifier and the login's USER-FACING prose are separate fields", async () => {
+    // THE ROUND-3 CONFLATION, as a test. `functionName` is a developer-facing symbol; `label` is the
+    // product name in "the … login timed out". Round 3 fed the symbol through `label`, so a codex
+    // user reading a timeout was told "the startCodexLogin login timed out".
+    //
+    // Both halves in one process: the ERROR's `functionName` (through the built dist, under Node,
+    // where the guard actually fires) and the PROSE (in-process under Bun, driving `runLoginFlow`
+    // with a 1 ms timeout against an authorize URL nothing will ever visit -- no listener is opened
+    // for the caller, nothing is fetched, and the flow rejects on its own timer).
+    const { runLoginFlow } = await import("./adapters/openai/pkce.ts");
+    const { startCodexLogin } = await import("./adapters/openai/codex-oauth.ts");
+    expect(typeof startCodexLogin).toBe("function");
+
+    // codex passes NO label, so the prose keeps `runLoginFlow`'s own default -- byte-identical to
+    // before round 3, which is the point.
+    await expect(
+      runLoginFlow({ clientId: "c", authorizeUrl: "https://example.invalid/authorize", tokenUrl: "https://example.invalid/token", scope: "s", callbackPort: 0, timeoutMs: 1, functionName: "startCodexLogin", openUrl: async () => {} }),
+    ).rejects.toThrow("the codex login timed out");
+
+    // ...and a login that DOES supply prose gets its own, with no function name in it.
+    await expect(
+      runLoginFlow({ clientId: "c", authorizeUrl: "https://example.invalid/authorize", tokenUrl: "https://example.invalid/token", scope: "s", callbackPort: 0, timeoutMs: 1, label: "Anthropic Console", functionName: "startAnthropicConsoleLogin", openUrl: async () => {} }),
+    ).rejects.toThrow("the Anthropic Console login timed out");
+  }, 30_000);
+
   test("provider-runtime: `startAnthropicConsoleLogin` refuses the same way -- both logins share one guard", async () => {
     const r = await underNode(`
       const m = await import("@yanlinglabs/winter-provider-runtime");
       try { await m.startAnthropicConsoleLogin({}, {}); console.log("NO-THROW"); }
-      catch (e) { console.log(JSON.stringify({ name: e?.name, isTyped: e instanceof m.BunRequiredError, api: e?.bunApi })); }
+      catch (e) { console.log(JSON.stringify({ name: e?.name, isTyped: e instanceof m.BunRequiredError, api: e?.bunApi, fn: e?.functionName })); }
     `);
     expect(r.exitCode).toBe(0);
-    const parsed = JSON.parse(r.out) as { name: string; isTyped: boolean; api: string };
-    expect(parsed).toEqual({ name: "BunRequiredError", isTyped: true, api: "Bun.serve" });
+    const parsed = JSON.parse(r.out) as { name: string; isTyped: boolean; api: string; fn: string };
+    expect(parsed).toEqual({ name: "BunRequiredError", isTyped: true, api: "Bun.serve", fn: "startAnthropicConsoleLogin" });
   }, 60_000);
 
   test("provider-runtime/testing: both loopback fakes refuse", async () => {
@@ -146,10 +175,17 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
   // `src/*.ts`, so the classes ARE identical -- which is why no Bun-side test could see it, and why
   // this whole describe runs under real `node`.
   //
-  // The fix is a package-scoped `Symbol.for` brand + `static [Symbol.hasInstance]`, and it is applied
-  // to the CLASS of the problem: EVERY error class exported from more than one subpath of a package,
-  // not just the one the READMEs happened to name. This test derives that set at run time, so a
-  // class that gains a second subpath later is covered without editing it.
+  // TWO FIXES, BOTH KEPT (P7a pre-publish item 2). The fix wave's was a package-scoped `Symbol.for`
+  // brand + `static [Symbol.hasInstance]`, applied to EVERY error class exported from more than one
+  // subpath. The pre-publish round added the STRUCTURAL one underneath it: `bun build --splitting`
+  // with all of a package's entries in ONE invocation, so a module reached by two entries is hoisted
+  // into a shared chunk and evaluated once -- the classes are now literally the SAME OBJECT.
+  //
+  // The brand stays, and is not redundant: it is a published contract now, it survives a future
+  // bundling change that re-duplicates, and it covers the cross-realm case (a worker, a `vm` context)
+  // that splitting cannot. So this test asserts BOTH -- object identity, and the brand still doing
+  // its job -- and derives the class set at run time, so one that gains a second subpath later is
+  // covered without editing it.
   test("F2: every class exported from BOTH entries of a package satisfies cross-entry `instanceof`", async () => {
     const r = await underNode(`
       const isClass = (v) => typeof v === "function" && /^class\\s/.test(Function.prototype.toString.call(v));
@@ -181,9 +217,10 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
       "@yanlinglabs/winter-provider-runtime#BunRequiredError",
     ]);
     for (const [pkg, cls, sameObject, crossEntry, ownEntry] of rows) {
-      // The duplication is REAL and still there -- this test would be vacuous if the emit stopped
-      // duplicating (which is the recorded `--splitting` carry), so it is asserted rather than assumed.
-      expect([pkg, cls, "distinct objects", sameObject]).toEqual([pkg, cls, "distinct objects", false]);
+      // ONE OBJECT, since `--splitting`: the shared chunk is evaluated once and both entries import
+      // the same binding. This assertion was `false` before the pre-publish round -- inverting it IS
+      // the structural fix, and leaving it as `false` would have made the fix look like a regression.
+      expect([pkg, cls, "same object", sameObject]).toEqual([pkg, cls, "same object", true]);
       expect([pkg, cls, "cross-entry instanceof", crossEntry]).toEqual([pkg, cls, "cross-entry instanceof", true]);
       expect([pkg, cls, "own-entry instanceof", ownEntry]).toEqual([pkg, cls, "own-entry instanceof", true]);
     }
@@ -205,6 +242,40 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
     `);
     expect(r.exitCode, r.out).toBe(0);
     expect(JSON.parse(r.out)).toEqual({ captureViaMainBarrel: true, fakeViaMainBarrel: true, loginViaTestingBarrel: true });
+  }, 60_000);
+
+  test("item 2: the emit really is SPLIT -- shared chunks exist and the entries import them", async () => {
+    // The mechanism behind the identity above, asserted directly so "same object" cannot pass for the
+    // wrong reason (e.g. an `exports` map that quietly collapsed two subpaths onto one file).
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const distDir = join(REPO_ROOT, "packages/conformance/dist");
+    const files = readdirSync(distDir).filter((f) => f.endsWith(".js"));
+    // Entry files keep their exact names; chunks land beside them as `<name>-<hash>.js`.
+    expect(files).toContain("index.js");
+    expect(files).toContain("trace.js");
+    const chunks = files.filter((f) => /-[a-z0-9]{8,}\.js$/.test(f));
+    expect(chunks.length).toBeGreaterThan(0);
+    // The class is in a CHUNK, not inlined into either entry -- that is what makes it one object.
+    const inEntry = readFileSync(join(distDir, "index.js"), "utf8").includes("class BunRequiredError");
+    const inSubpath = readFileSync(join(distDir, "official/index.js"), "utf8").includes("class BunRequiredError");
+    expect([inEntry, inSubpath]).toEqual([false, false]);
+    expect(chunks.filter((f) => readFileSync(join(distDir, f), "utf8").includes("class BunRequiredError")).length).toBe(1);
+  });
+
+  test("item 2: the BRAND still holds independently of bundling -- it is a published contract, not scaffolding", async () => {
+    // Splitting makes the classes one object TODAY. The brand is what keeps `instanceof` true if a
+    // future bundling change re-duplicates them, and across realms (a worker, a `vm` context) where
+    // no bundler can help. Asserted through a hand-made object carrying only the brand, so it tests
+    // the `Symbol.hasInstance` path rather than prototype identity.
+    const r = await underNode(`
+      const m = await import("@yanlinglabs/winter-provider-runtime");
+      const brand = Symbol.for("@yanlinglabs/winter-provider-runtime:BunRequiredError");
+      const foreign = { [brand]: true };              // a "copy from another bundle or realm"
+      const unbranded = Object.create(Error.prototype); // same shape, no brand
+      console.log(JSON.stringify({ branded: foreign instanceof m.BunRequiredError, unbranded: unbranded instanceof m.BunRequiredError }));
+    `);
+    expect(r.exitCode, r.out).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({ branded: true, unbranded: false });
   }, 60_000);
 
   test("F2: the brand is PACKAGE-scoped -- the two packages' classes still do not match, under Node too", async () => {

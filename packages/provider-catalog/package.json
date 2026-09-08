@@ -1,11 +1,22 @@
 {
   "name": "@yanlinglabs/winter-provider-catalog",
   "version": "0.0.1",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanlingLabs/winter-agent-sdk.git",
+    "directory": "packages/provider-catalog"
+  },
+  "homepage": "https://github.com/yanlingLabs/winter-agent-sdk",
+  "bugs": {
+    "url": "https://github.com/yanlingLabs/winter-agent-sdk/issues"
+  },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,19 +31,34 @@
   },
   "files": [
     "dist",
-    "src",
     "generated",
     "overlay",
     "schema",
     "NOTICE",
     "PROVENANCE.md",
     "UPSTREAM.json",
-    "!src/**/*.test.ts",
-    "!src/**/*.test-support.ts"
+    "README.md",
+    "LICENSE"
   ],
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+  "scripts": {
+    "prepack": "node -e \"if(!/\\bpnpm\\//.test(process.env.npm_config_user_agent||''))throw new Error('pack/publish this package with pnpm. publishConfig.exports is a pnpm-only feature: under npm the override is ignored, so the packed manifest keeps a bun condition pointing at src/ -- which files does not ship -- and the tarball is broken for every Bun consumer while installing fine under Node. See RELEASING.md.')\""
   },
-  "types": "./dist/index.d.ts"
+  "publishConfig": {
+    "access": "restricted",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./families": {
+        "types": "./dist/families.d.ts",
+        "default": "./dist/families.js"
+      }
+    }
+  },
+  "winter": {
+    "publish": {
+      "npm": true
+    }
+  }
 }

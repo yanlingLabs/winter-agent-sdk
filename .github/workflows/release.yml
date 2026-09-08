@@ -11,6 +11,12 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 jobs:
+  # --- TWO REGISTRIES, TWO JOBS (P7a pre-publish item 5; user ruling 2026-09-08) ------------------
+  #
+  # GitHub Packages first, npm second, and SEPARATE jobs on purpose: the npm leg needs a secret this
+  # repository may not have, and a missing `NPM_TOKEN` must never block the GitHub Packages publish.
+  # `needs:` makes the dependency explicit -- npm runs only if GitHub Packages SUCCEEDED, so the two
+  # registries can never disagree about which versions exist because the first leg failed halfway.
   publish:
     runs-on: ubuntu-latest
     # R-7-1: GitHub Packages, scope @yanlinglabs. `contents: read` is the default job permission
@@ -24,8 +30,22 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
+      # P7a pre-publish r3 (review C2): THIS is what gives job 1 a GitHub Packages credential, and
+      # before this round it had none -- no `//npm.pkg.github.com/:_authToken` line existed anywhere,
+      # `registry-url` was absent, and pnpm never reads `NODE_AUTH_TOKEN` by name (its only token
+      # plumbing is `:tokenHelper`). The first `v0.0.1` push would have failed at the publish step
+      # with ENEEDAUTH and published nothing, anywhere.
+      #
+      # `registry-url` + `scope` make setup-node write a throwaway userconfig
+      # (`$RUNNER_TEMP/.npmrc`, pointed at by `NPM_CONFIG_USERCONFIG`) carrying BOTH
+      # `@yanlinglabs:registry=<url>` and `//<url>/:_authToken=${NODE_AUTH_TOKEN}` -- one mechanism
+      # choosing the registry and the credential together, per job. That is why the committed
+      # `.npmrc` now pins neither: a committed pin is global, and there are two registries.
       - uses: actions/setup-node@v4
-        with: { node-version: 18 }
+        with:
+          node-version: 18
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@yanlinglabs"
       - run: pnpm install
 
       # --- the gates: the exact verification sequence ci.yml's `build` and `official-fixture-compile`
@@ -46,6 +66,7 @@ jobs:
       - run: bun run conformance:fetch
       - run: bun run conformance:snapshot -- --check
       - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter.json
+      - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter-dist.json   # P7a pre-publish item 3: the SAME fixture against the BUILT declarations -- what an installed consumer actually resolves
       - run: bun run provider:catalog -- --check
       - run: bun run provider:sync -- --offline
       - run: bun run differential
@@ -76,6 +97,14 @@ jobs:
       # a new version on every tag push would create a commit the pushed tag does not point at, and
       # would need write access back to a branch the tag need not even track. The published version
       # is exactly what VERSION already says at the tagged commit.
+      # P7a pre-publish (item 6): THE VERSION/TAG CONSISTENCY GATE, before anything is published.
+      # A publish is triggered by pushing `v<version>`, and what actually ships is whatever the
+      # manifests say at that commit -- equal only because a human ran the bump before tagging.
+      # Diverging does not fail the publish, it SUCCEEDS at publishing the wrong number, to registries
+      # where a version can never be re-published. `GITHUB_REF` is the pushed ref; on
+      # `workflow_dispatch` there is no tag and the manifest-vs-VERSION half still runs.
+      - run: bun run scripts/check-release-version.ts
+
       # P7a fix wave r2 (item 2, re-review N2): the compiled emit is built EXPLICITLY, immediately
       # before the one publish command, and never left to a smoke step's side effect. `releasePack()`
       # does build first -- which is why the smokes above pass -- but `pnpm publish` does not go
@@ -84,6 +113,127 @@ jobs:
       # dependency nothing states and nothing checks, and the failure mode is silent: a package whose
       # `default` condition names a file that is simply absent from the published tarball.
       - run: bun run build:packages
+      # P7a pre-publish r3 (review §5): IDEMPOTENT RE-DRIVE. `pnpm publish -r` already skips a version
+      # its own probe finds published, but that probe swallows every error as "not published", so it
+      # is not something to rely on for the recovery path. This step states the fact out loud, per
+      # package, before the publish -- so a half-done release is finished by a `workflow_dispatch` at
+      # the SAME tag rather than by a version bump, and the log says which packages were skipped and
+      # why. `--no-git-checks` because the tag ref is a detached HEAD.
+      - name: "report which versions this registry already has"
+        run: bun run scripts/check-already-published.ts --registry https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: pnpm publish -r --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- THE npm LEG (P7a pre-publish item 5) --------------------------------------------------------
+  #
+  # `needs: publish` -- it runs only after GitHub Packages succeeded, so a half-published pair is not
+  # possible in the direction that matters (npm is the registry a version can never be taken back
+  # from). A missing `NPM_TOKEN` skips this job's publish step and leaves the GitHub Packages publish
+  # untouched, which is why this is a separate job rather than two steps in one.
+  #
+  # `--registry https://registry.npmjs.org` OVERRIDES `.npmrc`'s scope pin for this command only: that
+  # file makes GitHub Packages the default for `@yanlinglabs` precisely so nothing reaches npm by
+  # accident, and this is the one place that is deliberate.
+  #
+  # `--access public` is EXPLICIT: `publishConfig.access` stays `restricted` (it is GitHub Packages'
+  # setting and npm's default for a scoped package would otherwise be restricted too, which the free
+  # plan cannot do). Scoped packages on npm's free plan are public -- the user has ruled that they
+  # are published publicly, and the tarballs ship COMPILED OUTPUT ONLY (round 2, item 8) -- the sources
+  # live in this repository, not in the package.
+  #
+  # NOT THE WHOLE SET (user ruling 2026-09-08). npm gets EXACTLY the wrapper and its transitive
+  # workspace `dependencies` closure -- what installing the wrapper by name needs at run time -- and
+  # nothing else. The provider runtime and the two conformance harnesses stay
+  # GitHub-Packages-only: the harnesses are the org's own test tooling, and the wrapper SPAWNS the
+  # compiled runtime rather than importing it, so a public consumer never needs that package.
+  #
+  # The set is DATA (`winter.publish.npm` per manifest) and this job asks `scripts/npm-publish-set.ts`
+  # for the `--filter` arguments at run time: a package name written HERE would be a second copy of a
+  # fact the manifests already carry, and the copy that drifts. `release-gates.test.ts` asserts the
+  # flagged set EQUALS that closure -- exactly, in both directions, with no exceptions mechanism -- so
+  # a new runtime dependency cannot be forgotten and nothing else can be added.
+  #
+  # `--provenance` attaches a signed npm provenance statement, which is why this job -- and ONLY this
+  # job -- carries `id-token: write`. `contents: read` is repeated explicitly beside it; nothing here
+  # needs `packages: write` (that is the other job's grant and stays there).
+  publish-npm:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      # Same mechanism as job 1, different registry and different credential -- `scope` is what makes
+      # it bind `@yanlinglabs` to npmjs for THIS job only (review C1: a committed scope pin beat
+      # `--registry` at both the pnpm and the npm layer, so nothing ever reached npm).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          scope: "@yanlinglabs"
+      - run: pnpm install
+      # The same two gates the GitHub Packages job ran, repeated here because this job checks out
+      # afresh: the version/tag agreement, and the compiled emit the tarballs must contain.
+      - run: bun run scripts/check-release-version.ts
+      - run: bun run build:packages
+      # TOKEN-GATED. `if:` cannot read `secrets` directly in a job-level condition, so the secret is
+      # lifted into `env` on the step and the condition tests THAT -- the documented pattern, and the
+      # reason this is a step-level gate rather than a job-level one. With no token the step is
+      # SKIPPED (green), the workflow succeeds, and GitHub Packages has already published.
+      # P7a pre-publish r3 (review M1): the npm set reaches the publish through `$GITHUB_OUTPUT`, not
+      # a `$(…)` substitution inside the command. A failing substitution used to degrade the command
+      # to an unfiltered, non-recursive `pnpm publish` in the workspace root -- which fails, because
+      # the root is private, but for a reason that has nothing to do with what went wrong. A step
+      # that cannot produce its output fails as itself.
+      - id: npm-set
+        run: |
+          set -euo pipefail
+          # `set -e` does NOT fire on a failed command substitution inside a simple command's
+          # argument (measured: `echo "x=$(exit 3)"` exits 0), so the round-3 form went GREEN with an
+          # empty output and the failure only surfaced one step later. Assigned on its own line --
+          # where `set -e` does fire -- and then checked explicitly, so this step fails as itself.
+          ARGS="$(bun run scripts/npm-publish-set.ts --format=names)"
+          if [ -z "$ARGS" ]; then
+            echo "npm-set: scripts/npm-publish-set.ts produced no packages -- refusing to continue" >&2
+            exit 1
+          fi
+          echo "tarball-args=$ARGS" >> "$GITHUB_OUTPUT"
+
+      # P7a pre-publish r3 (review I1): PER PACKAGE, with `npm publish <tarball>`, because pnpm's
+      # recursive publish REBUILDS npm's argv and forwards only `--access`/`--dry-run`/`--force`/
+      # `--otp` -- `--provenance` was silently dropped, `id-token: write` was granted and never used,
+      # and the YAML-text assertion kept passing. The tarballs come from `pnpm pack`, so the
+      # dist-only `publishConfig` overrides still apply (plain `npm pack` would ignore them).
+      #
+      # The skip-if-exists probe runs inside the same script, per package, against THIS registry: a
+      # `workflow_dispatch` re-drive at the same tag finishes a half-done release instead of
+      # colliding on a version that is already there.
+      # --- RUNBOOK: what to do when this job fails after job 1 succeeded -------------------------
+      #
+      # 1. DO NOT bump the version. Both registries refuse a version they already hold, so a bump
+      #    would leave the tag naming something other than what shipped. Re-drive instead:
+      #    `workflow_dispatch` at the SAME tag ref. Both jobs skip what their own registry already
+      #    has (`check-already-published.ts` here and in job 1), so the re-drive finishes the half
+      #    that failed and reports the half that did not need doing.
+      # 2. `NPM_TOKEN` must exist BEFORE the tag is pushed. Without it this job's publish step is
+      #    SKIPPED and the workflow goes green with GitHub Packages published and npm empty; adding
+      #    the secret afterwards ships nothing until a `workflow_dispatch` re-drive at that tag.
+      # 3. NEVER pack or publish these packages with plain `npm` by hand. The tarballs are dist-only
+      #    through `publishConfig.exports`/`files` overrides, which pnpm applies at pack time and
+      #    `npm pack` IGNORES -- a hand-packed tarball would carry a manifest whose `bun` condition
+      #    names a `src/` that is not in it. `scripts/publish-npm-set.ts` packs through
+      #    `releasePack()` (pnpm) and publishes the resulting tarballs with `npm publish`, which is
+      #    the only combination that gets both the overrides and `--provenance`.
+      - name: "publish to npm (skipped when NPM_TOKEN is absent)"
+        if: ${{ env.NPM_TOKEN != '' }}
+        run: bun run scripts/publish-npm-set.ts --packages "${{ steps.npm-set.outputs.tarball-args }}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
