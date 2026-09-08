@@ -67,6 +67,19 @@ export interface LoginConfig {
    */
   label?: string;
   /**
+   * P7a pre-publish (N1): the EXPORTED function a caller invoked, for `BunRequiredError.functionName`.
+   *
+   * Separate from `label` on purpose, because the two answer different questions and round 3
+   * conflated them. `label` is USER-FACING PROSE ("the Anthropic Console login timed out") and its
+   * own doc above reserves it for that; `functionName` is a DEVELOPER-FACING identifier that must be
+   * the symbol in the caller's code (`bun-required.ts`: "never the internal helper that reaches for
+   * Bun"). Round 3 fixed the identifier by writing it into `label`, which made a codex user read
+   * "the startCodexLogin login timed out" -- a function name where a product name goes.
+   *
+   * Absent -> the guard names `runLoginFlow`, which is honest for a direct caller of this helper.
+   */
+  functionName?: string;
+  /**
    * The token exchange's body encoding. Defaults to `"form"`.
    *
    * P6.5 ruling R-A2-1 — see `adapters/oauth/refresh.ts` for the whole reasoning. Short version:
@@ -210,9 +223,10 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
   // P7a fix wave r2 (item 3, re-review N1): the ONE place this package opens a loopback listener, and
   // therefore the one guard that covers every login built on it -- `startCodexLogin` and
   // `startAnthropicConsoleLogin` both funnel here. Named for the CALLER's own function where one is
-  // supplied (`cfg.label`), because that is the name in their code, not this internal helper's.
+  // supplied (`cfg.functionName`), because that is the SYMBOL in their code -- and NOT from
+  // `cfg.label`, which is user-facing prose (pre-publish N1: round 3 conflated the two).
   requireBunRuntime(
-    cfg.label !== undefined ? `${cfg.label} login (runLoginFlow)` : "runLoginFlow",
+    cfg.functionName ?? "runLoginFlow",
     "Bun.serve",
     "The authorization-code flow has to receive the vendor's redirect on 127.0.0.1, which needs a real HTTP listener. Run the login under Bun (or complete it in a Bun process and pass the resulting credential ref to your Node session).",
   );

@@ -84,22 +84,51 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
     // F3 (round 3): the error must name the function THE CALLER INVOKED, never the internal helper.
     // Round 2 asserted only `api` here, so `functionName: "runLoginFlow"` -- exactly what
     // `bun-required.ts`'s own doc forbids, and not the name in the README's table -- went unnoticed.
-    expect(parsed.fn).toContain("startCodexLogin");
-    expect(parsed.fn).not.toBe("runLoginFlow");
+    //
+    // PRE-PUBLISH N1: and it must be the BARE symbol, not a sentence. Round 3 supplied it through
+    // `LoginConfig.label`, which is user-facing prose, so this read
+    // `"startCodexLogin login (runLoginFlow)"` -- and, worse, put the same string into the timeout
+    // message a user sees (asserted separately below).
+    expect(parsed.fn).toBe("startCodexLogin");
     expect(parsed.msg).toContain("requires the Bun runtime");
     // NOT the failure it replaces.
     expect(parsed.msg).not.toContain("Bun is not defined");
   }, 60_000);
 
+  test("N1: the guard's identifier and the login's USER-FACING prose are separate fields", async () => {
+    // THE ROUND-3 CONFLATION, as a test. `functionName` is a developer-facing symbol; `label` is the
+    // product name in "the … login timed out". Round 3 fed the symbol through `label`, so a codex
+    // user reading a timeout was told "the startCodexLogin login timed out".
+    //
+    // Both halves in one process: the ERROR's `functionName` (through the built dist, under Node,
+    // where the guard actually fires) and the PROSE (in-process under Bun, driving `runLoginFlow`
+    // with a 1 ms timeout against an authorize URL nothing will ever visit -- no listener is opened
+    // for the caller, nothing is fetched, and the flow rejects on its own timer).
+    const { runLoginFlow } = await import("./adapters/openai/pkce.ts");
+    const { startCodexLogin } = await import("./adapters/openai/codex-oauth.ts");
+    expect(typeof startCodexLogin).toBe("function");
+
+    // codex passes NO label, so the prose keeps `runLoginFlow`'s own default -- byte-identical to
+    // before round 3, which is the point.
+    await expect(
+      runLoginFlow({ clientId: "c", authorizeUrl: "https://example.invalid/authorize", tokenUrl: "https://example.invalid/token", scope: "s", callbackPort: 0, timeoutMs: 1, functionName: "startCodexLogin", openUrl: async () => {} }),
+    ).rejects.toThrow("the codex login timed out");
+
+    // ...and a login that DOES supply prose gets its own, with no function name in it.
+    await expect(
+      runLoginFlow({ clientId: "c", authorizeUrl: "https://example.invalid/authorize", tokenUrl: "https://example.invalid/token", scope: "s", callbackPort: 0, timeoutMs: 1, label: "Anthropic Console", functionName: "startAnthropicConsoleLogin", openUrl: async () => {} }),
+    ).rejects.toThrow("the Anthropic Console login timed out");
+  }, 30_000);
+
   test("provider-runtime: `startAnthropicConsoleLogin` refuses the same way -- both logins share one guard", async () => {
     const r = await underNode(`
       const m = await import("@yanlinglabs/winter-provider-runtime");
       try { await m.startAnthropicConsoleLogin({}, {}); console.log("NO-THROW"); }
-      catch (e) { console.log(JSON.stringify({ name: e?.name, isTyped: e instanceof m.BunRequiredError, api: e?.bunApi })); }
+      catch (e) { console.log(JSON.stringify({ name: e?.name, isTyped: e instanceof m.BunRequiredError, api: e?.bunApi, fn: e?.functionName })); }
     `);
     expect(r.exitCode).toBe(0);
-    const parsed = JSON.parse(r.out) as { name: string; isTyped: boolean; api: string };
-    expect(parsed).toEqual({ name: "BunRequiredError", isTyped: true, api: "Bun.serve" });
+    const parsed = JSON.parse(r.out) as { name: string; isTyped: boolean; api: string; fn: string };
+    expect(parsed).toEqual({ name: "BunRequiredError", isTyped: true, api: "Bun.serve", fn: "startAnthropicConsoleLogin" });
   }, 60_000);
 
   test("provider-runtime/testing: both loopback fakes refuse", async () => {

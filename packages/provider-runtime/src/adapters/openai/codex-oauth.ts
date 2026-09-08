@@ -91,12 +91,12 @@ export interface CodexLoginResult {
  */
 export async function startCodexLogin(store: CredentialStore, options: CodexLoginOptions): Promise<CodexLoginResult> {
   const tokens = await runLoginFlow({
-    // P7a fix wave r3 (F3): `runLoginFlow` derives `BunRequiredError.functionName` from `label`, and
-    // without one a Node caller was told the failing function was `runLoginFlow` -- the internal
-    // helper `bun-required.ts`'s own doc says the error must NEVER name, and not the function in
-    // their code or in the README's table. `label` was already read for the flow's own prose
-    // (`cfg.label ?? "codex"`), so the field is free.
-    label: "startCodexLogin",
+    // P7a pre-publish (N1): the DEVELOPER-facing identifier for `BunRequiredError.functionName`.
+    // Round 3 wrote it into `label` instead, which `LoginConfig.label`'s own doc reserves for
+    // USER-FACING prose -- so a codex user reading a timeout was told "the startCodexLogin login
+    // timed out": a function name where a product name goes. `label` is left DEFAULTED to `"codex"`
+    // here, so every user-facing string is byte-identical to before round 3.
+    functionName: "startCodexLogin",
     clientId: CODEX.clientId,
     authorizeUrl: options.authorizeUrl ?? CODEX.authorizeUrl,
     tokenUrl: options.tokenUrl ?? CODEX.tokenUrl,
