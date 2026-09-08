@@ -709,24 +709,41 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     if (opts.providerSettings?.()?.[result.providerId]?.enabled === false) {
       return { refused: true, code: "provider-disabled", message: `provider "${result.providerId}" is disabled in settings (providers.${result.providerId}.enabled); the model was not switched` };
     }
-    const material = describeTargetMaterial(result);
-    const family = String(result.adapter.family);
-    const resolution: ModelSwitchResolution = {
-      provider: buildProvider(result),
-      identity: {
-        providerId: result.providerId,
-        modelKey: result.modelKey,
-        family,
-        ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}),
-        adapterId: result.adapterId,
-        adapterVersion: result.adapter.version,
-        catalogVersion: result.catalogVersion,
-        authRefKind: material.authRef.kind,
-      },
-      to: endpointFor({ providerId: result.providerId, modelKey: result.modelKey, family, ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}) }),
-      ...(from !== undefined ? { from: endpointFor({ ...from, family: familyOf(from) }) } : {}),
-    };
-    return resolution;
+    // P7a fix wave (item 4): MATERIALISATION IS PART OF THE SEAM, so its refusals are the seam's
+    // refusals. Every branch above returns a typed `{refused}`, and then the two calls that actually
+    // build the target -- `describeTargetMaterial` and `buildProvider` (which calls it again) --
+    // could still THROW past all of them: `connectionFrom` raises `endpoint-required` for a
+    // `requiresUserEndpoint` row (azure-ai, oci) with no user `baseUrl`, which is exactly the shape a
+    // `set_model` to a per-tenant provider has. Ruling E-2's whole point is that the engine calls this
+    // seam FIRST so an unusable target becomes a control-response refusal; an escaping throw lands
+    // instead on whatever the caller's generic error path is -- for `set_model`, an unhandled
+    // rejection rather than the refusal the host is shaped to render.
+    //
+    // Only `WinterProviderResolutionError` is converted: it is the family that CARRIES a code, and a
+    // genuine programming fault must stay a fault rather than be laundered into a model refusal.
+    try {
+      const material = describeTargetMaterial(result);
+      const family = String(result.adapter.family);
+      const resolution: ModelSwitchResolution = {
+        provider: buildProvider(result),
+        identity: {
+          providerId: result.providerId,
+          modelKey: result.modelKey,
+          family,
+          ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}),
+          adapterId: result.adapterId,
+          adapterVersion: result.adapter.version,
+          catalogVersion: result.catalogVersion,
+          authRefKind: material.authRef.kind,
+        },
+        to: endpointFor({ providerId: result.providerId, modelKey: result.modelKey, family, ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}) }),
+        ...(from !== undefined ? { from: endpointFor({ ...from, family: familyOf(from) }) } : {}),
+      };
+      return resolution;
+    } catch (err) {
+      if (!(err instanceof WinterProviderResolutionError)) throw err;
+      return { refused: true, code: err.code, message: err.message };
+    }
   };
 
   // RULING E-4 (R6-H): the price of one generation, from the descriptor's `pricing` evidence and

@@ -339,3 +339,91 @@ describe("WS-13b §2/§10: a `requiresUserEndpoint` provider REQUIRES the profil
     expect(message).not.toContain(SESSION_KEY);
   });
 });
+
+// --- P7a fix wave item 4: the refusal must not ESCAPE the switch seam as a throw -----------------
+//
+// Ruling E-2's whole point is that the engine calls `resolveModelSwitch` FIRST, so an unusable
+// target becomes a control-response refusal and nothing is ever parked. Every resolution branch in
+// that function already returned a typed `{refused, code, message}` -- and then the two calls that
+// MATERIALISE the target (`describeTargetMaterial`, and `buildProvider`, which calls it again) could
+// still throw straight past all of them, because `connectionFrom` raises `endpoint-required` for a
+// per-tenant row with no user `baseUrl`. A `set_model` onto `azure-ai`/`oci` is exactly that shape,
+// and it landed on the caller's generic error path instead of the refusal a host is shaped to render.
+describe("P7a fix wave (item 4): `endpoint-required` reaches the caller as the TYPED refusal, never as a throw", () => {
+  test("a CROSS-PROVIDER slot switch onto a per-tenant row refuses -- `{refused, code: \"endpoint-required\"}`, no throw", () => {
+    const catalog = catalogFor("https://reviewed.example/v1");
+    // A slot is the one production path that legitimately crosses providers on a BARE name (WS-13c
+    // §5): the slot resolver has already made the provider decision, so `resolveModelSwitch` looks
+    // the target up under the SLOT's provider and reaches `describeTargetMaterial` cross-provider --
+    // where `generatedConnectionForProvider` refuses, because a cross-provider target may not borrow
+    // the session's endpoint and this row ships none of its own.
+    const wiring = buildSessionProvider({
+      config: configFor("reviewedrow"),
+      env: {},
+      catalog,
+      credentials: createMemoryCredentialStore(),
+      resolveSlot: (requested) =>
+        requested === "tenant"
+          ? { ok: true, modelKey: "tenantrow/m1", providerId: "tenantrow", canonicalModelId: "m1", slot: { family: "openai", name: "tenant", source: "default" }, viaSlotName: true }
+          : { ok: false, code: "unknown-slot", message: `no slot named "${requested}"`, wouldServe: [] },
+    });
+    expect(wiring.resolutionError).toBeUndefined();
+
+    let thrown: unknown;
+    let outcome: ReturnType<typeof wiring.resolveModelSwitch> | undefined;
+    try {
+      outcome = wiring.resolveModelSwitch("tenant");
+    } catch (err) {
+      thrown = err;
+    }
+    // BEFORE the fix this line is what fails: the call threw and `outcome` stayed undefined.
+    expect(thrown).toBeUndefined();
+    expect(outcome).toBeDefined();
+    expect(outcome).toHaveProperty("refused", true);
+    const refusal = outcome as { refused: true; code: string; message: string };
+    expect(refusal.code).toBe("endpoint-required");
+    // The message the seam hands on is the connection layer's own, so the operator is told what to
+    // set -- and it still names only the TEMPLATE, never a real endpoint.
+    expect(refusal.message).toContain("https://<resource>.services.example.test/openai/v1");
+    expect(refusal.message).not.toContain("reviewed.example");
+  });
+
+  test("a SAME-PROVIDER switch on a refused per-tenant session refuses the same way -- the other door into `connectionFrom`", () => {
+    // The second reachable shape: the session itself is on the per-tenant row with no `baseUrl`, so
+    // it started REFUSED (deferred, per R6-9) and `sessionProviderId()` is `tenantrow`. A `set_model`
+    // to that provider's own qualified key resolves fine and then dies in `connectionForProvider` --
+    // a different branch of the same function, and it must answer the same way.
+    const wiring = buildSessionProvider({
+      config: configFor("tenantrow"),
+      env: {},
+      catalog: catalogFor("https://reviewed.example/v1"),
+      credentials: createMemoryCredentialStore(),
+    });
+    expect(wiring.resolutionError?.code).toBe("endpoint-required");
+
+    let thrown: unknown;
+    let outcome: ReturnType<typeof wiring.resolveModelSwitch> | undefined;
+    try {
+      outcome = wiring.resolveModelSwitch("tenantrow/m1");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeUndefined();
+    expect(outcome).toHaveProperty("refused", true);
+    expect((outcome as { code: string }).code).toBe("endpoint-required");
+  });
+
+  test("a target that DOES resolve is unaffected -- the wrapper converts refusals, it does not swallow success", () => {
+    // The guard on the guard: a try/catch around a construction is exactly the shape that can turn a
+    // working path into a silent refusal, so the happy case is pinned in the same block.
+    const wiring = buildSessionProvider({
+      config: configFor("reviewedrow"),
+      env: {},
+      catalog: catalogFor("https://reviewed.example/v1"),
+      credentials: createMemoryCredentialStore(),
+    });
+    const outcome = wiring.resolveModelSwitch("reviewedrow/m1");
+    expect(outcome).not.toHaveProperty("refused");
+    expect((outcome as { identity: { modelKey: string } }).identity.modelKey).toBe("reviewedrow/m1");
+  });
+});
