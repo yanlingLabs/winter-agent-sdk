@@ -116,8 +116,16 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
   //     `@sdk-under-test` at the installed OFFICIAL declarations and reaches no winter package, which
   //     `compile-fixtures.test.ts` proves by running it with every `dist` deleted.
 
-  /** A step that resolves a winter package through its `types` condition, i.e. needs `dist` on disk. */
-  const NEEDS_DIST = (run: string): boolean => run.includes("tsconfig.winter.json") || run.startsWith("bun test");
+  /**
+   * A step that resolves a winter package through its `types` condition, i.e. needs `dist` on disk.
+   *
+   * `tsconfig.winter` matches BOTH consumer-fixture configs (P7a pre-publish item 3 added
+   * `tsconfig.winter-dist.json`, which resolves `@sdk-under-test` through the BUILT declarations and
+   * therefore needs `dist` even harder than its sibling). A prefix rather than two exact names, so a
+   * third `tsconfig.winter-*.json` is covered on arrival -- the hand-list is what let F1 through.
+   * `tsconfig.official.json` is deliberately NOT matched: it reaches no winter package.
+   */
+  const NEEDS_DIST = (run: string): boolean => run.includes("tsconfig.winter") || run.startsWith("bun test");
   /** A step that calls a `compile()` consumer but needs no `dist` -- recorded so its absence is a DECISION. */
   const COMPILE_CONSUMER_NO_DIST = (run: string): boolean => run.includes("compile-official-fixture.ts");
 
@@ -140,6 +148,23 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     expect(offenders).toEqual([]);
     // Not vacuous: ci.yml's `build` and release.yml's publish job both qualify today.
     expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  test("item 3: BOTH workflows compile the fixture against the BUILT declarations, after the build", () => {
+    // The `dist`-typed fixture is the one gate that crosses `tsc --emitDeclarationOnly` +
+    // `rewriteDeclarationSpecifiers` -- the link an installed consumer resolves and no other gate
+    // touches. Asserted in both files, and after the build, since it needs `dist` by construction.
+    for (const [file, yml, jobName] of [["ci.yml", CI_YML, "build"], ["release.yml", RELEASE_YML, undefined]] as const) {
+      const doc = Bun.YAML.parse(yml) as WorkflowDoc;
+      const job = jobName !== undefined ? doc.jobs[jobName]! : Object.values(doc.jobs)[0]!;
+      const runs = job.steps.map((s) => s.run ?? "");
+      const distFixtureAt = runs.findIndex((r) => r.includes("tsconfig.winter-dist.json"));
+      expect([file, distFixtureAt >= 0]).toEqual([file, true]);
+      const buildAt = runs.findIndex((r) => r.startsWith("bun run build:packages"));
+      expect([file, buildAt < distFixtureAt]).toEqual([file, true]);
+      // ...and the SOURCE-typed sibling is still there: the two prove different things.
+      expect([file, runs.some((r) => r.includes("tsconfig.winter.json"))]).toEqual([file, true]);
+    }
   });
 
   test("F1: `official-fixture-compile` calls a `compile()` consumer and deliberately has NO build step", () => {

@@ -82,6 +82,36 @@ test("P7a r2: the build really is this file's precondition -- with no dist, `com
   expect(missingDistPackages()).toEqual([]);
 }, 300_000);
 
+test("P7a pre-publish (item 3): the fixture compiles against the BUILT declarations, not the source", async () => {
+  // THE ONE LINK NO OTHER GATE CROSSES. `tsconfig.winter.json` maps `@sdk-under-test` onto the sdk
+  // SOURCE, so it proves the fixture type-checks against the sdk's AUTHORED api -- while an installed
+  // consumer resolves `@yanlinglabs/winter-agent-sdk` through `types: ./dist/index.d.ts`, i.e. through
+  // `tsc --emitDeclarationOnly` plus `rewriteDeclarationSpecifiers`. `smoke-installed.ts` proves the
+  // emitted JS IMPORTS under both runtimes but type-checks nothing; `conformance:snapshot --check`
+  // reads the upstream OFFICIAL tarball's declarations, not winter's own emit.
+  //
+  // `requireDist: true` because this tsconfig genuinely needs the build -- and it is the reason that
+  // flag is a caller assertion rather than a property of `compile()`.
+  const r = await compile("packages/conformance/tsconfig.winter-dist.json", { requireDist: true });
+  expect(r.ok, r.output).toBe(true);
+}, 120_000);
+
+test("P7a pre-publish (item 3): that fixture really resolves through `dist` -- with none, it cannot find the sdk", async () => {
+  // Non-vacuity, and it is the whole claim: if this still compiled with no `dist`, the tsconfig would
+  // be reading the source through some inherited `paths` and proving nothing new.
+  const dists = ["sdk", "provider-catalog", "provider-runtime", "conformance", "provider-conformance"].map((p) => join(REPO_ROOT, "packages", p, "dist"));
+  try {
+    for (const dir of dists) rmSync(dir, { recursive: true, force: true });
+    // Asked WITHOUT the guard, so tsc actually runs and its own diagnostic is what we read.
+    const r = await compile("packages/conformance/tsconfig.winter-dist.json");
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain("Cannot find module '@sdk-under-test'");
+  } finally {
+    await buildPackages();
+  }
+  expect(missingDistPackages()).toEqual([]);
+}, 300_000);
+
 test("P7a r4 (F1, hermetic): with NO dist, a caller that does not ask for the guard is not refused", async () => {
   // F1's MECHANISM, with no network. The round-2 regression was `compile()` refusing a caller that
   // needs no build; `requireDist` makes the check something the CALLER asks for, so the statement to

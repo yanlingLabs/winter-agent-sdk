@@ -46,6 +46,7 @@ jobs:
       - run: bun run conformance:fetch
       - run: bun run conformance:snapshot -- --check
       - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter.json
+      - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter-dist.json   # P7a pre-publish item 3: the SAME fixture against the BUILT declarations -- what an installed consumer actually resolves
       - run: bun run provider:catalog -- --check
       - run: bun run provider:sync -- --offline
       - run: bun run differential

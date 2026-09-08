@@ -27,6 +27,7 @@ jobs:
       - run: bun run conformance:fetch             # ephemeral pinned-tarball fetch + checksum verify (Task 2)
       - run: bun run conformance:snapshot -- --check  # declaration drift gate (Task 3)
       - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter.json   # consumer fixture (winter)
+      - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter-dist.json   # P7a pre-publish item 3: the SAME fixture against the BUILT declarations -- what an installed consumer actually resolves
       - run: bun run provider:catalog -- --check    # P6 (WS-13 §13): the catalog regenerates byte-identically
                                                      # from its two committed layers — a hand-edit of
                                                      # generated/catalog.json fails HERE
