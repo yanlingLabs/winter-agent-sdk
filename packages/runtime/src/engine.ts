@@ -51,9 +51,13 @@ import {
   resolveFacetTarget,
 } from "@yanlinglabs/winter-agent-sdk";
 import {
+  AGENT_MESSAGE_TAG,
   buildChildAddress,
   buildSessionAddress,
   classifyPermissionMode,
+  escapeAttributionAttribute,
+  escapeAttributionText,
+  facetNotificationKey,
   parseRuntimeAddress,
   refused as refusedOutcome,
   serializeRuntimeAddress,
@@ -1513,7 +1517,40 @@ function providerStateDenyPatterns(projectsRoot: string): string[] {
   return [`${projectsRoot}/**/*${PROVIDER_STATE_FILE_SUFFIX}`, `${projectsRoot}/*${PROVIDER_STATE_FILE_SUFFIX}`];
 }
 
+/**
+ * Fix r2 (N4): the facet's PROCESS-LEVEL registrations, withdrawn from a `finally` that no throw can
+ * skip.
+ *
+ * `runEngine`'s own teardown is a straight-line block near the end of ~2400 lines, and its own
+ * comment says plainly that the `finally` half was never landed ("the residual exposure is: a future
+ * throw from anywhere in those 1800 lines"). That was tolerable while only a session a host had
+ * SUBSCRIBED to held a handle; unconditional self-peer registration made it every session, and a
+ * leaked handle keeps answering `list_reachable` and `deliverToSession` for a session that is gone,
+ * out of a `status()` closure reading dead state.
+ *
+ * This is the cheap half the review asked for rather than the restructure the comment declines: the
+ * body is unchanged and unindented, and only the two registrations that are now universal move into a
+ * disposer list this wrapper drains. Draining is idempotent (`splice`), so the ordinary teardown may
+ * still run them at its own point in the sequence and this is purely the backstop.
+ */
 export async function runEngine(opts: EngineOptions): Promise<number> {
+  const facetDisposers: Array<() => void> = [];
+  try {
+    return await runEngineBody(opts, facetDisposers);
+  } finally {
+    // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
+    // failure must never replace the run's own outcome.
+    for (const dispose of facetDisposers.splice(0)) {
+      try {
+        dispose();
+      } catch {
+        /* a withdrawal that throws has, at worst, left the entry it was removing */
+      }
+    }
+  }
+}
+
+async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => void>): Promise<number> {
   // Task 1 (P3): `tools` renamed to `providedTools` at the destructuring site ONLY -- every existing
   // reference to the bare name `tools` further down this function (both `tools.execute(...)` call
   // sites) is deliberately left untouched; `const tools: ToolExecutor = providedTools ?? ...` is
@@ -1684,20 +1721,32 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // IN-PROCESS `NotificationQueue` that nothing here drained and no frame carried, so a host could be
   // told `subscribed` and then never hear anything -- a promise the facet could not keep.
   //
-  // Two halves, and both are needed. The LIVE half forwards each queued notice as a
-  // `messaging.idle_notice` control request; the CATCH-UP half (`messaging.read_notifications`)
-  // drains the same queue, so a host that was not listening -- crashed, restarted, not yet
-  // connected -- collects what it missed (WS-15 §6.4). The queue entry is NOT consumed by the live
-  // forward: they are the same notice, correlated by `notification_id`, and the drain is the
-  // acknowledgement.
+  // Two halves. The LIVE half forwards each queued notice as a `messaging.idle_notice` control
+  // request; the CATCH-UP half (`messaging.read_notifications`) drains the same queue, so a host that
+  // was not listening -- crashed, restarted, not yet connected -- collects what it missed
+  // (WS-15 §6.4). The queue entry is NOT consumed by the live forward: they are the same notice,
+  // correlated by `notification_id`, and the drain is the acknowledgement.
   //
-  // The SELF-PEER is what makes any of it reachable. WS-10 §14 refuses a subagent target outright, so
-  // the only legitimate target inside a spawned session is the SESSION -- and the in-process
-  // reference resolves a session address through its peer directory, of which a session is not a
-  // member. This run registers itself, LAZILY, at the first `subscribe_idle` naming it: a session no
-  // host ever subscribes to is byte-for-byte unchanged, including its `list_reachable` answer. It is
-  // registered by the top-level run only, structurally -- a child engine's synthetic input pair never
-  // carries a host control frame, so this code cannot run inside one.
+  // THE SELF-PEER is what makes any of it reachable. WS-10 §14 refuses a subagent target outright, so
+  // the only legitimate target inside a spawned session is the SESSION -- and the in-process reference
+  // resolves a session address through its peer directory, of which a session is not a member. This
+  // run registers itself UNCONDITIONALLY at session start (fix r1's ruling), and TOP-LEVEL RUNS ONLY
+  // (fix r2, N1) -- `config.agentId !== undefined` is exactly "this is a child engine", the same
+  // predicate `sessionStateKey` already uses. That gate is not hygiene:
+  //
+  //   * a child engine is another `runEngine` loop over the PARENT's `config.sessionId`, so it would
+  //     publish a SECOND handle at `session:<parent>` whose `deliver` writes into the CHILD's input
+  //     stream -- and `createInMemoryPeerDirectory.find` returns the first match, so which handle a
+  //     delivery reaches is a registration-order accident. A parent whose teardown withdraws its own
+  //     handle while an abandoned foreground child's survives would then have every
+  //     `deliverToSession(session:<parent>)` land in a subagent's stream;
+  //   * `firePeerIdleTransition` has no status gate, so the CHILD's turn-end would fire the PARENT's
+  //     pending idle subscription -- while the parent is mid-turn awaiting the Agent tool -- and
+  //     §14's "at most one notice" would then remove it, so the parent's real idle transition fires
+  //     nothing. A false notice on exactly the return path this addendum built, and unrecoverable;
+  //   * `listReachable` does not dedupe, so any third session would see `session:<parent>` N+1 times.
+  //
+  // `fireFacetIdle()` early-returns on an unregistered peer, so a child engine is a no-op for free.
   let facetSelfPeer: (() => void) | undefined; // the unregister handle, present once registered
   let facetNoticeForwarder: (() => void) | undefined;
   // Fix r1 (M6): set at both `userFrames.end()` sites. A write after the channel has ended lands in a
@@ -1715,7 +1764,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    * that passes `subscriberSessionId: <the session's own id>` opts INTO the model's bucket
    * deliberately, which is the only way to reach it and is documented on `SessionMessagingFacet`.
    */
-  const FACET_NOTIFICATION_KEY = `host:${config.sessionId}`;
+  const FACET_NOTIFICATION_KEY = facetNotificationKey(config.sessionId);
   const facetIdleSubscribers = new Set<string>();
 
   /**
@@ -1747,8 +1796,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         throw new UnattributableSenderError(`the envelope claims to come from "${from}", which this session does not own`);
       }
     }
-    const summary = msg.summary !== undefined ? `\n<summary>${msg.summary}</summary>` : "";
-    return `<agent-message from="${from}" message-id="${msg.messageId}" sender-permission-class="${msg.senderPermissionClass}">${summary}\n${msg.body}\n</agent-message>`;
+    // N2: every field that is not runtime-authored is ESCAPED before it is embedded. `body` and
+    // `summary` come straight off the model's own `SendMessage` input, and `messageId` is
+    // caller-supplied on the wire path -- so without this a sender closes the runtime's frame and
+    // opens a second one naming an address it does not own with the strongest permission class, and
+    // the receiving model sees two attributions it cannot tell apart. `from` and
+    // `senderPermissionClass` are the runtime's own and need no escaping, but go through the same
+    // helper so that stays true if either ever stops being.
+    const summary = msg.summary !== undefined ? `\n<summary>${escapeAttributionText(msg.summary)}</summary>` : "";
+    const open = `<${AGENT_MESSAGE_TAG} from="${escapeAttributionAttribute(from)}" message-id="${escapeAttributionAttribute(msg.messageId)}" sender-permission-class="${escapeAttributionAttribute(msg.senderPermissionClass)}">`;
+    return `${open}${summary}\n${escapeAttributionText(msg.body)}\n</${AGENT_MESSAGE_TAG}>`;
   }
 
   function registerFacetSelfPeer(): void {
@@ -1776,10 +1833,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       },
     };
     facetSelfPeer = runtime.peers.register(selfPeer);
+    facetDisposers.push(() => facetSelfPeer?.());
     // Forward every notice filed for a subscriber this session knows about. WITHOUT CONSUMING IT:
     // the queue entry stays for `messaging.read_notifications`, so a host that was not listening
     // loses nothing. `subscribe` is optional on the interface -- a host-supplied queue without it
     // degrades to drain-only, never to a dropped notice.
+    facetDisposers.push(() => facetNoticeForwarder?.());
     facetNoticeForwarder = runtime.notifications.subscribe?.((ownerKey, record) => {
       if (!facetIdleSubscribers.has(ownerKey)) return;
       // Fire-and-forget: an unanswered or refused notice is a dropped LIVE signal, never a dropped
@@ -3702,7 +3761,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // another test's `ListAgents` reached this peer's `status()` and got
   // "Cannot access 'interruptCurrentTurn' before initialization". A registration is a publication, so
   // it happens once the thing published is whole.
-  registerFacetSelfPeer();
+  // TOP-LEVEL RUNS ONLY (N1): see this block's own header for the three ways a child engine's second
+  // handle at `session:<parent>` goes wrong. `config.agentId !== undefined` IS "this is a child
+  // engine" -- the predicate `sessionStateKey` already uses a few hundred lines down.
+  if (config.agentId === undefined) registerFacetSelfPeer();
 
   // Ruling P2-B: an explicit, engine-controlled shutdown signal for the pump — resolved exactly
   // once, from OUTSIDE the pump (after the turn loop below fully drains; see that call site's own

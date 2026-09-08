@@ -117,6 +117,9 @@ export {
 } from "./idle.ts";
 export type { NotificationRecord, NotificationQueue, PendingIdleSubscription, IdleSubscriptionStore } from "./idle.ts";
 
+// --- how a delivered message is rendered, and how the facet's queue bucket is named ---------------
+export { AGENT_MESSAGE_TAG, RESERVED_NOTIFICATION_KEY_PREFIX, escapeAttributionText, escapeAttributionAttribute, facetNotificationKey, isReservedNotificationKey } from "./attribution.ts";
+
 // --- the router core -----------------------------------------------------------------------------
 export {
   MAX_TRACKED_MESSAGE_IDS,
