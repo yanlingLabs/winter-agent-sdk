@@ -15,16 +15,40 @@
 // generated tsconfig reaches no winter package at all and whose ci.yml job (`official-fixture-compile`)
 // has no build step and needs none. The guard was a false positive there and turned that job red on
 // every commit of round 2, invisibly: `compileOfficialFixture` had no test, and the round's own new
-// position gates inspected only ci.yml's `build` job and release.yml's single job. The third test is
+// position gates inspected only ci.yml's `build` job and release.yml's single job. The last test is
 // that job's exact step, run with every `dist` deleted.
+//
+// ROUND 4: THAT LAST TEST IS OPT-IN, and F1 stays proven locally without it. `compileOfficialFixture`
+// FETCHES AND INSTALLS the pinned upstream tarball, so it is a network test, and the whole-branch
+// constraint is that the default suite is hermetic -- a dropped connection has to be a skipped
+// network leg, never a red suite. It is gated on the SAME harness variable as the pack+install legs
+// (`WINTER_TEST_PACK_SMOKE`, item 11 N-3) rather than a second one: one flag turns on every
+// network/packaging leg in the repo, and CI sets `CI` so all of them run there unchanged.
+//
+// What still proves F1 by default is the hermetic half, split out below: the guard is OPT-IN, so a
+// caller that does not ask for it is never refused for a missing `dist`. That is the entire mechanism
+// of the round-2 regression -- `compile()` refusing a caller that needs no build -- and it needs no
+// network to state. The gated test adds the end-to-end confirmation through the real script entry.
 import { test, expect, beforeAll } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { compile, missingDistPackages } from "./compile-fixtures.ts";
 import { buildPackages } from "./build-packages.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+/** The one harness variable for every network/packaging leg in this repo (item 11 N-3's own). */
+const NETWORK_LEGS_ENABLED = (process.env["CI"] ?? "") !== "" || process.env["WINTER_TEST_PACK_SMOKE"] === "1";
+if (!NETWORK_LEGS_ENABLED) {
+  // PRINTED, not silent: a skipped test that says nothing is indistinguishable from a passing one.
+  console.log(
+    "[compile-fixtures] SKIPPING the official-fixture leg (it FETCHES and installs the pinned upstream tarball). " +
+      "Run it with WINTER_TEST_PACK_SMOKE=1 bun test scripts/compile-fixtures.test.ts; CI always runs it. " +
+      "F1's mechanism -- the dist guard being opt-in -- is proven hermetically by the test above it.",
+  );
+}
 
 beforeAll(async () => {
   await buildPackages();
@@ -58,7 +82,44 @@ test("P7a r2: the build really is this file's precondition -- with no dist, `com
   expect(missingDistPackages()).toEqual([]);
 }, 300_000);
 
-test("P7a r3 (F1): the OFFICIAL fixture job's exact step succeeds with every `dist` deleted -- it needs no build", async () => {
+test("P7a r4 (F1, hermetic): with NO dist, a caller that does not ask for the guard is not refused", async () => {
+  // F1's MECHANISM, with no network. The round-2 regression was `compile()` refusing a caller that
+  // needs no build; `requireDist` makes the check something the CALLER asks for, so the statement to
+  // prove locally is that the same missing-`dist` tree refuses one caller and not the other.
+  //
+  // The opt-out side compiles a throwaway tsconfig in a mkdtemp -- a self-contained file reaching no
+  // winter package, which is the shape `compile-official-fixture.ts` generates -- so this asserts the
+  // flag's semantics rather than re-testing tsc.
+  const scratch = mkdtempSync(join(tmpdir(), "winter-compile-optout-"));
+  const dists = ["sdk", "provider-catalog", "provider-runtime", "conformance", "provider-conformance"].map((p) => join(REPO_ROOT, "packages", p, "dist"));
+  try {
+    writeFileSync(join(scratch, "standalone.ts"), "export const answer: number = 42;\n");
+    writeFileSync(
+      join(scratch, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { noEmit: true, strict: true, target: "ES2022", module: "ESNext", moduleResolution: "bundler", types: [] }, files: ["standalone.ts"] }, null, 2),
+    );
+
+    for (const dir of dists) rmSync(dir, { recursive: true, force: true });
+    expect(missingDistPackages().length).toBeGreaterThan(0); // the precondition really is absent
+
+    // NO `requireDist`: the guard must not fire, and the compile must genuinely run.
+    const optedOut = await compile(join(scratch, "tsconfig.json"));
+    expect(optedOut.ok, optedOut.output).toBe(true);
+    expect(optedOut.output).not.toContain("bun run build:packages");
+
+    // ...while the SAME tree still refuses the caller that did ask -- the two halves of one flag,
+    // asserted against one state of the world so neither can pass for the wrong reason.
+    const optedIn = await compile("packages/conformance/tsconfig.winter.json", { requireDist: true });
+    expect(optedIn.ok).toBe(false);
+    expect(optedIn.output).toContain("bun run build:packages");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+    await buildPackages();
+  }
+  expect(missingDistPackages()).toEqual([]);
+}, 300_000);
+
+test.skipIf(!NETWORK_LEGS_ENABLED)("P7a r3 (F1): the OFFICIAL fixture job's exact step succeeds with every `dist` deleted -- it needs no build", async () => {
   // THE REGRESSION ROUND 2 SHIPPED, as a test. `compileOfficialFixture` generates its own tsconfig
   // whose `@sdk-under-test` points at the INSTALLED OFFICIAL package's declarations and whose `files`
   // is the one fixture; the fixture imports nothing else. No winter package is reachable, so no
@@ -66,7 +127,11 @@ test("P7a r3 (F1): the OFFICIAL fixture job's exact step succeeds with every `di
   //
   // Driven through the SCRIPT'S OWN ENTRY (`compileOfficialFixture()`), not through `compile()`, so
   // a future change that reintroduces a `dist` dependency anywhere in that path fails here rather
-  // than in CI. It fetches and installs the pinned official tarball, which is why it is slow.
+  // than in CI.
+  //
+  // NETWORK, hence gated (round 4): it fetches and installs the pinned official tarball. The
+  // hermetic test above proves the same mechanism -- the guard is opt-in -- without one, so a
+  // default `bun test` still fails if F1 regresses; this adds the end-to-end confirmation.
   const dists = ["sdk", "provider-catalog", "provider-runtime", "conformance", "provider-conformance"].map((p) => join(REPO_ROOT, "packages", p, "dist"));
   try {
     for (const dir of dists) rmSync(dir, { recursive: true, force: true });
