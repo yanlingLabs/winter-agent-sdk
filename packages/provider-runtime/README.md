@@ -6,7 +6,7 @@ codex/xAI/Console flows), the credential-ref surface, endpoint policy, retry/sta
 honest-identity headers every request carries.
 
 This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope). The
-registry is chosen by the release workflow, not by a committed pin — see [`RELEASING.md`](../../RELEASING.md).
+registry is chosen by the release workflow, not by a committed pin — see [RELEASING.md](https://github.com/yanlingLabs/winter-agent-sdk/blob/main/RELEASING.md).
 
 ## What it ships
 

@@ -45,10 +45,28 @@ export function decidePublishes(
   });
 }
 
-/** `npm view <name>@<version> version --registry <url>`, mapped onto the three answers. */
+/**
+ * `npm view <name>@<version> version`, against a registry named BOTH ways, mapped onto the three answers.
+ *
+ * P7a pre-publish round 4 (review M4): `--registry` alone is DECORATIVE for a scoped name -- it sets
+ * only `registries.default`, and the scope binding outranks it. That is C1's trap one layer down, and
+ * it was correct here only by coincidence: each job's `setup-node` binding happens to agree with the
+ * flag its own probe passes. The next reuse of this seam (a third registry, a probe run outside its
+ * job) would silently query the wrong one and get a confident `absent` -- the worst possible wrong
+ * answer, since "absent" means "publish".
+ *
+ * So the scope is bound explicitly too. `--@yanlinglabs:registry=<url>` is the CLI form of the same
+ * key setup-node writes into its userconfig, and a CLI flag outranks any config file, so the probe
+ * asks the registry it was told to ask no matter what `.npmrc` is in scope.
+ */
+export const WINTER_SCOPE = "@yanlinglabs";
+
 export function probeWithNpmView(registry: string): (name: string, version: string) => PublishedProbeResult {
   return (name, version) => {
-    const proc = Bun.spawnSync(["npm", "view", `${name}@${version}`, "version", "--registry", registry], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync(
+      ["npm", "view", `${name}@${version}`, "version", "--registry", registry, `--${WINTER_SCOPE}:registry=${registry}`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
     const stdout = new TextDecoder().decode(proc.stdout).trim();
     const stderr = new TextDecoder().decode(proc.stderr).trim();
     if (proc.exitCode === 0) {

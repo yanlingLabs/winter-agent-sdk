@@ -51,7 +51,10 @@ export async function publishOne(entry: PublishPlanEntry, opts: { dryRun?: boole
 }
 
 if (import.meta.main) {
-  const namesArg = process.argv.find((a) => a.startsWith("--packages="))?.split("=").slice(1).join("=") ?? process.argv[process.argv.indexOf("--packages") + 1];
+  // N4: `indexOf` of an absent flag is -1, so `argv[0]` -- the bun binary -- used to be read as the
+  // argument and reported as "not a publishable package". Guarded explicitly.
+  const flagAt = process.argv.indexOf("--packages");
+  const namesArg = process.argv.find((a) => a.startsWith("--packages="))?.split("=").slice(1).join("=") ?? (flagAt === -1 ? undefined : process.argv[flagAt + 1]);
   if (namesArg === undefined || namesArg.startsWith("--") || namesArg.trim() === "") {
     console.error("publish-npm-set: --packages \"<name> <name>\" is required (the workflow supplies it from scripts/npm-publish-set.ts)");
     process.exit(1);
@@ -74,9 +77,14 @@ if (import.meta.main) {
     }
   }
 
-  const plan: PublishPlanEntry[] = packed.packages
-    .filter((p) => wanted.has(p.name))
-    .map((p) => ({ name: p.name, version: (JSON.parse(readFileSync(known.get(p.name)!.packageJsonPath, "utf8")) as { version: string }).version, tarballPath: p.tarballPath }));
+  // PUBLISH ORDER (review I1), never `packed.packages`' alphabetical order: a package must not reach
+  // npm before a workspace dependency its own packed manifest pins at that exact version.
+  const { npmPublishOrder } = await import("./npm-publish-set.ts");
+  const order = npmPublishOrder().map((p) => p.name);
+  const byName = new Map(packed.packages.map((p) => [p.name, p]));
+  const plan: PublishPlanEntry[] = order
+    .filter((name) => wanted.has(name) && byName.has(name))
+    .map((name) => ({ name, version: (JSON.parse(readFileSync(known.get(name)!.packageJsonPath, "utf8")) as { version: string }).version, tarballPath: byName.get(name)!.tarballPath }));
   if (plan.length !== wanted.size) {
     console.error(`publish-npm-set: packed ${plan.length} of the ${wanted.size} requested package(s)`);
     process.exit(1);

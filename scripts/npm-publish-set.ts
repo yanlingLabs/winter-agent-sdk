@@ -65,6 +65,49 @@ export function npmRequiredClosure(root: string = REPO_ROOT): string[] {
   return [...seen].sort();
 }
 
+/**
+ * The npm set in PUBLISH ORDER: every package after the workspace dependencies it declares.
+ *
+ * P7a pre-publish round 4 (review I1). `discoverPublishablePackages()` sorts ALPHABETICALLY, so the
+ * npm job published `winter-agent-sdk` BEFORE `winter-provider-catalog` -- the dependency its own
+ * packed manifest pins at that exact version. For the interval between the two uploads, npm served
+ * the one package a public consumer installs by name declaring a dependency that did not exist, and
+ * `npm install @yanlinglabs/winter-agent-sdk` 404'd on it. If the second upload then failed, that
+ * state persisted on a registry from which the version can never be withdrawn or re-published, until
+ * a re-drive landed the dependency.
+ *
+ * Derived from the SAME `dependencies` edges `npmRequiredClosure()` walks -- a depth-first POST-order,
+ * where a node is emitted only after everything it depends on. Correct for any future set, not just a
+ * two-element one, and it is the graph rather than a second hand-maintained list.
+ *
+ * `readManifest` is injectable so a test can plant a reversed graph and see the order follow it: an
+ * order that happened to be right because the real graph agrees with the alphabet would prove nothing.
+ */
+export function npmPublishOrder(
+  root: string = REPO_ROOT,
+  readManifest: (pkg: PublishablePackage) => { dependencies?: Record<string, string> } = (pkg) =>
+    JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { dependencies?: Record<string, string> },
+): PublishablePackage[] {
+  const inSet = new Map(npmPublishSet(root).map((p) => [p.name, p]));
+  const ordered: PublishablePackage[] = [];
+  const state = new Map<string, "visiting" | "done">();
+  const visit = (pkg: PublishablePackage): void => {
+    const seen = state.get(pkg.name);
+    if (seen === "done") return;
+    // A cycle cannot be published in any order, so it is a refusal rather than an arbitrary choice.
+    if (seen === "visiting") throw new Error(`npm-publish-set: dependency cycle through ${pkg.name}`);
+    state.set(pkg.name, "visiting");
+    for (const dep of Object.keys(readManifest(pkg).dependencies ?? {})) {
+      const target = inSet.get(dep);
+      if (target !== undefined) visit(target); // only edges INSIDE the npm set can constrain the order
+    }
+    state.set(pkg.name, "done");
+    ordered.push(pkg);
+  };
+  for (const pkg of inSet.values()) visit(pkg);
+  return ordered;
+}
+
 /** `--filter <name>` per package, in the order `pnpm publish` should receive them. */
 export function npmFilterArgs(root: string = REPO_ROOT): string[] {
   return npmPublishSet(root).flatMap((p) => ["--filter", p.name]);
@@ -77,6 +120,9 @@ if (import.meta.main) {
   //
   // `--format=names` is what the npm job asks for since round 3: bare package names, because that job
   // publishes per package with `npm publish <tarball>` rather than handing `--filter` pairs to pnpm.
+  //
+  // PUBLISH ORDER, not alphabetical (review I1): dependencies before dependents, so npm never serves
+  // the wrapper declaring a dependency that is not there yet.
   const names = process.argv.includes("--format=names");
-  process.stdout.write(names ? npmPublishSet().map((p) => p.name).join(" ") : npmFilterArgs().join(" "));
+  process.stdout.write(names ? npmPublishOrder().map((p) => p.name).join(" ") : npmFilterArgs().join(" "));
 }

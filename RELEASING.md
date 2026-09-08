@@ -58,14 +58,39 @@ transitive workspace `dependencies` closure exactly.
 **Do not bump the version.** Both registries refuse a version they already hold, so a bump would leave
 the tag naming something other than what shipped.
 
-Re-drive instead: **`workflow_dispatch` at the same tag ref**. Both jobs ask their own registry which
-versions it already has (`scripts/check-already-published.ts` in job 1, the same seam inside
-`scripts/publish-npm-set.ts` in job 2) and skip those with a printed line, so the re-drive finishes
-the half that failed and reports the half that did not need doing.
+Re-drive instead: **`workflow_dispatch` at the same tag ref**.
+
+The two jobs skip already-published versions by **different** mechanisms, and it matters which:
+
+- **Job 2 (npm)** skips through our own seam, inside `scripts/publish-npm-set.ts`: it asks npm per
+  package and prints the verdict. Deleting or failing that check changes what is published.
+- **Job 1 (GitHub Packages)** skips through **pnpm's own** `isAlreadyPublished`.
+  `scripts/check-already-published.ts` in that job only **reports** — it always exits 0, by design —
+  so removing it would change the log and nothing else. pnpm's probe swallows every error as "not
+  published", which errs toward *publishing*; the registry then refuses a genuine duplicate with a
+  409. Safe, but it is not the audited seam, and an operator should not read the report step as the
+  gate.
+
+Either way the re-drive finishes the half that failed and reports the half that did not need doing.
 
 A probe that cannot be answered — an auth failure, a network error — is treated as **not published**
 and the publish is attempted: the registry refuses a genuine duplicate with a legible 409, whereas
 reading an unanswerable probe as "already there" would silently ship four packages instead of five.
+
+## The docs gates are heuristics
+
+Two `release-gates` assertions read the shipped READMEs as prose: "no README may claim a path ships
+that `files` excludes", and "no README names a non-npm package as being on npm". Both are regexes over
+English, and a regex over English is a heuristic:
+
+- a claim can be *negated in one clause and asserted in another* on the same line;
+- a path can be written without backticks;
+- a sentence can name a non-npm package near an npm claim in phrasing the pattern does not match.
+
+Round 4 narrowed the negation skip to the matched clause and accepts unbackticked `src/`, which closes
+the two evasions the review demonstrated. The class remains: these gates catch the mistakes people
+actually make (a stale sentence surviving a rewrite) and cannot prove a README is true. **When you
+change what ships, re-read the five package READMEs** — the gate is a net, not a proof.
 
 ## What ships
 

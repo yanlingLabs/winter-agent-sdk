@@ -58,6 +58,19 @@ function stripComment(line: string): string {
  * gating must recognise BOTH, or they quietly stop applying to the job that changed -- which is how a
  * release gate rots.
  */
+/**
+ * The COMMAND lines of a step's `run`, with shell comments and blank lines dropped.
+ *
+ * A multi-line `run` carries prose, and prose contains words: the round-4 adjacency check matched
+ * `rm ` inside "the round-3 form went GREEN", and called a step that only computes an output a step
+ * that might delete `dist`. Ordering assertions must read what the step DOES.
+ */
+const commandLines = (run: string): string =>
+  run
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+    .join("\n");
+
 const IS_PUBLISH_STEP = (run: string): boolean => /\bpnpm publish\b/.test(run) || run.includes("publish-npm-set.ts");
 
 function containsPublishCommand(yamlText: string): boolean {
@@ -211,7 +224,26 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     }
   });
 
-  test("release.yml builds the emit explicitly BEFORE its own gates AND immediately before the one publish command", () => {
+  test("r4 (N3): BOTH publish jobs build the emit before their gates and leave nothing between build and publish", () => {
+    // Widened from job 1 only. Job 2 satisfies the property intrinsically -- `publish-npm-set.ts`
+    // calls `releasePack()`, which builds before packing -- but "satisfied intrinsically" is a claim
+    // about today's implementation, and this test is the place it should be written down.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    for (const [jobName, job] of Object.entries(doc.jobs)) {
+      const jobRuns = job.steps.map((s) => s.run ?? "");
+      const build = jobRuns.map((r) => r.startsWith("bun run build:packages")).lastIndexOf(true);
+      const publish = jobRuns.findIndex(IS_PUBLISH_STEP);
+      expect([jobName, build >= 0]).toEqual([jobName, true]);
+      expect([jobName, publish >= 0]).toEqual([jobName, true]);
+      expect([jobName, build < publish]).toEqual([jobName, true]);
+      for (const between of jobRuns.slice(build + 1, publish)) {
+        const commands = commandLines(between);
+        expect([jobName, commands, /build:packages|\brm\b|\bdist\b|pnpm pack|npm pack/.test(commands)]).toEqual([jobName, commands, false]);
+      }
+    }
+  });
+
+  test("release.yml builds the emit explicitly BEFORE its own gates AND immediately before the publish", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
     const runs = Object.values(doc.jobs)[0]!.steps.map((s) => s.run ?? "");
     const firstBuild = runs.findIndex((r) => r.startsWith("bun run build:packages"));
@@ -233,7 +265,8 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     // for the real property; naming the property directly is what lets a read-only step sit there.
     expect(lastBuild).toBeLessThan(publishAt);
     for (const between of runs.slice(lastBuild + 1, publishAt)) {
-      expect([between, /build|pack|rm |dist/.test(between)]).toEqual([between, false]);
+      const commands = commandLines(between);
+      expect([commands, /build:packages|\brm\b|\bdist\b|pnpm pack|npm pack/.test(commands)]).toEqual([commands, false]);
     }
   });
 
@@ -556,6 +589,12 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
       // ITEM 11: the DIST-ONLY sentence, and the source pointed at GitHub.
       expect([pkg.name, readme.includes("COMPILED OUTPUT ONLY")]).toEqual([pkg.name, true]);
       expect([pkg.name, readme.includes("github.com/yanlingLabs/winter-agent-sdk")]).toEqual([pkg.name, true]);
+      // R4 (M1): no README may point a reader at a "registry pin" -- the committed `.npmrc` pins
+      // nothing and `publishConfig.registry` is gone from every manifest. Round 2's N1 named this
+      // sentence and it was fixed in ONE README; a third copy must not be able to survive the next
+      // removal, so the sweep is over all five rather than a hand-check.
+      expect([pkg.name, /registry pin/i.test(readme)]).toEqual([pkg.name, false]);
+      expect([pkg.name, /`publishConfig`[^.\n]*registry|registry[^.\n]*`publishConfig`/i.test(readme)]).toEqual([pkg.name, false]);
       // Item 9: a licence section per package.
       expect([pkg.name, readme.includes("## License")]).toEqual([pkg.name, true]);
       // And the PUBLIC-npm section is present exactly for the packages that are on npm.
@@ -583,7 +622,12 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     //
     // The property, instead: a README may not say a top-level path ships unless `files` includes it.
     // Derived per package, so it holds for any phrasing and for paths nobody has thought of yet.
-    const SHIPPING_CLAIM = /(?:ship|ships|shipped|contains?|included?|are in)\b[^.\n]{0,80}?`([a-zA-Z0-9_.-]+)\/`/g;
+    // R4 (M5): backticks are OPTIONAL, and the negation skip is per CLAUSE, not per line. Round 3
+    // skipped any line containing `no`/`not`/`never` outright and only saw backticked paths, so both
+    // "There is no ambiguity: the tarballs ship `src/` as well." and "the tarballs ship the src/
+    // directory" passed -- demonstrated by the reviewer. A docs gate is still a heuristic (RELEASING.md
+    // says so), but these two evasions are closed.
+    const SHIPPING_CLAIM = /(?:ship|ships|shipped|contains?|included?|are in)\b[^.\n]{0,80}?`?([a-zA-Z0-9_.-]+)\/`?/g;
     for (const pkg of discoverPublishablePackages()) {
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files: string[] };
       const shipped = new Set(manifest.files.filter((f) => !f.startsWith("!")).map((f) => f.replace(/\/$/, "")));
@@ -592,18 +636,39 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
       // the fix reads as the violation.
       const claims: string[] = [];
       for (const line of readme.split("\n")) {
-        if (/\bnot\b|\bno\b|never|does \*\*not\*\*/i.test(line)) continue;
-        SHIPPING_CLAIM.lastIndex = 0;
-        for (let m = SHIPPING_CLAIM.exec(line); m !== null; m = SHIPPING_CLAIM.exec(line)) {
-          const path = m[1]!;
-          if (!shipped.has(path)) claims.push(`${path}/ -- "${line.trim().slice(0, 120)}"`);
+        // Split into CLAUSES first (`:` `;` `,` and the em dash this repo's prose uses), so a
+        // negation in one clause cannot excuse an assertion in another.
+        for (const clause of line.split(/[:;,]|—|--/)) {
+          if (/\bnot\b|\bno\b|never/i.test(clause)) continue;
+          SHIPPING_CLAIM.lastIndex = 0;
+          for (let m = SHIPPING_CLAIM.exec(clause); m !== null; m = SHIPPING_CLAIM.exec(clause)) {
+            const path = m[1]!;
+            if (!shipped.has(path)) claims.push(`${path}/ -- "${clause.trim().slice(0, 120)}"`);
+          }
         }
       }
       expect([pkg.name, claims]).toEqual([pkg.name, []]);
-      // Not vacuous: the regex really does see a claim about a path that IS shipped.
-      const positive = `The compiled \`dist/\` ships alongside \`${[...shipped].find((f) => f.endsWith("s")) ?? "dist"}/\`.`;
-      SHIPPING_CLAIM.lastIndex = 0;
-      expect([pkg.name, SHIPPING_CLAIM.test(positive)]).toEqual([pkg.name, true]);
+      // Not vacuous, in BOTH spellings and against the two evasions the review demonstrated.
+      //
+      // The plant path deliberately contains no `not`/`no`/`never` as a WORD: `-` is a non-word
+      // character, so a name like `zzz-not-shipped` would trip the negation filter on its own text --
+      // which is itself a true statement about the heuristic's limit, recorded in RELEASING.md, and
+      // not what these three plants are measuring.
+      for (const plant of [
+        "The published tarballs ship `zzz-absent/` as well.",
+        "The published tarballs ship the zzz-absent/ directory as well.",
+        "There is no ambiguity: the published tarballs ship `zzz-absent/` as well.",
+      ]) {
+        const caught: string[] = [];
+        for (const clause of plant.split(/[:;,]|—|--/)) {
+          if (/\bnot\b|\bno\b|never/i.test(clause)) continue;
+          SHIPPING_CLAIM.lastIndex = 0;
+          for (let m = SHIPPING_CLAIM.exec(clause); m !== null; m = SHIPPING_CLAIM.exec(clause)) {
+            if (!shipped.has(m[1]!)) caught.push(m[1]!);
+          }
+        }
+        expect([plant, caught]).toEqual([plant, ["zzz-absent"]]);
+      }
     }
   });
 
@@ -826,6 +891,13 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     expect(idStep).toBeDefined();
     expect(idStep.run).toContain("$GITHUB_OUTPUT");
     expect(idStep.run).toContain("npm-publish-set.ts");
+    // R4 (M3): and it FAILS on an empty output. `set -e` does not fire on a failed command
+    // substitution inside a simple command's argument, so the round-3 form went GREEN with nothing --
+    // the comment claimed "a step that cannot produce its output fails as itself" and it did not.
+    // Assigned on its own line (where `set -e` does fire) and then checked explicitly.
+    expect(idStep.run).toMatch(/ARGS="\$\(bun run scripts\/npm-publish-set\.ts/);
+    expect(idStep.run).toMatch(/if \[ -z "\$ARGS" \]/);
+    expect(idStep.run).toContain("exit 1");
     const publishStep = steps.find((step) => (step.run ?? "").includes("publish-npm-set.ts"))!;
     expect(publishStep.run).toContain("steps.npm-set.outputs");
     expect(publishStep.run).not.toContain("$(");

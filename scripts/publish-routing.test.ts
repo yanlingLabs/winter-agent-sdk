@@ -20,12 +20,12 @@
 // OPT-IN: `releasePack()` packs five packages (~4 s) and each dry-run reads a tarball. Gated on the
 // same harness variable as every other packaging leg, and CI sets `CI` so it always runs there.
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { releasePack, type PackedPackage } from "./release-pack.ts";
-import { npmPublishSet } from "./npm-publish-set.ts";
+import { npmPublishOrder, npmPublishSet } from "./npm-publish-set.ts";
 
 const ENABLED = (process.env["CI"] ?? "") !== "" || process.env["WINTER_TEST_PACK_SMOKE"] === "1";
 if (!ENABLED) {
@@ -46,9 +46,16 @@ const NPMJS = "https://registry.npmjs.org";
  * committed `.npmrc` can only ever pin one, globally, and there are two registries.
  */
 function setupNodeUserconfig(dir: string, registryUrl: string, scope = "@yanlinglabs"): string {
-  const host = registryUrl.replace(/^https?:/, "");
+  // BYTE-FAITHFUL to `actions/setup-node@v4` (review N1). Its `auth-util` normalises the registry to a
+  // TRAILING SLASH, writes the scope line first, then `always-auth=false`, then the auth line keyed on
+  // the slash-terminated URL with the token as the literal `${NODE_AUTH_TOKEN}` for npm to expand from
+  // the environment. Round 3 wrote no trailing slash, a literal token and no `always-auth`; the
+  // conclusions were the same (the reviewer re-ran every case against the real bytes), but a gate whose
+  // entire point is fidelity to setup-node should write setup-node's bytes.
+  const withSlash = registryUrl.endsWith("/") ? registryUrl : `${registryUrl}/`;
+  const host = withSlash.replace(/^https?:/, "");
   const path = join(dir, ".npmrc");
-  writeFileSync(path, `${scope}:registry=${registryUrl}\n${host}/:_authToken=test-token-not-a-credential\n`);
+  writeFileSync(path, `${scope}:registry=${withSlash}\nalways-auth=false\n${host}:_authToken=\${NODE_AUTH_TOKEN}\n`);
   return path;
 }
 
@@ -90,6 +97,37 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
       expect([pkg.name, line.includes(GITHUB_PACKAGES)]).toEqual([pkg.name, true]);
       expect([pkg.name, line.includes(NPMJS)]).toEqual([pkg.name, false]);
     }
+  }, 300_000);
+
+  test("r4 (I1): the npm set publishes in TOPOLOGICAL order -- the dependency's line comes first", async () => {
+    // The finding: the plan was alphabetical, so `winter-agent-sdk` reached npm BEFORE
+    // `winter-provider-catalog`, the dependency its own packed manifest pins at that exact version --
+    // and for that interval `npm install @yanlinglabs/winter-agent-sdk` 404'd on the dependency, on a
+    // registry from which the version can never be withdrawn.
+    //
+    // Asserted on the ORDER OF THE DRY-RUN LINES, not on the array: this is the sequence a real run
+    // would produce, one step short of the upload.
+    const dir = mkdtempSync(join(scratch, "order-"));
+    const userconfig = setupNodeUserconfig(dir, NPMJS);
+    const order = npmPublishOrder().map((p) => p.name);
+    const lines: string[] = [];
+    for (const name of order) {
+      const pkg = packed.find((p) => p.name === name)!;
+      lines.push(`${name} :: ${await dryRunTarget(pkg.tarballPath, userconfig, ["--access", "public"])}`);
+    }
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("@yanlinglabs/winter-provider-catalog");
+    expect(lines[1]).toContain("@yanlinglabs/winter-agent-sdk");
+    for (const line of lines) expect(line).toContain(NPMJS);
+
+    // ...and the sdk really does pin the catalog at this exact version in its PACKED manifest, which
+    // is what makes the order load-bearing rather than cosmetic.
+    const dirSdk = mkdtempSync(join(scratch, "manifest-"));
+    const sdk = packed.find((p) => p.name === "@yanlinglabs/winter-agent-sdk")!;
+    const proc = Bun.spawn(["tar", "-xzf", sdk.tarballPath, "-C", dirSdk], { stdout: "pipe", stderr: "pipe" });
+    expect(await proc.exited).toBe(0);
+    const manifest = JSON.parse(readFileSync(join(dirSdk, "package", "package.json"), "utf8")) as { dependencies?: Record<string, string> };
+    expect(Object.keys(manifest.dependencies ?? {})).toContain("@yanlinglabs/winter-provider-catalog");
   }, 300_000);
 
   test("job 2's config sends the npm set -- and only it -- to npmjs, with public access", async () => {

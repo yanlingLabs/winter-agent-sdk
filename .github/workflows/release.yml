@@ -195,7 +195,16 @@ jobs:
       - id: npm-set
         run: |
           set -euo pipefail
-          echo "tarball-args=$(bun run scripts/npm-publish-set.ts --format=names)" >> "$GITHUB_OUTPUT"
+          # `set -e` does NOT fire on a failed command substitution inside a simple command's
+          # argument (measured: `echo "x=$(exit 3)"` exits 0), so the round-3 form went GREEN with an
+          # empty output and the failure only surfaced one step later. Assigned on its own line --
+          # where `set -e` does fire -- and then checked explicitly, so this step fails as itself.
+          ARGS="$(bun run scripts/npm-publish-set.ts --format=names)"
+          if [ -z "$ARGS" ]; then
+            echo "npm-set: scripts/npm-publish-set.ts produced no packages -- refusing to continue" >&2
+            exit 1
+          fi
+          echo "tarball-args=$ARGS" >> "$GITHUB_OUTPUT"
 
       # P7a pre-publish r3 (review I1): PER PACKAGE, with `npm publish <tarball>`, because pnpm's
       # recursive publish REBUILDS npm's argv and forwards only `--access`/`--dry-run`/`--force`/
