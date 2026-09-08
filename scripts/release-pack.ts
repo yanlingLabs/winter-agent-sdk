@@ -202,6 +202,24 @@ const CREDENTIAL_FILENAME_RE = /^\.env(\..+)?$|\.(pem|key|p12|pfx)$|^id_(rsa|dsa
 // still caught -- only recognised code/doc extensions are exempted.
 const CREDENTIAL_SUBSTRING_RE = /credential/i;
 const NON_CREDENTIAL_SOURCE_EXTENSIONS_RE = /\.(ts|tsx|js|jsx|mjs|cjs|md)$/i;
+/**
+ * P7a fix wave (item 9; Lane C review M-6): TEST FILES NEVER SHIP.
+ *
+ * Every tarball carried its own test suite beside the implementation -- provider-runtime shipped 32
+ * `.test.ts` files against 59 sources, sdk 17 of 39. They are dead weight in a consumer's
+ * `node_modules`, they import test-only devDependencies a consumer never installed (so a bundler or
+ * a type-checker walking the tree finds unresolvable specifiers), and they hand a reader of the
+ * published package a second, uncompiled surface that looks like part of the API.
+ *
+ * `*.testing.ts` is NOT matched, deliberately: `provider-runtime` re-exports three of them through
+ * its PUBLIC `./testing` subpath (`startXaiOauthFake` and friends), so they are product, not test
+ * scaffolding. `*.test-support.ts` is matched -- nothing public re-exports one.
+ *
+ * The rule lives HERE rather than only in the `files` lists because a manifest is a declaration and
+ * this is the output: a future `files` edit, a stray `.npmignore`, or a package that forgets the
+ * negation fails the pack instead of shipping quietly.
+ */
+const TEST_FILE_RE = /\.test\.ts$|\.test-support\.ts$/;
 
 /** Every file under `dir` (recursive), as paths relative to `dir` using "/" separators regardless of platform. */
 function walkFiles(dir: string, base: string = dir): string[] {
@@ -218,8 +236,8 @@ function walkFiles(dir: string, base: string = dir): string[] {
 }
 
 /**
- * Scans one package's EXTRACTED tarball root (the `package/` directory `tar` produces) for the five
- * categories this file's header documents. Returns a violation string per hit; empty means clean.
+ * Scans one package's EXTRACTED tarball root (the `package/` directory `tar` produces) for the six
+ * categories this file's header documents (the sixth, test files, is the P7a fix wave's item 9). Returns a violation string per hit; empty means clean.
  * `expectedName` is the package this extraction is supposed to BE, for the identity check (category 5).
  */
 export function scanExtractedPackage(expectedName: string, packageRoot: string): { violations: string[]; filesScanned: number } {
@@ -241,6 +259,7 @@ export function scanExtractedPackage(expectedName: string, packageRoot: string):
     if (CREDENTIAL_FILENAME_RE.test(name) || (CREDENTIAL_SUBSTRING_RE.test(name) && !NON_CREDENTIAL_SOURCE_EXTENSIONS_RE.test(name))) {
       violations.push(`${expectedName}: a credentials-shaped file shipped at ${relPath}`);
     }
+    if (TEST_FILE_RE.test(name)) violations.push(`${expectedName}: a test file shipped at ${relPath} (exclude it in this package's "files")`);
 
     if (name === "package.json") {
       const full = join(packageRoot, ...relPath.split("/"));

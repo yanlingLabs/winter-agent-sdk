@@ -8,7 +8,9 @@
     "./fakes": "./src/fakes/index.ts"
   },
   "files": [
-    "src"
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",

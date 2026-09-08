@@ -10,6 +10,17 @@
     ".": "./src/index.ts",
     "./families": "./src/families.ts"
   },
+  "files": [
+    "src",
+    "generated",
+    "overlay",
+    "schema",
+    "NOTICE",
+    "PROVENANCE.md",
+    "UPSTREAM.json",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"

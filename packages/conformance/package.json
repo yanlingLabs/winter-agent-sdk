@@ -10,7 +10,9 @@
   },
   "files": [
     "src",
-    "goldens"
+    "goldens",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",

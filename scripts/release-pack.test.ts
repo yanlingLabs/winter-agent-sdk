@@ -76,10 +76,19 @@ describe("scanExtractedPackage: a synthetic dirty fixture proves the scan has te
     writeFileSync(join(dirtyDir, "nested", "package.json"), JSON.stringify({ name: "not-yanlinglabs" }));
     mkdirSync(join(dirtyDir, "official-capture-output"), { recursive: true });
     writeFileSync(join(dirtyDir, "official-capture-output", "report.txt"), "x");
+    // P7a fix wave (item 9): a test file, a test-support file, and the two CONTROLS that must NOT
+    // be flagged -- a public `testing.ts` (provider-runtime re-exports three through `./testing`)
+    // and an ordinary source file whose name merely contains the word.
+    mkdirSync(join(dirtyDir, "src"), { recursive: true });
+    writeFileSync(join(dirtyDir, "src", "thing.test.ts"), "");
+    writeFileSync(join(dirtyDir, "src", "raw-fake.test-support.ts"), "");
+    writeFileSync(join(dirtyDir, "src", "testing.ts"), "");
+    writeFileSync(join(dirtyDir, "src", "xai-oauth.testing.ts"), "");
+    writeFileSync(join(dirtyDir, "src", "latest.ts"), "");
   });
   afterAll(() => rmSync(dirtyDir, { recursive: true, force: true }));
 
-  test("catches all six categories in one pass over one fixture", () => {
+  test("catches all seven categories in one pass over one fixture", () => {
     const { violations, filesScanned } = scanExtractedPackage("@yanlinglabs/winter-conformance", dirtyDir);
     expect(filesScanned).toBeGreaterThan(0);
     expect(violations.some((v) => v.includes('forbidden directory "compat"'))).toBe(true);
@@ -88,6 +97,14 @@ describe("scanExtractedPackage: a synthetic dirty fixture proves the scan has te
     expect(violations.some((v) => v.includes("Anthropic artifact"))).toBe(true);
     expect(violations.some((v) => v.includes("credentials-shaped"))).toBe(true);
     expect(violations.some((v) => v.includes('unexpected identity ("not-yanlinglabs"'))).toBe(true);
+    // P7a fix wave (item 9): the test-file category, both spellings...
+    expect(violations.some((v) => v.includes("a test file shipped at src/thing.test.ts"))).toBe(true);
+    expect(violations.some((v) => v.includes("a test file shipped at src/raw-fake.test-support.ts"))).toBe(true);
+    // ...and NOT the controls. `*.testing.ts` is PRODUCT (provider-runtime's public `./testing`
+    // subpath re-exports three of them), and a source file is a source file whatever it is called --
+    // a rule that swept either would silently break the published `./testing` entry point.
+    expect(violations.some((v) => v.includes("testing.ts"))).toBe(false);
+    expect(violations.some((v) => v.includes("latest.ts"))).toBe(false);
   });
 
   test("a mismatched root package.json (right scope, wrong package) is caught by the identity check", () => {
@@ -218,5 +235,41 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
   test("the scan actually ran (inspected every packed file) and found nothing on the real repo", () => {
     expect(result.filesScanned).toBeGreaterThan(0);
     expect(result.violations).toEqual([]);
+  });
+
+  test("P7a fix wave (item 9): NO tarball ships a test file -- verified via `tar -tzf`, independently of the scanner", async () => {
+    // Before this fix every tarball carried its own suite: provider-runtime 32 `.test.ts` against 59
+    // sources, sdk 17 of 39, 72 across the five. `tar -tzf` rather than `result.violations` on
+    // purpose -- the scanner's own rule is what the `files` lists are checked against, so a bug
+    // shared between the two would pass both.
+    for (const p of result.packages) {
+      const proc = Bun.spawn(["tar", "-tzf", p.tarballPath], { stdout: "pipe" });
+      const listing = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const paths = listing.trim().split("\n");
+      expect([p.name, paths.filter((f) => /\.test\.ts$|\.test-support\.ts$/.test(f))]).toEqual([p.name, []]);
+    }
+  });
+
+  test("P7a fix wave (item 9): provider-runtime STILL ships the `*.testing.ts` files its public `./testing` subpath re-exports", async () => {
+    // The control on the exclusion. `src/testing.ts` re-exports `startXaiOauthFake` and friends from
+    // `adapters/openai/xai-oauth.testing.ts`; an exclusion pattern written one character wider
+    // (`*test*.ts`) would take them with it and break a DECLARED entry point -- which the installed
+    // smoke would catch, but only in the leg that imports that exact subpath.
+    const runtime = result.packages.find((p) => p.name === "@yanlinglabs/winter-provider-runtime")!;
+    const proc = Bun.spawn(["tar", "-tzf", runtime.tarballPath], { stdout: "pipe" });
+    const listing = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(listing).toContain("package/src/testing.ts");
+    expect(listing).toContain("package/src/adapters/openai/xai-oauth.testing.ts");
+  });
+
+  test("P7a fix wave (item 9): every publishable manifest DECLARES the exclusion -- a new package cannot forget it", () => {
+    // The declaration half. The two assertions above are about the OUTPUT of today's five packages;
+    // this one fails the moment a sixth is added without the negation, before anybody packs.
+    for (const pkg of discoverPublishablePackages()) {
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files?: string[] };
+      expect([pkg.name, manifest.files]).toEqual([pkg.name, expect.arrayContaining(["src", "!src/**/*.test.ts", "!src/**/*.test-support.ts"])]);
+    }
   });
 });
