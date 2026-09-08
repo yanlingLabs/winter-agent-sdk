@@ -12,8 +12,10 @@
 // THE EXCEPTIONS ARE DISCLOSED, NOT INFERRED:
 //   * `packages/sdk/src/brand.ts` — the one module allowed to spell Winter's own names.
 //   * `BASELINE_ALLOWLIST` below — the files that ALREADY carried a literal when this gate landed.
-//     Each lane deletes its own entries as it sweeps them; P7a's close-out asserts the list is
-//     empty. A listed file is a debt with a name, not a permission.
+//     Each lane deleted its own entries as it swept them, and the fix wave took the last one. IT IS
+//     NOW EMPTY, and a test asserts that (P7a close-out, part A): the exceptions are `brand.ts` and
+//     nothing else. A listed file was a debt with a name, never a permission — so the list going to
+//     zero is the phase's own acceptance, not a tidy-up.
 //   * CATALOG PROVENANCE VOCABULARY needs no exemption, and the reasoning is recorded here so the
 //     next reader does not re-litigate it (P7a fix wave, item 8). `provider-catalog/src/validate.ts`
 //     spells `winter-default` (an `EvidenceSource`), `winter-curated` (a `SlotBasis`) and `winter`
@@ -45,9 +47,10 @@
 //
 // Rule 9 (a MODULE-LOAD read of a product env name) is not greppable — "at top level" means brace
 // depth zero with strings, comments, template literals and regex literals discounted — so this file
-// carries its own scanner for it (`computeScanMask`), plant-tested below. To REGENERATE the
-// baseline after a sweep: delete the entries you fixed and run this file; a stale entry fails the
-// second test by name, and a missed file fails the first with its path and the rule it tripped.
+// carries its own scanner for it (`computeScanMask`), plant-tested below. Rules 2b and 10b need the
+// same scanner for a different fact — "inside a STRING LITERAL, never a comment" — which is the shape
+// every survivor of the whole-branch review had. A missed file fails the first test with its path
+// and the rule it tripped.
 //
 // A RAW OCCURRENCE INCLUDES COMMENTS, deliberately. A comment saying `.winter/settings.json` is a
 // statement about a path that is no longer necessarily `.winter/...`, and it is exactly the kind of
