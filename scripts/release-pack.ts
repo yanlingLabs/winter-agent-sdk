@@ -75,8 +75,8 @@ export interface PackageManifest {
   version: string;
   private?: boolean;
   publishConfig?: unknown;
-  /** P7a pre-publish (item 5): `winter.publish.npm` -- see `PublishablePackage.npm`. */
-  winter?: { publish?: { npm?: boolean } };
+  /** `winter.publish.{npm,harness}` -- see `PublishablePackage.npm` / `.harness`. */
+  winter?: { publish?: { npm?: boolean; harness?: boolean } };
 }
 
 export interface PublishablePackage {
@@ -86,19 +86,38 @@ export interface PublishablePackage {
   dir: string;
   packageJsonPath: string;
   /**
-   * P7a pre-publish (item 5; user ruling 2026-09-08): does this package also go to PUBLIC npm?
+   * Does this package also go to PUBLIC npm?
    *
-   * Every publishable package goes to GitHub Packages (the org's own registry). Only the WRAPPER and
-   * its runtime dependency closure go to npm, because that is what a public consumer installs:
-   * `@yanlinglabs/winter-agent-sdk` plus what it needs at run time. The two conformance harnesses are
-   * the org's own test tooling and stay GitHub-Packages-only.
+   * Every publishable package goes to GitHub Packages (the org's own registry). The npm set is the
+   * runtime dependency CLOSURE of the roots: the wrapper (what `npm install
+   * @yanlinglabs/winter-agent-sdk` needs) plus every package flagged `harness` (see `.harness`) and
+   * whatever those in turn depend on -- a published manifest pins its dependencies at an exact
+   * version, so a root on npm whose dependency is not there is an install that 404s.
    *
    * Read from `winter.publish.npm` in the manifest, so the set is DATA the workflow filters on rather
    * than a list written twice (once in YAML, once in someone's head). `release-gates.test.ts` asserts
-   * it equals exactly the wrapper's transitive workspace-dependency closure, so a new runtime
-   * dependency of the wrapper cannot be forgotten and a harness package cannot leak.
+   * it equals exactly that closure, so a new runtime dependency of any root cannot be forgotten and
+   * nothing can leak onto npm by copy-pasting one flag.
    */
   npm: boolean;
+  /**
+   * R-7b-5 (2026-09-08): is this an org TEST HARNESS published to npm for an out-of-repo consumer?
+   *
+   * A SECOND flag, not a wider `npm`, and the reason is what the tests can then say. `npm: true`
+   * alone would make the set unfalsifiable -- "whatever is flagged" is a property no test can check
+   * against anything. With `harness` the rule stays checkable in both directions: `npm` must equal
+   * the wrapper's closure ∪ the harness set, so `npm: true` on a package that is neither is still a
+   * REFUSAL, which is exactly the copy-paste leak the exact-closure rule existed to stop.
+   *
+   * What earns it: `@yanlinglabs/winter-runtime-sdk` lives in its OWN repository and needs these two
+   * harnesses as dev dependencies (goldens + trace normalizer; loopback provider fakes). Reaching
+   * GitHub Packages requires a `read:packages` token in that repo's CI; npm does not. The
+   * alternative was a cross-repo token whose only purpose was fetching test fixtures.
+   *
+   * What it does NOT mean: that a harness is part of what a consumer of the wrapper installs. It is
+   * not a dependency of anything published; nothing pulls it in transitively.
+   */
+  harness: boolean;
 }
 
 export interface PackedPackage {
@@ -157,7 +176,7 @@ export function discoverPublishablePackages(root: string = REPO_ROOT): Publishab
   for (const packageJsonPath of findPackageManifests(root)) {
     const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageManifest;
     if (!isPublishable(pkg)) continue;
-    result.push({ name: pkg.name, version: pkg.version, dir: dirname(packageJsonPath), packageJsonPath, npm: pkg.winter?.publish?.npm === true });
+    result.push({ name: pkg.name, version: pkg.version, dir: dirname(packageJsonPath), packageJsonPath, npm: pkg.winter?.publish?.npm === true, harness: pkg.winter?.publish?.harness === true });
   }
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -1,29 +1,44 @@
-// P7a pre-publish (item 5; user ruling 2026-09-08): WHICH PACKAGES GO TO PUBLIC npm.
+// WHICH PACKAGES GO TO PUBLIC npm.
 //
 // Every publishable package goes to GitHub Packages -- that is the org's own registry and the whole
-// set belongs there. npm is different: it is what a PUBLIC consumer installs, so it gets EXACTLY the
-// wrapper and its transitive workspace `dependencies` closure -- `@yanlinglabs/winter-agent-sdk` and
-// `@yanlinglabs/winter-provider-catalog` -- and nothing else (user ruling 2026-09-08).
+// set belongs there. npm is different: a version there can never be withdrawn, and it is what a
+// stranger installs. So the npm set is
 //
-// NO EXCEPTIONS MECHANISM, deliberately. An earlier draft carried a ruled-extras list so
-// `winter-provider-runtime` could sit on npm without being in the closure; the ruling removed both the
-// package and the concept. "Exactly the closure" is a property a test can state in one sentence and
-// check in both directions; "the closure plus a list" is a property that degrades every time the list
-// grows, and the list is precisely where a harness would eventually be added by someone in a hurry.
+//     the transitive workspace `dependencies` CLOSURE of the ROOTS,
+//     where the roots are: the wrapper, plus every package flagged as a HARNESS
 //
-// So `winter-provider-runtime`, `winter-conformance` and `winter-provider-conformance` are GitHub
-// Packages only. The two conformance packages are the org's own test harnesses -- publishing them
-// publicly would offer a stranger a package whose only purpose is testing this repository -- and
-// `winter-provider-runtime` is the PRIVATE `winter-agent-runtime`'s dependency: the wrapper SPAWNS the
-// compiled runtime rather than importing it, so a public consumer of the wrapper never needs it.
+// which today is five: `@yanlinglabs/winter-agent-sdk` and `@yanlinglabs/winter-provider-catalog`
+// (what `npm install @yanlinglabs/winter-agent-sdk` needs at run time), the two harness roots
+// `@yanlinglabs/winter-conformance` + `@yanlinglabs/winter-provider-conformance`, and
+// `@yanlinglabs/winter-provider-runtime`, which the second harness genuinely imports.
 //
-// THE SET IS DATA (`winter.publish.npm` in each manifest), read here and turned into the `--filter`
-// arguments the npm job passes to `pnpm publish`. It is not a list in the YAML, because a list in
-// YAML is a second copy of a fact the manifests already know -- and the failure modes are silent in
-// both directions: a new runtime dependency of the wrapper that nobody adds to the list is MISSING
-// from npm (a consumer's install breaks), and a harness that gains the flag by copy-paste LEAKS.
-// `release-gates.test.ts` pins the flagged set against the wrapper's actual transitive closure, so
-// neither can happen quietly.
+// WHY THE HARNESSES ARE ROOTS (R-7b-5). P7a ruled "EXACTLY the wrapper's closure, no exceptions
+// mechanism", for a good reason worth restating: "the closure plus a list" degrades every time the
+// list grows, and a list is exactly where a harness would eventually be added by someone in a hurry.
+// R-7b-5 widened it, and the widening is NOT a list. `@yanlinglabs/winter-runtime-sdk` lives in its
+// OWN repository and needs both harnesses as dev dependencies (goldens + the trace normalizer; the
+// loopback provider fakes); reaching GitHub Packages from that repo's CI would require a cross-repo
+// `read:packages` token whose only purpose is fetching test fixtures. So the two harnesses carry a
+// SECOND manifest flag, `winter.publish.harness`, that says what they are -- and the rule stays
+// falsifiable in both directions: `npm: true` on a package that is neither a root nor reachable from
+// one is still a REFUSAL (`release-gates.test.ts`), which is the copy-paste leak the exact-closure
+// rule existed to stop.
+//
+// WHY IT IS A CLOSURE AND NOT A UNION (the correction to R-7b-5's own arithmetic, which said four).
+// A published package's manifest pins its `dependencies` at the exact version -- measured:
+// `winter-provider-conformance`'s packed manifest carries `"@yanlinglabs/winter-provider-runtime":
+// "<version>"`, because `corpus/{bedrock,google,openai,continuity}.ts` import VALUES from it. Four
+// targets would put a harness on npm whose install 404s on a dependency that is not there, which is
+// exactly the C1/I1 failure the routing gate was built to catch, one package over -- and it would
+// defeat R-7b-5's own stated purpose, since the router's CI would still need the GitHub Packages
+// token it was meant to stop needing. `winter-provider-runtime` therefore enters npm BY CLOSURE,
+// not by being a harness: it is not one, and the flag's meaning stays crisp.
+//
+// THE SET IS DATA (`winter.publish.*` in each manifest), read here and turned into the arguments the
+// npm job passes. It is not a list in the YAML, because a list in YAML is a second copy of a fact the
+// manifests already know -- and the failure modes are silent in both directions: a new runtime
+// dependency of a root that nobody flags is MISSING from npm (a consumer's install breaks), and a
+// package that gains the flag by copy-paste LEAKS.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { discoverPublishablePackages, type PublishablePackage } from "./release-pack.ts";
@@ -39,18 +54,19 @@ export function npmPublishSet(root: string = REPO_ROOT): PublishablePackage[] {
 }
 
 /**
- * The wrapper's transitive WORKSPACE dependency closure, computed from `dependencies` alone.
+ * The transitive WORKSPACE dependency closure of `roots`, computed from `dependencies` alone.
  *
  * `dependencies` and not `devDependencies` or `optionalDependencies`: the question is what a consumer
- * needs at RUN TIME after `npm install @yanlinglabs/winter-agent-sdk`. The platform binary package is
- * an `optionalDependency` and is not published at 7a (R-7-2), so it is correctly outside this set.
+ * needs at RUN TIME after `npm install <root>`. The platform binary package is an
+ * `optionalDependency` and is not published at 7a (R-7-2), so it is correctly outside this set.
  *
- * THIS IS THE WHOLE DEFINITION of the npm set since the ruling: `npmPublishSet()` (the manifest flag,
- * which is what the workflow filters on) must equal this exactly, and `release-gates.test.ts` asserts
- * it in both directions -- a new runtime dependency of the wrapper cannot be forgotten, and nothing
- * else can be added.
+ * `roots` defaults to the wrapper plus every harness root (R-7b-5), which makes this THE WHOLE
+ * DEFINITION of the npm set: `npmPublishSet()` (the `winter.publish.npm` flag, which is what the
+ * workflow filters on) must equal it exactly, asserted in both directions by
+ * `release-gates.test.ts`. The parameter exists so that test can plant a synthetic graph -- a rule
+ * that has only ever been evaluated on the one tree it was written for proves nothing.
  */
-export function npmRequiredClosure(root: string = REPO_ROOT): string[] {
+export function npmRequiredClosure(root: string = REPO_ROOT, roots: readonly string[] = [NPM_ROOT_PACKAGE, ...npmHarnessSet(root)]): string[] {
   const byName = new Map(discoverPublishablePackages(root).map((p) => [p.name, p]));
   const seen = new Set<string>();
   const visit = (name: string): void => {
@@ -61,7 +77,7 @@ export function npmRequiredClosure(root: string = REPO_ROOT): string[] {
     const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { dependencies?: Record<string, string> };
     for (const dep of Object.keys(manifest.dependencies ?? {})) visit(dep);
   };
-  visit(NPM_ROOT_PACKAGE);
+  for (const name of roots) visit(name);
   return [...seen].sort();
 }
 
@@ -106,6 +122,26 @@ export function npmPublishOrder(
   };
   for (const pkg of inSet.values()) visit(pkg);
   return ordered;
+}
+
+/**
+ * Packages whose manifest declares `winter.publish.harness: true`, sorted.
+ *
+ * R-7b-5: org TEST HARNESSES published to npm for an out-of-repo consumer -- today
+ * `@yanlinglabs/winter-runtime-sdk`, whose CI would otherwise need a cross-repo `read:packages`
+ * token solely to fetch test fixtures. A harness is not a dependency of anything published: nothing
+ * pulls one in transitively, and flagging one does not put it in any consumer's install.
+ */
+export function npmHarnessSet(root: string = REPO_ROOT): string[] {
+  return discoverPublishablePackages(root)
+    .filter((p) => p.harness)
+    .map((p) => p.name)
+    .sort();
+}
+
+/** THE RULE, named: the closure of {wrapper} ∪ {harness roots}. Equals `npmPublishSet()` exactly. */
+export function npmExpectedSet(root: string = REPO_ROOT): string[] {
+  return npmRequiredClosure(root);
 }
 
 /** `--filter <name>` per package, in the order `pnpm publish` should receive them. */

@@ -1,10 +1,9 @@
-// Phase 4 Task 3 (MUST 8, WS-10 §11/§12/§15): serializeRuntimeAddress + createFakeMessagingRouterSeam.
-// The full adapter/router SEAM semantics (allocateMessageId-before-resolution idempotency,
-// recordOutcome/lookupOutcome, children() reflecting the roster) are the dedicated
-// subagents/seam-contracts-p4.test.ts file's own job; this file covers what's local to this module.
+// WS-10 §11/§12/§15: serializeRuntimeAddress + createFakeMessagingRouterSeam. The full adapter/router
+// SEAM semantics (allocateMessageId-before-resolution idempotency, recordOutcome/lookupOutcome,
+// children() reflecting the roster) are the Winter runtime's own seam-contract file's job; this file
+// covers what is local to this module.
 import { describe, test, expect } from "bun:test";
-import { serializeRuntimeAddress, createFakeMessagingRouterSeam, type RuntimeAddress } from "./adapter.ts";
-import type { ChildHandle } from "../subagents/child-handle.ts";
+import { serializeRuntimeAddress, createFakeMessagingRouterSeam, type RuntimeAddress, type ChildLike } from "./adapter.ts";
 
 describe("serializeRuntimeAddress (WS-10 §11's own opaque serialization)", () => {
   test("a session address serializes to session:<winterSessionId>", () => {
@@ -28,23 +27,12 @@ describe("serializeRuntimeAddress (WS-10 §11's own opaque serialization)", () =
   });
 });
 
-function fakeChild(id: string): ChildHandle {
+function fakeChild(id: string): ChildLike {
   return {
-    record: {
-      id,
-      parentSessionId: "p1",
-      parentToolUseId: "t1",
-      transcript: `subagents/agent-${id}.jsonl`,
-      status: "running",
-      runtime: "winter-agent",
-      model: { effectiveModel: "sonnet", effectiveEffort: "medium" },
-      permission: { effectiveMode: "default", parentPolicyHash: "h", parentPolicyVersion: 1 },
-    },
+    record: { id, parentSessionId: "p1", permission: { effectiveMode: "default" } },
     status: () => "running",
     steer: async () => ({ status: "queued", messageId: "m1" }),
     resume: async () => ({ status: "resumed_and_delivered", messageId: "m1" }),
-    result: async () => ({ status: "completed", content: "done" }),
-    stop: async () => {},
   };
 }
 

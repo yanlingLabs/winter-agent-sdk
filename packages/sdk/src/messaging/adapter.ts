@@ -1,17 +1,15 @@
-// Phase 4 Task 3 (WS-10 §11/§12/§15, messaging companion §4/§8/§9): the messaging seam types + the
-// runtime adapter contract. Lane D (Task 7) implements `RuntimeMessagingAdapter` (the in-process
-// reference) and `MessagingRouterSeam`'s own routing logic; this file owns ONLY the shapes + the
-// engine-side hook Lane D's router consumes (`children()`, sourced from the child roster) -- NO
-// routing/addressing/delivery logic lives here (WS-10 §15's own split: "this spec owns the
-// model-facing schemas/semantics... and the runtime adapter contract... WS-15 owns the
-// RuntimeDirectory + global messaging service that consumes it").
+// The messaging seam types + the runtime adapter contract (WS-10 §11/§12/§15, messaging companion
+// §4/§8/§9). NO routing/addressing/delivery logic lives here -- only the shapes every party to
+// cross-runtime messaging must agree on.
 //
-// `ChildHandle` is imported type-only from subagents/child-handle.ts, which in turn imports
-// `GlobalAgentMessage`/`DeliveryOutcome` type-only from THIS file -- a mutual type reference with no
-// runtime cycle at all (both imports are erased entirely at compile time; neither file needs a VALUE
-// from the other), the same pattern TypeScript supports for any two interfaces that reference each
-// other structurally.
-import type { ChildHandle } from "../subagents/child-handle.ts";
+// PHASE 7B (R-7b-4, "move down into it"): this file used to live in the private runtime package and
+// name `ChildHandle` (the runtime's own child-engine handle) directly. It is now published as
+// `@yanlinglabs/winter-agent-sdk/messaging`, consumed by three parties -- the Winter runtime's
+// in-process reference adapter, the router package's two `RuntimeMessagingAdapter`s, and any host
+// that composes them -- so the one runtime-only type it named is replaced by `ChildLike` below: the
+// BOUNDARY interface stating exactly what messaging needs a child to be. The runtime's `ChildHandle`
+// satisfies it structurally, with no adaptation and no import in this direction.
+import type { PermissionMode } from "../permissions/types.ts";
 
 // --- WS-10 §11: addressing (messaging companion §4, absorbed verbatim with WS-01 names applied) ---
 
@@ -86,6 +84,37 @@ export interface GlobalAgentMessage {
   senderPermissionClass: "prompts" | "bypasses" | "unknown";
 }
 
+// --- R-7b-4: the child BOUNDARY interface ---------------------------------------------------------
+//
+// "What messaging needs a child to be", and nothing more. Four members, each load-bearing for a
+// named rule:
+//
+//   * `record.id` / `record.parentSessionId` -- WS-10 §11 rules 2/3/5 resolve a child BY id within
+//     the caller's owning parent, and rule 5's stale-name refusal counts DISTINCT ids under one name.
+//   * `record.name` -- rules 3/4/5 (display-name resolution, ambiguity, staleness).
+//   * `record.permission.effectiveMode` -- WS-10 §13's sender/receiver permission CLASS.
+//   * `status()` -- WS-10 §10.3's steer-vs-resume split (a RUNNING child is steered; a TERMINAL,
+//     addressable one is resumed; never the reverse).
+//   * `steer` / `resume` -- the two delivery doors an adapter drives once the router has chosen one.
+//
+// Deliberately NOT `result()`/`stop()`: those are the Agent tool's own lifecycle surface, and a
+// messaging adapter that could reach them could stop a child it was only asked to message.
+export type ChildLikeStatus = "running" | "completed" | "stopped" | "failed";
+
+export interface ChildLikeRecord {
+  id: string;
+  parentSessionId: string;
+  name?: string;
+  permission: { effectiveMode: PermissionMode };
+}
+
+export interface ChildLike {
+  readonly record: ChildLikeRecord;
+  status(): ChildLikeStatus;
+  steer(msg: GlobalAgentMessage): Promise<DeliveryOutcome>; // running child
+  resume(msg: GlobalAgentMessage): Promise<DeliveryOutcome>; // terminal child with resume state
+}
+
 // --- WS-10 §15: the runtime adapter contract, verbatim ----------------------------------------------
 //
 // Adapters perform owner-specific operations only; the daemon (WS-15) authors canonical addresses,
@@ -100,24 +129,19 @@ export interface RuntimeMessagingAdapter {
   senderPermissionClass(addr: RuntimeAddress): Promise<"prompts" | "bypasses" | "unknown">;
 }
 
-// --- Phase 4 Task 3's own addition: the router seam ---------------------------------------------
+// --- The router seam ------------------------------------------------------------------------------
 //
-// Lane D (Task 7) implements the actual routing/dedup/idempotency logic; this interface is the
-// contract their router satisfies, proven by the seam contract tests (subagents/seam-contracts-p4.
-// test.ts). `children()` should be filled from the live child roster, but this spine does NOT
-// construct a real MessagingRouterSeam anywhere -- engine.ts exposes only the roster DATA SOURCE,
-// via `EngineOptions.onChildRosterReady?(getChildren)` (called once, synchronously, near the start
-// of the run, handing the caller a live `() => readonly ChildHandle[]` getter -- see that field's
-// own doc comment in engine.ts). Lane D's own router is what actually builds a real
-// MessagingRouterSeam object, plugging `children()` in as `() => getChildren()` (or equivalent)
-// against the getter this callback hands it; allocateMessageId/recordOutcome/lookupOutcome are
-// entirely Lane D's own job, with no partial/fake version of them shipped here. This spine ships
-// only `createFakeMessagingRouterSeam` (below), for its own contract tests.
+// The bookkeeping half of routing: message-id allocation, the outcome ledger a retry short-circuits
+// on (WS-10 §12), and the live child roster resolution reads. `router.ts` implements it; a host that
+// owns durable state supplies its own. `children()` is filled from whatever roster source the host
+// has -- in the Winter runtime that is `EngineOptions.onChildRosterReady?(getChildren)`, called once
+// per run with a live `() => readonly ChildLike[]` getter, and every run's roster is aggregated
+// (`addChildRosterSource`, router.ts) because resolution rules 2/3/5 must see the whole process.
 export interface MessagingRouterSeam {
   allocateMessageId(senderSessionId: string, toolUseId: string): string;
   recordOutcome(messageId: string, outcome: DeliveryOutcome): void;
   lookupOutcome(messageId: string): DeliveryOutcome | undefined;
-  children(): ChildHandle[];
+  children(): ChildLike[];
 }
 
 // Test-only fake (mirrors this whole phase's own "shape + fake here, real impl is the lane's job"
@@ -127,18 +151,18 @@ export interface MessagingRouterSeam {
 // the SAME pair always allocates the SAME id, so a caller's own retry logic can rely on it.
 export interface FakeMessagingRouterSeam extends MessagingRouterSeam {
   readonly outcomes: Map<string, DeliveryOutcome>;
-  setChildren(children: ChildHandle[]): void;
+  setChildren(children: ChildLike[]): void;
 }
 
 export function createFakeMessagingRouterSeam(): FakeMessagingRouterSeam {
   const outcomes = new Map<string, DeliveryOutcome>();
   const idsBySenderAndTool = new Map<string, string>();
-  let children: ChildHandle[] = [];
+  let children: ChildLike[] = [];
   let counter = 0;
 
   return {
     outcomes,
-    setChildren(next: ChildHandle[]): void {
+    setChildren(next: ChildLike[]): void {
       children = next;
     },
     allocateMessageId(senderSessionId: string, toolUseId: string): string {
@@ -155,7 +179,7 @@ export function createFakeMessagingRouterSeam(): FakeMessagingRouterSeam {
     lookupOutcome(messageId: string): DeliveryOutcome | undefined {
       return outcomes.get(messageId);
     },
-    children(): ChildHandle[] {
+    children(): ChildLike[] {
       return children;
     },
   };

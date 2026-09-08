@@ -66,29 +66,34 @@ describe("decidePublishes", () => {
 
 // --- P7a pre-publish round 4 ----------------------------------------------------------------------
 describe("npmPublishOrder (review I1)", () => {
-  test("the real set publishes the catalog BEFORE the sdk that depends on it", async () => {
+  test("the real set publishes the catalog BEFORE the sdk, and the provider runtime BEFORE the harness that imports it", async () => {
+    // R-7b-5 took this from two packages to five, and the second pair is the one the widening
+    // created: `winter-provider-conformance` imports values from `winter-provider-runtime`, so its
+    // packed manifest pins that version -- the same 404 shape as the original catalog/sdk finding,
+    // one package over.
     const { npmPublishOrder } = await import("./npm-publish-set.ts");
     expect(npmPublishOrder().map((p) => p.name)).toEqual([
       "@yanlinglabs/winter-provider-catalog",
       "@yanlinglabs/winter-agent-sdk",
+      "@yanlinglabs/winter-conformance",
+      "@yanlinglabs/winter-provider-runtime",
+      "@yanlinglabs/winter-provider-conformance",
     ]);
   });
 
   test("a REVERSED graph reverses the order -- it follows the edges, not the alphabet", async () => {
-    // Without this, the real answer above could be right by coincidence: the correct order happens to
-    // be the reverse-alphabetical one for today's two packages, so an implementation that simply
-    // sorted descending would pass. Planting the opposite dependency direction is what distinguishes
-    // "reads the graph" from "got lucky".
+    // Without this, the real answer above could be right by coincidence. Planting the OPPOSITE
+    // dependency direction for the catalog/sdk pair is what distinguishes "reads the graph" from
+    // "got lucky": under the plant the sdk must now come FIRST, and it does -- every other package's
+    // position is decided by its own (unplanted) edges.
     const { npmPublishOrder } = await import("./npm-publish-set.ts");
     const reversed = npmPublishOrder(undefined, (pkg) =>
       pkg.name === "@yanlinglabs/winter-provider-catalog"
         ? { dependencies: { "@yanlinglabs/winter-agent-sdk": "workspace:*" } }
         : {},
-    );
-    expect(reversed.map((p) => p.name)).toEqual([
-      "@yanlinglabs/winter-agent-sdk",
-      "@yanlinglabs/winter-provider-catalog",
-    ]);
+    ).map((p) => p.name);
+    expect(reversed.indexOf("@yanlinglabs/winter-agent-sdk")).toBeLessThan(reversed.indexOf("@yanlinglabs/winter-provider-catalog"));
+    expect(reversed).toHaveLength(5);
   });
 
   test("no package appears before one it depends on -- the property, over the real graph", async () => {

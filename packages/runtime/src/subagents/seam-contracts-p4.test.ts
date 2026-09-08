@@ -35,7 +35,7 @@ import { isWinterMcpServerInstance, type WinterMcpServerInstance } from "@yanlin
 import { createFakeChildHandle } from "./test-fakes.ts";
 import { createChildEngineFactory } from "./child-engine.ts";
 import type { ChildEngineRunContext } from "./child-handle.ts";
-import { createFakeMessagingRouterSeam } from "../messaging/adapter.ts";
+import { createFakeMessagingRouterSeam } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { createFakeMcpControlSeam } from "../mcp/control-seam.ts";
 import { createFakeMcpServerStateSource } from "../mcp/state.ts";
 import { handleMcpStatus, handleMcpReconnect, handleMcpToggle, handleMcpSetServers } from "../rpc/mcp-control.ts";

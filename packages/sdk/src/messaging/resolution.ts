@@ -1,14 +1,26 @@
-// Phase 4 Task 7 (Lane D, WS-10 §11): the resolution algorithm -- rules 1-6, MUST, in order. Consumes
-// `ChildHandle` ONLY from subagents/child-handle.ts (R4-10) and the frozen RuntimeAddress/
-// ListedRuntimeObject/serializeRuntimeAddress shapes from messaging/adapter.ts.
-import type { ChildHandle } from "../subagents/child-handle.ts";
-import { serializeRuntimeAddress, type RuntimeAddress, type ListedRuntimeObject } from "./adapter.ts";
+/**
+ * WS-10 §11: the resolution algorithm -- rules 1-6, MUST, in order.
+ *
+ * RUNTIME KIND. A serialized address (`session:<id>` / `agent:<parent>:<child>`) carries NO runtime
+ * kind -- WS-10 §11 puts it in the directory record instead -- so `parseRuntimeAddress` can only ever
+ * stamp a default. Where a `ListedRuntimeObject` row is available, THAT row's declared `runtimeKind`
+ * is authoritative and this function carries it onto the resolved address; a child resolves under
+ * `winter-agent`, since a child of a Winter session is one by construction. A consumer resolving from
+ * its OWN directory (the router) must overlay `runtimeKind` the same way for any address it builds by
+ * hand. `sameAddress` is unaffected -- it compares serializations, which never carry the kind.
+ *
+ * Consumes the `ChildLike` boundary interface and the RuntimeAddress/ListedRuntimeObject/
+ * serializeRuntimeAddress shapes from adapter.ts, and nothing else: resolution is pure, so both the
+ * Winter runtime's in-process adapter and the router package's cross-runtime one get identical
+ * answers.
+ */
+import { serializeRuntimeAddress, type RuntimeAddress, type ListedRuntimeObject, type ChildLike } from "./adapter.ts";
 import { buildChildAddress, parseRuntimeAddress } from "./addressing.ts";
 
 // The one mapping site from a roster ChildHandle to its own ListedRuntimeObject row -- reused by
-// both this file's own ambiguous-candidate construction and reference-adapter.ts's `listReachable`,
+// both this file's own ambiguous-candidate construction and every adapter's `listReachable`,
 // so the two never drift apart on what a child "looks like" to the model.
-export function childToListedRuntimeObject(parentSessionId: string, child: ChildHandle): ListedRuntimeObject {
+export function childToListedRuntimeObject(parentSessionId: string, child: ChildLike): ListedRuntimeObject {
   const running = child.status() === "running";
   return {
     address: serializeRuntimeAddress(buildChildAddress(parentSessionId, child.record.id)),
@@ -48,7 +60,7 @@ export interface ResolutionInputs {
   // below. Deliberately NOT pre-filtered by the caller: doing the filtering here (rather than
   // trusting a pre-scoped list) is what makes rule 2/3/5's "within the caller's owning parent"
   // wording an actual enforced check instead of an assumption about the input.
-  children: readonly ChildHandle[];
+  children: readonly ChildLike[];
   // Reachable peer top-level session rows (reference-adapter.ts's own PeerSessionHandle directory,
   // already mapped to ListedRuntimeObject). MAY include the caller's own session -- self-target
   // detection is router.ts's own job once a concrete address is resolved, not this function's.
@@ -56,7 +68,7 @@ export interface ResolutionInputs {
 }
 
 export type ResolutionResult =
-  | { kind: "resolved"; address: RuntimeAddress; child?: ChildHandle }
+  | { kind: "resolved"; address: RuntimeAddress; child?: ChildLike }
   | { kind: "ambiguous"; candidates: ListedRuntimeObject[] }
   | { kind: "stale"; message: string }
   | { kind: "not_found"; message: string };
@@ -80,7 +92,8 @@ export function resolveTarget(input: ResolutionInputs): ResolutionResult {
     }
     const peer = input.peers.find((p) => p.address === input.to);
     if (peer === undefined) return { kind: "not_found", message: `no live session at canonical address "${input.to}"` };
-    return { kind: "resolved", address: parsed };
+    // The row's DECLARED kind wins here too -- see the name-resolution branch below for why.
+    return { kind: "resolved", address: { ...parsed, runtimeKind: peer.runtimeKind } };
   }
 
   // Rule 2: a stable child ID within the caller's owning parent wins over a name.
@@ -130,5 +143,10 @@ export function resolveTarget(input: ResolutionInputs): ResolutionResult {
     /* c8 ignore next */
     return { kind: "not_found", message: `internal: malformed peer address for "${input.to}"` }; // defensive; every peer row's address is produced by serializeRuntimeAddress
   }
-  return { kind: "resolved", address: peerAddr };
+  // THE ROW'S DECLARED KIND WINS. WS-10 §11's serialized form carries no runtime kind by design
+  // ("runtime kind and backend IDs live in the directory record"), so `parseRuntimeAddress` can only
+  // stamp a default -- and a router that picks an adapter by `address.runtimeKind` would then send
+  // every Claude-driven session to the Winter branch. The row IS the directory record here, so its
+  // own `runtimeKind` is authoritative and is carried through.
+  return { kind: "resolved", address: { ...peerAddr, runtimeKind: peer.runtimeKind } };
 }

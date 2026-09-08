@@ -20,6 +20,24 @@ import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type 
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError, InvalidBrandError } from "./errors.ts";
 import { envName, resolveBrand, WINTER_BRAND, type BrandProfile } from "./brand.ts";
 import { resolveKeychainServiceForProfile } from "./paths/home.ts";
+// R-7b-4: the facet's own contract types + the guards this side runs on the runtime's answers. The
+// `id` -> RuntimeAddress rule (`resolveFacetTarget`) is applied on the RUNTIME side, where the
+// session id is authoritative -- this side puts the caller's id on the wire verbatim.
+import { deliveryUncertain, refused as refusedOutcome, unavailable as unavailableOutcome, type DeliveryOutcome, type GlobalAgentMessage, type ListedRuntimeObject, type PermissionClassLabel } from "./messaging/index.ts";
+import {
+  MESSAGING_CONTROL_SUBTYPES,
+  isDeliveryOutcome,
+  isListedRuntimeObjectArray,
+  isPermissionClassLabel,
+  type MessagingChildRequest,
+  type MessagingDeliverRequest,
+  type MessagingSubscribeIdleRequest,
+  type MessagingReadNotificationsRequest,
+  type MessagingNotificationsPage,
+  type MessagingIdleNoticePayload,
+  isMessagingIdleNoticePayload,
+  isMessagingNotificationsPage,
+} from "./protocol/messaging.ts";
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
 // catch-all for lossless pass-through of unknown message kinds, Task 5). The SDK's public surface
@@ -51,6 +69,83 @@ export interface QueryInternal {
   // forever, which has no timeout, WS-04 §3). Transport-compatible low-level API only — a product
   // approval broker always returns a typed PermissionResult from the callback itself (WS-07 §7.2).
   respondPermission(requestId: string, result: PermissionResult): void;
+}
+
+/**
+ * R-7b-4: the per-session MESSAGING FACET -- `RuntimeMessagingAdapter` (WS-10 §15) reached over this
+ * session's own control channel.
+ *
+ * WHO CALLS IT: `@yanlinglabs/winter-runtime-sdk`, from the HOST process. A spawned Winter session's
+ * children live inside that session's process, behind a pipe; without this facet the router owns a
+ * RuntimeDirectory that can address the session and nothing inside it, so WS-15 §6.2's "running
+ * Winter child" and "terminal Winter child" rows have no mechanism at all.
+ *
+ * WHAT IT IS NOT: the router. Every rule that needs the whole directory -- WS-10 §11's resolution
+ * order, ambiguity, staleness, §12's dedupe/retry ledger and loop guard, §13's hold/refuse policy --
+ * runs ABOVE this, in the host, once, for both runtimes. This is the six owner-specific operations
+ * the router delegates to whichever runtime actually holds the object.
+ *
+ * WINTER-ONLY, disclosed: the pinned official SDK has no messaging surface of any kind (its `Query`
+ * declares none), so there is no counterpart to mirror and nothing here is a divergence FROM one.
+ *
+ * FOUR THINGS A CONSUMER MUST KNOW, because none of them is visible in the signatures:
+ *
+ *  1. NO DELIVERY METHOD REJECTS. `deliver`, `steerChild`, `resumeChild` and `subscribeIdle` always
+ *     RESOLVE with a typed `DeliveryOutcome` -- a caller that must record an outcome for every
+ *     message (WS-10 §12's ledger) is never left with nothing to write down. A refusal the runtime
+ *     could name arrives as `refused`; an unregistered messaging runtime as non-retryable
+ *     `unavailable`; every other failure, including a transport fault, as `delivery_uncertain`,
+ *     because from the host's side that is genuinely indistinguishable from "it already happened".
+ *  2. THIS FACET SERVES ONE SESSION -- its own, and its own children. A target naming another session
+ *     is refused, even though the runtime could reach it in a shared process: cross-session delivery
+ *     belongs to the router, through its directory, which is the one party that holds every session's
+ *     entry and can pick the right adapter for it.
+ *  3. THE RECEIVER RE-RUNS INBOUND POLICY on the `senderPermissionClass` YOU stamped (WS-10 §13), so
+ *     a caller-side decision to deliver can still come back `held` or `refused`. The envelope's class
+ *     is an input to the receiver's matrix, never a verdict.
+ *  4. NOTIFICATIONS ARE NAMESPACED. `subscribeIdle` and `readNotifications` default to the FACET's own
+ *     queue key (`host:<sessionId>`), deliberately separate from the one the session's own model
+ *     drains with its `ReadNotifications` tool -- a drain REMOVES, so a shared key would have
+ *     whichever side read first silently eat the other's notices. Passing
+ *     `subscriberSessionId: <the session's own id>` opts into the model's bucket on purpose.
+ */
+export interface SessionMessagingFacet {
+  /** Every object this session can currently reach: its own children, plus the reachable live peers its adapter knows (WS-10 §10.2 -- never exited transcripts). */
+  listReachable(): Promise<ListedRuntimeObject[]>;
+  /** Deliver a fully-addressed envelope. The target is `msg.to`; the receiver's inbound policy (WS-10 §13) runs inside. */
+  deliver(msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
+  /** Steer a RUNNING child (WS-10 §10.3). `id` is a canonical address or a bare child id within this session. */
+  steerChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
+  /** Resume a TERMINAL, addressable child (WS-10 §10.3). Never the reverse of `steerChild`. */
+  resumeChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
+  /**
+   * Subscribe to a target going idle (WS-10 §14). `opts.messageId` is the CALLER's -- the facet never
+   * allocates one, because allocation is keyed to the sender session plus tool-call id (§12) and a
+   * second allocator across the pipe would break the retry idempotency that key exists for.
+   * `subscriberSessionId` names whose notification queue the eventual notice belongs to; absent means
+   * the receiving session itself.
+   */
+  subscribeIdle(id: string, opts: { messageId: string; subscriberSessionId?: string }): Promise<DeliveryOutcome>;
+  /** This session's own sender permission class (WS-10 §13's matrix input), from its LIVE permission mode. */
+  senderClass(): Promise<PermissionClassLabel>;
+  /**
+   * Drain a bounded page of queued notifications -- the CATCH-UP half of `notify_when_idle`
+   * (WS-15 §6.4's restart recovery). `remaining` says how many are still queued, so a host that
+   * reconnects drains in pages rather than in one frame whose size nothing governs.
+   *
+   * A drain is the ACKNOWLEDGEMENT: a record it returns is removed. `onIdleNotice` below carries the
+   * same notice live, with the same `notification_id`, so a host that got both dedupes on the id.
+   */
+  readNotifications(opts?: { subscriberSessionId?: string; max?: number }): Promise<MessagingNotificationsPage>;
+  /**
+   * Subscribe to LIVE idle notices for this session. Returns an unsubscribe.
+   *
+   * A handler-plus-unsubscribe rather than an async iterator, because a notice is a fire-and-forget
+   * SIGNAL, not a stream a consumer may fall behind on: an iterator would need a buffer, and the
+   * durable buffer already exists on the runtime side (`readNotifications`). A handler that is never
+   * registered, or that throws, loses no notice -- the entry stays queued for the drain.
+   */
+  onIdleNotice(handler: (payload: MessagingIdleNoticePayload) => void): () => void;
 }
 
 export interface Query extends AsyncGenerator<SdkMessage> {
@@ -104,6 +199,13 @@ export interface Query extends AsyncGenerator<SdkMessage> {
   // (e.g. a non-TS caller, or a deliberately-cast test value) and gets a typed `invalid_mode`
   // control-response rejection there, unchanged from before this tightening.
   setPermissionMode(mode: PermissionMode): Promise<void>;
+  /**
+   * R-7b-4: this session's messaging facet, backed by the six `messaging.*` control subtypes.
+   *
+   * ADDITIVE and Winter-only: the pinned `Query` contract loses nothing, and the official SDK has no
+   * member this could collide with. See `SessionMessagingFacet` for what it is and is not.
+   */
+  messaging: SessionMessagingFacet;
   // Optional (not every hand-built Query-shaped test double needs to carry it) — query() itself
   // always sets it.
   __internal?: QueryInternal;
@@ -1017,6 +1119,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     }
   }
 
+  // R-7b-4 addendum: live idle-notice listeners. A Set, so an unsubscribe is exact and a handler
+  // registered twice fires once.
+  const idleNoticeHandlers = new Set<(payload: MessagingIdleNoticePayload) => void>();
   const gen = iterate() as Query;
   // Task 2: real control requests, replacing the P0/P1 stubs (previously `proc.stdin.end()` for
   // interrupt; both setters were no-ops) — both now send a real control_request and resolve/reject
@@ -1065,6 +1170,127 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   gen.setPermissionMode = async (mode: PermissionMode) => {
     await sendControlRequest("set_permission_mode", mode); // WS-04 §3.1: bare PermissionMode value
   };
+  // --- R-7b-4: the messaging facet ---------------------------------------------------------------
+  //
+  // Six thin translations, one per `RuntimeMessagingAdapter` method, each validating the runtime's
+  // answer before handing it to a host that will branch on it.
+  //
+  // THE DEGRADATION POSTURE IS PER METHOD, and the difference is deliberate:
+  //
+  //   * the two DATA methods (`listReachable`, `senderClass`) degrade to an honest empty/unknown
+  //     answer on a malformed payload, exactly like `supportedModels`/`listModelFamilies`: they
+  //     return data, so a rejected promise could not tell "nothing to report" from a transport fault.
+  //   * every DELIVERY method degrades to `delivery_uncertain` instead. A malformed payload means the
+  //     request DID reach the runtime and the runtime DID answer -- we simply cannot read the answer,
+  //     which is precisely WS-10 §12's crash window ("a crash between invoking and recording MUST
+  //     surface as delivery_uncertain"). Returning `refused` or `not_found` there would assert the
+  //     effect did not happen, which is exactly the claim we cannot make; throwing would leave the
+  //     router with no outcome to record at all.
+  //
+  // A control response with `ok: false` still REJECTS (sendControlRequest's own contract) -- that is
+  // the runtime saying the CALL was malformed or unserved, which is a caller error, not an outcome.
+  // Fix r1 (M4): a DELIVERY method NEVER rejects. Every failure becomes a typed `DeliveryOutcome`,
+  // because the caller is a router that must RECORD an outcome for the message either way -- a
+  // rejection leaves it with nothing to write down, and WS-10 §12's whole ledger is built on there
+  // always being something.
+  //
+  // The mapping is by what the failure PROVES, never by convenience:
+  //   * `invalid_messaging_request` -> `refused`. Every producer of it (the wrong door, the
+  //     cross-session fence, an unattributable sender, a malformed payload) checks BEFORE touching an
+  //     adapter, so nothing happened and the router may record that.
+  //   * `messaging_unavailable` -> `unavailable`, non-retryable: no messaging runtime is registered
+  //     in that process, which retrying cannot change.
+  //   * ANYTHING ELSE -- `messaging_adapter_threw`, a transport fault, a closed connection, a payload
+  //     this wrapper cannot read -- is `delivery_uncertain`. From here "the call failed" and "the
+  //     effect happened and then the call failed" are indistinguishable, which is exactly the crash
+  //     window §12 names, and the conservative reading is the only honest one.
+  async function deliveryCall(subtype: string, payload: unknown, messageId: string): Promise<DeliveryOutcome> {
+    let answer: unknown;
+    try {
+      answer = await sendControlRequest(subtype, payload);
+    } catch (err) {
+      const code = err instanceof WinterRpcError ? err.code : "";
+      const message = err instanceof Error ? err.message : String(err);
+      if (code === "invalid_messaging_request") return refusedOutcome(messageId, message);
+      if (code === "messaging_unavailable") return unavailableOutcome(messageId, false, message);
+      return deliveryUncertain(messageId, `'${subtype}' failed: ${message}`);
+    }
+    return isDeliveryOutcome(answer) ? answer : deliveryUncertain(messageId, `the runtime returned a malformed delivery outcome for '${subtype}'`);
+  }
+  gen.messaging = {
+    async listReachable(): Promise<ListedRuntimeObject[]> {
+      // A DATA method: it degrades to an honest empty answer rather than throwing, on a malformed
+      // payload AND on an `ok:false` -- a rejected promise could not tell "nothing reachable" from a
+      // transport fault, and an empty listing claims nothing about a delivery.
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.listReachable, undefined).catch(() => undefined);
+      return isListedRuntimeObjectArray(payload) ? payload : [];
+    },
+    deliver(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      const request: MessagingDeliverRequest = { message: msg };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.deliver, request, msg.messageId);
+    },
+    steerChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      const request: MessagingChildRequest = { id, message: msg };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.steerChild, request, msg.messageId);
+    },
+    resumeChild(id: string, msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+      const request: MessagingChildRequest = { id, message: msg };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.resumeChild, request, msg.messageId);
+    },
+    subscribeIdle(id: string, opts: { messageId: string; subscriberSessionId?: string }): Promise<DeliveryOutcome> {
+      const request: MessagingSubscribeIdleRequest = {
+        id,
+        messageId: opts.messageId,
+        // Spread rather than set, so an omitted subscriber never puts an explicit `undefined` on the
+        // wire (the same discipline `setModel`/`rewindFiles` follow above).
+        ...(opts.subscriberSessionId !== undefined ? { subscriberSessionId: opts.subscriberSessionId } : {}),
+      };
+      return deliveryCall(MESSAGING_CONTROL_SUBTYPES.subscribeIdle, request, opts.messageId);
+    },
+    async senderClass(): Promise<PermissionClassLabel> {
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.senderClass, undefined).catch(() => undefined);
+      const label = typeof payload === "object" && payload !== null ? (payload as { senderClass?: unknown }).senderClass : undefined;
+      return isPermissionClassLabel(label) ? label : "unknown";
+    },
+    async readNotifications(opts?: { subscriberSessionId?: string; max?: number }): Promise<MessagingNotificationsPage> {
+      const request: MessagingReadNotificationsRequest = {
+        ...(opts?.subscriberSessionId !== undefined ? { subscriberSessionId: opts.subscriberSessionId } : {}),
+        ...(opts?.max !== undefined ? { max: opts.max } : {}),
+      };
+      const payload = await sendControlRequest(MESSAGING_CONTROL_SUBTYPES.readNotifications, request).catch(() => undefined);
+      // A DATA method: a malformed payload degrades to an honest empty page rather than throwing,
+      // because a rejected promise could not tell "nothing queued" from a transport fault. Safe in a
+      // way the delivery methods are not -- an empty page claims nothing about a delivery.
+      return isMessagingNotificationsPage(payload) ? payload : { notifications: [], remaining: 0 };
+    },
+    onIdleNotice(handler: (payload: MessagingIdleNoticePayload) => void): () => void {
+      idleNoticeHandlers.add(handler);
+      return () => {
+        idleNoticeHandlers.delete(handler);
+      };
+    },
+  };
+  // The runtime-originated half. REGISTERED UNCONDITIONALLY, not "when a handler exists": without it
+  // the generic fallback answers `unhandled_subtype`, which reads on the runtime side as "this host
+  // does not speak the facet" rather than "no listener right now" -- and those must stay
+  // distinguishable, because only the first justifies giving up on the wire.
+  //
+  // A handler that throws is contained: the notice is still queued on the runtime side for
+  // `readNotifications`, so the LIVE signal is best-effort by construction and one bad listener can
+  // neither break the others nor lose anything.
+  controlRequestHandlers.set(MESSAGING_CONTROL_SUBTYPES.idleNotice, async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+    if (!isMessagingIdleNoticePayload(payload)) {
+      return { ok: false, error: { code: "invalid_idle_notice", message: "messaging.idle_notice requires { subscriberSessionId: string, notice: NotificationRecord }" } };
+    }
+    for (const handler of [...idleNoticeHandlers]) {
+      try {
+        handler(payload);
+      } catch (err) {
+        console.error(`winter: onIdleNotice handler threw for notification ${payload.notice.notification_id}: ${err instanceof Error ? err.message : String(err)} -- the notice is still queued for readNotifications()`);
+      }
+    }
+    return { ok: true, payload: { delivered: idleNoticeHandlers.size } };
+  });
   // Phase 5 Task 3 (R5-11, derived-shapes-p5 item (e)): `rewindFiles(userMessageId, { dryRun? })`.
   //
   // The public parameter is spelled `userMessageId` and the WIRE is snake_case and result-dropping

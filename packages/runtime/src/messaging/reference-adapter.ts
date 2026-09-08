@@ -22,38 +22,48 @@
 //   - an automatic "session went idle" event source (real engine/session lifecycle hooks are a P8
 //     wiring concern) -- this reference exposes `firePeerIdleTransition` for a caller (a real host,
 //     or this file's own tests) to call explicitly instead.
-import type { ChildHandle } from "../subagents/child-handle.ts";
+//
+// PHASE 7B (R-7b-4): the contract and every routing rule this adapter is measured against now live
+// in `@yanlinglabs/winter-agent-sdk/messaging`; the adapter itself stays here, because WS-10 §15 is
+// explicit that "adapters perform owner-specific operations only" -- this one drives THIS runtime's
+// own child handles and in-process peers, and nothing about it generalises.
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 import {
   serializeRuntimeAddress,
-  type RuntimeAddress,
-  type ListedRuntimeObject,
-  type DeliveryOutcome,
-  type GlobalAgentMessage,
-  type RuntimeMessagingAdapter,
-} from "./adapter.ts";
-import { childToListedRuntimeObject } from "./resolution.ts";
-import {
+  childToListedRuntimeObject,
   classifyPermissionMode,
   resolveInboundDecision,
   createMailbox,
   buildDefaultHoldEntry,
   buildExplicitHoldEntry,
-  type CrossSessionInbound,
-  type PermissionClassLabel,
-} from "./inbound.ts";
-import { createIdleSubscriptionStore, createNotificationQueue, type NotificationQueue } from "./idle.ts";
-import { delivered, queued, held, subscribed, refused, notFound, unavailable, createLoopGuard } from "./outcomes.ts";
-import {
+  createIdleSubscriptionStore,
+  createNotificationQueue,
+  delivered,
+  queued,
+  held,
+  subscribed,
+  refused,
+  notFound,
+  unavailable,
+  createLoopGuard,
   createMessagingRouterSeam,
   createSubscriberDirectory,
-  getMessagingRuntime,
-  registerMessagingRuntime,
+  rememberBounded,
+  type ChildLike,
+  type RuntimeAddress,
+  type ListedRuntimeObject,
+  type DeliveryOutcome,
+  type GlobalAgentMessage,
+  type RuntimeMessagingAdapter,
+  type CrossSessionInbound,
+  type PermissionClassLabel,
+  type NotificationQueue,
   type MessagingRouterSeamWithRoster,
   type MessagingRuntimeDeps,
   type SubscriberDirectory,
-  rememberBounded,
-} from "./router.ts";
+} from "@yanlinglabs/winter-agent-sdk/messaging";
+import { ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
+import { getMessagingRuntime, registerMessagingRuntime } from "./router.ts";
 
 // --- The reference's own "peer" abstraction (same-process top-level sessions) ----------------------
 
@@ -105,7 +115,7 @@ export function createInMemoryPeerDirectory(): PeerDirectory {
 // --- The adapter itself ------------------------------------------------------------------------
 
 export interface ReferenceAdapterDeps {
-  getChildren(): readonly ChildHandle[];
+  getChildren(): readonly ChildLike[];
   peers: PeerDirectory;
   notifications: NotificationQueue;
   // WS-10 §15's own `subscribeIdle(addr, {messageId})` carries NO subscriber address at all -- by
@@ -151,7 +161,7 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
   // and every one of that session's children's `record.parentSessionId` are the same value at EVERY
   // nesting level -- which is what makes a child able to see its SIBLINGS here rather than only its
   // own grandchildren. Nothing in this file changed; the identity it always assumed is now true.
-  function findChild(addr: RuntimeAddress): ChildHandle | undefined {
+  function findChild(addr: RuntimeAddress): ChildLike | undefined {
     if (addr.objectKind !== "agent") return undefined;
     const owningParent = addr.parentWinterSessionId ?? addr.winterSessionId;
     return deps.getChildren().find((c) => c.record.id === addr.childId && c.record.parentSessionId === owningParent);
@@ -348,7 +358,15 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
       const acceptedOk = mailbox.accept(receiverKey);
       if (!acceptedOk) return refused(msg.messageId, "accepted-message queue is full (cap 50, WS-10 §13); refused visibly rather than silently dropped");
       const wasRunning = peer.status() === "running";
-      await peer.deliver(msg);
+      try {
+        await peer.deliver(msg);
+      } catch (err) {
+        // A peer may REFUSE at the push (fix r1, I3: an unattributable `agent:`-origin envelope). The
+        // accepted slot must come back either way, or the 50-cap leaks one entry per refusal until a
+        // long-lived receiver stops accepting anything.
+        mailbox.releaseAccepted(receiverKey);
+        throw err;
+      }
       // This reference's own `deliver` call is synchronous-complete (a direct, fire-and-forget call
       // into the fake/real peer) -- a real host's own queue would drain this over time (P8); this
       // reference releases the accepted-slot immediately rather than pretending to model that delay.
@@ -475,14 +493,51 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
 export interface DefaultMessagingRuntime extends MessagingRuntimeDeps {
   adapter: ReferenceMessagingAdapter;
   peers: PeerDirectory;
+  // Narrowed from `MessagingRuntimeDeps.seam` (R-7b-4): what this factory builds really is the
+  // roster-aggregating seam, and saying so here is what lets `ensureDefaultMessagingRuntimeRegistered`
+  // (and any test) reach `addChildRosterSource` without a cast asserting a fact the type had erased.
+  seam: MessagingRouterSeamWithRoster;
 }
 
-// Builds a complete, self-consistent MessagingRuntimeDeps: the real seam (router.ts) + the reference
+/**
+ * R-7b-4: THIS RUNTIME's answer to "was that throw a policy refusal, or a crash window?"
+ *
+ * `MessagingRuntimeDeps.classifyDeliveryError` is the one behavioural seam the move introduced. The
+ * router core cannot recognise a refusal class belonging to a runtime it does not import, so the
+ * owner supplies the predicate -- and this is Winter's: RULING P4-D's incomparable
+ * recorded-vs-current-parent mode pair, thrown by `ChildHandle.resume()` and deliberately NOT
+ * swallowed by the adapter above, is a clean, side-effect-free policy refusal. Everything else is
+ * indistinguishable from "the effect may already have happened", which is WS-10 §12's
+ * `delivery_uncertain`.
+ *
+ * Exported so `router-wiring.test.ts` can pin both directions on the REAL class.
+ */
+export function classifyDeliveryError(err: unknown): "refused" | "uncertain" {
+  if (err instanceof ChildResumeModeIncomparableError) return "refused";
+  if (err instanceof UnattributableSenderError) return "refused";
+  return "uncertain";
+}
+
+/**
+ * Fix r1 (I3): a message into a session's input stream whose sender cannot be ATTRIBUTED.
+ *
+ * A clean, side-effect-free refusal -- nothing has been written -- so it classifies as `refused`
+ * rather than as WS-10 §12's crash window. Thrown from a session peer's own `deliver`, which is the
+ * only point that knows both the envelope and the stream it would be written to.
+ */
+export class UnattributableSenderError extends Error {
+  constructor(reason: string) {
+    super(`cross-session delivery refused: ${reason}`);
+    this.name = "UnattributableSenderError";
+  }
+}
+
+// Builds a complete, self-consistent MessagingRuntimeDeps: the real seam (the SDK subpath) + the reference
 // adapter (this file) + a fresh peer directory + a fresh notification queue, all sharing the SAME
 // clock. `getChildren` defaults to the seam's own aggregated roster (the ordinary case: the adapter
 // sees every child any session in this process has registered); a caller MAY override it to scope
 // the adapter to a narrower roster in a test.
-export function createDefaultMessagingRuntime(opts: { now?: () => number; getChildren?: () => readonly ChildHandle[] } = {}): DefaultMessagingRuntime {
+export function createDefaultMessagingRuntime(opts: { now?: () => number; getChildren?: () => readonly ChildLike[] } = {}): DefaultMessagingRuntime {
   const seam = createMessagingRouterSeam();
   const now = opts.now ?? (() => Date.now());
   const peers = createInMemoryPeerDirectory();
@@ -495,7 +550,7 @@ export function createDefaultMessagingRuntime(opts: { now?: () => number; getChi
     subscribers,
     now,
   });
-  return { seam, adapter, notifications, loopGuard: createLoopGuard(), subscribers, now, peers };
+  return { seam, adapter, notifications, loopGuard: createLoopGuard(), subscribers, now, peers, classifyDeliveryError };
 }
 
 // --- Phase 4 Task 8: the PROCESS-LEVEL default messaging runtime ---------------------------------
@@ -517,10 +572,32 @@ export function createDefaultMessagingRuntime(opts: { now?: () => number; getChi
 // Idempotent and lazy: the first run to ask builds it; every later run reuses it. A host that wants
 // its own real (daemon-backed, cross-process, durable) runtime registers one BEFORE any session
 // starts and this function leaves it alone -- WS-10 §15's own split of ownership, unchanged.
+/**
+ * The registered runtime, IF it is one this file built.
+ *
+ * `getMessagingRuntime()` answers `MessagingRuntimeDeps`, which is all the router core needs and
+ * deliberately carries neither a peer directory nor an idle-transition trigger -- both are
+ * owner-specific (WS-10 §15). The engine's messaging facet needs both to serve
+ * `messaging.subscribe_idle` and `messaging.idle_notice`, so it asks THIS question instead of
+ * casting: a host that registered its OWN runtime has its own session-status event source and its
+ * own directory, and must not have this one's absence papered over with a cast that would throw at
+ * the first call.
+ *
+ * Duck-typed on the two members the engine actually uses, so a host that supplies a compatible
+ * runtime is served too -- the check is about capability, not about identity.
+ */
+export function getDefaultMessagingRuntime(): DefaultMessagingRuntime | undefined {
+  const runtime = getMessagingRuntime();
+  if (runtime === undefined) return undefined;
+  const candidate = runtime as Partial<DefaultMessagingRuntime>;
+  if (candidate.peers === undefined || typeof candidate.adapter?.firePeerIdleTransition !== "function") return undefined;
+  return runtime as DefaultMessagingRuntime;
+}
+
 export function ensureDefaultMessagingRuntimeRegistered(): MessagingRouterSeamWithRoster {
   const existing = getMessagingRuntime();
-  if (existing !== undefined) return existing.seam as MessagingRouterSeamWithRoster;
+  if (existing !== undefined) return existing.seam as MessagingRouterSeamWithRoster; // a HOST-registered runtime may carry any seam; the roster contribution is best-effort for one that does not aggregate
   const runtime = createDefaultMessagingRuntime();
   registerMessagingRuntime(runtime);
-  return runtime.seam as MessagingRouterSeamWithRoster;
+  return runtime.seam;
 }

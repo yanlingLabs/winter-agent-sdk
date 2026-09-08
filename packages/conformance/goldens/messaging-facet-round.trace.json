@@ -1,0 +1,278 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "init",
+    "payload": {
+      "type": "init",
+      "protocolVersion": "1.0",
+      "cwd": "/winter-fixture",
+      "model": "winter-test/echo",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Workflow",
+        "Write"
+      ]
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "winter-test/echo",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Workflow",
+        "Write"
+      ],
+      "apiKeySource": "none",
+      "slash_commands": [
+        "compact"
+      ],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": []
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "senderClass": "prompts"
+      }
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "not_found",
+        "messageId": "host-1",
+        "reason": "child no longer reachable"
+      }
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "not_found",
+        "messageId": "host-2",
+        "reason": "child no longer reachable"
+      }
+    }
+  },
+  {
+    "sequence": 6,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-3",
+        "reason": "notify_when_idle targets a top-level session only (WS-10 §14)"
+      }
+    }
+  },
+  {
+    "sequence": 7,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-4",
+        "reason": "messaging.deliver: this facet serves session \"differential-facet-fixture\" only; cross-session delivery is the router's, through its directory"
+      }
+    }
+  },
+  {
+    "sequence": 8,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": false,
+      "error": {
+        "code": "invalid_messaging_request",
+        "message": "messaging.deliver requires { message: GlobalAgentMessage }"
+      }
+    }
+  },
+  {
+    "sequence": 9,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-5",
+        "reason": "messaging.deliver targets a SESSION; address an agent through messaging.steer_child / messaging.resume_child (WS-10 §10.3)"
+      }
+    }
+  },
+  {
+    "sequence": 10,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "refused",
+        "messageId": "host-6",
+        "reason": "messaging.steer_child: a child is addressable only through its OWNING parent (WS-10 §10.3); \"agent:s_other:c1\" names another session"
+      }
+    }
+  },
+  {
+    "sequence": 11,
+    "direction": "runtime-to-host",
+    "kind": "control_request",
+    "payload": {
+      "type": "control_request",
+      "subtype": "messaging.idle_notice",
+      "payload": {
+        "subscriberSessionId": "host:differential-facet-fixture",
+        "notice": {
+          "notification_id": "note-1",
+          "origin": "session:differential-facet-fixture",
+          "queued_at": "QUEUED_AT",
+          "content": "session:differential-facet-fixture is now idle"
+        }
+      }
+    }
+  },
+  {
+    "sequence": 12,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "status": "subscribed",
+        "messageId": "host-7"
+      }
+    }
+  },
+  {
+    "sequence": 13,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true,
+      "payload": {
+        "notifications": [
+          {
+            "notification_id": "note-1",
+            "origin": "session:differential-facet-fixture",
+            "queued_at": "QUEUED_AT",
+            "content": "session:differential-facet-fixture is now idle"
+          }
+        ],
+        "remaining": 0
+      }
+    }
+  },
+  {
+    "sequence": 14,
+    "direction": "runtime-to-host",
+    "kind": "control_response",
+    "payload": {
+      "type": "control_response",
+      "ok": true
+    }
+  }
+]

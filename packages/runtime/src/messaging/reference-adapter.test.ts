@@ -6,15 +6,22 @@ import {
   type PeerSessionHandle,
   type ReferenceAdapterDeps,
 } from "./reference-adapter.ts";
-import { createNotificationQueue } from "./idle.ts";
-import { createSubscriberDirectory } from "./router.ts";
-import type { RuntimeAddress, GlobalAgentMessage, DeliveryOutcome } from "./adapter.ts";
+import {
+  createNotificationQueue,
+  createSubscriberDirectory,
+  sendMessage,
+  resolveTarget,
+  HELD_INBOX_CAP,
+  ACCEPTED_QUEUE_CAP,
+  DEFAULT_HOLD_EXPIRY_MS,
+  type RuntimeAddress,
+  type GlobalAgentMessage,
+  type DeliveryOutcome,
+  type CrossSessionInbound,
+  type CallerContext,
+} from "@yanlinglabs/winter-agent-sdk/messaging";
 import { createFakeChildHandle } from "../subagents/test-fakes.ts";
-import { HELD_INBOX_CAP, ACCEPTED_QUEUE_CAP, DEFAULT_HOLD_EXPIRY_MS } from "./outcomes.ts";
-import type { CrossSessionInbound } from "./inbound.ts";
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
-import { sendMessage, type CallerContext } from "./router.ts";
-import { resolveTarget } from "./resolution.ts";
 
 function fakePeer(overrides: {
   winterSessionId?: string;

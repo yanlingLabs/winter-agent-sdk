@@ -112,9 +112,9 @@ describe("P7a pre-publish (item 4): tsconfig `paths` and package `exports` agree
     }
   });
 
-  test("the parity is not vacuous: it covers every publishable package and all ten subpaths", () => {
+  test("the parity is not vacuous: it covers every publishable package and all eleven subpaths", () => {
     const expected = expectedFromExports();
-    expect(expected.size).toBe(10);
+    expect(expected.size).toBe(11);
     expect(new Set([...expected.keys()].map((s) => s.split("/").slice(0, 2).join("/"))).size).toBe(discoverPublishablePackages().length);
     // And each mapped file really exists -- a `paths` pair that agreed on a path nobody wrote would
     // satisfy both tests above.

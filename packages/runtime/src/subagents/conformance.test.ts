@@ -13,6 +13,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 interface Citation {
+  /**
+   * Resolved as a URL relative to THIS file. Phase 7b (R-7b-4) moved the pure messaging modules and
+   * their tests into `@yanlinglabs/winter-agent-sdk/messaging`, so the citations that used to read
+   * `../messaging/<x>.test.ts` now reach across the package boundary -- the tests did not change,
+   * only where they live. The reference adapter's own tests stayed here.
+   */
   file: string;
   testName: string;
 }
@@ -69,11 +75,11 @@ const ROWS: ConformanceRow[] = [
     bullet: "unique / ambiguous / stale / missing / replaced-generation / self-target resolution",
     status: "covered",
     citations: [
-      { file: "../messaging/resolution.test.ts", testName: "resolves a uniquely-named child" },
-      { file: "../messaging/router.test.ts", testName: "ambiguous -> carries candidates" },
-      { file: "../messaging/router.test.ts", testName: "stale name -> refused" },
-      { file: "../messaging/resolution.test.ts", testName: "a canonical session address with no matching peer row is not_found" },
-      { file: "../messaging/router.test.ts", testName: "addressing your own session by its canonical address is refused, never delivered" },
+      { file: "../../../sdk/src/messaging/resolution.test.ts", testName: "resolves a uniquely-named child" },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "ambiguous -> carries candidates" },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "stale name -> refused" },
+      { file: "../../../sdk/src/messaging/resolution.test.ts", testName: "a canonical session address with no matching peer row is not_found" },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "addressing your own session by its canonical address is refused, never delivered" },
     ],
     note:
       "'replaced-generation' is the stale-name row's own structural reading (a display name that WAS used by a different child of the same parent), disclosed as such in Lane D's report -- no name-history ledger exists in the in-process reference for a temporal reading.",
@@ -84,10 +90,10 @@ const ROWS: ConformanceRow[] = [
     bullet: "resolution rules 1-6 in order: canonical address > child id within the owning parent > unique display name; names never grant permission",
     status: "covered",
     citations: [
-      { file: "../messaging/resolution.test.ts", testName: "canonical resolution takes priority even when a same-named child or peer also exists" },
-      { file: "../messaging/resolution.test.ts", testName: "a child id wins even when some OTHER child has that same string as its display name" },
-      { file: "../messaging/resolution.test.ts", testName: "a canonical agent address owned by a DIFFERENT parent is not_found (not reachable from another paren" },
-      { file: "../messaging/resolution.test.ts", testName: "a name belonging to a child of a DIFFERENT parent is not visible to this caller" },
+      { file: "../../../sdk/src/messaging/resolution.test.ts", testName: "canonical resolution takes priority even when a same-named child or peer also exists" },
+      { file: "../../../sdk/src/messaging/resolution.test.ts", testName: "a child id wins even when some OTHER child has that same string as its display name" },
+      { file: "../../../sdk/src/messaging/resolution.test.ts", testName: "a canonical agent address owned by a DIFFERENT parent is not_found (not reachable from another paren" },
+      { file: "../../../sdk/src/messaging/resolution.test.ts", testName: "a name belonging to a child of a DIFFERENT parent is not visible to this caller" },
     ],
   },
 
@@ -154,12 +160,12 @@ const ROWS: ConformanceRow[] = [
     bullet: "the full accept/hold/refuse x class matrix (all five §13 rows), plus the unauthenticated-route refusal",
     status: "covered",
     citations: [
-      { file: "../messaging/inbound.test.ts", testName: "prompts x prompts -> accept" },
-      { file: "../messaging/inbound.test.ts", testName: "prompts x bypasses -> hold" },
-      { file: "../messaging/inbound.test.ts", testName: "bypasses x bypasses -> accept" },
-      { file: "../messaging/inbound.test.ts", testName: "bypasses x unknown -> hold" },
-      { file: "../messaging/inbound.test.ts", testName: "an unauthenticated route is refused before the matrix, regardless of classes" },
-      { file: "../messaging/inbound.test.ts", testName: "plan classifies as bypasses only when bypass is available to that session" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "prompts x prompts -> accept" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "prompts x bypasses -> hold" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "bypasses x bypasses -> accept" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "bypasses x unknown -> hold" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "an unauthenticated route is refused before the matrix, regardless of classes" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "plan classifies as bypasses only when bypass is available to that session" },
     ],
   },
 
@@ -169,7 +175,7 @@ const ROWS: ConformanceRow[] = [
     spec: "WS-10 §16",
     bullet: "dedupe (a retry with the same message id returns the stored outcome, never a second turn)",
     status: "covered",
-    citations: [{ file: "../messaging/router.test.ts", testName: "a retry with the identical (sessionId, toolUseId) returns the stored outcome without re-invoking the" }],
+    citations: [{ file: "../../../sdk/src/messaging/router.test.ts", testName: "a retry with the identical (sessionId, toolUseId) returns the stored outcome without re-invoking the" }],
     note:
       "rider 14 is what makes this real in PRODUCTION rather than only at the router layer: `ctx.toolUseId` now carries the model's own tool_use id, so the (sender, toolUseId) key WS-10 §12 derives the stable messageId from is finally the real one instead of a fresh synthetic value per call.",
   },
@@ -179,10 +185,10 @@ const ROWS: ConformanceRow[] = [
     bullet: "crash at every delivery boundary -> delivery_uncertain with deliveryMayHaveOccurred: true; expiry; queue overflow (50/100); loop prevention; identical rapid repeats dropped visibly",
     status: "covered",
     citations: [
-      { file: "../messaging/outcomes.test.ts", testName: "delivery_uncertain always carries deliveryMayHaveOccurred: true" },
-      { file: "../messaging/router.test.ts", testName: "an identical rapid repeat (different tool-call id, same content) is refused as a duplicate, distinct" },
-      { file: "../messaging/router.test.ts", testName: "a message over MAX_GLOBAL_MESSAGE_SIZE is refused before resolution ever runs" },
-      { file: "../messaging/outcomes.test.ts", testName: "strings that could naively concatenate into the same key (delimiter confusion) are distinguished" },
+      { file: "../../../sdk/src/messaging/outcomes.test.ts", testName: "delivery_uncertain always carries deliveryMayHaveOccurred: true" },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "an identical rapid repeat (different tool-call id, same content) is refused as a duplicate, distinct" },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "a message over MAX_GLOBAL_MESSAGE_SIZE is refused before resolution ever runs" },
+      { file: "../../../sdk/src/messaging/outcomes.test.ts", testName: "strings that could naively concatenate into the same key (delimiter confusion) are distinguished" },
     ],
   },
   {
@@ -201,11 +207,11 @@ const ROWS: ConformanceRow[] = [
     bullet: "one-shot idle notices; already-idle immediate notice; the 12-hour expiry; whole-call refusal for unsupported notification targets; the 5-minute dialog expiry",
     status: "covered",
     citations: [
-      { file: "../messaging/idle.test.ts", testName: "a fired subscription never fires again (at most one notice, WS-10 §14)" },
-      { file: "../messaging/idle.test.ts", testName: "a held subscription fires a reduced-status notice, not ordinary delivered text" },
-      { file: "../messaging/router.test.ts", testName: "an agent (child) target refuses the WHOLE call, including the attached message -- neither steer nor " },
-      { file: "../messaging/router.test.ts", testName: "a peer target with capabilities.notifyWhenIdle:false refuses the WHOLE call" },
-      { file: "../messaging/idle.test.ts", testName: "a child/subagent sender is refused" },
+      { file: "../../../sdk/src/messaging/idle.test.ts", testName: "a fired subscription never fires again (at most one notice, WS-10 §14)" },
+      { file: "../../../sdk/src/messaging/idle.test.ts", testName: "a held subscription fires a reduced-status notice, not ordinary delivered text" },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "an agent (child) target refuses the WHOLE call, including the attached message -- neither steer nor " },
+      { file: "../../../sdk/src/messaging/router.test.ts", testName: "a peer target with capabilities.notifyWhenIdle:false refuses the WHOLE call" },
+      { file: "../../../sdk/src/messaging/idle.test.ts", testName: "a child/subagent sender is refused" },
     ],
   },
 
@@ -340,7 +346,7 @@ const ROWS: ConformanceRow[] = [
     status: "covered",
     citations: [
       { file: "./child-engine.test.ts", testName: "a forced-bypass child still DENIES a parent-denied tool call (parentPermissionRules mirrored)" },
-      { file: "../messaging/inbound.test.ts", testName: "an explicit receiver setting always wins over the default matrix" },
+      { file: "../../../sdk/src/messaging/inbound.test.ts", testName: "an explicit receiver setting always wins over the default matrix" },
     ],
     note:
       "The first is Lane C's own I1 fix (the child RuntimeConfig dropped the parent's permissions.{allow,ask,deny} and hooks entirely, so a forced-bypass child auto-approved exactly what the parent forbade). The 'cannot approve' half is structural: nothing in messaging/** hands a delivered body anywhere but the receiver's own turn/mailbox -- Lane D's report states the invariant and no code path contradicts it.",
