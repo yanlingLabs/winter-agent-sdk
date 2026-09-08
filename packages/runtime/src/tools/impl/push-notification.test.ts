@@ -45,7 +45,7 @@ describe("PushNotification", () => {
     expect(parsed.message).toBe("build finished");
     expect(parsed.localSent).toBe(true);
     expect(parsed.pushSent).toBe(false);
-    expect(parsed.disabledReason).toBe("winter transport unconfigured");
+    expect(parsed.disabledReason).toBe("push transport unconfigured");
     expect(new Date(parsed.sentAt).toISOString()).toBe(parsed.sentAt);
   });
 

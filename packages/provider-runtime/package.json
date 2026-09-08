@@ -2,13 +2,27 @@
   "name": "@yanlinglabs/winter-provider-runtime",
   "version": "0.0.1",
   "type": "module",
-  "main": "./src/index.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "bun": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    }
   },
   "files": [
-    "src"
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -17,5 +31,6 @@
   "dependencies": {
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*"
-  }
+  },
+  "types": "./dist/index.d.ts"
 }

@@ -81,54 +81,14 @@ export const OPAQUE_MARKER = "OPAQUE-CONTINUATION-MARKER";
 export const FOREIGN_MARKER = "FOREIGN-DOMAIN-MARKER";
 
 // --- the harness a target supplies ---------------------------------------------------------------------
-
-export interface HarnessOverrides {
-  /**
-   * Resolve every model to NO descriptor — the `allowUnlisted` gateway shape, where a model has no
-   * catalog evidence at all.
-   *
-   * Spelled as a positive statement rather than as an absent option (ruling on finding I3): the
-   * adapters now REQUIRE a lookup, so "this model has no evidence" is something a caller says out
-   * loud, and forgetting to say anything is a compile error instead of a silent loss of every
-   * §8.2 refusal.
-   */
-  unlisted?: boolean;
-  /** Vary the descriptor this turn resolves. */
-  descriptor?: DescriptorOverrides;
-}
-
-export interface HarnessCapabilities {
-  tools: boolean;
-  vision: boolean;
-  /** `opaque` = Responses' encrypted reasoning items; `exposed` = DeepSeek's replayable text; `none` = neither. */
-  continuation: "opaque" | "exposed" | "none";
-  effort: boolean;
-}
-
-export interface CorpusHarness {
-  name: string;
-  surface: "responses" | "chat";
-  capabilities: HarnessCapabilities;
-  /**
-   * `live` = the provider serves a catalog endpoint this corpus can page through; `static` = the
-   * adapter's catalog is compiled in (codex serves only its own slugs for a ChatGPT account), so the
-   * paging questions do not exist for it and the case asks the ones that do.
-   */
-  discovery: "live" | "static";
-  /**
-   * False for a declared-LOCAL endpoint, where having no credential is a valid configuration
-   * (`local-none` is a first-class auth kind, WS-13 §6) rather than a missing one.
-   */
-  requiresCredential: boolean;
-  /** Where this surface's model listing lives, when it is not at the root (Azure's `/openai/models`). */
-  discoveryRoutePrefix?: string;
-  /** Runs a turn against `endpoint`. `endpoint` is usually the runner's fake, but a case may point it at a closed server. */
-  stream(endpoint: { url: string }, req: TurnRequest, overrides?: HarnessOverrides): AsyncIterable<ProviderEvent>;
-  /** Live discovery against `endpoint`. */
-  discover(endpoint: { url: string }, opts?: { maxItems?: number; maxBytes?: number; cache?: DiscoveryCache; signal?: AbortSignal }): Promise<ModelCatalogResult>;
-  /** Target-specific assertions every recorded request must satisfy (Azure's `api-version`). */
-  assertRequest?(recorded: RecordedRequest): void;
-}
+//
+// MOVED to `./harness.ts` by the P7a fix wave (item 1) and re-exported here verbatim, so every
+// importer of `CorpusHarness`/`HarnessOverrides`/`HarnessCapabilities` from this module is unchanged.
+// The reason is in that file's own header: `corpus/azure.ts` is in the published barrel and needed
+// only these types, and taking them from HERE dragged the private `winter-agent-runtime` (imported
+// above for the real fold) into this package's declaration build.
+export type { CorpusHarness, HarnessCapabilities, HarnessOverrides } from "./harness.ts";
+import type { CorpusHarness, HarnessOverrides } from "./harness.ts";
 
 // --- assertion helpers ----------------------------------------------------------------------------------
 

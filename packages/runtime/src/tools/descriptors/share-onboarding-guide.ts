@@ -24,7 +24,12 @@ stub({
     },
     required: ["status", "message"],
   },
-  description: "64 KiB source cap. Winter's later equivalent is WINTER.md-oriented and backed by a Winter backend -- absent until that backend exists.",
+  // P7a fix wave (item 5, M-1): reworded generically, exactly as Lane A did for `enter-worktree`
+  // and `cron-create`. `stub({...})` is evaluated at module load with a STATIC description, so this
+  // string cannot be session-aware without moving every tool's advertised description onto a
+  // per-session render path -- a registry change, not a brand fix. A generic sentence is honest
+  // under every brand including Winter's; naming a file a reuser's product does not have is not.
+  description: "64 KiB source cap. The later equivalent is oriented around this product's own instructions file and backed by a first-party backend -- absent until that backend exists.",
   // See send-user-file.ts's identical comment: exposure:"hidden" is reserved for correctly-absent
   // tools; a winter-backed-later tool relies on capabilityRequirements to stay unadvertised today.
   exposure: "eager",

@@ -101,6 +101,36 @@ describe("resolveMcpServerSources: precedence, strictMcpConfig, trust gating, va
     expect(result.rejected[0]!.reason).toContain("reserved");
   });
 
+  // --- P7a fix wave (item 5, whole-branch review I-2) ---------------------------------------------
+  //
+  // The reserved name is the SESSION BRAND's standing-server name, not a module-load constant. Under
+  // a rebrand this door and `tools/registry.ts` read two different names, so a server called `acme`
+  // passed here, got validated, CONNECTED (a stdio child spawned, `slot.client` assigned) and only
+  // then hit `registerMcpServerTools`' own reserved-name throw -- verbatim the defect control.ts
+  // records the P4 fix wave closing, re-opened for the brand's own name. The inverse mattered too: a
+  // reuser could not name any live server `winter`, a stale reservation for a standing server that
+  // under their brand is called `acme`.
+  test("P7a (I-2): under a brand, `acme` is refused AT THE DOOR and `winter` is an ordinary name", () => {
+    const branded = resolveMcpServerSources([{ origin: "explicit", servers: { acme: { command: "x" }, winter: { command: "y" } } }], {
+      trustedWorkspace: true,
+      reservedServerName: "acme",
+    });
+    // The brand's own name never becomes a resolved entry, so nothing downstream can spawn it.
+    expect(branded.resolved.map((r) => r.name)).toEqual(["winter"]);
+    expect(branded.rejected.map((r) => r.name)).toEqual(["acme"]);
+    expect(branded.rejected[0]!.reason).toContain("reserved server identity");
+    // The message names the SESSION's server, never Winter's -- a reuser told that "winter" is
+    // reserved has been handed a fact about somebody else's product.
+    expect(branded.rejected[0]!.reason).toContain('"acme"');
+    expect(branded.rejected[0]!.reason).not.toContain('"winter"');
+  });
+
+  test("P7a (I-2): the parameter DEFAULTS to Winter's name, so every unbranded caller is byte-identical", () => {
+    const unbranded = resolveMcpServerSources([{ origin: "explicit", servers: { winter: { command: "x" }, acme: { command: "y" } } }], { trustedWorkspace: true });
+    expect(unbranded.resolved.map((r) => r.name)).toEqual(["acme"]);
+    expect(unbranded.rejected.map((r) => r.name)).toEqual(["winter"]);
+  });
+
   test("RULING P5-K: an untrusted project-sourced stdio config loads DISABLED with a visible reason, never connected", () => {
     const result = resolveMcpServerSources([{ origin: "project", servers: { local: { command: "x" } } }], { trustedWorkspace: false });
     expect(result.rejected).toEqual([]);

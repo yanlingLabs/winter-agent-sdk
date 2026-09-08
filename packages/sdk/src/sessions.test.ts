@@ -557,4 +557,67 @@ describe("winterHome resolution", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  // --- P7a fix wave (item 5, whole-branch review I-1) ---------------------------------------------
+  //
+  // These nine functions run OUTSIDE a query, so nothing hands them a `RuntimeConfig` and the brand
+  // has to arrive as an option. It did not, and `resolveHome` called `resolveWinterHome()` with no
+  // brand at all -- which reads `WINTER_HOME` and `~/.winter`. A D19 tier-1 reuser's `listSessions()`
+  // therefore addressed WINTER's store, and on a machine where Winter is also installed
+  // `deleteSession(id)` from the reuser's app deleted a Winter session.
+  //
+  // BOTH DIRECTIONS ARE ASSERTED. A branded call finding the branded store proves the argument is
+  // threaded; the UNBRANDED call NOT finding it (while finding Winter's own decoy instead) is what
+  // proves the two homes are genuinely distinct rather than the test having pointed both at one.
+  test("P7a (I-1): a BRANDED call reads the brand's own home, and an unbranded call reads Winter's", async () => {
+    const acmeHome = freshHome();
+    const winterHome = freshHome();
+    const ACME = { productName: "Acme", homeDirName: ".acme", envPrefix: "ACME_", packageName: "acme", mcpServerName: "acme", codexOriginator: "acme", tempRootName: "acme" } as const;
+    const originalWinter = process.env.WINTER_HOME;
+    const originalAcme = process.env.ACME_HOME;
+    process.env.WINTER_HOME = winterHome;
+    process.env.ACME_HOME = acmeHome;
+    try {
+      await seedSession(new WinterCompatibilitySessionStore({ winterHome: acmeHome }), projectKeyFor(DIR_A), "acme-session");
+      await seedSession(new WinterCompatibilitySessionStore({ winterHome }), projectKeyFor(DIR_A), "winter-decoy-session");
+
+      // The brand's OWN env name is what resolves the home -- `ACME_HOME`, derived, never spelled.
+      expect((await listSessions({ directory: DIR_A, brand: ACME })).map((x) => x.sessionId)).toEqual(["acme-session"]);
+      // ...and Winter's own default is untouched, which is what makes the assertion above meaningful.
+      expect((await listSessions({ directory: DIR_A })).map((x) => x.sessionId)).toEqual(["winter-decoy-session"]);
+
+      // The destructive one, because it is the one the review names: a reuser's delete must not be
+      // able to reach a Winter session of the same id.
+      await deleteSession("acme-session", { directory: DIR_A, brand: ACME });
+      expect(await listSessions({ directory: DIR_A, brand: ACME })).toEqual([]);
+      expect((await listSessions({ directory: DIR_A })).map((x) => x.sessionId)).toEqual(["winter-decoy-session"]);
+    } finally {
+      if (originalWinter === undefined) delete process.env.WINTER_HOME;
+      else process.env.WINTER_HOME = originalWinter;
+      if (originalAcme === undefined) delete process.env.ACME_HOME;
+      else process.env.ACME_HOME = originalAcme;
+      rmSync(acmeHome, { recursive: true, force: true });
+      rmSync(winterHome, { recursive: true, force: true });
+    }
+  });
+
+  test("P7a (I-1): an explicit `winterHome` still wins over `brand`, and an INVALID brand refuses rather than falling back", async () => {
+    const explicit = freshHome();
+    const decoy = freshHome();
+    const originalAcme = process.env.ACME_HOME;
+    process.env.ACME_HOME = decoy;
+    try {
+      await seedSession(new WinterCompatibilitySessionStore({ winterHome: explicit }), projectKeyFor(DIR_A), "explicit-session");
+      expect((await listSessions({ directory: DIR_A, winterHome: explicit, brand: { homeDirName: ".acme", envPrefix: "ACME_" } })).map((x) => x.sessionId)).toEqual(["explicit-session"]);
+
+      // A malformed profile must REFUSE. Falling back to Winter's home is the exact failure the
+      // field exists to prevent -- the caller asked for their store and would silently get Winter's.
+      await expect(listSessions({ directory: DIR_A, brand: { homeDirName: "acme" } })).rejects.toThrow(/homeDirName/);
+    } finally {
+      if (originalAcme === undefined) delete process.env.ACME_HOME;
+      else process.env.ACME_HOME = originalAcme;
+      rmSync(explicit, { recursive: true, force: true });
+      rmSync(decoy, { recursive: true, force: true });
+    }
+  });
 });

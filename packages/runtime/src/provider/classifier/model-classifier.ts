@@ -46,6 +46,8 @@ export interface ModelClassifierOptions {
   timeoutMs?: number;
   /** P2 carry: the app-owned accumulated-context bound. See `prompt.ts`'s `DEFAULT_MAX_CONTEXT_CHARS`. */
   maxContextChars?: number;
+  /** P7a fix wave (item 5, M-1): the running brand's instructions file, so the classifier prompt labels the operator's own file correctly. */
+  instructionsFile?: string;
   /**
    * Test seam: observes what was actually sent and what came back, WITHOUT the classifier logging
    * anything itself. Nothing in this file writes to a log — a permission review's request contains
@@ -62,7 +64,10 @@ export function createModelClassifier(opts: ModelClassifierOptions): ClassifierI
 
   return {
     async classify(envelope: ActionEnvelope, context: ClassifierContext): Promise<ClassifierRawResult> {
-      const prompt = buildClassifierPrompt(envelope, context, opts.maxContextChars !== undefined ? { maxContextChars: opts.maxContextChars } : {});
+      const prompt = buildClassifierPrompt(envelope, context, {
+        ...(opts.maxContextChars !== undefined ? { maxContextChars: opts.maxContextChars } : {}),
+        ...(opts.instructionsFile !== undefined ? { instructionsFile: opts.instructionsFile } : {}),
+      });
       const controller = new AbortController();
       const request: ProviderRequest = {
         messages: [{ role: "user", content: prompt.text }],

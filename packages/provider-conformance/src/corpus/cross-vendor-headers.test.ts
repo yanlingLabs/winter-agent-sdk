@@ -30,7 +30,7 @@
 import { describe, expect, test } from "bun:test";
 import { loadCatalog, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
-import { createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { activeWinterIdentity, createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 // `buildSessionProvider` stays relative (review r1 Critical-2): `winter-agent-runtime` is
 // `"private": true`, never published -- irrelevant here since `.test.ts` files never ship as
@@ -211,7 +211,7 @@ describe("WS-13b §7/§8.4: every row that DECLARES an identity header actually 
     expect(declaring.map((p) => p.id)).toEqual(["aihorde"]);
   });
 
-  test.each(declaring.map((p) => [p.id] as const))("%s sends its declared identity header, with `<product>` and `<version>` substituted", async (id) => {
+  test.each(declaring.map((p) => [p.id] as const))("%s sends its declared identity header, with `<product>`, `<version>` and `<contact>` substituted", async (id) => {
     const provider = CATALOG.providers.find((p) => p.id === id)!;
     // `authKinds` decides the material, so a keyless-documented row is driven exactly as the live
     // gate drives it rather than however this file finds convenient.
@@ -220,8 +220,12 @@ describe("WS-13b §7/§8.4: every row that DECLARES an identity header actually 
     // BOTH halves are read off the User-Agent this build actually sends, so the expectation cannot
     // drift from the product: `<product>/<version>` is that header's whole shape.
     const [product, version] = [winterUserAgent().split("/")[0]!, winterUserAgent().split("/")[1]!];
+    // P7a fix wave (item 7): the THIRD token. Read off the live identity for the same reason the
+    // other two are read off the `User-Agent` -- the expectation must be what this build actually
+    // presents as, never a literal that can drift from it.
+    const contact = activeWinterIdentity().contactUrl;
     for (const [name, declared] of Object.entries(provider.identityHeaders ?? {})) {
-      const expected = declared.split("<product>").join(product).split("<version>").join(version);
+      const expected = declared.split("<product>").join(product).split("<version>").join(version).split("<contact>").join(contact);
       // Header names arrive lowercased on the recorder, as they do on the wire.
       expect([id, name, requests[0]?.headers[name.toLowerCase()]]).toEqual([id, name, expected]);
       // The substitution actually happened: a value still carrying either placeholder would be a
@@ -229,6 +233,7 @@ describe("WS-13b §7/§8.4: every row that DECLARES an identity header actually 
       // receives it.
       expect(requests[0]?.headers[name.toLowerCase()]).not.toContain("<version>");
       expect(requests[0]?.headers[name.toLowerCase()]).not.toContain("<product>");
+      expect(requests[0]?.headers[name.toLowerCase()]).not.toContain("<contact>");
     }
   }, 15_000);
 

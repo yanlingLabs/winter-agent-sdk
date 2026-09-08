@@ -11,7 +11,6 @@
 // rewind restores PATHS rather than authorship: a Bash edit to a TRACKED file is undone as
 // collateral, while a Bash-CREATED file is untouched.
 import type { RewindFilesResult } from "@yanlinglabs/winter-agent-sdk";
-import { resolveWinterHome } from "@yanlinglabs/winter-agent-sdk";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { CheckpointMutation, FileCheckpointSink } from "./seam.ts";
@@ -37,8 +36,21 @@ export interface FileCheckpointSinkOptions {
    * let one session undo another's work.
    */
   sessionUuid: string;
-  /** The `~/.winter` root. Defaults to `WINTER_HOME || ~/.winter`; every test passes a mkdtemp root. */
-  home?: string;
+  /**
+   * The resolved product root (`<PREFIX>HOME` || `~/<homeDirName>`), the directory this sink writes
+   * its backups and its index under. REQUIRED.
+   *
+   * P7a fix wave (item 5, whole-branch review M-5): it used to default to `resolveWinterHome(opts.env)`
+   * -- WITH NO BRAND -- which reads `WINTER_HOME` and `~/.winter`. Unreachable today (the sole
+   * production caller, `production-wiring.ts`, passes the session's own resolved root), but it is the
+   * same shape as I-1 one call site away from being live: a reuser's checkpoints would have been
+   * written into, and rewound from, WINTER's home. There is no brand-neutral default to fall back
+   * to, so the parameter is required rather than brand-threaded -- a caller that has a session at
+   * all has already resolved its root, and one that has not must not be given Winter's.
+   *
+   * Every test passes a mkdtemp root.
+   */
+  home: string;
   /**
    * Resolves a RELATIVE candidate write path. `extractCandidateWritePaths` yields the path the tool
    * call carried, which is usually but not always absolute -- and the backup identity is the hash of
@@ -66,11 +78,17 @@ export interface FileCheckpointSinkOptions {
    * dangerous direction, which is why the sidecar write stays first.
    */
   persistence?: { recordFileHistory?(record: CheckpointRecord): void | Promise<void> };
+  /**
+   * P7a fix wave (item 5, M-5): RETAINED but now inert here -- its only reader was the brand-less
+   * `resolveWinterHome(opts.env)` default that `home` replaced. Kept on the options type because
+   * callers pass it and removing it would be a breaking change for no gain; a future reader of an
+   * env-derived value has a place to look.
+   */
   env?: Record<string, string | undefined>;
 }
 
 export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileCheckpointSink {
-  const home = opts.home ?? resolveWinterHome(opts.env);
+  const home = opts.home;
   const cwd = opts.cwd ?? process.cwd();
   const ownSession = opts.sessionUuid;
   // T8 rider 25: the rewind fence. Computed once here, from the same construction options the

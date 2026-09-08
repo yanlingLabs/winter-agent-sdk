@@ -210,8 +210,9 @@ function admitsKeyless(provider: WinterProviderDescriptor): boolean {
  * CONTROLLER RULING (2026-09-06): the live gate never touches the product's own keychain service
  * (`DEFAULT_KEYCHAIN_SERVICE`) or its `.dev` sibling by default. The production services are the
  * HOST's — a user's daily-driver records live there — and this gate's material belongs in a
- * dedicated temporary service created for the run and deleted after it
- * (`com.example.live.<yyyymmdd>`). So the variable is not a
+ * dedicated temporary service created for the run and deleted after it (`SUGGESTED_LIVE_SERVICE`
+ * below, which DERIVES the concrete name from the product's own service rather than spelling one).
+ * So the variable is not a
  * convenience override with a production default; it is the run's explicit statement of where its
  * credentials live, and without it there is no Keychain path at all — not a login, not an OAuth
  * target's read.
@@ -230,6 +231,11 @@ export const KEYCHAIN_SERVICE_VAR = "WINTER_LIVE_KEYCHAIN_SERVICE";
  * harness and knows exactly which service it is steering them away from. Dropping the last
  * reverse-DNS segment off `DEFAULT_KEYCHAIN_SERVICE` gives the concrete name back with no literal in
  * source, so the sweep gate stays green and the hint stays actionable.
+ *
+ * P7a fix wave (item 10, N-3): two prose sites above still told the reader the gate suggests
+ * `com.example.live.<yyyymmdd>` — the string this constant REPLACED — so the file contradicted
+ * itself about the one instruction an operator follows. Both now point here instead of restating a
+ * value, which is why they cannot drift again.
  */
 const SUGGESTED_LIVE_SERVICE = `${DEFAULT_KEYCHAIN_SERVICE.replace(/\.[^.]+$/, "")}.live.<yyyymmdd>`;
 
@@ -261,7 +267,7 @@ export function requireLiveKeychainService(env: Record<string, string | undefine
  * own locator rules permit), and that case is exactly what the colon test keeps correct:
  *
  *   keychain:anthropic:acct-1                        -> account `anthropic:acct-1`, default service
- *   keychain:com.example.live.2026/anthropic:a1     -> account `anthropic:a1`, service `com.example.live.2026`
+ *   keychain:<throwaway-service>/anthropic:a1       -> account `anthropic:a1`, service `<throwaway-service>` (see SUGGESTED_LIVE_SERVICE)
  *   keychain:anthropic:https://id.example/u/1        -> account `anthropic:https://id.example/u/1`, default service
  *
  * The account is NOT trimmed of its own inner text and is never rendered by this script's output;
@@ -630,9 +636,9 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
 // Without this door the oauth target kind is unreachable in practice. `WINTER_LIVE_<P>_CREDENTIAL_REF`
 // names a Keychain record, and nothing in this repository could put one there under a service the
 // operator chose — `startProviderLogin` is a library function with no command-line surface, and the
-// close-out live run's ruling (a throwaway `com.example.live.<yyyymmdd>` service, never the
-// product's own `DEFAULT_KEYCHAIN_SERVICE`) exists precisely so the run does not touch the
-// operator's real records.
+// close-out live run's ruling (a throwaway service for the run — `SUGGESTED_LIVE_SERVICE`, derived
+// from the product's own — never `DEFAULT_KEYCHAIN_SERVICE` itself) exists precisely so the run does
+// not touch the operator's real records.
 //
 // IT IS A VENDOR NETWORK CALL, so it sits behind the same `WINTER_LIVE_PROVIDER_TESTS=1` opt-in as
 // everything else here, and `verify-provider-live.test.ts`'s spawn helper refuses `--login` for the

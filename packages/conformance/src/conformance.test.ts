@@ -863,7 +863,167 @@ const MODEL_FAMILIES_ROWS: ConformanceRow[] = [
   },
 ];
 
-const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS, ...WIDENING_ROWS, ...MODEL_FAMILIES_ROWS];
+
+// --- Phase 7a: BRAND, ADVISOR, PACKAGING ---------------------------------------------------------
+//
+// P7a amends WS-00/WS-02/WS-03/WS-06/WS-13b/WS-13c rather than replacing any of them, so its rows
+// live in this same table under the same guards -- the fifth spec group to do so (after WS-13b and
+// WS-13c). The authority for each bullet is named in the constant below.
+//
+// EVERY CITATION IS AN EXISTING TEST, and where a bullet has both a mechanism and a wiring, both are
+// cited: the pattern this phase's own whole-branch review named is a derivation that is unit-proven
+// and never threaded, which one citation apiece would have described as covered.
+const WS7A = "WS-7a (brand/advisor/packaging)";
+
+const PHASE_7A_ROWS: ConformanceRow[] = [
+  {
+    id: "WS7a-1",
+    spec: WS7A,
+    bullet: "brand defaults byte-identical: under `WINTER_BRAND` every derived name, every rendered profile and every byte on the wire equals the pre-brand build",
+    status: "new",
+    citations: [
+      { file: `${SDK}/brand.test.ts`, testName: "resolveBrand() with nothing returns exactly WINTER_BRAND" },
+      { file: `${SDK}/brand.test.ts`, testName: "every field carries WS-01 §2's own literal" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "under the DEFAULT profile every derivation is byte-identical to Winter's own names" },
+      { file: `${RUNTIME}/sandbox/profile.test.ts`, testName: "the ENTIRE rendered profile is byte-identical to the pre-derivation build under the default brand" },
+    ],
+    note: "The wire half is the `differential` goldens and `verify:compiled`, which are SCRIPTS rather than named tests and so cannot be cited in this table's `{file, testName}` shape; they run as their own gates (`bun run differential` — 28/28 — and `bun run verify:compiled`). The four citations here are the ones a machine can verify by name: the profile object, its literal table, the whole-derivation default check through the real wiring, and the sandbox profile rendered byte-for-byte.",
+  },
+  {
+    id: "WS7a-2",
+    spec: WS7A,
+    bullet: "the `acme` rebrand end to end: home, project dir, instructions file, env prefix, keychain service, MCP server name, preset, codex originator, temp root, plugin manifest dir",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "`ACME_HOME` resolves the session's home, and `WINTER_HOME` beside it is IGNORED" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "the user and project instructions files are `ACME.md`; a `WINTER.md` beside them is not read" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "the standing server's canonical twins are advertised as `mcp__acme__*`, and `dispose()` gives the names back" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "the codex `originator` and the `User-Agent` on the WIRE are the reuser's, not Winter's" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "R-7a-8: the keychain store and the cross-provider `authRef` read ONE source -- `com.acme.core`" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "the shared temp root is `<realpath of /tmp>/acme-<uid>` -- computed as a STRING, never created" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "the preset's NAME follows the brand; its TEXT does not move by one byte" },
+      { file: `${RUNTIME}/brand-rebrand.test.ts`, testName: "P7a fix r1 (I-3): a plugin whose manifest lives in `.acme-plugin/` is DISCOVERED through the production path" },
+      { file: `${SDK}/sessions.test.ts`, testName: "P7a (I-1): a BRANDED call reads the brand's own home, and an unbranded call reads Winter's" },
+    ],
+    note: "`processLabel` is deliberately absent: the spine recorded it as inert in this package (it names the PUBLISHED artifact's executable, not the host's product), so a fixture asserting it moved would assert a change nothing makes. The last citation is the fix wave's own I-1: the sdk's nine standalone session functions run OUTSIDE a query and had no way to learn a brand at all, so they addressed Winter's store for every reuser.",
+  },
+  {
+    id: "WS7a-3",
+    spec: WS7A,
+    bullet: "no brand-derived env name is read at module load, and no non-test source spells a Winter-owned literal (the sweep gate, rules 1-10)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/brand-gate.test.ts`, testName: "no NEW file carries a raw Winter-owned literal" },
+      { file: `${RUNTIME}/brand-gate.test.ts`, testName: "BASELINE_ALLOWLIST is EMPTY -- every lane's debt is discharged" },
+      { file: `${RUNTIME}/brand-gate.test.ts`, testName: "FLAGS a module-load read inside a TOP-LEVEL OBJECT LITERAL (the r1 plant)" },
+      { file: `${RUNTIME}/brand-gate.test.ts`, testName: "does NOT flag the same read inside a function body" },
+      { file: `${RUNTIME}/brand-gate.test.ts`, testName: "every raw rule fires on its own literal and not on a near miss" },
+      { file: `${RUNTIME}/brand-gate.test.ts`, testName: "no UNJUSTIFIED brand-less call site exists" },
+    ],
+    note: "The last citation is the fix wave's item 12, and it covers the shape the gate's first ten rules structurally cannot see: a value DERIVED from `WINTER_BRAND` at module load, or a brand-taking function called without its brand. Every survivor the whole-branch review found was that shape and none of them spelled a literal.",
+  },
+  {
+    id: "WS7a-4",
+    spec: WS7A,
+    bullet: "the advisor is a bare NATIVE tool, and its reviewer resolves option > setting > per-family default (gpt -> astra, claude -> fable, any other family -> its slot 1)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/tools/conformance.test.ts`, testName: "WS-06 §6 obligation 5 (D29): advisor is a bare NATIVE name with an identical descriptor across every permission mode" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "`Options.advisor.model` wins over `settings.advisor.model` AND over the family default" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "`settings.advisor.model` wins over the family default" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "a gpt session with no setting reviews with astra -- openai/gpt-6-astra when only the API key is configured" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "a claude session with no setting reviews with fable -- anthropic/claude-fable-5-1" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "any OTHER family falls to its slot 1, by position and not by strength" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "D30's family defaults are pinned BY NAME, not read off slot 1 -- a re-ranked gpt family still reviews with astra" },
+      { file: `${RUNTIME}/permissions/evaluator.test.ts`, testName: "a user-tier DENY rule refuses the call, even under bypassPermissions" },
+    ],
+    note: "The last citation is the fix wave's M-4: WS-06 §4 requires the tool to be rule-addressable under its bare name, which the spine's report REASONED held (the `startsWith(\"mcp__\")` sites key on the name) with no test anywhere asserting it.",
+  },
+  {
+    id: "WS7a-5",
+    spec: WS7A,
+    bullet: "the advisor never substitutes: a stated-but-unresolvable reviewer is a typed refusal, and a resolution failure is an ordinary tool error that never blocks the turn",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "a stated-but-unresolvable value is a REFUSAL, never a slide down to the next source" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "an unresolvable `Options.advisor.model` refuses too, and names the OPTION as the source" },
+      { file: `${RUNTIME}/provider/advisor-route.test.ts`, testName: "a disabled provider is a refusal that says so, not a fall-through to another vendor" },
+      { file: `${RUNTIME}/tools/impl/advisor.test.ts`, testName: "no reviewer resolvable -> ordinary tool error, never throws" },
+      { file: `${RUNTIME}/tools/impl/advisor.test.ts`, testName: "resolveReviewer throwing is caught as an ordinary tool error" },
+    ],
+  },
+  {
+    id: "WS7a-6",
+    spec: WS7A,
+    bullet: "the publish pipeline packs, scans the TARBALL's contents, and imports every publishable package's every declared exports subpath from a real installed tarball",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/release-pack.test.ts`, testName: "the publishable set is exactly R-7-1's five packages -- excludes the private runtime and the unpublished (R-7-2) platform package" },
+      { file: `${SCRIPTS}/release-pack.test.ts`, testName: "catches all seven categories in one pass over one fixture" },
+      { file: `${SCRIPTS}/release-pack.test.ts`, testName: "P7a fix wave (item 9): NO tarball ships a test file -- verified via `tar -tzf`, independently of the scanner" },
+      { file: `${SCRIPTS}/smoke-installed.test.ts`, testName: "every publishable package's OWN exports map is fully covered -- no subpath silently skipped" },
+      { file: `${SCRIPTS}/smoke-installed.test.ts`, testName: "every target imports cleanly -- this is the exact check that would have caught review r1's two Criticals" },
+      { file: `${SCRIPTS}/build-packages.test.ts`, testName: "every entry emits BOTH a .js and a .d.ts, at the path its manifest condition names" },
+    ],
+    note: "The last citation is the fix wave's item 1 (R-7a-16 reversed): every manifest now points its `default` condition at a compiled emit, so `pack-smoke-node18` is a BLOCKING gate rather than the advisory carry it shipped as. The Node leg asserts what each package DECLARES through `engines` -- `@yanlinglabs/winter-provider-conformance` is Bun-only by construction (`Bun.serve` loopback fakes) and declares `engines.bun` alone.",
+  },
+  {
+    id: "WS7a-7",
+    spec: WS7A,
+    bullet: "the release trigger set is pinned to `v*` tags plus `workflow_dispatch`; a phase tag can never publish, and no other workflow publishes at all",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/release-gates.test.ts`, testName: "the parsed `on:` block is EXACTLY { push: { tags: [\\\"v*\\\"] }, workflow_dispatch: {} }" },
+      { file: `${SCRIPTS}/release-gates.test.ts`, testName: "no `push: branches` trigger -- a plain branch push must never publish" },
+      { file: `${SCRIPTS}/release-gates.test.ts`, testName: "every OTHER workflow file's actual command text never runs pnpm/npm publish" },
+      { file: `${SCRIPTS}/release-gates.test.ts`, testName: "the check above is discriminating, not vacuously true: it DOES flag a publish command when one is present" },
+      { file: `${SCRIPTS}/release-gates.test.ts`, testName: "scripts/smoke-installed.ts (which packs + scans internally) runs as a gate BEFORE the publish step" },
+    ],
+    note: "A `phase-*` tag matches neither trigger, which is what makes \"no task in this plan publishes anything\" mechanical rather than procedural. NOTHING in this phase has published: the first publish is the user's decision.",
+  },
+  {
+    id: "WS7a-8",
+    spec: WS7A,
+    bullet: "endpoint provenance: a copied reviewed endpoint carries `endpointOrigin: \"reviewed\"` and keeps the privileged set; a `requiresUserEndpoint` row refuses with a typed `endpoint-required` and never a throw",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/endpoint-origin.test.ts`, testName: "the catalog's copied endpoint is `reviewed`; an operator's own is `user`" },
+      { file: `${RUNTIME}/provider/endpoint-origin.test.ts`, testName: "the host's `user-agent` does NOT reach a reviewed vendor endpoint, and its `x-goog-quota-project` DOES" },
+      { file: `${RUNTIME}/provider/endpoint-origin.test.ts`, testName: "the SHIPPED `ollama-local` row is stamped `reviewed` and `local` — the local cohort is the M-1 closure's largest blast radius" },
+      { file: `${RUNTIME}/provider/endpoint-origin.test.ts`, testName: "absent → the typed `endpoint-required` refusal, naming the template, and NOTHING is ever requested" },
+      { file: `${RUNTIME}/provider/endpoint-origin.test.ts`, testName: "a CROSS-PROVIDER slot switch onto a per-tenant row refuses -- `{refused, code: \\\"endpoint-required\\\"}`, no throw" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "ACCEPTS the shape the two shipped rows use: `requiresUserEndpoint: true`, a template, and an empty `defaultEndpoints`" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a `requiresUserEndpoint` row with NO `endpointTemplate` is refused — the refusal has nothing to name" },
+    ],
+    note: "The fifth citation is the fix wave's item 4: every RESOLUTION branch of `resolveModelSwitch` already returned a typed refusal, and then the two calls that MATERIALISE the target could still throw past all of them -- which a `set_model` onto azure-ai/oci does.",
+  },
+  {
+    id: "WS7a-9",
+    spec: WS7A,
+    bullet: "`ModelFamilyListing.servable` is the tri-state `present`/`absent`/`unknown`, and `unknown` is never rendered as `absent`",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/family-listing.test.ts`, testName: "families carry their slots and every model grouped by canonical id with per-row servable states" },
+      { file: `${RUNTIME}/provider/family-listing.test.ts`, testName: "P7a: the third state is not synthesised here -- every row reports exactly what the predicate said" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "R-6c-27 (P7a): a cold listing reports `servable` as `unknown` for a provider nobody has probed, and `present` for the session's own" },
+    ],
+  },
+  {
+    id: "WS7a-10",
+    spec: WS7A,
+    bullet: "PROVENANCE.md's admission-tier census is GENERATED from the shipped catalog, with a drift check and a named script",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/provenance-tiers.test.ts`, testName: "PROVENANCE.md's census is exactly what a fresh render produces" },
+      { file: `${SCRIPTS}/provenance-tiers.test.ts`, testName: "every tier in the vocabulary gets a row, including one with no members" },
+      { file: `${SCRIPTS}/provenance-tiers.test.ts`, testName: "`provenance:tiers` is a root script pointing at this generator" },
+      { file: `${SCRIPTS}/provenance-tiers.test.ts`, testName: "no CI step runs this generator -- the drift gate is the test above, and there is only one of it" },
+    ],
+    note: "The drift gate is the FIRST citation, running under the repository's own `bun test` in CI -- not a second CI step. The fix wave (item 3) added the named script for a contributor who has just regenerated the catalog, and the last citation makes that reduction enforceable in the place someone would look before adding one.",
+  },
+];
+
+const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS, ...WIDENING_ROWS, ...MODEL_FAMILIES_ROWS, ...PHASE_7A_ROWS];
 
 describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
   test("every row is covered, newly tested here, or deferred with a named owning-phase reasoning -- zero unexplained bullets", () => {
@@ -935,7 +1095,10 @@ describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
     // same table and under this same set of guards. P6.6 adds a fifth the same way: WS-13c amends
     // WS-01/WS-03/WS-06/WS-10/WS-13 rather than replacing any of them. `"WS-13b …"` sorts before
     // `"WS-13c …"` (`"b"` < `"c"`), so WS13C is last.
-    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)", WS13B, WS13C]);
+    // P7a adds a sixth the same way (WS-00 D19/D19a, WS-06 D29/D30, WS-02/WS-03's own "Execution
+    // amendments -- Phase 7a", WS-13b §10's Phase 7a bullet, WS-13c §7). `"WS-7a …"` sorts after the
+    // `"WS-13…"` strings (`"7"` > `"1"`), so WS7A is last.
+    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)", WS13B, WS13C, WS7A]);
   });
 
   test("CI runs the catalog regeneration check and the OFFLINE source sync (WS13-C1's other half)", () => {

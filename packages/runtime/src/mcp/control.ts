@@ -23,7 +23,12 @@ import { WINTER_SERVER_NAME } from "./winter-server.ts";
 // `servers` win regardless of its PRIOR origin -- re-tagged "dynamic" from that point on).
 const REPLACE_ELIGIBLE_ORIGINS: ReadonlySet<McpConfigSourceOrigin> = new Set<McpConfigSourceOrigin>(["explicit", "dynamic"]);
 
-export function createMcpControlSeam(internals: McpLifecycleInternals): McpControlSeam {
+export function createMcpControlSeam(internals: McpLifecycleInternals, opts: { reservedServerName?: string } = {}): McpControlSeam {
+  // P7a fix wave (item 5, I-2): the SESSION brand's standing-server name, threaded from
+  // `createMcpLifecycle`. `WINTER_SERVER_NAME` is computed from `WINTER_BRAND` at module load, so
+  // this door and the registry's per-session reservation disagreed under any rebrand -- see
+  // `resolveMcpServerSources`' own note for the two halves of that. Defaults to today's value.
+  const reservedServerName = opts.reservedServerName ?? WINTER_SERVER_NAME;
   return {
     async reconnect(serverName: string): Promise<void> {
       if (!internals.hasSlot(serverName)) {
@@ -62,8 +67,8 @@ export function createMcpControlSeam(internals: McpLifecycleInternals): McpContr
         // a connected client in a `failed` slot with its child process reaped no earlier than
         // `dispose()`. Reported as an ordinary per-entry error, matching every other rejection on
         // this path: never partially applied, never a thrown seam.
-        if (name === WINTER_SERVER_NAME) {
-          errors[name] = `"${WINTER_SERVER_NAME}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name`;
+        if (name === reservedServerName) {
+          errors[name] = `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name`;
           continue;
         }
         const result = validateServerConfig(raw);

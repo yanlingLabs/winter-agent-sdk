@@ -15,7 +15,7 @@ import { discoverModels, createAzureOpenAIAdapter } from "@yanlinglabs/winter-pr
 import type { ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
 import { apiVersionOf, deploymentOf } from "../fakes/azure-openai.ts";
 import type { RecordedRequest } from "../fakes/server.ts";
-import type { CorpusHarness, HarnessOverrides } from "./openai.ts";
+import type { CorpusHarness, HarnessOverrides } from "./harness.ts";
 
 export const AZURE_CLASSIC_API_VERSION = "2026-05-01";
 export const AZURE_DEPLOYMENT = "corpus-deployment";

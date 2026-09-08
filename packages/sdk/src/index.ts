@@ -134,7 +134,7 @@ export type {
 // project-dir-name.ts stay runtime-private; the runtime imports resolveWinterHome/
 // compatibilityKeys/isUnset back from here (packages/runtime/src/index.ts re-exports them
 // unchanged for its own existing consumers).
-export { resolveWinterHome, isUnset } from "./paths/home.ts";
+export { resolveWinterHome, resolveKeychainServiceForProfile, isUnset } from "./paths/home.ts";
 export { transcriptProjectKey } from "./paths/project-key.ts";
 export { compatibilityKeys } from "./paths/keys.ts";
 export type { CompatibilityKeys } from "./paths/keys.ts";

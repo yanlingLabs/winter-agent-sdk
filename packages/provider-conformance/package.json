@@ -2,13 +2,27 @@
   "name": "@yanlinglabs/winter-provider-conformance",
   "version": "0.0.1",
   "type": "module",
-  "main": "./src/index.ts",
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts",
-    "./fakes": "./src/fakes/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./fakes": {
+      "types": "./dist/fakes/index.d.ts",
+      "bun": "./src/fakes/index.ts",
+      "default": "./dist/fakes/index.js"
+    }
   },
   "files": [
-    "src"
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -17,5 +31,6 @@
   "dependencies": {
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*"
-  }
+  },
+  "types": "./dist/index.d.ts"
 }

@@ -253,6 +253,35 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
     }
   });
 
+  // P7a fix wave (item 5, whole-branch review I-2): the SAME door, under a BRAND. `addAndConnect`
+  // compared against a module-load constant, so a branded session's `mcp_set_servers` naming the
+  // brand's own standing server (`acme`) got past this guard and spawned a real child -- the exact
+  // shape the M1 test above exists to prevent, re-opened for every name but Winter's.
+  test("P7a (I-2): under a brand, mcp_set_servers refuses `acme` up front -- no slot, no spawn -- and `winter` is an ordinary name", async () => {
+    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT, reservedServerName: "acme" });
+    try {
+      await lifecycle.start();
+      const { command, args } = stdioFixtureCommand();
+      const result = await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: { acme: { command, args, env: {} } } });
+      expect(result.ok).toBe(true);
+      const payload = (result as { payload: { added: string[]; removed: string[]; errors: Record<string, string> } }).payload;
+      expect(payload.added).toEqual([]);
+      expect(payload.errors["acme"]).toContain("reserved server identity");
+      expect(payload.errors["acme"]).not.toContain("winter");
+      // Nothing was spawned or connected under that name.
+      expect(lifecycle.stateSource.snapshot().map((e) => e.name)).not.toContain("acme");
+
+      // ...and the inverse: `winter` is just a name to this session, so it connects like any other.
+      const other = await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: { winter: { command, args, env: {} } } });
+      expect(other.ok).toBe(true);
+      const otherPayload = (other as { payload: { added: string[]; errors: Record<string, string> } }).payload;
+      expect(otherPayload.errors["winter"]).toBeUndefined();
+      expect(otherPayload.added).toEqual(["winter"]);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
   // Whole-branch review M12 (fix wave): a REPLACEMENT must withdraw the previous declaration's tools.
   // Before this, closing the old client left every `mcp__<name>__<tool>` from the prior server in the
   // registry -- advertised, ToolSearch-able, and bound to a closed connection.

@@ -316,7 +316,7 @@ export function revalidateApproval(approval: DurableApprovalRecord, ctx: Revalid
   // fallback, recomputing from the (already-live, un-frozen) issuedCwd/issuedHome instead.
   const issuedTargets = approval.issuedResolvedTargets ?? extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: approval.issuedCwd, home: approval.issuedHome });
   const currentTargets = extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: ctx.cwd, home: ctx.home });
-  if (issuedTargets.join(" ") !== currentTargets.join(" ")) {
+  if (issuedTargets.join("\u0000") !== currentTargets.join("\u0000")) {
     return {
       ok: false,
       axis: "paths",

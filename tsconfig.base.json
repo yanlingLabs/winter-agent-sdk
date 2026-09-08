@@ -1,7 +1,52 @@
 {
   "compilerOptions": {
-    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
-    "strict": true, "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true,
-    "declaration": true, "resolveJsonModule": true, "skipLibCheck": true, "types": ["bun"], "allowImportingTsExtensions": true
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "declaration": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun"
+    ],
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@yanlinglabs/winter-agent-sdk": [
+        "./packages/sdk/src/index.ts"
+      ],
+      "@yanlinglabs/winter-provider-catalog": [
+        "./packages/provider-catalog/src/index.ts"
+      ],
+      "@yanlinglabs/winter-provider-catalog/families": [
+        "./packages/provider-catalog/src/families.ts"
+      ],
+      "@yanlinglabs/winter-provider-runtime": [
+        "./packages/provider-runtime/src/index.ts"
+      ],
+      "@yanlinglabs/winter-provider-runtime/testing": [
+        "./packages/provider-runtime/src/testing.ts"
+      ],
+      "@yanlinglabs/winter-conformance": [
+        "./packages/conformance/src/index.ts"
+      ],
+      "@yanlinglabs/winter-conformance/trace": [
+        "./packages/conformance/src/trace.ts"
+      ],
+      "@yanlinglabs/winter-conformance/official": [
+        "./packages/conformance/src/official/index.ts"
+      ],
+      "@yanlinglabs/winter-provider-conformance": [
+        "./packages/provider-conformance/src/index.ts"
+      ],
+      "@yanlinglabs/winter-provider-conformance/fakes": [
+        "./packages/provider-conformance/src/fakes/index.ts"
+      ],
+      "winter-agent-runtime": [
+        "./packages/runtime/src/index.ts"
+      ]
+    }
   }
 }

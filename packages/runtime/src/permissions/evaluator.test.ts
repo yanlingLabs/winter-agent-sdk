@@ -67,6 +67,8 @@ import { runHooks, type HookInvoker, type HookAuditRecorder, type ToolInputValid
 // this file.
 import { createAutoEngine, createScriptedClassifier } from "./auto/engine.ts";
 import { AUTO_FALLBACK_CONSECUTIVE_THRESHOLD } from "./auto/caches.ts";
+// P7a fix wave (item 5, M-4): the tool's OWN canonical name, so a rename moves this test with it.
+import { ADVISOR_TOOL_NAME } from "../tools/impl/advisor.ts";
 
 // --- fixture helpers -----------------------------------------------------------------------------
 
@@ -778,6 +780,53 @@ describe("ask-beats-allow (WS-07 §2 stage 3)", () => {
     const record = await evaluate(call("Bash", { command: "git push" }), ctx);
     expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("rule");
+  });
+});
+
+// --- P7a fix wave (item 5, whole-branch review M-4): the NATIVE `advisor` is rule-addressable ------
+//
+// D29 retired `mcp__winter__advisor` for a bare `advisor`, and WS-06 §4 requires the tool to be
+// rule-addressable with deny/ask rules applying normally. The spine's report REASONED that this
+// holds -- the three `startsWith("mcp__")` sites key on the NAME, so a plain tool name is addressed
+// like any other -- and no test anywhere asserted it. A reasoned invariant with no test is exactly
+// what a rename breaks silently: nothing here would fail if `advisor` acquired a prefix again, or if
+// a future special-case exempted it the way `AskUserQuestion` is deliberately exempted below.
+//
+// Driven by the CANONICAL NAME the tool actually registers under, not a literal, so a rename moves
+// the test with the tool instead of leaving it green against a name nobody uses.
+describe("P7a (M-4): the native `advisor` obeys deny and ask rules like any other tool (WS-06 §4)", () => {
+  test("a user-tier DENY rule refuses the call, even under bypassPermissions", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "bypassPermissions", rules: withRules(rule(ADVISOR_TOOL_NAME, "deny", "user")) }) });
+    const record = await evaluate(call(ADVISOR_TOOL_NAME, {}), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+    expect(record.source).toBe("user");
+  });
+
+  test("a user-tier ASK rule reaches the prompt stage, and the human's answer decides", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "not this turn" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ rules: withRules(rule(ADVISOR_TOOL_NAME, "ask", "user")) }) });
+    const record = await evaluate(call(ADVISOR_TOOL_NAME, {}), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toEqual({ source: "user", toolName: ADVISOR_TOOL_NAME });
+    expect(record.decision).toBe("deny");
+    expect(record.message).toBe("not this turn");
+  });
+
+  test("with NO rule it is an ordinary tool -- no rule mechanism, and nothing special-cases the name", async () => {
+    // The control. Without it the two assertions above would pass just as happily against an
+    // evaluator that denied `advisor` unconditionally, which is a different bug.
+    const ctx = baseCtx({ policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call(ADVISOR_TOOL_NAME, {}), ctx);
+    expect(record.decision).toBe("allow");
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("the name it is addressed by carries NO `mcp__` prefix -- D29's retirement, asserted", () => {
+    // If `advisor` ever regained a prefix, the rules above would still pass (they read the constant)
+    // while every host's existing `advisor` rule stopped matching. This is the line that fails.
+    expect(ADVISOR_TOOL_NAME).toBe("advisor");
+    expect(ADVISOR_TOOL_NAME.startsWith("mcp__")).toBe(false);
   });
 });
 

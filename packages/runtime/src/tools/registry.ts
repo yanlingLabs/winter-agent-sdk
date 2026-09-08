@@ -723,7 +723,47 @@ const RESERVED_MCP_SERVER_NAMES = new Set<string>([WINTER_BRAND.mcpServerName]);
 // process would fight over these names, exactly as two concurrent sessions already fight over a
 // live MCP server's names. That is the same "one-live-engine assumption" `subagents/limits.ts` and
 // `tools/background-tasks.ts` record; a genuinely multi-tenant host is a WS-15 concern.
+//
+// TWO SESSIONS UNDER THE *SAME* BRAND ARE NOT THAT CASE, and this is the P7a fix wave's M-2 (item 5).
+// One host process running many sessions under one brand is the NORMAL topology, not an edge. Before
+// the ref count, the second same-brand call found every `from` already renamed, `continue`d, and
+// returned a disposer holding nothing with `reservedHere === false`; the FIRST session's disposer
+// then restored Winter's own tool names and dropped the reservation while the second session was
+// still live -- leaving its alias table (`canonicalAliases(brand)`) pointing at a name nobody had
+// registered, which is exactly the pairing the acme test guards against.
+//
+// So the rename is REF-COUNTED per target brand: it happens on the first same-brand session and is
+// undone by the LAST disposer. `setWinterIdentity` (provider-runtime/src/identity.ts) solves the
+// same overlap with restore-previous; a stack works there because the value is ONE string, while
+// here the installed state is a set of registry entries plus a reservation, and "restore what was
+// there" for the inner call is "do nothing" -- which is precisely the bug. Counting is the shape
+// that makes the inner call's disposer a no-op and the outer one's the real restore.
+//
+// Keyed on the SERVER NAME (the brand's `mcpServerName`), which is what the whole rename is derived
+// from: two profiles agreeing on it produce identical renames by construction, and two that differ
+// are the disclosed different-brand case above, which keeps its own count.
+interface StandingRebrand {
+  count: number;
+  applied: Array<{ from: string; to: string; entry: RegisteredTool }>;
+  reservedHere: boolean;
+}
+const STANDING_REBRANDS = new Map<string, StandingRebrand>();
+
 export function rebrandStandingServerTools(renames: ReadonlyArray<{ from: string; to: string }>, serverName: string): () => void {
+  const existing = STANDING_REBRANDS.get(serverName);
+  if (existing !== undefined) {
+    // Already installed by an overlapping session under this same brand. Take a reference and hand
+    // back a disposer that releases it -- never a second install (there is nothing left to rename)
+    // and never a no-op disposer (that is what dropped the count to the first session's teardown).
+    existing.count++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseStandingRebrand(serverName);
+    };
+  }
+
   const applied: Array<{ from: string; to: string; entry: RegisteredTool }> = [];
   for (const { from, to } of renames) {
     if (from === to) continue;
@@ -739,18 +779,40 @@ export function rebrandStandingServerTools(renames: ReadonlyArray<{ from: string
   }
   const reservedHere = !RESERVED_MCP_SERVER_NAMES.has(serverName);
   if (reservedHere) RESERVED_MCP_SERVER_NAMES.add(serverName);
+  // An UNBRANDED session renames nothing and reserves nothing (`from === to` throughout, and
+  // `WINTER_BRAND.mcpServerName` is already reserved at module load). Recording an entry for it
+  // would be harmless but pointless bookkeeping on the hot default path, so it stays byte-identical
+  // to before: no map entry, a disposer that does nothing.
+  if (applied.length === 0 && !reservedHere) {
+    let disposed = false;
+    return () => {
+      disposed = true;
+      void disposed;
+    };
+  }
+  STANDING_REBRANDS.set(serverName, { count: 1, applied, reservedHere });
   let disposed = false;
   return () => {
     if (disposed) return;
     disposed = true;
-    for (const { from, to, entry } of applied) {
-      // Identity-checked, the `registerHostGeneratedTool` precedent: only withdraw a name this
-      // call actually installed and that nothing has replaced since.
-      if (registry.get(to)?.descriptor.canonicalName === to) registry.delete(to);
-      if (!registry.has(from)) registry.set(from, entry);
-    }
-    if (reservedHere) RESERVED_MCP_SERVER_NAMES.delete(serverName);
+    releaseStandingRebrand(serverName);
   };
+}
+
+/** Drops one reference; the LAST one restores the registry and the reservation. */
+function releaseStandingRebrand(serverName: string): void {
+  const state = STANDING_REBRANDS.get(serverName);
+  if (state === undefined) return;
+  state.count--;
+  if (state.count > 0) return;
+  STANDING_REBRANDS.delete(serverName);
+  for (const { from, to, entry } of state.applied) {
+    // Identity-checked, the `registerHostGeneratedTool` precedent: only withdraw a name this
+    // call actually installed and that nothing has replaced since.
+    if (registry.get(to)?.descriptor.canonicalName === to) registry.delete(to);
+    if (!registry.has(from)) registry.set(from, entry);
+  }
+  if (state.reservedHere) RESERVED_MCP_SERVER_NAMES.delete(serverName);
 }
 
 // P4 fix wave, KNOWN (1) -- SAME-BATCH duplicate names, ruled DEDUPE-FIRST-WINS (never throw).

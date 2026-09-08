@@ -27,10 +27,11 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { resolveBrand, WINTER_BRAND, envName, mcpToolName, type BrandProfile, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
-import { activeWinterIdentity, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { activeWinterIdentity, renderIdentityHeaders, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 // DEEP RELATIVE IMPORTS, and only into TEST-facing surfaces. The codex adapter, its quota manager
 // and the Responses scenario table are not on `@yanlinglabs/winter-provider-runtime`'s or
 // `…/winter-provider-conformance`'s public index -- the corpus test that already drives this exact
@@ -75,6 +76,7 @@ const ACME_PARTIAL: Partial<BrandProfile> = {
   tempRootName: "acme",
   keychainService: "com.acme.core",
   pluginManifestDir: ".acme-plugin",
+  contactUrl: "https://acme.example/support",
 };
 
 const resolvedAcme = resolveBrand(ACME_PARTIAL);
@@ -200,6 +202,65 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     expect(getRegisteredTool(acmeSend)).toBeUndefined();
   });
 
+  // --- P7a fix wave (item 5, whole-branch review M-2) ---------------------------------------------
+  //
+  // TWO OVERLAPPING SESSIONS UNDER ONE BRAND -- the normal topology for a host process, not an edge.
+  // Before the ref count, the SECOND same-brand call found every `from` already renamed, `continue`d,
+  // and returned a disposer holding nothing; the FIRST session's disposer then restored
+  // `mcp__winter__*` and dropped the reservation while the second session was still live, leaving
+  // its alias table pointing at a name nobody had registered -- exactly the pairing the test above
+  // guards against, reached by teardown order instead of by a missing derivation.
+  test("P7a (M-2): with two overlapping ACME sessions, the FIRST teardown leaves the second's names intact", async () => {
+    const cwd = tempDirNamed("p7a-cwd-");
+    const homeA = tempDirNamed("p7a-acme-home-a-");
+    const homeB = tempDirNamed("p7a-acme-home-b-");
+    const acmeSend = mcpToolName(ACME, "send_message");
+    const winterSend = mcpToolName(WINTER_BRAND, "send_message");
+
+    const first = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: homeA }, provider: { credentials: createMemoryCredentialStore([]) } });
+    const second = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: homeB }, provider: { credentials: createMemoryCredentialStore([]) } });
+    try {
+      expect(getRegisteredTool(acmeSend)).toBeDefined();
+
+      // The first session goes away while the second is STILL LIVE.
+      first.dispose();
+
+      // The second session's own tool must still be there, under its own spelling -- and Winter's
+      // must NOT be back, because nothing has finished with the brand yet.
+      expect(getRegisteredTool(acmeSend)?.descriptor.canonicalName).toBe(acmeSend);
+      expect(getRegisteredTool(winterSend)).toBeUndefined();
+      // The pairing, restated at the level that actually breaks: the alias table's canonical target
+      // still resolves to a registered tool.
+      expect(getRegisteredTool(effectiveAliasTable(undefined, ACME)["SendMessage"] as string)).toBeDefined();
+    } finally {
+      second.dispose();
+    }
+
+    // ...and the LAST disposer is the one that restores Winter's names.
+    expect(getRegisteredTool(winterSend)).toBeDefined();
+    expect(getRegisteredTool(acmeSend)).toBeUndefined();
+  });
+
+  test("P7a (M-2): the disposers are idempotent and order-independent -- a double dispose cannot drop the count twice", async () => {
+    const cwd = tempDirNamed("p7a-cwd-");
+    const acmeSend = mcpToolName(ACME, "send_message");
+    const winterSend = mcpToolName(WINTER_BRAND, "send_message");
+    const first = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: tempDirNamed("p7a-acme-home-c-") }, provider: { credentials: createMemoryCredentialStore([]) } });
+    const second = await buildProductionWiring({ config: acmeConfig({ cwd }), env: { ACME_HOME: tempDirNamed("p7a-acme-home-d-") }, provider: { credentials: createMemoryCredentialStore([]) } });
+    try {
+      // Dispose the SECOND first (reverse order), twice. A count that a double dispose could drop
+      // twice would restore Winter's names here, while `first` is still live.
+      second.dispose();
+      second.dispose();
+      expect(getRegisteredTool(acmeSend)).toBeDefined();
+      expect(getRegisteredTool(winterSend)).toBeUndefined();
+    } finally {
+      first.dispose();
+    }
+    expect(getRegisteredTool(winterSend)).toBeDefined();
+    expect(getRegisteredTool(acmeSend)).toBeUndefined();
+  });
+
   test("the shared temp root is `<realpath of /tmp>/acme-<uid>` -- computed as a STRING, never created", () => {
     // `/tmp` (`/private/tmp` on macOS, `/tmp` itself on Linux -- hence the realpath on BOTH sides) is
     // shared between every user on the machine and this suite must not mkdir into it (D18's own
@@ -229,8 +290,24 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     try {
       await withWiring(acmeConfig({ cwd }), { ACME_HOME: acmeHome }, async () => {
         // The identity the whole adapter family reads, installed by the session's own wiring.
-        expect(activeWinterIdentity()).toEqual({ product: "acme", codexOriginator: "acme" });
+        expect(activeWinterIdentity()).toEqual({ product: "acme", codexOriginator: "acme", contactUrl: "https://acme.example/support" });
         expect(winterUserAgent().startsWith("acme/")).toBe(true);
+
+        // P7a fix wave (item 7, Lane A review M-4): THE CONTACT MOVED TOO. A vendor identity field
+        // is `<name>:<version>:<contact>`, and until this fix only the first two tokens followed the
+        // brand -- so a rebranded product's honest-identity header still pointed AI Horde's
+        // operators at Winter's issue tracker for traffic Winter never sent. `renderIdentityHeaders`
+        // is the one seam every adapter family goes through, so rendering the SHIPPED row's declared
+        // value here is the same substitution a real request makes.
+        const shippedRow = loadCatalog().providers.find((p) => p.id === "aihorde")!;
+        const rendered = renderIdentityHeaders(shippedRow.identityHeaders!, {
+          version: "9.9.9",
+          product: activeWinterIdentity().product,
+          contact: activeWinterIdentity().contactUrl,
+        });
+        expect(rendered).toEqual({ "Client-Agent": "acme:9.9.9:https://acme.example/support" });
+        expect(rendered["Client-Agent"]).not.toContain("winter");
+        expect(rendered["Client-Agent"]).not.toContain("yanlingLabs");
 
         const ref = { kind: "keychain", account: `codex-oauth:${codexFake.FAKE_ACCOUNT_ID}` } as const;
         const credentials = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: codexFake.FAKE_ACCESS_TOKEN, refreshToken: codexFake.FAKE_REFRESH_TOKEN, accountId: codexFake.FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
@@ -262,7 +339,7 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     }
 
     // The identity is a per-session installation, given back on teardown.
-    expect(activeWinterIdentity()).toEqual({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator });
+    expect(activeWinterIdentity()).toEqual({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator, contactUrl: WINTER_BRAND.contactUrl });
   });
 
   test("R-7a-8: the keychain store and the cross-provider `authRef` read ONE source -- `com.acme.core`", () => {
@@ -318,6 +395,18 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     const others = entries.filter((e) => typeof e.ruleValue.ruleContent === "string" && !(e.ruleValue.ruleContent as string).startsWith("~/.acme/projects"));
     expect(others.some((e) => skip!(e))).toBe(false);
 
+    // P7a fix wave (item 10, N-2): THE NEGATIVE CASE, and it cannot be read off `others` -- the
+    // assertion four lines above proves no `.winter` entry is IN `entries` at all, so `others` is
+    // structurally incapable of carrying one. A synthetic rule is the only way to ask the question.
+    //
+    // What it pins: the carve-out follows the SESSION's brand and nothing else. A managed deny that
+    // literally names `~/.winter/projects` under a branded session is somebody ELSE's floor, and
+    // skipping it would let a branded session write through a deny it was never granted a carve-out
+    // from -- the exact inverse of the I-2 bug, and the direction a "make it match either name" fix
+    // would introduce.
+    const winterLiteralDeny = { behavior: "deny" as const, source: "managed" as const, ruleValue: { ruleContent: "~/.winter/projects/**" } };
+    expect(skip!(winterLiteralDeny as unknown as (typeof entries)[number])).toBe(false);
+
     // A sibling under the same session -- a transcript, not a script -- earns no carve-out at all.
     expect(workflowScriptCarveOutSkip({ toolName: "Write", input: { file_path: join(winterHome, "projects", "key", "uuid", "transcript.jsonl") } }, ctx)).toBeUndefined();
   });
@@ -346,9 +435,11 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     const config = acmeConfig({ cwd, plugins: [{ type: "local", path: pluginRoot }] });
     await withWiring(config, { ACME_HOME: acmeHome }, (wiring) => {
       const names = wiring.engineOptions.initPlugins.map((p) => p.name);
-      expect(names).toContain("named-by-its-acme-manifest");
-      // The basename is what a MISSED manifest would have produced.
-      expect(names).not.toContain(basename(pluginRoot));
+      // P7a fix wave (item 10, N-3): the `not.toContain(basename(pluginRoot))` assertion that used
+      // to sit here is DELETED, not reworded. It was inert: `names` is a one-element array whose
+      // single member the line above already pins exactly, so the negative could not fail without
+      // the positive failing first -- an assertion that reads like a second guard and is not one.
+      expect(names).toEqual(["named-by-its-acme-manifest"]);
       expect(wiring.warnings.filter((w) => w.includes("was not loaded"))).toEqual([]);
     });
   });

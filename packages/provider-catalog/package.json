@@ -5,13 +5,34 @@
   "engines": {
     "node": ">=18"
   },
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts",
-    "./families": "./src/families.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./families": {
+      "types": "./dist/families.d.ts",
+      "bun": "./src/families.ts",
+      "default": "./dist/families.js"
+    }
   },
+  "files": [
+    "dist",
+    "src",
+    "generated",
+    "overlay",
+    "schema",
+    "NOTICE",
+    "PROVENANCE.md",
+    "UPSTREAM.json",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"
-  }
+  },
+  "types": "./dist/index.d.ts"
 }

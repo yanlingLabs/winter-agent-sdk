@@ -665,11 +665,32 @@ describe("WS-13b §1: rows are evidence", () => {
     expect(result.errors.map((e) => e.code)).toContain("identity-header-invalid");
   });
 
-  test("...and the honest form is accepted, `<version>` placeholder and all", () => {
+  test("...and the honest form is accepted, all three placeholders and all", () => {
     // The positive leg. Without it the two refusals above would pass just as happily against a
     // validator that rejected every `identityHeaders` value, which is a different bug.
-    const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk" } })] });
+    const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "<product>:<version>:<contact>" } })] });
     expect(validateCatalog(catalog).ok).toBe(true);
+  });
+
+  test("P7a fix wave (item 7): a HARD-CODED product token is now refused -- only `<product>` can be true under every brand", () => {
+    // Until the fix wave the literal Winter package name was accepted beside the placeholder, as
+    // back-compat for "rows written before the brand profile existed". No row was ever written that
+    // way, and accepting it meant a validator that calls a hard-coded product token impersonation in
+    // its own error message while permitting exactly that -- which is also how the last raw brand
+    // literal stayed in `provider-catalog/src`.
+    const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "winter-agent-sdk:<version>:<contact>" } })] });
+    const result = validateCatalog(catalog);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("identity-header-invalid");
+  });
+
+  test("P7a fix wave (item 7): the SHIPPED aihorde row carries `<contact>`, not a repository URL", () => {
+    // The row is the thing the fix is about, so the shipped data is the assertion -- a fixture-only
+    // test would pass just as happily against a catalog that still hard-codes Winter's issue tracker
+    // in a reuser's honest-identity header.
+    const shipped = loadCatalog().providers.find((p) => p.id === "aihorde");
+    expect(shipped?.identityHeaders).toEqual({ "Client-Agent": "<product>:<version>:<contact>" });
   });
 });
 

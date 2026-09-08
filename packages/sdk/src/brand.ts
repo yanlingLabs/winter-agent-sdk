@@ -75,6 +75,23 @@ export interface BrandProfile {
    * OFFICIAL runtime reads, a Claude-mirroring literal this profile deliberately does not own.
    */
   pluginManifestDir: string;
+  /**
+   * P7a fix wave (item 7; Lane A review M-4): WHERE TO REACH THE RUNNING PRODUCT.
+   *
+   * A vendor identity field is a `<name>:<version>:<contact>` triple, not a name (AI Horde's
+   * `Client-Agent` is the shipped example, and its whole purpose is that an operator whose workers
+   * are misbehaving can contact whoever wrote the client). `packageName` already moved with the
+   * brand; the CONTACT did not, so a rebranded product's honest-identity header still pointed a
+   * vendor at Winter's issue tracker for traffic Winter never sent. That is not a cosmetic leak —
+   * it is a false statement in the one field whose entire purpose is being true.
+   *
+   * A URL rather than an email: it is what the shipped row already carried, it is the form vendors
+   * document, and it is the one contact shape that discloses nothing personal. Validated as an
+   * `https:` URL — `http:` is refused because this value is published to third parties, and any
+   * other scheme (`mailto:`, `javascript:`, a bare token) is refused because a header value pasted
+   * from a profile is exactly where a surprising scheme should not be accepted.
+   */
+  contactUrl: string;
 }
 
 /**
@@ -97,6 +114,25 @@ const ENV_PREFIX_RE = /^[A-Z][A-Z0-9]{0,15}_$/;
 const KEYCHAIN_SERVICE_RE = /^[a-z][a-z0-9.-]{0,63}$/;
 
 const MAX_PRODUCT_NAME = 64;
+/**
+ * Any C0 control byte or DEL. Never legal in a header value, and the reason this file writes them
+ * as escapes: a raw one in source is invisible to every reviewer and to `grep`
+ * (`scripts/source-hygiene.test.ts` is the gate).
+ */
+const CONTROL_BYTE_RE = /[\u0000-\u001f\u007f]/;
+/** `brand.contactUrl`'s own check — see the field's doc for why it is a parse and not a pattern. */
+function isHttpsUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  // A header value must not carry a newline, a CR or any other control byte: an identity header is
+  // written into a request, and `new URL` happily accepts and percent-encodes some of them.
+  if (CONTROL_BYTE_RE.test(value)) return false;
+  return url.protocol === "https:";
+}
 
 /**
  * Originator values that name a FIRST PARTY. `codexOriginator` may never be one of these.
@@ -121,6 +157,7 @@ export const WINTER_BRAND: Readonly<BrandProfile> = Object.freeze({
   codexOriginator: "winter",
   tempRootName: "winter",
   pluginManifestDir: ".winter-plugin",
+  contactUrl: "https://github.com/yanlingLabs/winter-agent-sdk",
 });
 
 /** A refusal carries WHICH field and WHY, never a bare boolean — the host has to fix something. */
@@ -179,6 +216,7 @@ export function resolveBrand(partial?: Partial<BrandProfile>): BrandValidation {
     codexOriginator: pick("codexOriginator"),
     tempRootName: pick("tempRootName"),
     pluginManifestDir: pick("pluginManifestDir"),
+    contactUrl: pick("contactUrl"),
   };
 
   for (const key of Object.keys(brand) as Array<keyof BrandProfile>) {
@@ -193,6 +231,17 @@ export function resolveBrand(partial?: Partial<BrandProfile>): BrandValidation {
   for (const rule of FIELD_RULES) {
     const value = brand[rule.field];
     if (!rule.re.test(value)) return { ok: false, reason: `brand.${rule.field}: ${JSON.stringify(value)} is not ${rule.shape}` };
+  }
+  // `contactUrl` is PARSED, not regex-matched. It is published to third parties in an identity
+  // header, so "looks vaguely like a URL" is the wrong bar: `new URL` rejects the malformed forms
+  // outright, and the scheme check refuses `http:` (this value travels to strangers) and every
+  // non-http scheme (`mailto:`, `javascript:`, a bare token) — a header value pasted straight out of
+  // a host's profile is exactly where a surprising scheme must not be accepted.
+  if (!isHttpsUrl(brand.contactUrl)) {
+    return {
+      ok: false,
+      reason: `brand.contactUrl: ${JSON.stringify(brand.contactUrl)} is not an https:// URL — it is published to vendors in identity headers as the way to reach whoever runs this client`,
+    };
   }
   if (FIRST_PARTY_ORIGINATORS.includes(brand.codexOriginator)) {
     return {

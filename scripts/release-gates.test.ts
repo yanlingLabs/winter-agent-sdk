@@ -135,9 +135,14 @@ describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-
     expect(doc.on).toEqual(["push", "pull_request"]);
   });
 
-  test("R-7a-16: pack-smoke-node18 is ADVISORY -- `continue-on-error: true` at the JOB level", () => {
+  test("R-7a-16 REVERSED (P7a fix wave, item 1): pack-smoke-node18 is BLOCKING -- no continue-on-error anywhere on it", () => {
+    // This test used to assert `continue-on-error: true`, and its inversion IS the deliverable: the
+    // compiled emit landed, so the Node leg is a real gate rather than a disclosed carry. Asserted
+    // at the JOB level and on every STEP, because a step-level flag would silence it just as well.
     const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
-    expect(doc.jobs["pack-smoke-node18"]?.["continue-on-error"]).toBe(true);
+    const job = doc.jobs["pack-smoke-node18"]!;
+    expect(job["continue-on-error"]).toBeUndefined();
+    for (const step of job.steps) expect(step["continue-on-error"]).toBeUndefined();
   });
 
   test("R-7a-16: pack-smoke (the Bun leg) stays BLOCKING -- no continue-on-error on the job or on any of its steps", () => {
@@ -165,10 +170,14 @@ describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-
     expect(bunJob.steps.some((s) => s.run?.includes("smoke-installed.ts") && s.run?.includes("--runtime=bun"))).toBe(true);
   });
 
-  test("the advisory job's own step name documents WHY, by name, citing R-7a-16", () => {
+  test("the Node18 job's own step name records that R-7a-16 was REVERSED, not silently dropped", () => {
+    // The advisory name said "advisory until the compiled emit lands". Now it has to say the
+    // opposite, in the same place, so a reader of the workflow learns the state of the carry from
+    // the workflow rather than from a report.
     const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
     const names = doc.jobs["pack-smoke-node18"]!.steps.map((s) => s.name).filter((n): n is string => typeof n === "string");
-    expect(names.some((n) => n.toLowerCase().includes("advisory") && n.includes("R-7a-16"))).toBe(true);
+    expect(names.some((n) => n.toUpperCase().includes("BLOCKING") && n.includes("R-7a-16"))).toBe(true);
+    expect(names.some((n) => n.toLowerCase().includes("advisory"))).toBe(false);
   });
 });
 

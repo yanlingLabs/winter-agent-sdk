@@ -88,21 +88,27 @@ const FAMILY_STATUSES: readonly ModelFamilyDescriptor["status"][] = ["candidate"
  */
 export const WINTER_IDENTITY_HEADER_NAMES: readonly string[] = ["Client-Agent"];
 
-/** Every identity value names the PRODUCT. `identity.ts` substitutes the placeholders at request time. */
-export const WINTER_IDENTITY_VALUE_PREFIX = "winter-agent-sdk";
-
 /**
- * The two tokens an `identityHeaders` VALUE may carry, substituted by the adapter at request time
+ * The THREE tokens an `identityHeaders` VALUE may carry, substituted by the adapter at request time
  * (provider-runtime's `renderIdentityHeaders`).
  *
- * `<version>` predates P7a. `<product>` is D19's: the product token is `brand.packageName` now, so a
- * row that hard-codes Winter's own name is honest for Winter and a LIE for a reuser — it would put
- * Winter's identity on a request the reuser's product made. A row written with `<product>` is
- * truthful under every brand, which is why it is the preferred spelling and why the value check
- * below accepts it as a prefix in its own right.
+ * `<version>` predates P7a. `<product>` is D19's: the product token is `brand.packageName`, so a row
+ * that hard-codes Winter's own name is honest for Winter and a LIE for a reuser — it would put
+ * Winter's identity on a request the reuser's product made. `<contact>` is the P7a fix wave's (item
+ * 7, Lane A review M-4): a vendor identity field is a `<name>:<version>:<contact>` triple and the
+ * contact is the half a vendor ACTS on, so a row hard-coding Winter's repository URL points every
+ * reuser's traffic at Winter's issue tracker — the same untruth as the product token, and less
+ * visible, because the row still LOOKS rebranded once `<product>` has moved.
+ *
+ * A ROW MUST NOW START WITH `<product>`; the literal Winter package name is no longer accepted (P7a
+ * fix wave, item 8's enabler). It was a back-compat spelling for "rows written before the profile
+ * existed", and there are none — the one shipped row uses the placeholder. Keeping it would mean
+ * a validator that calls a hard-coded product token impersonation in its own error message while
+ * accepting exactly that, and it was the last raw brand literal in the four source trees.
  */
 export const IDENTITY_PRODUCT_PLACEHOLDER = "<product>";
 export const IDENTITY_VERSION_PLACEHOLDER = "<version>";
+export const IDENTITY_CONTACT_PLACEHOLDER = "<contact>";
 const CONTINUATIONS = ["none", "plaintext", "opaque-provider-state", "server-response-handle"] as const;
 const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
@@ -543,15 +549,17 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
             "identity-header-invalid",
           );
         }
-        // TWO ACCEPTED PREFIXES, and the placeholder is the preferred one (P7a, D19): a value
-        // starting `<product>` names whatever brand is running, which is truthful for Winter AND
-        // for a reuser; the literal Winter token stays accepted for rows written before the
-        // profile existed. Anything else still fails — the rule this enforces is not "spell it our
-        // way", it is "an identity field must name the client that is actually speaking".
-        if (typeof value !== "string" || !(value.startsWith(IDENTITY_PRODUCT_PLACEHOLDER) || value.startsWith(WINTER_IDENTITY_VALUE_PREFIX))) {
+        // ONE ACCEPTED PREFIX (P7a fix wave, item 7/8): a value starting `<product>` names whatever
+        // brand is running, which is truthful for Winter AND for a reuser. The literal Winter token
+        // used to be accepted beside it for "rows written before the profile existed"; no row was
+        // ever written that way, and accepting it made this validator refuse a hard-coded product
+        // token as impersonation in its message while permitting it in its rule. The rule this
+        // enforces is not "spell it our way", it is "an identity field must name the client that is
+        // actually speaking" — which only the placeholder can do under every brand.
+        if (typeof value !== "string" || !value.startsWith(IDENTITY_PRODUCT_PLACEHOLDER)) {
           errs.add(
             `${path}.identityHeaders.${name}`,
-            `expected a value naming the product (starting ${JSON.stringify(IDENTITY_PRODUCT_PLACEHOLDER)} — preferred — or ${JSON.stringify(WINTER_IDENTITY_VALUE_PREFIX)}; both \`<product>\` and \`<version>\` are substituted by the adapter), got ${describe(value)} — an identity field that names anything else is not a configuration error, it is impersonation`,
+            `expected a value starting ${JSON.stringify(IDENTITY_PRODUCT_PLACEHOLDER)} (\`<product>\`, \`<version>\` and \`<contact>\` are all substituted by the adapter at request time), got ${describe(value)} — an identity field that names anything else is not a configuration error, it is impersonation, and one that hard-codes a product token cannot be rebranded`,
             "identity-header-invalid",
           );
         }

@@ -5,10 +5,20 @@
   "engines": {
     "node": ">=18"
   },
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-support.ts"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"
@@ -23,5 +33,6 @@
     "winter-agent-runtime": "workspace:*",
     "@yanlinglabs/winter-conformance": "workspace:*",
     "@types/node": "^26.4.0"
-  }
+  },
+  "types": "./dist/index.d.ts"
 }
