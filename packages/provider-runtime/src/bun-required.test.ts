@@ -131,6 +131,92 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
     expect(parsed.msg).toContain("capture-official-golden.ts");
   }, 60_000);
 
+  // --- P7a fix wave r3 (F2): `instanceof` across SUBPATHS of one package, on the emit ---------------
+  //
+  // `build-packages.ts` runs `bun build` ONCE PER EXPORT ENTRY, so every entry bundle carries its own
+  // copy of every internal module -- the class declared in one source file is TWO DISTINCT CLASSES at
+  // runtime under Node. A consumer who imports the FUNCTION from one subpath and the CLASS from the
+  // other (exactly what both READMEs teach) got a silent `false` and rethrew the error the guards
+  // exist to make catchable. Under Bun the `bun` condition resolves both entries to the same
+  // `src/*.ts`, so the classes ARE identical -- which is why no Bun-side test could see it, and why
+  // this whole describe runs under real `node`.
+  //
+  // The fix is a package-scoped `Symbol.for` brand + `static [Symbol.hasInstance]`, and it is applied
+  // to the CLASS of the problem: EVERY error class exported from more than one subpath of a package,
+  // not just the one the READMEs happened to name. This test derives that set at run time, so a
+  // class that gains a second subpath later is covered without editing it.
+  test("F2: every class exported from BOTH entries of a package satisfies cross-entry `instanceof`", async () => {
+    const r = await underNode(`
+      const isClass = (v) => typeof v === "function" && /^class\\s/.test(Function.prototype.toString.call(v));
+      const out = [];
+      for (const [a, b] of [
+        ["@yanlinglabs/winter-conformance", "@yanlinglabs/winter-conformance/official"],
+        ["@yanlinglabs/winter-provider-runtime", "@yanlinglabs/winter-provider-runtime/testing"],
+      ]) {
+        const A = await import(a), B = await import(b);
+        const shared = Object.keys(A).filter((k) => isClass(A[k]) && isClass(B[k]));
+        for (const k of shared) {
+          // Constructed from the SUBPATH entry's class, tested against the MAIN entry's -- the exact
+          // direction a README reader takes, and the direction that used to be false.
+          let inst;
+          try { inst = new B[k]("fn", "Bun.serve", "detail"); } catch { inst = new B[k]("msg"); }
+          out.push([a, k, B[k] === A[k], inst instanceof A[k], inst instanceof B[k]]);
+        }
+      }
+      console.log(JSON.stringify(out));
+    `);
+    expect(r.exitCode, r.out).toBe(0);
+    const rows = JSON.parse(r.out) as Array<[string, string, boolean, boolean, boolean]>;
+
+    // The set really is the one the review measured -- three on conformance, one on provider-runtime.
+    expect(rows.map(([pkg, cls]) => `${pkg}#${cls}`).sort()).toEqual([
+      "@yanlinglabs/winter-conformance#BunRequiredError",
+      "@yanlinglabs/winter-conformance#ChecksumMismatchError",
+      "@yanlinglabs/winter-conformance#OfficialCompatUnavailableError",
+      "@yanlinglabs/winter-provider-runtime#BunRequiredError",
+    ]);
+    for (const [pkg, cls, sameObject, crossEntry, ownEntry] of rows) {
+      // The duplication is REAL and still there -- this test would be vacuous if the emit stopped
+      // duplicating (which is the recorded `--splitting` carry), so it is asserted rather than assumed.
+      expect([pkg, cls, "distinct objects", sameObject]).toEqual([pkg, cls, "distinct objects", false]);
+      expect([pkg, cls, "cross-entry instanceof", crossEntry]).toEqual([pkg, cls, "cross-entry instanceof", true]);
+      expect([pkg, cls, "own-entry instanceof", ownEntry]).toEqual([pkg, cls, "own-entry instanceof", true]);
+    }
+  }, 60_000);
+
+  test("F2: a THROWN error is catchable through the OTHER subpath's class -- the README's own pattern", async () => {
+    // The end-to-end statement, not a constructed instance: the error really thrown by a guarded
+    // function imported from one subpath, matched against the class imported from the other.
+    const r = await underNode(`
+      const main = await import("@yanlinglabs/winter-conformance");
+      const official = await import("@yanlinglabs/winter-conformance/official");
+      const prMain = await import("@yanlinglabs/winter-provider-runtime");
+      const prTesting = await import("@yanlinglabs/winter-provider-runtime/testing");
+      const out = {};
+      try { await official.runCapture(); } catch (e) { out.captureViaMainBarrel = e instanceof main.BunRequiredError; }
+      try { await prTesting.startXaiOauthFake(); } catch (e) { out.fakeViaMainBarrel = e instanceof prMain.BunRequiredError; }
+      try { await prMain.startCodexLogin({}, {}); } catch (e) { out.loginViaTestingBarrel = e instanceof prTesting.BunRequiredError; }
+      console.log(JSON.stringify(out));
+    `);
+    expect(r.exitCode, r.out).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({ captureViaMainBarrel: true, fakeViaMainBarrel: true, loginViaTestingBarrel: true });
+  }, 60_000);
+
+  test("F2: the brand is PACKAGE-scoped -- the two packages' classes still do not match, under Node too", async () => {
+    // The property the fix must not break, asserted where it was previously only asserted in-process
+    // under Bun: a `Symbol.for` key naming one package cannot be satisfied by the other's.
+    const r = await underNode(`
+      const c = await import("@yanlinglabs/winter-conformance");
+      const p = await import("@yanlinglabs/winter-provider-runtime");
+      console.log(JSON.stringify({
+        conformanceInstanceVsProviderRuntimeClass: new c.BunRequiredError("f", "a", "d") instanceof p.BunRequiredError,
+        providerRuntimeInstanceVsConformanceClass: new p.BunRequiredError("f", "a", "d") instanceof c.BunRequiredError,
+      }));
+    `);
+    expect(r.exitCode, r.out).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({ conformanceInstanceVsProviderRuntimeClass: false, providerRuntimeInstanceVsConformanceClass: false });
+  }, 60_000);
+
   test("...and a NODE-SAFE export on the same barrels still works -- the guard is not a blanket refusal", async () => {
     // The control. Without it every assertion above would pass just as happily against a package that
     // threw `BunRequiredError` from everything, which is a different (and worse) bug.

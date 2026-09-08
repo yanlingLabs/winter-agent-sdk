@@ -23,8 +23,43 @@
  * `name` is the exported function the caller actually invoked (never the internal helper that
  * reaches for Bun), because that is the name in their code.
  */
+/**
+ * P7a fix wave round 3 (F2): CROSS-BUNDLE `instanceof`.
+ *
+ * THE PROBLEM, measured on the compiled emit under Node. `build-packages.ts` runs `bun build` ONCE
+ * PER EXPORT ENTRY, so every entry bundle carries its own copy of every internal module: the class
+ * declared in one source file exists as TWO DISTINCT CLASSES at runtime, one in `dist/index.js` and
+ * one in `dist/<subpath>/index.js`. A consumer who imports the function from one subpath and the
+ * class from the other -- the pattern both new READMEs teach -- gets a silent `false` from
+ * `instanceof` and rethrows the very error the guard exists to make catchable. Under Bun the `bun`
+ * condition resolves both entries to the same `src/*.ts`, so the classes ARE identical, which is why
+ * no Bun-side test could see it.
+ *
+ * THE FIX, applied to the CLASS of the problem rather than to one error: every error class exported
+ * from more than one subpath of a package carries a PACKAGE-SCOPED `Symbol.for(...)` brand and a
+ * `static [Symbol.hasInstance]` that tests for it. `Symbol.for` is cross-realm and cross-copy, so
+ * every duplicated bundle of ONE package agrees -- while a DIFFERENT package's class, whose key
+ * names a different package, still does not match. The two packages stay deliberately distinct
+ * (they share no dependency and cannot share a module), and the existing distinctness test passes
+ * unchanged.
+ *
+ * Considered and recorded as a carry rather than done here: `bun build --splitting`, so shared
+ * internals emit once per package. It is the more fundamental answer and it changes the emit shape
+ * for every package and every `.d.ts` -- not a round-3-sized change.
+ */
+export function brandedInstanceOf(brand: symbol) {
+  return (candidate: unknown): boolean => typeof candidate === "object" && candidate !== null && brand in (candidate as object);
+}
+
+/** The cross-bundle identity of THIS package's `BunRequiredError`. Package-scoped on purpose. */
+const BUN_REQUIRED_BRAND = Symbol.for("@yanlinglabs/winter-provider-runtime:BunRequiredError");
+
 export class BunRequiredError extends Error {
   readonly name = "BunRequiredError";
+  /** F2: the brand `Symbol.hasInstance` below tests for. Present on every instance, in every bundle. */
+  readonly [BUN_REQUIRED_BRAND] = true;
+  /** F2: `instanceof` holds across this package's duplicated entry bundles, and only this package's. */
+  static [Symbol.hasInstance] = brandedInstanceOf(BUN_REQUIRED_BRAND);
   /** The exported function the caller invoked. */
   readonly functionName: string;
   /** The Bun API that has no Node equivalent this package implements, e.g. `Bun.serve`. */
