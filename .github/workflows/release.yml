@@ -11,6 +11,12 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 jobs:
+  # --- TWO REGISTRIES, TWO JOBS (P7a pre-publish item 5; user ruling 2026-09-08) ------------------
+  #
+  # GitHub Packages first, npm second, and SEPARATE jobs on purpose: the npm leg needs a secret this
+  # repository may not have, and a missing `NPM_TOKEN` must never block the GitHub Packages publish.
+  # `needs:` makes the dependency explicit -- npm runs only if GitHub Packages SUCCEEDED, so the two
+  # registries can never disagree about which versions exist because the first leg failed halfway.
   publish:
     runs-on: ubuntu-latest
     # R-7-1: GitHub Packages, scope @yanlinglabs. `contents: read` is the default job permission
@@ -77,6 +83,14 @@ jobs:
       # a new version on every tag push would create a commit the pushed tag does not point at, and
       # would need write access back to a branch the tag need not even track. The published version
       # is exactly what VERSION already says at the tagged commit.
+      # P7a pre-publish (item 6): THE VERSION/TAG CONSISTENCY GATE, before anything is published.
+      # A publish is triggered by pushing `v<version>`, and what actually ships is whatever the
+      # manifests say at that commit -- equal only because a human ran the bump before tagging.
+      # Diverging does not fail the publish, it SUCCEEDS at publishing the wrong number, to registries
+      # where a version can never be re-published. `GITHUB_REF` is the pushed ref; on
+      # `workflow_dispatch` there is no tag and the manifest-vs-VERSION half still runs.
+      - run: bun run scripts/check-release-version.ts
+
       # P7a fix wave r2 (item 2, re-review N2): the compiled emit is built EXPLICITLY, immediately
       # before the one publish command, and never left to a smoke step's side effect. `releasePack()`
       # does build first -- which is why the smokes above pass -- but `pnpm publish` does not go
@@ -88,3 +102,60 @@ jobs:
       - run: pnpm publish -r --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- THE npm LEG (P7a pre-publish item 5) --------------------------------------------------------
+  #
+  # `needs: publish` -- it runs only after GitHub Packages succeeded, so a half-published pair is not
+  # possible in the direction that matters (npm is the registry a version can never be taken back
+  # from). A missing `NPM_TOKEN` skips this job's publish step and leaves the GitHub Packages publish
+  # untouched, which is why this is a separate job rather than two steps in one.
+  #
+  # `--registry https://registry.npmjs.org` OVERRIDES `.npmrc`'s scope pin for this command only: that
+  # file makes GitHub Packages the default for `@yanlinglabs` precisely so nothing reaches npm by
+  # accident, and this is the one place that is deliberate.
+  #
+  # `--access public` is EXPLICIT: `publishConfig.access` stays `restricted` (it is GitHub Packages'
+  # setting and npm's default for a scoped package would otherwise be restricted too, which the free
+  # plan cannot do). Scoped packages on npm's free plan are public -- the user has ruled that they
+  # are published publicly, and the packages are source-visible either way (the tarballs ship `src/`).
+  #
+  # NOT THE WHOLE SET (user ruling 2026-09-08). npm gets the WRAPPER and what a public consumer needs
+  # -- `winter-agent-sdk`, `winter-provider-catalog`, `winter-provider-runtime`; the two conformance
+  # HARNESSES are the org's own test tooling and stay GitHub-Packages-only. The set is DATA
+  # (`winter.publish.npm` per manifest) and this job asks `scripts/npm-publish-set.ts` for the
+  # `--filter` arguments at run time: a package name written HERE would be a second copy of a fact the
+  # manifests already carry, and the copy that drifts. `release-gates.test.ts` pins the data against
+  # the wrapper's own transitive `dependencies` closure in both directions, so a new runtime
+  # dependency cannot be forgotten and a harness cannot leak.
+  #
+  # `--provenance` attaches a signed npm provenance statement, which is why this job -- and ONLY this
+  # job -- carries `id-token: write`. `contents: read` is repeated explicitly beside it; nothing here
+  # needs `packages: write` (that is the other job's grant and stays there).
+  publish-npm:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, registry-url: "https://registry.npmjs.org" }
+      - run: pnpm install
+      # The same two gates the GitHub Packages job ran, repeated here because this job checks out
+      # afresh: the version/tag agreement, and the compiled emit the tarballs must contain.
+      - run: bun run scripts/check-release-version.ts
+      - run: bun run build:packages
+      # TOKEN-GATED. `if:` cannot read `secrets` directly in a job-level condition, so the secret is
+      # lifted into `env` on the step and the condition tests THAT -- the documented pattern, and the
+      # reason this is a step-level gate rather than a job-level one. With no token the step is
+      # SKIPPED (green), the workflow succeeds, and GitHub Packages has already published.
+      - name: "publish to npm (skipped when NPM_TOKEN is absent)"
+        if: ${{ env.NPM_TOKEN != '' }}
+        run: pnpm publish $(bun run scripts/npm-publish-set.ts) --no-git-checks --registry https://registry.npmjs.org --access public --provenance
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

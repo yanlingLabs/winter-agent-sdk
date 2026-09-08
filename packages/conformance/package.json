@@ -35,5 +35,10 @@
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"
   },
+  "winter": {
+    "publish": {
+      "npm": false
+    }
+  },
   "types": "./dist/index.d.ts"
 }

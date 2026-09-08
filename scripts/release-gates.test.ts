@@ -29,6 +29,8 @@ import { describe, test, expect } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { discoverPublishablePackages } from "./release-pack.ts";
+import { NPM_RULED_EXTRAS, npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
 
 const WORKFLOWS_DIR = fileURLToPath(new URL("../.github/workflows/", import.meta.url));
 const RELEASE_YML_PATH = join(WORKFLOWS_DIR, "release.yml");
@@ -64,11 +66,14 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     expect(doc.on.push?.branches).toBeUndefined();
   });
 
-  test("the publish job's permissions are exactly packages:write and contents:read -- nothing broader", () => {
-    const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { permissions?: Record<string, string> }> };
-    const jobs = Object.values(doc.jobs);
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.permissions).toEqual({ packages: "write", contents: "read" });
+  test("each publish job's permissions are exactly what that registry needs -- nothing broader", () => {
+    // TWO JOBS since the pre-publish round (item 5), with DIFFERENT minimal grants: `packages: write`
+    // is GitHub Packages' and stays there; `id-token: write` is npm provenance's and exists only on
+    // the npm job. Neither has the other's -- which is the whole reason they are separate jobs.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    expect(Object.keys(doc.jobs)).toEqual(["publish", "publish-npm"]);
+    expect(doc.jobs["publish"]?.permissions).toEqual({ packages: "write", contents: "read" });
+    expect(doc.jobs["publish-npm"]?.permissions).toEqual({ "id-token": "write", contents: "read" });
   });
 
   test("it actually publishes via `pnpm publish -r --no-git-checks`, with NODE_AUTH_TOKEN from secrets.GITHUB_TOKEN", () => {
@@ -268,6 +273,10 @@ interface WorkflowStep {
 interface WorkflowJob {
   steps: WorkflowStep[];
   ["continue-on-error"]?: boolean;
+  /** P7a pre-publish (item 5): the two publish jobs carry different, minimal grants. */
+  permissions?: Record<string, string>;
+  /** P7a pre-publish (item 5): the npm job's dependency on the GitHub Packages job. */
+  needs?: string | string[];
 }
 interface WorkflowDoc {
   on: unknown;
@@ -325,6 +334,142 @@ describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-
     const names = doc.jobs["pack-smoke-node18"]!.steps.map((s) => s.name).filter((n): n is string => typeof n === "string");
     expect(names.some((n) => n.toUpperCase().includes("BLOCKING") && n.includes("R-7a-16"))).toBe(true);
     expect(names.some((n) => n.toLowerCase().includes("advisory"))).toBe(false);
+  });
+});
+
+// --- P7a pre-publish (items 5 + 6): the DUAL-REGISTRY release, and the version gate ---------------
+describe("release.yml publishes to BOTH registries, npm second and token-gated", () => {
+  test("the trigger set is UNCHANGED -- adding a second registry must not widen what can publish", () => {
+    // Asserted first and separately: everything else in this describe is about a NEW publish path,
+    // and the one property that must not move while adding one is what fires the workflow at all.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    expect(doc.on).toEqual({ push: { tags: ["v*"] }, workflow_dispatch: {} });
+  });
+
+  test("there are exactly two publish jobs, and the npm one DEPENDS on GitHub Packages succeeding", () => {
+    // Order matters in one direction only: npm is the registry a version can never be taken back
+    // from, so it must not run until the recoverable one has succeeded.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    expect(Object.keys(doc.jobs)).toEqual(["publish", "publish-npm"]);
+    expect(doc.jobs["publish-npm"]?.needs).toBe("publish");
+    expect(doc.jobs["publish"]?.needs).toBeUndefined();
+  });
+
+  test("the npm publish is TOKEN-GATED, so a missing NPM_TOKEN never blocks the GitHub Packages publish", () => {
+    // `if:` cannot read `secrets` in a job-level condition, so the secret is lifted into `env` on the
+    // step and the condition tests that -- which is also why this is a step gate, not a job gate.
+    // With no token the step is SKIPPED (green) and the other registry has already published.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const step = doc.jobs["publish-npm"]!.steps.find((s) => (s.run ?? "").includes("pnpm publish"))!;
+    expect(step).toBeDefined();
+    expect(String((step as unknown as { if?: unknown }).if ?? "")).toContain("env.NPM_TOKEN");
+    expect(JSON.stringify((step as unknown as { env?: unknown }).env ?? {})).toContain("secrets.NPM_TOKEN");
+    // The GitHub Packages job's own publish carries NO such gate -- it is the leg that must always run.
+    const ghStep = doc.jobs["publish"]!.steps.find((s) => (s.run ?? "").includes("pnpm publish"))!;
+    expect((ghStep as unknown as { if?: unknown }).if).toBeUndefined();
+  });
+
+  test("the npm publish names the npm registry, `--access public` and `--provenance`, and the job grants id-token: write", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const job = doc.jobs["publish-npm"]!;
+    const run = job.steps.find((s) => (s.run ?? "").includes("pnpm publish"))!.run!;
+    // `--registry` OVERRIDES `.npmrc`'s scope pin, which exists so nothing reaches npm by accident.
+    expect(run).toContain("--registry https://registry.npmjs.org");
+    // EXPLICIT, because `publishConfig.access` stays `restricted` for GitHub Packages and npm's own
+    // default for a scoped package would be restricted too -- which the free plan cannot do.
+    expect(run).toContain("--access public");
+    expect(run).toContain("--provenance");
+    // `--provenance` is the ONLY reason this job has id-token, and only this job has it.
+    expect(job.permissions).toEqual({ "id-token": "write", contents: "read" });
+  });
+
+  test("item 5 (ruling): the npm set is DATA, and it is exactly the wrapper's closure plus the ruled extras", () => {
+    // npm gets the WRAPPER and what a public consumer needs; GitHub Packages gets everything. The set
+    // lives in `winter.publish.npm` per manifest rather than as a list in this YAML, and this is the
+    // test that keeps the data honest in BOTH directions:
+    //   * nothing in the wrapper's transitive workspace `dependencies` closure may be MISSING -- a
+    //     new runtime dependency that nobody flags breaks `npm install @yanlinglabs/winter-agent-sdk`;
+    //   * nothing outside `closure ∪ NPM_RULED_EXTRAS` may be PRESENT -- a harness that gains the
+    //     flag by copy-paste would be published publicly, and npm cannot take a version back.
+    const flagged = npmPublishSet().map((p) => p.name).sort();
+    const closure = npmRequiredClosure();
+    const allowed = new Set([...closure, ...Object.keys(NPM_RULED_EXTRAS)]);
+
+    expect(closure.filter((name) => !flagged.includes(name))).toEqual([]);
+    expect(flagged.filter((name) => !allowed.has(name))).toEqual([]);
+    // The set as it stands today, pinned so a change is a deliberate edit here too.
+    expect(flagged).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog", "@yanlinglabs/winter-provider-runtime"]);
+    expect(closure).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog"]);
+  });
+
+  test("item 5 (ruling): the two conformance HARNESSES are GitHub Packages only", () => {
+    // Named, because "not in the set" is the property that matters and it is easiest to lose by
+    // accident: these are the org's own test tooling, and publishing them publicly would offer a
+    // stranger a package whose only purpose is testing this repository.
+    const flagged = new Set(npmPublishSet().map((p) => p.name));
+    for (const harness of ["@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]) {
+      expect([harness, flagged.has(harness)]).toEqual([harness, false]);
+      // ...and they are still publishable AT ALL -- GitHub Packages gets the whole set.
+      expect([harness, discoverPublishablePackages().some((p) => p.name === harness)]).toEqual([harness, true]);
+    }
+  });
+
+  test("item 5 (ruling): every NPM_RULED_EXTRA is real, flagged, and carries the ruling", () => {
+    const flagged = new Set(npmPublishSet().map((p) => p.name));
+    const closure = new Set(npmRequiredClosure());
+    expect(Object.keys(NPM_RULED_EXTRAS).length).toBeGreaterThan(0);
+    for (const [name, why] of Object.entries(NPM_RULED_EXTRAS)) {
+      expect([name, flagged.has(name)]).toEqual([name, true]);
+      // An extra that JOINS the closure must leave this list -- otherwise the list stops meaning
+      // "outside the closure" and the parity above weakens without anyone noticing.
+      expect([name, closure.has(name)]).toEqual([name, false]);
+      expect([name, why.length > 60]).toEqual([name, true]);
+    }
+  });
+
+  test("item 5 (ruling): the npm job FILTERS by the data -- no package name is spelled in the YAML", () => {
+    // A name in the workflow would be a second copy of the manifests' own fact, and the one that
+    // drifts. The job computes the filters from `scripts/npm-publish-set.ts` at run time.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const job = doc.jobs["publish-npm"]!;
+    const runs = job.steps.map((s) => s.run ?? "");
+    expect(runs.some((r) => r.includes("npm-publish-set.ts"))).toBe(true);
+    // No publishable package name appears anywhere in the workflow's own text.
+    for (const pkg of discoverPublishablePackages()) expect([pkg.name, RELEASE_YML.includes(pkg.name)]).toEqual([pkg.name, false]);
+  });
+
+  test("`publishConfig.access` stays `restricted` in every manifest -- npm's public-ness is a FLAG, not a file", () => {
+    // If a manifest flipped to `access: public`, a GitHub Packages publish would start asserting
+    // something about a registry it is not talking to, and the npm leg's explicit flag would look
+    // redundant rather than load-bearing.
+    for (const pkg of discoverPublishablePackages()) {
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { publishConfig?: { access?: string; registry?: string } };
+      expect([pkg.name, manifest.publishConfig?.access]).toEqual([pkg.name, "restricted"]);
+      expect([pkg.name, manifest.publishConfig?.registry]).toEqual([pkg.name, "https://npm.pkg.github.com"]);
+    }
+  });
+
+  test("`.npmrc` keeps the scope on GitHub Packages and carries NO literal token", () => {
+    const npmrc = readFileSync(fileURLToPath(new URL("../.npmrc", import.meta.url)), "utf8");
+    expect(npmrc).toContain("@yanlinglabs:registry=https://npm.pkg.github.com");
+    // The npmjs auth line is env-expanded, never a value: `${NODE_AUTH_TOKEN}` and nothing else.
+    expect(npmrc).toContain("//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}");
+    expect(npmrc).not.toMatch(/_authToken=(?!\$\{)/);
+    expect(npmrc).not.toMatch(/npm_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}/);
+  });
+
+  test("item 6: the version/tag gate runs BEFORE any publish, in BOTH jobs", () => {
+    // A publish that ships the wrong number does not fail -- it succeeds, to registries where a
+    // version can never be re-published. Both jobs check out afresh, so both must check.
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    for (const jobName of ["publish", "publish-npm"]) {
+      const runs = doc.jobs[jobName]!.steps.map((s) => s.run ?? "");
+      const gateAt = runs.findIndex((r) => r.includes("check-release-version.ts"));
+      const publishAt = runs.findIndex((r) => r.includes("pnpm publish"));
+      expect([jobName, gateAt >= 0]).toEqual([jobName, true]);
+      expect([jobName, publishAt >= 0]).toEqual([jobName, true]);
+      expect([jobName, gateAt < publishAt]).toEqual([jobName, true]);
+    }
   });
 });
 

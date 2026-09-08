@@ -28,6 +28,11 @@
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"
   },
+  "winter": {
+    "publish": {
+      "npm": false
+    }
+  },
   "dependencies": {
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*"

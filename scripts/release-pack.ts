@@ -75,6 +75,8 @@ export interface PackageManifest {
   version: string;
   private?: boolean;
   publishConfig?: unknown;
+  /** P7a pre-publish (item 5): `winter.publish.npm` -- see `PublishablePackage.npm`. */
+  winter?: { publish?: { npm?: boolean } };
 }
 
 export interface PublishablePackage {
@@ -83,6 +85,20 @@ export interface PublishablePackage {
   /** Absolute path to the package directory (the parent of its package.json). */
   dir: string;
   packageJsonPath: string;
+  /**
+   * P7a pre-publish (item 5; user ruling 2026-09-08): does this package also go to PUBLIC npm?
+   *
+   * Every publishable package goes to GitHub Packages (the org's own registry). Only the WRAPPER and
+   * its runtime dependency closure go to npm, because that is what a public consumer installs:
+   * `@yanlinglabs/winter-agent-sdk` plus what it needs at run time. The two conformance harnesses are
+   * the org's own test tooling and stay GitHub-Packages-only.
+   *
+   * Read from `winter.publish.npm` in the manifest, so the set is DATA the workflow filters on rather
+   * than a list written twice (once in YAML, once in someone's head). `release-gates.test.ts` asserts
+   * it equals exactly the wrapper's transitive workspace-dependency closure, so a new runtime
+   * dependency of the wrapper cannot be forgotten and a harness package cannot leak.
+   */
+  npm: boolean;
 }
 
 export interface PackedPackage {
@@ -141,7 +157,7 @@ export function discoverPublishablePackages(root: string = REPO_ROOT): Publishab
   for (const packageJsonPath of findPackageManifests(root)) {
     const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageManifest;
     if (!isPublishable(pkg)) continue;
-    result.push({ name: pkg.name, version: pkg.version, dir: dirname(packageJsonPath), packageJsonPath });
+    result.push({ name: pkg.name, version: pkg.version, dir: dirname(packageJsonPath), packageJsonPath, npm: pkg.winter?.publish?.npm === true });
   }
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
