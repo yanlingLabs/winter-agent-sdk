@@ -30,7 +30,8 @@
 //     `claude-resume-<uuid>`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_TMPDIR`, `preset: "claude_code"`,
 //     the `AgentInput.model` aliases, `.claude-plugin`, `com.anthropic.claude-code`. They are the
 //     official runtime's own names; rebranding them would be a lie, not a personalisation.
-//   * HARNESS/TEST env names are never matched: `WINTER_TEST_*`, `WINTER_LIVE_*`,
+//   * HARNESS/TEST env names are never matched: `WINTER_TEST_*` (today `WINTER_TEST_PACK_SMOKE`,
+//     the P7a fix-wave opt-in that runs the ~62s pack+install legs outside CI), `WINTER_LIVE_*`,
 //     `WINTER_COMPILED_BIN`, `WINTER_CANARY_SECRET`, `WINTER_SDK_CAN_USE_TOOL_SHADOWED`,
 //     `WINTER_CREDENTIAL_MISSING`, `WINTER_RUNTIME_KIND`. They are this repository's own
 //     scaffolding, not a product surface, and rule 9's suffix list is closed for exactly that

@@ -62,7 +62,7 @@
 // (if ever wanted) is a decision for the eventual PUBLIC npm publish (P9's own `Publishable set`),
 // not this restricted-GitHub-Packages pipeline — recorded here rather than silently declined.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
