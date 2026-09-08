@@ -34,6 +34,13 @@ jobs:
       # sync with ci.yml by hand -- there is no reusable-workflow indirection here, matching this
       # repository's own existing convention of two independent jobs in ci.yml each repeating their
       # own checkout/setup steps rather than sharing them. ---
+      - run: bun run build:packages                # P7a fix wave r2 (item 2): FIRST, for the same reason
+                                                     # ci.yml's build job runs it first -- `bun test` and the
+                                                     # consumer-fixture `tsc` two steps down both resolve through
+                                                     # a package's `types` condition, i.e. `./dist/*.d.ts`. Built
+                                                     # AGAIN immediately before `pnpm publish` below: fourteen
+                                                     # steps run in between, and the bytes that SHIP must be built
+                                                     # by a step adjacent to the one that publishes them.
       - run: bun test
       - run: bun run typecheck
       - run: bun run conformance:fetch
@@ -56,15 +63,11 @@ jobs:
       # call per runtime.
       #
       # WS-02 §9 item 3 ("a dry-run pack + install-from-tarball smoke test (Node 18 and Bun) gates
-      # every publish") is a PUBLISH gate first and a per-push CI convenience second. ci.yml's own
-      # Node 18 leg (`pack-smoke-node18`) is ADVISORY (continue-on-error) because a hard-red job on
-      # every push would turn main's CI red the moment this branch merges, before the compiled-emit
-      # build step this finding calls for has landed (spine-owned manifest work, this phase's fix
-      # wave). NONE of that reasoning applies here: this job only ever runs on a `v*` tag push or a
-      # deliberate workflow_dispatch, and "the packages ship raw TypeScript Node cannot import" is
-      # exactly the condition under which a publish MUST fail -- so both legs below are BLOCKING,
-      # with no `continue-on-error` on the job or on either step. ---
-      - run: bun run scripts/smoke-installed.ts --runtime=node   # BLOCKING -- a publish must fail until the compiled emit exists
+      # every publish"). BOTH legs are BLOCKING, here and in ci.yml alike: the compiled emit landed in
+      # this phase's fix wave, so `pack-smoke-node18` is no longer advisory either (R-7a-16 reversed).
+      # A publish is exactly where "a consumer cannot import what we shipped" must stop the workflow,
+      # and there is no `continue-on-error` on this job or on any of its steps. ---
+      - run: bun run scripts/smoke-installed.ts --runtime=node   # BLOCKING
       - run: bun run scripts/smoke-installed.ts --runtime=bun    # BLOCKING
 
       # version:bump / version:sync are DELIBERATELY not run here. WS-02 §9 item 2 says "every
@@ -73,6 +76,14 @@ jobs:
       # a new version on every tag push would create a commit the pushed tag does not point at, and
       # would need write access back to a branch the tag need not even track. The published version
       # is exactly what VERSION already says at the tagged commit.
+      # P7a fix wave r2 (item 2, re-review N2): the compiled emit is built EXPLICITLY, immediately
+      # before the one publish command, and never left to a smoke step's side effect. `releasePack()`
+      # does build first -- which is why the smokes above pass -- but `pnpm publish` does not go
+      # through `releasePack()` at all: it packs each workspace package itself, from whatever is on
+      # disk. Relying on an earlier step's leftovers to populate the tarballs that actually SHIP is a
+      # dependency nothing states and nothing checks, and the failure mode is silent: a package whose
+      # `default` condition names a file that is simply absent from the published tarball.
+      - run: bun run build:packages
       - run: pnpm publish -r --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

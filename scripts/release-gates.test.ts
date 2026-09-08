@@ -77,6 +77,58 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     expect(RELEASE_YML).toContain("NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
   });
 
+  // --- P7a fix wave r2 (item 2, re-review N2): the compiled emit is built EXPLICITLY ---------------
+  //
+  // Both workflows relied on a SIDE EFFECT. In ci.yml, `bun test` and the consumer-fixture `tsc` both
+  // resolve through a package's `types` condition -- `./dist/*.d.ts` since the emit -- and only
+  // compiled because some earlier test happened to build; that is how the merge's focused run failed
+  // once and passed on re-run. In release.yml, `releasePack()` builds (so the smokes pass), but
+  // `pnpm publish` does not go through `releasePack()` at all: it packs each workspace package from
+  // whatever is on disk. Both are now explicit steps, in a pinned POSITION -- a step that exists but
+  // runs after the thing it feeds is the same bug with a step in it.
+  test("ci.yml's build job runs `bun run build:packages` BEFORE `bun test` and before the consumer-fixture tsc", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const runs = doc.jobs["build"]!.steps.map((s) => s.run ?? "");
+    const buildAt = runs.findIndex((r) => r.startsWith("bun run build:packages"));
+    const testAt = runs.findIndex((r) => r.startsWith("bun test"));
+    const fixtureAt = runs.findIndex((r) => r.includes("tsconfig.winter.json"));
+    expect(buildAt, "ci.yml's build job must run `bun run build:packages`").toBeGreaterThanOrEqual(0);
+    expect(testAt).toBeGreaterThanOrEqual(0);
+    expect(fixtureAt).toBeGreaterThanOrEqual(0);
+    expect(buildAt).toBeLessThan(testAt);
+    expect(buildAt).toBeLessThan(fixtureAt);
+  });
+
+  test("release.yml builds the emit explicitly BEFORE its own gates AND immediately before the one publish command", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const runs = Object.values(doc.jobs)[0]!.steps.map((s) => s.run ?? "");
+    const firstBuild = runs.findIndex((r) => r.startsWith("bun run build:packages"));
+    const lastBuild = runs.map((r) => r.startsWith("bun run build:packages")).lastIndexOf(true);
+    const testAt = runs.findIndex((r) => r.startsWith("bun test"));
+    const fixtureAt = runs.findIndex((r) => r.includes("tsconfig.winter.json"));
+    const publishAt = runs.findIndex((r) => r.includes("pnpm publish"));
+    expect(firstBuild, "release.yml must build the compiled emit explicitly, never as a smoke step's side effect").toBeGreaterThanOrEqual(0);
+    expect(publishAt).toBeGreaterThanOrEqual(0);
+    // Its own gate sequence resolves through `types` -> `./dist/*.d.ts`, exactly as ci.yml's does.
+    expect(firstBuild).toBeLessThan(testAt);
+    expect(firstBuild).toBeLessThan(fixtureAt);
+    // ...and the bytes that SHIP are built ADJACENT to the step that publishes them. Fourteen steps
+    // run between the first build and the publish; a build separated from it by anything that could
+    // rewrite or remove `dist` would satisfy a plain ordering check and still publish wrong bytes.
+    expect(publishAt - lastBuild).toBe(1);
+  });
+
+  test("neither workflow's build step is silenced -- no continue-on-error on it", () => {
+    for (const yml of [CI_YML, RELEASE_YML]) {
+      const doc = Bun.YAML.parse(yml) as WorkflowDoc;
+      for (const job of Object.values(doc.jobs)) {
+        for (const step of job.steps) {
+          if ((step.run ?? "").startsWith("bun run build:packages")) expect(step["continue-on-error"]).toBeUndefined();
+        }
+      }
+    }
+  });
+
   test("scripts/smoke-installed.ts (which packs + scans internally) runs as a gate BEFORE the publish step", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
     const steps = Object.values(doc.jobs)[0]!.steps;
@@ -181,7 +233,7 @@ describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-
   });
 });
 
-describe("release.yml's own Node 18 smoke (R-7a-16): stays BLOCKING, unlike ci.yml's advisory leg", () => {
+describe("release.yml's own Node 18 smoke (R-7a-16): BLOCKING, as ci.yml's leg now is too", () => {
   test("the publish job has no job-level continue-on-error", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
     expect(Object.values(doc.jobs)[0]?.["continue-on-error"]).toBeUndefined();

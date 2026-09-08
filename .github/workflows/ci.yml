@@ -9,6 +9,17 @@ jobs:
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
       - run: pnpm install
+      - run: bun run build:packages                # P7a fix wave r2 (item 2, re-review N2): EXPLICIT, and FIRST.
+                                                     # Since the compiled emit, every publishable package points
+                                                     # its `types` condition at `./dist/*.d.ts`, and two steps
+                                                     # below resolve through it: `bun test` (compile-fixtures) and
+                                                     # the consumer-fixture `tsc` (which maps `@sdk-under-test`
+                                                     # onto the sdk SOURCE, replacing the repo-wide `paths`, so
+                                                     # every OTHER workspace specifier goes via node_modules).
+                                                     # Both used to depend on some earlier test having built as a
+                                                     # SIDE EFFECT -- which is how the merge's focused run failed
+                                                     # once and passed on re-run. `scripts/release-gates.test.ts`
+                                                     # pins this step's position.
       - run: bun test                              # all unit tests (codec, runtime, wrapper, trace, version)
       - run: bun run typecheck                     # whole-repo tsc --noEmit incl. test files (sdk, runtime,
                                                      # conformance/src, scripts) — Task 5 rider; `bun test` only
