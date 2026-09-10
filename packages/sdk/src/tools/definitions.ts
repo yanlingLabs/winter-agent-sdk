@@ -78,8 +78,10 @@ export const LIST_AGENTS_DEFINITION: WinterToolDefinition = {
 export const READ_NOTIFICATIONS_DEFINITION: WinterToolDefinition = {
   toolName: "read_notifications",
   builtinName: "ReadNotifications",
-  description: "Drains Winter's own global-messaging notification queue ([WS-10]) — the idle/exit notices a `notify_when_idle` subscription produced.",
-  searchHint: "read notifications drain idle notice queue subscription",
+  // Byte-exact from the runtime's own descriptor. Unlike SendMessage/ListAgents there was never a
+  // second wording to unify here, so there is nothing for this move to decide: a description is what
+  // the model reads, and improving one in passing is a model-facing change with no ruling behind it.
+  description: "Drains Winter's own global-messaging notification queue ([WS-10]).",
   inputSchema: NATIVE_READ_NOTIFICATIONS_SCHEMA,
   outputSchema: NATIVE_READ_NOTIFICATIONS_OUTPUT_SCHEMA,
   permissionClass: "messaging",
@@ -93,7 +95,6 @@ export const ADVISOR_DEFINITION: WinterToolDefinition = {
   builtinName: "advisor",
   description:
     "Consults a stronger reviewer model over this session's own conversation/tool history (provider-opaque state such as encrypted_content is never included). Reviewer unavailable/timeout -> ordinary tool error; never blocks the turn.",
-  searchHint: "advisor review reviewer second opinion stronger model critique",
   inputSchema: NATIVE_ADVISOR_SCHEMA,
   outputSchema: NATIVE_ADVISOR_OUTPUT_SCHEMA,
   permissionClass: "mcp",
