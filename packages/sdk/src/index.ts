@@ -167,7 +167,7 @@ export type {
 // compatibilityKeys/isUnset back from here (packages/runtime/src/index.ts re-exports them
 // unchanged for its own existing consumers).
 export { resolveWinterHome, resolveKeychainServiceForProfile, isUnset } from "./paths/home.ts";
-export { transcriptProjectKey } from "./paths/project-key.ts";
+export { transcriptProjectKey, TRANSCRIPT_PROJECT_KEY_MAX_LENGTH, isVendorCompliantProjectKey } from "./paths/project-key.ts";
 export { compatibilityKeys } from "./paths/keys.ts";
 export type { CompatibilityKeys } from "./paths/keys.ts";
 

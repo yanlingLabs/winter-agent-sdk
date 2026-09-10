@@ -46,9 +46,20 @@ describe("resolveProjectDirName (Controller Ruling P1-N)", () => {
     expect(() => resolveProjectDirName("k", { WINTER_PROJECT_DIR_NAME: "../escape" })).toThrow(WinterPathsError);
   });
 
-  test("rejects an override with a space or other non-alnum-dash character", () => {
+  test("rejects an override with a space or other non-alnum-dash-underscore character", () => {
     expect(() => resolveProjectDirName("k", { WINTER_PROJECT_DIR_NAME: "has space" })).toThrow(WinterPathsError);
     expect(() => resolveProjectDirName("k", { WINTER_PROJECT_DIR_NAME: "has.dot" })).toThrow(WinterPathsError);
+  });
+
+  // --- Task S2 (carry #8): aligned to the vendor's own CLAUDE_CODE_PROJECT_DIR_NAME rule -----------
+  test("an override with an underscore is accepted (the vendor's own charset includes it)", () => {
+    expect(resolveProjectDirName("k", { WINTER_PROJECT_DIR_NAME: "my_custom_name" })).toBe("my_custom_name");
+  });
+
+  test("a 65-char override is refused, with a message naming the 64 bound", () => {
+    const tooLong = "a".repeat(65);
+    expect(() => resolveProjectDirName("k", { WINTER_PROJECT_DIR_NAME: tooLong })).toThrow(WinterPathsError);
+    expect(() => resolveProjectDirName("k", { WINTER_PROJECT_DIR_NAME: tooLong })).toThrow(/1-64/);
   });
 
   test("reads process.env when no env map is supplied", () => {
