@@ -49,30 +49,23 @@
 // unconditionally ("core built-ins... never deferred through the public surface"), so a builtin-
 // sourced canonical entry could never be deferred at all.
 import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
-import { stub } from "./_shared.ts";
+import { SEND_MESSAGE_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
 
-const NAME = mcpToolName(WINTER_BRAND, "send_message");
+import { stub, definitionFields } from "./_shared.ts";
+
+const NAME = mcpToolName(WINTER_BRAND, SEND_MESSAGE_DEFINITION.toolName);
 
 stub({
+  // R-8-1 CLOSES THIS FILE'S OWN WORRY. The paragraph above says the schema here is "a deliberate
+  // MIRROR of descriptors/send-message.ts's own -- not a variant". A mirror is a promise; this is the
+  // same object. Both names now spread ONE definition, so "the alias target accepts the native
+  // arguments exactly" (WS-09 §10) is structural rather than reviewed -- including the DESCRIPTION,
+  // which used to say "Canonical Winter-server entry for SendMessage" and is now the native's own.
+  ...definitionFields(SEND_MESSAGE_DEFINITION),
   canonicalName: NAME,
   advertisedName: NAME,
   source: "mcp",
-  // Byte-mirrors descriptors/send-message.ts's own inputSchema (WS-10 §10.1's pinned shape).
-  inputSchema: {
-    type: "object",
-    properties: {
-      to: { type: "string", maxLength: 300, description: 'no newline, no "*" broadcast' },
-      message: { type: "string", description: 'required; defaults "" for pure idle subscription' },
-      summary: { type: "string", maxLength: 200 },
-      notify_when_idle: { type: "boolean", description: "one-shot; main conversation -> same-machine session only" },
-    },
-    required: ["to", "message"],
-  },
-  description:
-    "Canonical Winter-server entry for SendMessage ([WS-10] §15): the alias target the official branch redirects the native SendMessage name to. Accepts the native arguments exactly.",
-  searchHint: "send message agent session peer child steer resume notify idle",
   exposure: "deferred",
-  permissionClass: "messaging",
   availability: {},
   capabilityRequirements: ["winter.global-messaging"],
   deferred: true,

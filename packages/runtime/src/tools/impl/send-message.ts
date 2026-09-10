@@ -1,104 +1,76 @@
-// Task 7 (Lane D, WS-10 §10.1): the SendMessage executor. Input validation and summary
-// derivation/truncation happen HERE, never in messaging/router.ts (which receives an already-clean
-// SendMessageInput) -- this file owns the "malformed call, no messageId" tier; router.ts's own
-// sendMessage owns every outcome that DOES get a messageId once the call is well-formed
-// (the messaging subpath's addressing header: "an invalid call never enters the messaging system").
+// Task 7 (Lane D, WS-10 §10.1): the SendMessage executor — since R-8-1, a THIN BINDING of the SDK's
+// own handler rather than a second implementation of it.
 //
-// CLOSED by Phase 4 Task 8: `ToolExecutionContext.toolUseId` is real now (registry.ts threads
-// `EngineToolCall.id` onto every context it builds), so WS-10 §12's retry-stable messageId
-// derivation is live in production, not only at the router layer -- see `callerContextFrom` below.
+// WHAT MOVED, AND WHY. Input validation, summary derivation/truncation, the caller-address
+// construction, the result rendering and the failure classification all used to live here, and a
+// near-identical copy of every one of them lived in `@yanlinglabs/winter-runtime-sdk`. Where the two
+// differed, they differed on the MODEL-VISIBLE contract — one refused an overlong `summary` and the
+// other truncated it; one marked a `refused` outcome as an error result and the other did not; one
+// tolerated an unknown argument and the other refused it. WS-10 §10.1 requires "this exact
+// model-facing schema" on both branches, so those were not three tidy-ups: they were the schema
+// drifting between branches, in the one place a test in either repo alone could not see.
+//
+// The user's ruling R-8-1 settles ownership — Winter owns its default tools; the router only binds
+// them — and ruling P-4 settled each divergence. Both now live in
+// `@yanlinglabs/winter-agent-sdk/tools`, and this file does three things: name the caller, resolve
+// the process-level messaging runtime, and translate `{ text, isError? }` into this registry's
+// `{ output, isError }`.
+//
+// TWO MODEL-VISIBLE CHANGES ARRIVE WITH THAT BINDING, both deliberate (ruling P-4):
+//   * `refused`/`ambiguous`/`not_found`/`unavailable` now carry `isError: true`. This runtime used to
+//     return every outcome as an ordinary success and let the model infer failure from the JSON —
+//     which is exactly the reading a model skips when the result looks like it worked.
+//   * the result text is the OUTCOME, rendered whole (`{"status":…,"messageId":…}`), rather than the
+//     internal `{"outcome":{…}}` envelope. WS-10 §10.1's "the result reports success/message and MAY
+//     include a message ID … or a CLASSIFIED FAILURE" describes the outcome itself; the envelope was
+//     this runtime's own `SendMessageResult` leaking into the model's view, and it was never what the
+//     other branch showed. A combined call's supplementary `notify` fact rides beside the status.
 import "../descriptors/send-message.ts";
 import "../descriptors/winter-send-message.ts"; // rider 15: the canonical alias-target descriptor this file also installs an executor for.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
-import { validateToField } from "@yanlinglabs/winter-agent-sdk/messaging";
-import { getMessagingRuntime, sendMessage, type CallerContext } from "../../messaging/router.ts";
 import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
+import { acceptNativeSendMessageArgs, createMessagingToolHandlers, messagingToolPortFromRuntimeDeps, SEND_MESSAGE_DEFINITION, type WinterToolCaller } from "@yanlinglabs/winter-agent-sdk/tools";
+import { getMessagingRuntime } from "../../messaging/router.ts";
 
-export const SEND_MESSAGE_TOOL_NAME = "SendMessage";
+/** Read off the one definition, so the registered name and the descriptor's can never disagree. */
+export const SEND_MESSAGE_TOOL_NAME = SEND_MESSAGE_DEFINITION.builtinName ?? SEND_MESSAGE_DEFINITION.toolName;
 
-// CLOSED by Phase 4 Task 8 (rider 15): the canonical standing-server duplicate
-// WS-10 §15/WS-14 name now exists -- `descriptors/winter-send-message.ts`, declared `deferred: true`
-// AT THE SOURCE exactly as the controller's own mid-task note required, with this file's own
-// executor installed under it (see the bottom of this file).
-const MAX_SUMMARY_LENGTH = 200; // WS-10 §10.1 verbatim
-
-function asRecord(input: unknown): Record<string, unknown> {
-  return typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
-}
-
-// WS-10 §10.1: "summary?: derived from first message line when absent; truncated when overlong."
-// NEVER a validation error -- a computed value, or absent when there is nothing to derive from an
-// empty message (the pure-idle-subscription case).
-function deriveSummary(rawSummary: string | undefined, message: string): string | undefined {
-  if (rawSummary !== undefined) {
-    return rawSummary.length > MAX_SUMMARY_LENGTH ? rawSummary.slice(0, MAX_SUMMARY_LENGTH) : rawSummary;
-  }
-  const firstLine = message.split("\n")[0] ?? "";
-  if (firstLine.length === 0) return undefined;
-  return firstLine.length > MAX_SUMMARY_LENGTH ? firstLine.slice(0, MAX_SUMMARY_LENGTH) : firstLine;
-}
-
-let fallbackCounter = 0;
-function fallbackToolUseId(): string {
-  return `no-tool-use-id-${++fallbackCounter}-${Date.now()}`;
-}
-
-function callerContextFrom(ctx: ToolExecutionContext): CallerContext {
-  // Phase 4 Task 8: `ctx.toolUseId` is a REAL ToolExecutionContext field now (registry.ts threads
-  // `EngineToolCall.id` onto every context it builds) -- the forward-compatible cast this line used
-  // to need is gone. WS-10 §12's "messageId is stable across retries, derived/persisted from the
-  // sender session plus tool-call ID" is therefore live in production, not only at the router layer.
-  // The synthetic fallback stays for a hand-built context with no id: the SAFE direction, since two
-  // distinct model calls must never be mistaken for one retry of each other.
+/**
+ * WHO IS CALLING — from the execution context, never from the arguments.
+ *
+ * `ctx.toolUseId` is real (registry.ts threads `EngineToolCall.id` onto every context it builds), so
+ * WS-10 §12's retry-stable messageId derivation is live in production. It is passed through as
+ * possibly-undefined rather than defaulted here: the SDK's port allocates the fallback, once, for
+ * both hosts, and its posture is the one this file used to carry — a fresh id per call and NO dedupe,
+ * because two distinct model calls must never be mistaken for one retry of each other.
+ */
+export function callerContextFrom(ctx: ToolExecutionContext): WinterToolCaller {
   return {
     sessionId: ctx.sessionId,
     ...(ctx.agentId !== undefined ? { agentId: ctx.agentId } : {}),
-    toolUseId: ctx.toolUseId ?? fallbackToolUseId(),
+    ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
   };
 }
 
 export const sendMessageExecutor: ToolExecutor = {
   async execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
-    const record = asRecord(input);
+    // THE SCHEMA ANSWER COMES FIRST, before any infrastructure is resolved -- "an invalid call never
+    // enters the messaging system", and a model that sent a malformed call deserves the correctable
+    // schema error rather than a message about this host's wiring. This is the SAME acceptor the
+    // handler runs (it is pure, and re-running it costs nothing); the ORDER is what lives here,
+    // because the SDK handler cannot know that this host resolves its runtime lazily.
+    const accepted = acceptNativeSendMessageArgs(input);
+    if (!accepted.ok) return { output: accepted.reason, isError: true };
 
-    const toCheck = validateToField(record.to);
-    if (!toCheck.ok) return { output: `Error: SendMessage input is invalid: ${toCheck.message}`, isError: true };
-
-    if (typeof record.message !== "string") {
-      return { output: "Error: SendMessage input is invalid: message must be a string", isError: true };
-    }
-    if (record.notify_when_idle !== undefined && typeof record.notify_when_idle !== "boolean") {
-      return { output: "Error: SendMessage input is invalid: notify_when_idle must be a boolean", isError: true };
-    }
-    if (record.summary !== undefined && typeof record.summary !== "string") {
-      return { output: "Error: SendMessage input is invalid: summary must be a string", isError: true };
-    }
-    const notifyWhenIdle = record.notify_when_idle === true;
-    if (record.message.length === 0 && !notifyWhenIdle) {
-      return {
-        output: "Error: SendMessage input is invalid: message may only be empty when notify_when_idle is true (a pure idle subscription, WS-10 §10.1)",
-        isError: true,
-      };
-    }
-
+    // Resolved PER CALL, not bound at module load: the process-level runtime is host composition and
+    // a session may be wired after this module is evaluated.
     const runtime = getMessagingRuntime();
     if (runtime === undefined) {
       return { output: "Error: SendMessage has no messaging runtime configured for this session", isError: true };
     }
-
-    const to = record.to as string;
-    const message = record.message;
-    const summary = deriveSummary(record.summary, message);
-    const caller = callerContextFrom(ctx);
-
-    const result = await sendMessage(runtime, caller, {
-      to,
-      message,
-      ...(summary !== undefined ? { summary } : {}),
-      ...(record.notify_when_idle !== undefined ? { notify_when_idle: notifyWhenIdle } : {}),
-    });
-
-    return { output: JSON.stringify(result) };
+    const handlers = createMessagingToolHandlers(messagingToolPortFromRuntimeDeps(runtime), callerContextFrom(ctx));
+    const { text, isError } = await handlers.sendMessage(input);
+    return { output: text, ...(isError === true ? { isError: true } : {}) };
   },
 };
 
@@ -111,6 +83,7 @@ replaceExecutor(SEND_MESSAGE_TOOL_NAME, sendMessageExecutor);
 // drift. RULING P4-E's "there is NO dispatch redirection [on the Winter branch] -- the native
 // name's executor is the implementation" is satisfied structurally: both names ARE the same
 // executor, so nothing needs to redirect. The descriptor (descriptors/winter-send-message.ts,
-// `deferred: true` at the source) is what keeps the model from normally seeing both.
-export const WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME = mcpToolName(WINTER_BRAND, "send_message");
+// `deferred: true` at the source) is what keeps the model from normally seeing both. Since R-8-1
+// both descriptors also share ONE schema object, so the pair cannot drift in either direction.
+export const WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME = mcpToolName(WINTER_BRAND, SEND_MESSAGE_DEFINITION.toolName);
 replaceExecutor(WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME, sendMessageExecutor);

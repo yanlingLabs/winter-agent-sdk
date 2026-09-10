@@ -816,6 +816,7 @@ export function scanFileForBrandlessCallSites(relPath: string, src: string): Cal
 const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   // --- (a) defaults a branded caller overrides -----------------------------------------------------
   "packages/sdk/src/sessions.ts:57": "the unbranded default: a caller that supplied NO brand gets Winter's home, which is what I-1 made explicit rather than implicit",
+  "packages/sdk/src/tools/advisor.ts:235": "transcriptSourceForSessionKey's DEFAULT store location; a branded host passes `winterHome` (or its own `store`) explicitly, which is the whole reason both options exist",
   "packages/sdk/src/options.ts:59": "DEFAULT_PLANS_DIRECTORY -- the default a session's `brand.projectDirName` replaces",
   "packages/sdk/src/options.ts:76": "DEFAULT_KEYCHAIN_SERVICE -- the default a host's own `brand.keychainService` replaces",
   "packages/sdk/src/query.ts:531": "the FALLBACK side of `options.brand?.envPrefix ?? WINTER_BRAND.envPrefix` (M-1's fix)",

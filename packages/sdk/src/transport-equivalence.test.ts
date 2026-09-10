@@ -1694,9 +1694,11 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       .flatMap((e) => ((e.payload as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []))
       .find((blk) => blk.tool_use_id === "sendmsg-call-1");
     expect(sendResult, "the SendMessage call must produce a tool_result").toBeDefined();
-    // The tool's own model-visible envelope is `{outcome: DeliveryOutcome, notify?}` (Lane D's
-    // send-message.ts) -- not a bare DeliveryOutcome.
-    const { outcome } = JSON.parse(sendResult!.content) as { outcome: { status: string; messageId?: string } };
+    // The tool's model-visible result IS the DeliveryOutcome, rendered whole (R-8-1: the SDK's own
+    // handler renders it for both branches now; this runtime's former `{outcome: ..., notify?}`
+    // envelope was its internal SendMessageResult leaking into the model's view). A combined call's
+    // supplementary `notify` fact rides beside the status rather than wrapping it.
+    const outcome = JSON.parse(sendResult!.content) as { status: string; messageId?: string };
     // The router resolved a REAL child of this session and produced a real DeliveryOutcome -- never
     // "no messaging runtime configured" (the pre-T8 answer) and never "not_found" (which is what a
     // roster the messaging runtime cannot see would produce).

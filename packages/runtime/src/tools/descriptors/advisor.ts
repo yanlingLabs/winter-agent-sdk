@@ -30,32 +30,19 @@
 // Input `{}` -- the runtime forwards the session's own conversation/tool history; no model-supplied
 // parameters. Availability stays gated on `winter.reviewer-model` (a reviewer must be resolvable in
 // the session's provider catalog).
-import { stub } from "./_shared.ts";
+import { ADVISOR_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
+
+import { stub, builtinNameOf, definitionFields } from "./_shared.ts";
 
 stub({
-  canonicalName: "advisor",
-  advertisedName: "advisor",
+  // R-8-1: the bare name, the empty input schema, the pinned `{advice, model, truncated?}` output and
+  // the description are the SDK definition's; `source`/`exposure`/`availability`/the capability gate
+  // are this registry's (P-8).
+  ...definitionFields(ADVISOR_DEFINITION),
+  canonicalName: builtinNameOf(ADVISOR_DEFINITION),
+  advertisedName: builtinNameOf(ADVISOR_DEFINITION),
   source: "builtin",
-  // N2 (fix wave, nit, P3 close-out): the schema previously declared `additionalProperties: false`
-  // here, but no executor in this codebase validates input against a JSON Schema at all
-  // (registry.ts's own JSONSchema type is explicitly "self-describing... not a validator") -- the
-  // keyword was decorative, never enforced. Dropped uniformly (see the same fix on CronList/TaskList/
-  // EnterPlanMode/advisor -- pick one posture and apply it everywhere, rather than a schema that
-  // implies enforcement none of these executors perform).
-  inputSchema: { type: "object", properties: {} },
-  outputSchema: {
-    type: "object",
-    properties: {
-      advice: { type: "string" },
-      model: { type: "string" },
-      truncated: { type: "boolean" },
-    },
-    required: ["advice", "model"],
-  },
-  description:
-    "Consults a stronger reviewer model over this session's own conversation/tool history (provider-opaque state such as encrypted_content is never included). Reviewer unavailable/timeout -> ordinary tool error; never blocks the turn.",
   exposure: "eager",
-  permissionClass: "mcp",
   availability: {},
   capabilityRequirements: ["winter.reviewer-model"],
   disposition: "implement-now",
