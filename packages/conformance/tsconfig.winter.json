@@ -3,7 +3,8 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@sdk-under-test": ["../sdk/src/index.ts"]
+      "@sdk-under-test": ["../sdk/src/index.ts"],
+      "@sdk-under-test/tools": ["../sdk/src/tools/index.ts"]
     }
   },
   "include": ["consumer-fixtures/**/*.ts"]

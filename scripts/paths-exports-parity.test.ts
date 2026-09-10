@@ -112,9 +112,13 @@ describe("P7a pre-publish (item 4): tsconfig `paths` and package `exports` agree
     }
   });
 
-  test("the parity is not vacuous: it covers every publishable package and all eleven subpaths", () => {
+  test("the parity is not vacuous: it covers every publishable package and all twelve subpaths", () => {
     const expected = expectedFromExports();
-    expect(expected.size).toBe(11);
+    // 12 since SDK 0.0.3's `@yanlinglabs/winter-agent-sdk/tools` (R-8-1: Winter's default tools,
+    // declared once for both hosts). The literal is the tripwire -- a subpath added to `exports` with
+    // no `paths` entry, or vice versa, is caught by the two tests above only if this one keeps
+    // counting what they cover.
+    expect(expected.size).toBe(12);
     expect(new Set([...expected.keys()].map((s) => s.split("/").slice(0, 2).join("/"))).size).toBe(discoverPublishablePackages().length);
     // And each mapped file really exists -- a `paths` pair that agreed on a path nobody wrote would
     // satisfy both tests above.
