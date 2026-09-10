@@ -71,6 +71,7 @@ export type { McpServerConfigForProcessTransport, AgentMcpServerSpec, RuntimeAge
 // Previously reachable only via the runtime; now the sdk's own public surface.
 export { encodeFrame, decodeFrame, splitFrames, ProtocolError } from "./protocol/codec.ts";
 export { PROTOCOL_VERSION } from "./protocol/frames.ts";
+export { SDK_VERSION } from "./version.ts";
 
 // --- the per-session MESSAGING FACET on the wire (R-7b-4) -----------------------------------------
 //
