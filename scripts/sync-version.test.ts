@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { computeSyncedManifests, stampRuntimeEngineVersion } from "./sync-version.ts";
+import { computeSyncedManifests, stampRuntimeEngineVersion, stampVersionConstant } from "./sync-version.ts";
 
 test("stamps every workspace manifest with the VERSION value", () => {
   const result = computeSyncedManifests("1.2.345", [
@@ -42,17 +42,49 @@ test("stampRuntimeEngineVersion rewrites the declaration and nothing else", () =
     'export const RUNTIME_ENGINE_VERSION = "0.0.1";',
     'const OTHER_VERSION = "0.0.1";',
   ].join("\n");
-  const out = stampRuntimeEngineVersion(source, "0.0.2");
+  // Routed through the generalized stamper -- stampRuntimeEngineVersion is now a one-line wrapper
+  // over stampVersionConstant(source, "RUNTIME_ENGINE_VERSION", semver); this plant proves the
+  // wrapper's precision survived the generalization.
+  const out = stampVersionConstant(source, "RUNTIME_ENGINE_VERSION", "0.0.2");
   expect(out).toContain('export const RUNTIME_ENGINE_VERSION = "0.0.2";');
   // The COMMENT above it and an unrelated constant below both still say 0.0.1 -- the anchor is the
   // declaration, not the string.
   expect(out).toContain('see RUNTIME_ENGINE_VERSION = \"0.0.1\" below');
   expect(out).toContain('const OTHER_VERSION = "0.0.1";');
+  // The compatibility wrapper produces the identical result.
+  expect(stampRuntimeEngineVersion(source, "0.0.2")).toBe(out);
 });
 
 test("stampRuntimeEngineVersion returns the source UNCHANGED when the declaration is absent", () => {
   // A caller then writes nothing, rather than silently corrupting a file whose shape it no longer
   // recognises -- and the parity test in dialect.test.ts is still there to report the drift.
   const source = "export const SOMETHING_ELSE = 1;\n";
+  expect(stampVersionConstant(source, "RUNTIME_ENGINE_VERSION", "9.9.9")).toBe(source);
   expect(stampRuntimeEngineVersion(source, "9.9.9")).toBe(source);
+});
+
+// --- Task S1: the generalized stamper, exercised under a second constant name --------------------
+//
+// `stampVersionConstant` is the function `stampRuntimeEngineVersion` now wraps; these plant it
+// directly under "SDK_VERSION" (the name `version.ts` declares) to prove the generalization holds
+// for any declaration name, not just the one it was extracted from.
+test("stampVersionConstant rewrites only the named declaration", () => {
+  const source = 'export const SDK_VERSION = "0.0.2";\nexport const OTHER = "x";';
+  const out = stampVersionConstant(source, "SDK_VERSION", "0.0.3");
+  expect(out).toBe('export const SDK_VERSION = "0.0.3";\nexport const OTHER = "x";');
+});
+
+test("stampVersionConstant returns the source unchanged when the name is absent", () => {
+  const source = 'export const OTHER = "x";';
+  expect(stampVersionConstant(source, "SDK_VERSION", "0.0.3")).toBe(source);
+});
+
+test("stampVersionConstant does not rewrite a comment mentioning the name", () => {
+  const source = [
+    '// stamped from package.json by version:sync; see SDK_VERSION = "0.0.2" below.',
+    'export const SDK_VERSION = "0.0.2";',
+  ].join("\n");
+  const out = stampVersionConstant(source, "SDK_VERSION", "0.0.3");
+  expect(out).toContain('export const SDK_VERSION = "0.0.3";');
+  expect(out).toContain('see SDK_VERSION = "0.0.2" below');
 });

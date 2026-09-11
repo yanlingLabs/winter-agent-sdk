@@ -5,27 +5,20 @@
 // unchanged. The schema below byte-mirrors descriptors/list-agents.ts's own, and
 // tools/impl/list-agents.ts installs the IDENTICAL executor object under both names.
 import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
-import { stub } from "./_shared.ts";
+import { LIST_AGENTS_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
 
-const NAME = mcpToolName(WINTER_BRAND, "list_agents");
+import { stub, definitionFields } from "./_shared.ts";
+
+const NAME = mcpToolName(WINTER_BRAND, LIST_AGENTS_DEFINITION.toolName);
 
 stub({
+  // R-8-1: the same one definition the native `ListAgents` binds -- see winter-send-message.ts's own
+  // note for why a shared OBJECT rather than a mirrored literal is what WS-09 §10 actually requires.
+  ...definitionFields(LIST_AGENTS_DEFINITION),
   canonicalName: NAME,
   advertisedName: NAME,
   source: "mcp",
-  inputSchema: {
-    type: "object",
-    properties: {
-      channel: { type: "string", maxLength: 256, description: "reserved" },
-      q: { type: "string", maxLength: 256, description: "reserved" },
-    },
-  },
-  outputSchema: { type: "object", properties: { listing: { type: "string" } }, required: ["listing"] },
-  description:
-    "Canonical Winter-server entry for ListAgents ([WS-10] §15): the alias target the official branch redirects the native ListAgents name to. Accepts the native arguments exactly.",
-  searchHint: "list agents sessions peers children roster reachable",
   exposure: "deferred",
-  permissionClass: "messaging",
   availability: {},
   capabilityRequirements: ["winter.global-messaging"],
   deferred: true,

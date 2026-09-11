@@ -14,34 +14,17 @@
 // `{ notifications: Array<{notification_id, origin, queued_at, content}>, remaining: number }` --
 // an ARRAY of drained notifications per call, not one. Corrected to match; zero behavioral risk
 // (no executor consumes this schema yet -- WS-10 owns building the real thing).
-import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
+import { READ_NOTIFICATIONS_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
+
+import { stub, ALWAYS_AVAILABLE, builtinNameOf, definitionFields } from "./_shared.ts";
 
 stub({
-  canonicalName: "ReadNotifications",
-  advertisedName: "ReadNotifications",
+  // R-8-1: `{}` in, the drained page out -- declared once in the SDK, bound here.
+  ...definitionFields(READ_NOTIFICATIONS_DEFINITION),
+  canonicalName: builtinNameOf(READ_NOTIFICATIONS_DEFINITION),
+  advertisedName: builtinNameOf(READ_NOTIFICATIONS_DEFINITION),
   source: "builtin",
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  outputSchema: {
-    type: "object",
-    properties: {
-      notifications: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            notification_id: { type: "string" },
-            origin: { type: "string" },
-            queued_at: { type: "string" },
-            content: { type: "string" },
-          },
-        },
-      },
-      remaining: { type: "number" },
-    },
-  },
-  description: "Drains Winter's own global-messaging notification queue ([WS-10]).",
   exposure: "eager",
-  permissionClass: "messaging",
   availability: ALWAYS_AVAILABLE,
   // I4 (fix wave, P3 close-out): gated on "winter.global-messaging" -- this descriptor has no `impl/*.ts`
   // executor anywhere in the codebase yet (owned by WS-10), so advertising it unconditionally
@@ -64,6 +47,13 @@ stub({
   // withholding the read half would leave the model able to enqueue and unable to drain. The
   // reviewable cost is one name in every `init.tools` golden that the capture does not back; that
   // name is the one to revisit first if a later capture shows a real official equivalent.
+  //
+  // (SB review r1: the two paragraphs above were lost when this descriptor's schema literal was
+  // replaced by the SDK definition. Nothing about that change touched the judgment -- the
+  // `capabilityRequirements` value below is still exactly the one they explain -- so they are
+  // restored verbatim from e29dd99. The "no `impl/*.ts` executor... yet" clause in the first one was
+  // already overtaken when it was written down; it is kept as the record of why the gate was added
+  // rather than silently corrected in a comment-only restoration.)
   capabilityRequirements: ["winter.global-messaging"],
   disposition: "winter-backed-equivalent",
 });

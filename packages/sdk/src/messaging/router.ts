@@ -375,7 +375,16 @@ export interface ListAgentsInput {
   q?: string;
 }
 
-function formatListing(rows: readonly ListedRuntimeObject[]): string {
+/**
+ * WS-10 §10.2's line format for the one `listing` string.
+ *
+ * `export`ed for `../tools/messaging-handlers.ts` alone — NOT re-exported from this subpath's barrel,
+ * so it stays an internal seam rather than new published surface. The tool handler needs the SAME
+ * renderer this function already is: `listAgents` returns `{ listing, rows }` for a host that owns
+ * the deps, while the tool handler works through the address-centric port and has only rows, and a
+ * second formatter there would be a second answer to "what does the model see".
+ */
+export function formatListing(rows: readonly ListedRuntimeObject[]): string {
   if (rows.length === 0) return "No agents or sessions are currently reachable.";
   return rows
     .map((r) => {

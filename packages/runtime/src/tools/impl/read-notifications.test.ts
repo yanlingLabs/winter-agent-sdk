@@ -78,9 +78,14 @@ describe("ReadNotifications (Task 7, WS-06 §3.6 / WS-10 §14)", () => {
     expect(JSON.parse(second.output)).toEqual({ notifications: [], remaining: 0 });
   });
 
-  test("stray extra input fields are harmless (never rejected)", async () => {
+  test("RULING P-4: a stray input field is REFUSED -- input is `{}` and only `{}`", async () => {
+    // FLIPPED from "stray extra input fields are harmless (never rejected)" by ruling P-4 and R-8-1.
+    // The old posture was right about HARM and wrong about SCHEMAS: a model that got away with an
+    // extra field had been told, by the runtime's own silence, that the field exists. The router
+    // branch already refused; this is the two branches agreeing rather than a new restriction.
     registerMessagingRuntime(createDefaultMessagingRuntime({ now: () => 0 }));
     const result = await readNotificationsExecutor.execute({ somethingUnexpected: true }, makeCtx());
-    expect(result.isError).toBeUndefined();
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("somethingUnexpected");
   });
 });

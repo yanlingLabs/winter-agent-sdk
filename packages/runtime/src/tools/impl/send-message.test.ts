@@ -67,7 +67,8 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
     test("message missing (not a string) is a validation error", async () => {
       const result = await sendMessageExecutor.execute({ to: "someone" }, makeCtx());
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("message must be a string");
+      // R-8-1: the refusal sentence is the SDK acceptor's now (one wording for both branches).
+      expect(result.output).toContain("must be a string");
     });
     test("an empty message without notify_when_idle is a validation error", async () => {
       const result = await sendMessageExecutor.execute({ to: "someone", message: "" }, makeCtx());
@@ -77,7 +78,13 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
     test("an empty message WITH notify_when_idle: true is NOT a validation error (a pure idle subscription)", async () => {
       registerMessagingRuntime(createDefaultMessagingRuntime({ now: () => 0 }));
       const result = await sendMessageExecutor.execute({ to: "session:s_peer", message: "", notify_when_idle: true }, makeCtx());
-      expect(result.isError).toBeUndefined();
+      // RULING P-4: `isError` no longer separates "malformed call" from "the messaging system said
+      // no" -- a `not_found` outcome (no such peer is registered in this bed) is an error result too.
+      // What this test has always been about is that the call was ACCEPTED and entered the system,
+      // which is exactly "it got a messageId": a validation refusal never allocates one.
+      const parsed = JSON.parse(result.output) as { status: string; messageId?: string };
+      expect(parsed.status).toBe("not_found");
+      expect(typeof parsed.messageId).toBe("string");
     });
     test("notify_when_idle of the wrong type is a validation error", async () => {
       const result = await sendMessageExecutor.execute({ to: "someone", message: "hi", notify_when_idle: "yes" }, makeCtx());
@@ -106,7 +113,9 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
       const result = await sendMessageExecutor.execute({ to: "session:s_peer", message: "hello there" }, makeCtx());
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.output);
-      expect(parsed.outcome.status).toBe("delivered");
+      // R-8-1: the model-visible result is the OUTCOME itself, not this runtime's internal
+      // `{outcome: ...}` envelope -- the shape the other branch always showed.
+      expect(parsed.status).toBe("delivered");
       expect(delivered).toHaveLength(1);
       expect(delivered[0]?.body).toBe("hello there");
     });
@@ -150,10 +159,14 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
       registerMessagingRuntime(runtime);
 
       const tooLong = await sendMessageExecutor.execute({ to: "session:s_peer", message: "a".repeat(MAX_GLOBAL_MESSAGE_SIZE + 1) }, makeCtx());
-      expect(tooLong.isError).toBeUndefined(); // NOT a tool-input validation error...
-      const parsed = JSON.parse(tooLong.output);
-      expect(parsed.outcome.status).toBe("refused"); // ...it's a messaging-system bounds outcome instead
-      expect(typeof parsed.outcome.messageId).toBe("string");
+      // RULING P-4: a `refused` outcome now carries `isError: true` on BOTH branches -- a model that
+      // reads a failure as a success is exactly what the old always-successful result invited.
+      expect(tooLong.isError).toBe(true);
+      const parsed = JSON.parse(tooLong.output) as { status: string; messageId?: string };
+      // The distinction the title names survives, and it is the messageId that carries it: this is a
+      // messaging-system bounds outcome, so it HAS one; a tool-input validation refusal never does.
+      expect(parsed.status).toBe("refused");
+      expect(typeof parsed.messageId).toBe("string");
     });
   });
 
@@ -164,8 +177,8 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
         { to: "session:s_peer", message: "hi", notify_when_idle: true },
         makeCtx({ agentId: "child-1" }),
       );
-      const parsed = JSON.parse(result.output);
-      expect(parsed.outcome.status).toBe("refused");
+      const parsed = JSON.parse(result.output) as { status: string };
+      expect(parsed.status).toBe("refused");
     });
     test("a top-level call (no ctx.agentId) is NOT refused merely for requesting notify_when_idle against an eligible target", async () => {
       let now = 0;
@@ -174,8 +187,8 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
       runtime.peers.register(peer);
       registerMessagingRuntime(runtime);
       const result = await sendMessageExecutor.execute({ to: "session:s_peer", message: "", notify_when_idle: true }, makeCtx());
-      const parsed = JSON.parse(result.output);
-      expect(parsed.outcome.status).toBe("subscribed");
+      const parsed = JSON.parse(result.output) as { status: string };
+      expect(parsed.status).toBe("subscribed");
     });
   });
 
@@ -200,8 +213,8 @@ describe("SendMessage (Task 7, WS-10 §10.1)", () => {
       const ctx = makeCtx();
       const first = await sendMessageExecutor.execute({ to: "session:s_peer", message: "same content" }, ctx);
       const second = await sendMessageExecutor.execute({ to: "session:s_peer", message: "same content" }, ctx);
-      expect(JSON.parse(first.output).outcome.status).toBe("delivered");
-      expect(JSON.parse(second.output).outcome.status).toBe("refused");
+      expect((JSON.parse(first.output) as { status: string }).status).toBe("delivered");
+      expect((JSON.parse(second.output) as { status: string }).status).toBe("refused");
       expect(delivered).toHaveLength(1);
     });
   });

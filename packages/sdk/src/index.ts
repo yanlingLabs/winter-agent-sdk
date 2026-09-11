@@ -71,6 +71,7 @@ export type { McpServerConfigForProcessTransport, AgentMcpServerSpec, RuntimeAge
 // Previously reachable only via the runtime; now the sdk's own public surface.
 export { encodeFrame, decodeFrame, splitFrames, ProtocolError } from "./protocol/codec.ts";
 export { PROTOCOL_VERSION } from "./protocol/frames.ts";
+export { SDK_VERSION } from "./version.ts";
 
 // --- the per-session MESSAGING FACET on the wire (R-7b-4) -----------------------------------------
 //
@@ -166,7 +167,7 @@ export type {
 // compatibilityKeys/isUnset back from here (packages/runtime/src/index.ts re-exports them
 // unchanged for its own existing consumers).
 export { resolveWinterHome, resolveKeychainServiceForProfile, isUnset } from "./paths/home.ts";
-export { transcriptProjectKey } from "./paths/project-key.ts";
+export { transcriptProjectKey, TRANSCRIPT_PROJECT_KEY_MAX_LENGTH, isVendorCompliantProjectKey } from "./paths/project-key.ts";
 export { compatibilityKeys } from "./paths/keys.ts";
 export type { CompatibilityKeys } from "./paths/keys.ts";
 

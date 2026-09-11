@@ -226,8 +226,10 @@ describe("RULING P4-E amended: alias-aware permission identity (whole-branch C2 
     const { denied, toolResultsJson } = await callOnce(TWIN, { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
     expect(denied).toBeUndefined();
     // Executed for real (the messaging runtime's own `not_found` outcome for an unknown addressee) --
-    // proof the call was never rewritten to the native name or refused at lookup.
-    expect(toolResultsJson).toContain("outcome");
+    // proof the call was never rewritten to the native name or refused at lookup. R-8-1 flattened the
+    // model-visible result from this runtime's `{outcome: ...}` envelope to the outcome itself, so the
+    // marker is now the STATUS, which is a stronger statement about the same thing anyway.
+    expect(toolResultsJson).toContain("not_found");
     expect(toolResultsJson).not.toContain("unknown tool");
   });
 

@@ -17,6 +17,9 @@
     "paths": {
       "@sdk-under-test": [
         "../sdk/dist/index.d.ts"
+      ],
+      "@sdk-under-test/tools": [
+        "../sdk/dist/tools/index.d.ts"
       ]
     }
   },

@@ -1,6 +1,6 @@
 {
   "name": "@yanlinglabs/winter-agent-sdk",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -27,6 +27,11 @@
       "types": "./dist/messaging/index.d.ts",
       "bun": "./src/messaging/index.ts",
       "default": "./dist/messaging/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "bun": "./src/tools/index.ts",
+      "default": "./dist/tools/index.js"
     }
   },
   "files": [
@@ -47,6 +52,10 @@
       "./messaging": {
         "types": "./dist/messaging/index.d.ts",
         "default": "./dist/messaging/index.js"
+      },
+      "./tools": {
+        "types": "./dist/tools/index.d.ts",
+        "default": "./dist/tools/index.js"
       }
     }
   },

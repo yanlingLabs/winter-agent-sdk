@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { resolveKeychainServiceForProfile, resolveWinterHome } from "./home.ts";
 // P7a spine, Step 3 (D19): the brand profile the home resolver derives its env name and dir from.
 import { resolveBrand, WINTER_BRAND, type BrandProfile } from "../brand.ts";
-import { transcriptProjectKey } from "./project-key.ts";
+import { transcriptProjectKey, TRANSCRIPT_PROJECT_KEY_MAX_LENGTH, isVendorCompliantProjectKey } from "./project-key.ts";
 import { compatibilityKeys } from "./keys.ts";
 
 // Every home/cwd base in this file is a fresh mkdtemp under the OS temp dir — never
@@ -105,28 +105,51 @@ describe("transcriptProjectKey — exact CC project-key algorithm", () => {
     expect(transcriptProjectKey("/a/café/😀b")).toBe("-a-caf----b");
   });
 
-  test("exactly 200 sanitized chars: returned unchanged, no hash suffix", () => {
-    const input = "a".repeat(200);
-    expect(transcriptProjectKey(input)).toBe(input);
+  test("a 64-char sanitized path is returned unchanged (the parity band)", () => {
+    const p = "/" + "a".repeat(63);
+    expect(transcriptProjectKey(p)).toBe("-" + "a".repeat(63));
+    expect(transcriptProjectKey(p).length).toBe(64);
   });
 
-  test("201 sanitized chars: 200-char prefix + dash + base-36 hash of the ORIGINAL string", () => {
-    const input = "a".repeat(201);
-    const result = transcriptProjectKey(input);
-    expect(result).toBe("a".repeat(200) + "-rkvsv5");
-    expect(result.length).toBe(207);
+  test("a 65-char sanitized path is capped to exactly 64: prefix + '-' + the vendor's base-36 hash of the ORIGINAL path", () => {
+    const p = "/" + "a".repeat(64);
+    const key = transcriptProjectKey(p);
+    expect(key.length).toBe(64);
+    expect(key).toMatch(/^-a+-[0-9a-z]{1,6}$/);
+    // Frozen by running once (as the old :113-118 pin did for the 201-char case).
+    expect(key).toBe("-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-jp5p75");
   });
 
-  test("a >200-char path-shaped string (slashes + words) caps at 200 chars + hash suffix", () => {
+  test("the 927-char fixture caps to its new 64-char literal", () => {
     // Path-shaped (not all-alnum) so this fixture can only pass if the hash is computed over the
     // ORIGINAL pre-sanitize string, not the sanitized/truncated one — the exact detail the
     // ephemeral inspection recovered (task-6-report.md).
     const longRaw = "/Users/alice/code/" + Array.from({ length: 20 }, (_, i) => `segment-${i}-of-a-very-long-nested-project-path`).join("/");
     expect(longRaw.length).toBe(927);
-    const expected =
-      "-Users-alice-code-segment-0-of-a-very-long-nested-project-path-segment-1-of-a-very-long-nested-project-path-segment-2-of-a-very-long-nested-project-path-segment-3-of-a-very-long-nested-project-path-se-nxhjqo";
+    const expected = "-Users-alice-code-segment-0-of-a-very-long-nested-project-nxhjqo";
     expect(transcriptProjectKey(longRaw)).toBe(expected);
-    expect(expected.length).toBe(207);
+    expect(expected.length).toBe(64);
+  });
+
+  test("every key is vendor-compliant (the pinned runtime's own CLAUDE_CODE_PROJECT_DIR_NAME rule)", () => {
+    const VENDOR = /^[A-Za-z0-9_-]{1,64}$/; // router:src/official/env-allowlist.ts:590 — keep in lockstep
+    const longRaw927 = "/Users/alice/code/" + Array.from({ length: 20 }, (_, i) => `segment-${i}-of-a-very-long-nested-project-path`).join("/");
+    const existingFixtures = [
+      "/Users/alice/Games/pvp/ninja game",
+      "/",
+      "/a/b c/d",
+      "/a!!!b",
+      "/a/café/😀b",
+      longRaw927,
+    ];
+    for (const p of [...existingFixtures, "/x", "/Users/u/Xcode progects/Norma v2/.worktrees/some-long-branch-name/packages/core", "/" + "é".repeat(300)]) {
+      const key = transcriptProjectKey(p);
+      expect(VENDOR.test(key)).toBe(true);
+      expect(isVendorCompliantProjectKey(key)).toBe(true);
+    }
+    expect(TRANSCRIPT_PROJECT_KEY_MAX_LENGTH).toBe(64);
+    expect(isVendorCompliantProjectKey("a".repeat(65))).toBe(false);
+    expect(isVendorCompliantProjectKey("bad/key")).toBe(false);
   });
 });
 

@@ -20,7 +20,13 @@ import { WinterPathsError } from "./temp.ts";
 // sessionTempDir/ensureTasksDir only), and this validates a DIFFERENT kind of input — an
 // env-supplied override string, not a derived key — so a same-alphabet, independently-declared
 // regex has no coupling to temp.ts's internals to keep in sync with beyond the alphabet itself.
-const SAFE_DIR_NAME = /^[A-Za-z0-9-]+$/;
+//
+// Aligned to the vendor's own CLAUDE_CODE_PROJECT_DIR_NAME rule (carry #8; sdk's
+// isVendorCompliantProjectKey / TRANSCRIPT_PROJECT_KEY_MAX_LENGTH mirror this exact bound): an
+// override this permissive is also handed straight to the OFFICIAL runtime as that env var, which
+// rejects anything outside `^[A-Za-z0-9_-]{1,64}$` -- so Winter's own override validation refuses
+// up front rather than accepting a value the official runtime would then bounce.
+const SAFE_DIR_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
 // `<PREFIX>PROJECT_DIR_NAME` || defaultProjectKey. `env` is injectable so tests never read the real
 // process environment (mirrors resolveWinterHome/resolveTempBase's own pattern in this module).
@@ -35,7 +41,7 @@ export function resolveProjectDirName(defaultProjectKey: string, env?: Record<st
   if (isUnset(override)) return defaultProjectKey;
   if (!SAFE_DIR_NAME.test(override as string)) {
     throw new WinterPathsError(
-      `invalid ${varName} ${JSON.stringify(override)}: expected non-empty [A-Za-z0-9-]+ (no path separators or traversal)`,
+      `invalid ${varName} ${JSON.stringify(override)}: expected 1-64 chars of [A-Za-z0-9_-] (no path separators or traversal)`,
     );
   }
   return override as string;
