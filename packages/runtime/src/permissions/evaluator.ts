@@ -688,6 +688,14 @@ const WRITE_BLOCKING_DENY_TOOLS: ReadonlySet<string> = new Set(["Read", "Write",
 // buildBaselineDenyRules), which a plain allow rule can never beat -- deny wins at stage 2, before
 // any allow is consulted, by design.
 //
+// The TOOLS the projects WRITE FLOOR is seeded with -- `buildBaselineDenyRules` emits exactly
+// `Write`/`Edit`/`NotebookEdit` over `<projects>` + `/projects/**`, and nothing else write-shaped.
+// Hand-mirrored with that function on purpose (this module cannot import the engine without a cycle),
+// and pinned by the tripwire test: a floor seeded for a NEW tool must be a deliberate edit here, never
+// an entry that silently starts being suppressed. NOT the same set as `MEMORY_CARVE_OUT_TOOLS` below
+// -- that one gates the CALL's tool, this one gates the RULE ENTRY's.
+const PROJECTS_WRITE_FLOOR_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "NotebookEdit"]);
+
 // The carve-out is therefore expressed as a SKIP on those specific entries, using
 // `findMatchingRuleEntry`'s existing `opts.skip` seam (Task 12's own broad-allow-suspension
 // precedent) rather than by inventing rule negation, which the grammar has no way to express and
@@ -697,8 +705,23 @@ const WRITE_BLOCKING_DENY_TOOLS: ReadonlySet<string> = new Set(["Read", "Write",
 // user-authored `Write(~/.winter/projects/**)` deny is NOT skipped -- an explicit human denial still
 // wins), and EVERY candidate write path of the call must be inside the carve-out (so a compound Bash
 // command touching one script and one transcript is still denied outright).
+//
+// SDK 0.0.4 fix wave, Minor 1: a THIRD condition -- the entry's own TOOL must be one the projects
+// WRITE FLOOR emits. Without it this predicate matched every managed deny whose content merely starts
+// with the projects prefix, which is a strictly larger set than the floor these carve-outs exist to
+// lift: it also matched the six provider-state SIDECAR patterns (`buildBaselineDenyRules`'s
+// `providerStateDenyPatterns`, seeded for Read/Glob/Grep). `findFileDenyBlockingEdit` consults
+// `Read`-tool denies cross-tool (WRITE_BLOCKING_DENY_TOOLS), so skipping them made
+// `Write(<carve-out>/x.provider-state.jsonl)` ALLOWED while the matching Read stayed denied -- the
+// model could create a sidecar-named file it then could not read back. Nothing real is corruptible
+// today (no provider state is ever sunk under a memory or scripts directory), but the shape was
+// forward-unsafe: ANY managed deny seeded under `projects/` in future was silently suppressed for
+// both carve-outs, with nothing to notice. Narrowing is a strict TIGHTENING and cannot widen either
+// carve-out; the tripwire test in baseline-projects-deny.test.ts pins the exact suppressed set so a
+// newly-seeded floor fails loudly instead.
 function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext): boolean {
   if (entry.behavior !== "deny" || entry.source !== "managed") return false;
+  if (!PROJECTS_WRITE_FLOOR_TOOLS.has(entry.rule.toolName)) return false;
   const content = entry.ruleValue.ruleContent;
   if (typeof content !== "string") return false;
   // P7a fix r1 (Important-2): the HOME-ANCHORED form, derived rather than spelled.

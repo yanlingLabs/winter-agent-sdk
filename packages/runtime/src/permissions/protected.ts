@@ -133,6 +133,39 @@ const WORKFLOW_SCRIPTS_SEGMENTS = ["workflows", "scripts"] as const;
 // strictly stronger of the two: a Bash-shaped write into the memory directory is still refused by
 // the managed deny (through `findFileDenyBlockingEdit`), so relaxing the §6.7 protected-write
 // standing exception for that same path cannot open it.
+//
+// --- THREE PROPERTIES A HOST READING THIS MUST KNOW (SDK 0.0.4 fix wave, review Minors 3/4/5) -----
+//
+// (1) IT IS KEYED TO THE DEFAULT SHAPE, NOT TO THE SESSION'S EFFECTIVE MEMORY DIRECTORY, AND IT
+// FAILS CLOSED. `context/memory-key.ts`'s `memoryDirFor` honours `Settings.autoMemoryDirectory` and a
+// host-supplied `SystemPromptInput.memoryDir`, either of which REPLACES the computed path outright.
+// This predicate matches the literal `projects/<one segment>/memory` shape, so a relocation to any
+// OTHER sub-path of the winter home -- `projects/<key>/mem`, `projects/<key>/<uuid>/memory`,
+// `<winterHome>/memory/<key>` -- still meets the M13 floor and is DENIED: the very bug this carve-out
+// fixes, in a configuration the SDK supports. It fails closed (a clean rule denial, never a silent
+// hole), and an override pointing outside `projects/` entirely is unaffected because no floor applies
+// there. Deriving the carve-out from the EFFECTIVE directory would mean threading it through
+// `EvaluationContext`; correct long-term, deliberately out of scope for this cut.
+//
+// (2) THE WILDCARD IS *ANY* KEY, DELIBERATELY -- SO MEMORY IS A CROSS-PROJECT SURFACE. The segment is
+// not the session's own cwd-derived memory key: a session in project A can write project B's
+// `MEMORY.md`, and both shared product buckets (`RESERVED_MEMORY_KEYS` -- `_global`, `_assistant`)
+// are admitted. That is REQUIRED, not an oversight: those buckets are layered on by a HOST (Winter's
+// own sanitiser can never produce a key beginning with `_`), so scoping to the session's own key
+// would break them, and Winter's shipped memory instructions name that path to the model directly.
+// The consequence a host must weigh: memory content is injected into FUTURE sessions' context every
+// turn, so a write here is a cross-session influence channel. Bounded -- every non-bypass mode
+// prompts or needs a host allow rule, and under `bypassPermissions` `~/.winter/settings.json` is
+// already writable through the same §6.7 arm -- and P5-B has the identical property (any key, any
+// uuid).
+//
+// (3) THIS REMOVES A FLOOR; IT DOES NOT GRANT. Nothing here auto-approves anything. The memory
+// directory is outside `boundedRoots`, so `acceptEdits` prompts for a memory write exactly as it does
+// for any other out-of-cwd write, and `plan` still withholds it by its own rule. That ceiling is
+// deliberate: smuggling a grant into a permission-BOUNDARY change would be wrong, and prompting is
+// already strictly better than the hard managed deny this replaces. A host that wants silent memory
+// writes must say so itself -- seed an allow rule for the path, or add the memory directory to the
+// session's additional directories.
 const MEMORY_SEGMENTS = ["memory"] as const;
 
 /**

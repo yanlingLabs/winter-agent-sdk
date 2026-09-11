@@ -22,6 +22,7 @@ import { memoryDirFor, RESERVED_MEMORY_KEYS } from "../context/memory-key.ts";
 import { MEMORY_INDEX_BASENAME } from "../context/memory.ts";
 import {
   evaluate,
+  projectsCarveOutSkip,
   PLAN_WRITE_WITHHELD_MESSAGE,
   REAL_SPECIAL_CHECKS,
   NO_OPINION_HOOK_STAGE,
@@ -354,5 +355,90 @@ describe("SDK 0.0.4: the carve-out names the directory the memory feature ACTUAL
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+// --- SDK 0.0.4 fix wave (whole-branch review, Minor 1): the skip's own BLAST RADIUS ---------------
+//
+// `isProjectsBaselineDeny` decides which managed entries a carve-out suppresses, and it decides it
+// from the entry's TOOL and its rule CONTENT -- not from a list of the entries the floor happens to
+// seed today. Before the fix wave the content test alone matched a strictly larger set than the M13
+// write floor: the six provider-state SIDECAR patterns start with the same `projects` prefix, and
+// `findFileDenyBlockingEdit` consults `Read`-tool denies cross-tool, so a memory `Write` to a
+// `*.provider-state.jsonl` name was ALLOWED while the matching `Read` stayed denied.
+//
+// The real risk was never that file: it is that ANY managed deny seeded under `projects/` in future
+// would be silently suppressed for both carve-outs. So this block pins the EXACT suppressed set. It
+// is meant to fail when the floor grows -- that failure is the point, and the fix is to decide
+// deliberately whether the new entry belongs in `PROJECTS_WRITE_FLOOR_TOOLS`, never to re-bless the
+// list without reading it.
+describe("SDK 0.0.4 fix wave: exactly which managed entries the carve-out skip suppresses", () => {
+  const memoryWrite: PermissionCall = { toolName: "Write", input: { file_path: MEMORY_INDEX, content: "x" }, toolUseId: "s1" };
+  const describeEntries = (predicate: (e: SourcedRuleEntry) => boolean): string[] =>
+    buildBaselineDenyRules()
+      .filter(predicate)
+      .map((e) => `${e.ruleValue.toolName}(${String(e.ruleValue.ruleContent)})`)
+      .sort();
+
+  test("the suppressed set is the SIX M13 write-floor entries and nothing else", () => {
+    const skip = projectsCarveOutSkip(memoryWrite, ctxFor("bypassPermissions"));
+    expect(skip, "a memory write must earn a skip predicate at all").toBeDefined();
+    expect(describeEntries(skip!)).toEqual([
+      "Edit(~/.winter/projects)",
+      "Edit(~/.winter/projects/**)",
+      "NotebookEdit(~/.winter/projects)",
+      "NotebookEdit(~/.winter/projects/**)",
+      "Write(~/.winter/projects)",
+      "Write(~/.winter/projects/**)",
+    ]);
+  });
+
+  test("the provider-state sidecar patterns, the run-dir floor and the backups floor are NOT suppressed", () => {
+    const skip = projectsCarveOutSkip(memoryWrite, ctxFor("bypassPermissions"))!;
+    const survivors = describeEntries((e) => !skip(e));
+    // The sidecar patterns share the `projects` prefix, which is exactly why the content test alone
+    // was not enough -- they are kept out by the RULE's tool, not by its path.
+    for (const pattern of [
+      "Read(~/.winter/projects/**/*.provider-state.jsonl)",
+      "Glob(~/.winter/projects/**/*.provider-state.jsonl)",
+      "Grep(~/.winter/projects/**/*.provider-state.jsonl)",
+      "Read(~/.winter/run)",
+      "Write(~/.winter/backups/**)",
+    ]) {
+      expect([pattern, survivors.includes(pattern)]).toEqual([pattern, true]);
+    }
+  });
+
+  test("so a Write to a provider-state NAME inside the memory directory is still denied", async () => {
+    // The observable half of the same fix, in every mode. The sidecar deny is the ONLY sink for
+    // opaque provider continuation state, and `findFileDenyBlockingEdit` is what carries a Read-tool
+    // deny across to a write -- the cross-tool rule the old predicate was suppressing.
+    const sidecarInMemory = `${MEMORY_DIR}/leaked.provider-state.jsonl`;
+    for (const mode of ["bypassPermissions", "default", "acceptEdits", "plan", "dontAsk"] as const) {
+      const out = await decide({ toolName: "Write", input: { file_path: sidecarInMemory, content: "x" }, toolUseId: "s2" }, mode);
+      expect(out.decision, `mode ${mode}: ${out.message ?? ""}`).toBe("deny");
+      expect(out.mechanism, `mode ${mode} must be denied by the RULE, not a mode floor`).toBe("rule");
+    }
+    // ...and the READ that was always denied still is, so the two halves agree rather than leaving a
+    // file the model can create but never read back.
+    const read = await decide({ toolName: "Read", input: { file_path: sidecarInMemory }, toolUseId: "s2b" }, "default");
+    expect(read.decision).toBe("deny");
+    expect(read.mechanism).toBe("rule");
+  });
+
+  test("...while an ordinary memory file beside it is still allowed (the carve-out is not re-closed)", async () => {
+    const out = await decide({ toolName: "Write", input: { file_path: `${MEMORY_DIR}/notes.md`, content: "x" }, toolUseId: "s3" });
+    expect(out.decision).toBe("allow");
+  });
+
+  test("the P5-B workflow-script carve-out is narrowed identically -- one predicate, one behaviour", async () => {
+    // `isProjectsBaselineDeny` is shared verbatim between the two carve-outs, so the narrowing binds
+    // both. Pinned here so the two can never be argued to differ.
+    const script = `${HOME}/.winter/projects/-synthetic-workspace/sess-1/workflows/scripts/wf-abc.js`;
+    expect((await decide({ toolName: "Write", input: { file_path: script, content: "// edited\n" }, toolUseId: "s4" })).decision).toBe("allow");
+    const sidecar = `${HOME}/.winter/projects/-synthetic-workspace/sess-1/workflows/scripts/x.provider-state.jsonl`;
+    const out = await decide({ toolName: "Write", input: { file_path: sidecar, content: "x" }, toolUseId: "s5" });
+    expect(out.decision, "a sidecar NAME is not a workflow script").toBe("deny");
+    expect(out.mechanism).toBe("rule");
   });
 });
