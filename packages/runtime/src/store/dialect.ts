@@ -844,7 +844,7 @@ export class TranscriptWriter implements SessionPersistence {
 // `bun test` — never compiled — so a real fs read there is safe) gets the same drift protection
 // without touching the compiled path at all. verify:compiled is the proof this constant survives
 // the real compiled binary unchanged.
-export const RUNTIME_ENGINE_VERSION = "0.0.2";
+export const RUNTIME_ENGINE_VERSION = "0.0.3";
 
 // Task 9: what runEngine actually needs once resume/continue/fork/resumeSessionAt (or none of them)
 // have been resolved — a persistence sink (or none, when persistSession:false), the prior
