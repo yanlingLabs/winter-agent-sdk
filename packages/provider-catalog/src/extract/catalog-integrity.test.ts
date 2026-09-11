@@ -126,7 +126,17 @@ describe("pricing (R6-H, R6-9)", () => {
   });
 
   test("gateway, Azure, Bedrock and Vertex rows stay unpriced — a reseller's price is not the vendor's", () => {
-    for (const key of ["openrouter/openai/gpt-4.1", "azure-openai/gpt-4.1", "vertex/gemini-2.5-pro", "codex-oauth/gpt-5.6-sol"]) {
+    // SDK 0.0.4: the two new codex rows join their sibling here. Their `openai/*` twins ARE priced
+    // (the metered endpoint's published rates, pinned in the priced set above), and the whole point
+    // of this assertion is that a subscription backend must never inherit them.
+    for (const key of [
+      "openrouter/openai/gpt-4.1",
+      "azure-openai/gpt-4.1",
+      "vertex/gemini-2.5-pro",
+      "codex-oauth/gpt-5.6-sol",
+      "codex-oauth/gpt-5.6-terra",
+      "codex-oauth/gpt-5.6-luna",
+    ]) {
       expect(catalog.models.find((m) => m.key === key)?.pricing).toBeUndefined();
     }
   });
@@ -1000,5 +1010,76 @@ describe("WS-13c: model families and slots", () => {
     // MAY become a family in a reviewed commit (§1), and a threshold here would either be arbitrary
     // or would turn a new provider's rows into a failing build.
     console.log(`WS-13c: ${others.length} of ${catalog.models.length} model rows are in family "other" (${new Set(others.map((m) => m.canonicalModelId)).size} distinct canonical ids)`);
+  });
+});
+
+// --- SDK 0.0.4: the codex-oauth GPT-5.6 slot rows -------------------------------------------------
+//
+// Norma's engine leg serves `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` over the Codex backend
+// today (`packages/core/src/providers/codex-config.ts`'s `CODEX_MODELS`). Only `sol` was catalogued
+// here, so on a Codex-only install the `gpt` family's `terra` and `luna` SLOTS resolved to keys the
+// catalog did not carry -- a typed `unknown-model` refusal, on two of the four options the family
+// advertises, with `codex-oauth` leading `vendorProviders` precisely so it is tried first.
+describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
+  const codexKeys = () =>
+    catalog.models
+      .filter((m) => m.providerId === "codex-oauth")
+      .map((m) => m.key)
+      .sort();
+
+  test("the provider lists all three GPT-5.6 models alongside Astra, and nothing else", () => {
+    expect(codexKeys()).toEqual([
+      "codex-oauth/gpt-5.6-luna",
+      "codex-oauth/gpt-5.6-sol",
+      "codex-oauth/gpt-5.6-terra",
+      "codex-oauth/gpt-6-astra",
+    ]);
+  });
+
+  test("each `gpt` family slot resolves to a codex-oauth row -- which is the refusal this closes", () => {
+    // Reads the SLOT TABLE rather than a re-typed list: the family layer is what a Codex-only
+    // session actually consults, so this fails if a later edit adds a slot with no codex row.
+    const gpt = catalog.families!.find((f) => f.id === "gpt")!;
+    expect(gpt.vendorProviders[0]).toBe("codex-oauth");
+    for (const slot of gpt.slots) {
+      expect([slot.name, codexKeys().includes(`codex-oauth/${slot.canonicalModelId}`)]).toEqual([slot.name, true]);
+    }
+  });
+
+  test("the two new rows mirror their `sol` sibling EXACTLY, bar the six fields that must differ", () => {
+    // The rows were copied, not re-derived: same backend, same adapter, same Responses dialect, same
+    // efforts, same unpriced posture. Asserting the structural equality is what keeps a later edit
+    // to one of them from silently splitting the three apart.
+    const sol = catalog.models.find((m) => m.key === "codex-oauth/gpt-5.6-sol")!;
+    // The six fields that MUST differ, dropped by name, plus `observedAt` (each row records the date
+    // its own evidence was read). Every self-reference -- the key itself and `continuationDomain`'s
+    // single entry -- is then normalised to one token, so "names ITSELF" is what is compared rather
+    // than "names sol".
+    const DIFFERING = new Set(["key", "upstreamId", "displayName", "canonicalModelId", "$comment", "observedAt"]);
+    const strip = (m: WinterModelDescriptor): unknown =>
+      JSON.parse(
+        JSON.stringify(m, (key, value: unknown) => (DIFFERING.has(key) ? undefined : value)).replace(
+          /"codex-oauth\/gpt-5\.6-(?:terra|luna|sol)"/g,
+          '"<self>"',
+        ),
+      );
+    for (const key of ["codex-oauth/gpt-5.6-terra", "codex-oauth/gpt-5.6-luna"]) {
+      const row = catalog.models.find((m) => m.key === key)!;
+      expect(row.providerId).toBe("codex-oauth");
+      expect(row.status).toBe("candidate");
+      expect(row.modelFamily).toBe("gpt");
+      // `continuationDomain` names THIS key alone (§2.5): a codex row shares no domain with its
+      // `openai/*` twin despite the shared `/v1/responses` shape, and none with its codex siblings.
+      expect(row.reasoning!.continuationDomain!.value).toEqual([key]);
+      expect(strip(row)).toEqual(strip(sol));
+    }
+  });
+
+  test("the metered `openai/*` twins are untouched and still priced -- the two surfaces stay separate rows", () => {
+    for (const key of ["openai/gpt-5.6-terra", "openai/gpt-5.6-luna"]) {
+      const row = catalog.models.find((m) => m.key === key)!;
+      expect(row.providerId).toBe("openai");
+      expect(row.pricing?.value.inputPerMTokUsd).toBeGreaterThan(0);
+    }
   });
 });
