@@ -15230,6 +15230,110 @@
       "modelFamily": "other"
     },
     {
+      "key": "codex-oauth/gpt-5.6-luna",
+      "providerId": "codex-oauth",
+      "upstreamId": "gpt-5.6-luna",
+      "displayName": "GPT-5.6 Luna (Codex)",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 272000,
+        "source": "upstream-static",
+        "sourceRef": "Norma packages/core/src/providers/codex-config.ts — CODEX_MODELS, a dated static set with its own drift guard",
+        "confidence": "declared",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "Norma codex-config.ts CODEX_MODELS supportsVision: true",
+        "confidence": "declared",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "confidence": "inferred",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed. Same evidence as `openai/o4-mini` — the same field on the same wire shape — which is exactly why the DOMAIN still is not shared (§2.5). A `readableState: \"summary\"` claim with no way to REQUEST the summary is a capability nobody can use, so the two travel together.",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "codex-oauth/gpt-5.6-luna"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model, which is what Norma's shipped Codex adapter does verbatim off `response.completed` — and §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-luna",
+      "modelFamily": "gpt"
+    },
+    {
       "key": "codex-oauth/gpt-5.6-sol",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-5.6-sol",
@@ -15331,6 +15435,110 @@
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "gpt-5.6-sol",
+      "modelFamily": "gpt"
+    },
+    {
+      "key": "codex-oauth/gpt-5.6-terra",
+      "providerId": "codex-oauth",
+      "upstreamId": "gpt-5.6-terra",
+      "displayName": "GPT-5.6 Terra (Codex)",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 272000,
+        "source": "upstream-static",
+        "sourceRef": "Norma packages/core/src/providers/codex-config.ts — CODEX_MODELS, a dated static set with its own drift guard",
+        "confidence": "declared",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "Norma codex-config.ts CODEX_MODELS supportsVision: true",
+        "confidence": "declared",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-11T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "confidence": "inferred",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed. Same evidence as `openai/o4-mini` — the same field on the same wire shape — which is exactly why the DOMAIN still is not shared (§2.5). A `readableState: \"summary\"` claim with no way to REQUEST the summary is a capability nobody can use, so the two travel together.",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "codex-oauth/gpt-5.6-terra"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model, which is what Norma's shipped Codex adapter does verbatim off `response.completed` — and §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.",
+          "confidence": "declared",
+          "observedAt": "2026-09-11T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
     },
     {

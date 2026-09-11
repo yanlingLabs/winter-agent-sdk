@@ -387,13 +387,27 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     };
     const skip = workflowScriptCarveOutSkip({ toolName: "Write", input: { file_path: scriptPath } }, ctx);
     expect(skip, "a write inside the carve-out must earn a skip predicate at all").toBeDefined();
-    // EVERY managed `<home>/projects…` deny is skipped -- that is what unblocks the loop.
-    const projectsDenies = entries.filter((e) => typeof e.ruleValue.ruleContent === "string" && (e.ruleValue.ruleContent as string).startsWith("~/.acme/projects"));
-    expect(projectsDenies.length).toBeGreaterThan(0);
-    expect(projectsDenies.every((e) => skip!(e))).toBe(true);
-    // ...and nothing ELSE is: the backups floor and the run-dir denials are untouched by the skip.
-    const others = entries.filter((e) => typeof e.ruleValue.ruleContent === "string" && !(e.ruleValue.ruleContent as string).startsWith("~/.acme/projects"));
+    // Every managed `<home>/projects…` WRITE-FLOOR deny is skipped -- that is what unblocks the loop.
+    //
+    // SDK 0.0.4 fix wave (review Minor 1): narrowed from "every managed `~/.acme/projects…` deny" to
+    // "every WRITE-FLOOR one". `isProjectsBaselineDeny` now also gates on the entry's own tool, so the
+    // provider-state SIDECAR patterns -- which share the `projects` prefix but are seeded for
+    // Read/Glob/Grep, and which `findFileDenyBlockingEdit` carries cross-tool onto a write -- are no
+    // longer suppressed by either carve-out. This test's SUBJECT is unchanged and still fully
+    // asserted: the carve-out follows the BRAND. What moved is only the breadth of the set it sweeps,
+    // and the narrower set is the one the edit-then-rerun loop actually needs.
+    const isWriteFloor = (e: (typeof entries)[number]): boolean =>
+      typeof e.ruleValue.ruleContent === "string" &&
+      ["Write", "Edit", "NotebookEdit"].includes(e.ruleValue.toolName) &&
+      ((e.ruleValue.ruleContent as string) === "~/.acme/projects" || (e.ruleValue.ruleContent as string) === "~/.acme/projects/**");
+    const projectsWriteFloor = entries.filter(isWriteFloor);
+    expect(projectsWriteFloor.length).toBe(6);
+    expect(projectsWriteFloor.every((e) => skip!(e))).toBe(true);
+    // ...and nothing ELSE is: the backups floor, the run-dir denials AND the branded provider-state
+    // sidecar patterns are all untouched by the skip.
+    const others = entries.filter((e) => !isWriteFloor(e));
     expect(others.some((e) => skip!(e))).toBe(false);
+    expect(others.some((e) => typeof e.ruleValue.ruleContent === "string" && (e.ruleValue.ruleContent as string).startsWith("~/.acme/projects")), "the sidecar patterns must be among the survivors, or this assertion is vacuous").toBe(true);
 
     // P7a fix wave (item 10, N-2): THE NEGATIVE CASE, and it cannot be read off `others` -- the
     // assertion four lines above proves no `.winter` entry is IN `entries` at all, so `others` is
@@ -404,7 +418,10 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
     // skipping it would let a branded session write through a deny it was never granted a carve-out
     // from -- the exact inverse of the I-2 bug, and the direction a "make it match either name" fix
     // would introduce.
-    const winterLiteralDeny = { behavior: "deny" as const, source: "managed" as const, ruleValue: { ruleContent: "~/.winter/projects/**" } };
+    // Carries a `rule` as well as a `ruleValue`: a real `SourcedRuleEntry` always has both, and the
+    // fix wave's tool gate reads `rule.toolName`. `Write` is chosen so the entry would be skipped if
+    // the BRAND check were the thing that failed -- which is exactly what this case must isolate.
+    const winterLiteralDeny = { behavior: "deny" as const, source: "managed" as const, rule: { toolName: "Write" }, ruleValue: { toolName: "Write", ruleContent: "~/.winter/projects/**" } };
     expect(skip!(winterLiteralDeny as unknown as (typeof entries)[number])).toBe(false);
 
     // A sibling under the same session -- a transcript, not a script -- earns no carve-out at all.

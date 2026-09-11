@@ -99,9 +99,74 @@ export const PROTECTED_FILE_BASENAMES: ReadonlySet<string> = new Set([
 // session write into another session's area by nesting; a prefix match on `workflows/scripts` alone
 // would open one anywhere under `projects/`. Everything else under `projects/` -- the JSONL
 // transcripts a resume rebuilds from, the roster sidecars, the provider-state sidecars -- stays
-// write-denied by the M13 baseline rules (engine.ts's buildBaselineDenyRules) and by this module.
+// write-denied by the M13 baseline rules (engine.ts's buildBaselineDenyRules) and by this module,
+// with exactly ONE other exception: the auto-memory directory, immediately below.
 const WINTER_PROJECTS_SEGMENT = "projects";
 const WORKFLOW_SCRIPTS_SEGMENTS = ["workflows", "scripts"] as const;
+
+// --- SDK 0.0.4: the model-writable AUTO-MEMORY carve-out ------------------------------------------
+//
+// `~/.winter/projects/<memory-key>/memory/**` is MODEL-WRITABLE, for the identical reason P5-B's
+// scripts subtree is: the feature's own contract requires it. `context/memory-key.ts` resolves the
+// auto-memory directory to exactly `<winterHome>/projects/<memory-key>/memory`, and
+// `context/memory.ts` tells the model, in prose it is handed every turn, that "there are no memory
+// tools: read and write it with the ordinary file tools." The M13 baseline deny then refused every
+// one of those writes -- Winter's own auto-memory feature was blocked by Winter's own floor, and a
+// host layering its own memory directory on the same path (Norma's MEMDIR) inherited the same break.
+//
+// SCOPED ONE SEGMENT TIGHTER THAN P5-B, and the shape is again the enforcement: FOUR fixed
+// positions with exactly ONE wildcard between them -- `<home>/<homeDirName>/projects/<key>/memory/...`.
+//   - NEVER `projects/**/memory`: a session-uuid directory nested under a key
+//     (`projects/<key>/<uuid>/memory/x.md`) is NOT the memory directory and stays denied, exactly as
+//     P5-B refuses to let one session nest into another's area.
+//   - NEVER a prefix match on the literal `memory`: `projects/memory/x.md` (a project whose KEY is
+//     "memory") is not a memory directory either, and stays denied.
+//   - Traversal is a non-issue by construction: every caller resolves before calling in, so
+//     `projects/<key>/memory/../agent-1.jsonl` is already normalized to `projects/<key>/agent-1.jsonl`
+//     by the time the segments are compared, and fails the `memory` position.
+// The DIRECTORY itself is still not writable, only its contents -- same rule as P5-B.
+//
+// WHAT THIS CARVE-OUT IS *NOT*: it is not tool-scoped, because this primitive answers a question
+// about a PATH and knows nothing about the call that produced it (see `isProtectedWrite`'s own
+// header). The write-class tool gate (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`, Bash deliberately
+// excluded) lives at the OTHER half of the carve-out -- evaluator.ts's stage-2 skip -- which is the
+// strictly stronger of the two: a Bash-shaped write into the memory directory is still refused by
+// the managed deny (through `findFileDenyBlockingEdit`), so relaxing the §6.7 protected-write
+// standing exception for that same path cannot open it.
+//
+// --- THREE PROPERTIES A HOST READING THIS MUST KNOW (SDK 0.0.4 fix wave, review Minors 3/4/5) -----
+//
+// (1) IT IS KEYED TO THE DEFAULT SHAPE, NOT TO THE SESSION'S EFFECTIVE MEMORY DIRECTORY, AND IT
+// FAILS CLOSED. `context/memory-key.ts`'s `memoryDirFor` honours `Settings.autoMemoryDirectory` and a
+// host-supplied `SystemPromptInput.memoryDir`, either of which REPLACES the computed path outright.
+// This predicate matches the literal `projects/<one segment>/memory` shape, so a relocation to any
+// OTHER sub-path of the winter home -- `projects/<key>/mem`, `projects/<key>/<uuid>/memory`,
+// `<winterHome>/memory/<key>` -- still meets the M13 floor and is DENIED: the very bug this carve-out
+// fixes, in a configuration the SDK supports. It fails closed (a clean rule denial, never a silent
+// hole), and an override pointing outside `projects/` entirely is unaffected because no floor applies
+// there. Deriving the carve-out from the EFFECTIVE directory would mean threading it through
+// `EvaluationContext`; correct long-term, deliberately out of scope for this cut.
+//
+// (2) THE WILDCARD IS *ANY* KEY, DELIBERATELY -- SO MEMORY IS A CROSS-PROJECT SURFACE. The segment is
+// not the session's own cwd-derived memory key: a session in project A can write project B's
+// `MEMORY.md`, and both shared product buckets (`RESERVED_MEMORY_KEYS` -- `_global`, `_assistant`)
+// are admitted. That is REQUIRED, not an oversight: those buckets are layered on by a HOST (Winter's
+// own sanitiser can never produce a key beginning with `_`), so scoping to the session's own key
+// would break them, and Winter's shipped memory instructions name that path to the model directly.
+// The consequence a host must weigh: memory content is injected into FUTURE sessions' context every
+// turn, so a write here is a cross-session influence channel. Bounded -- every non-bypass mode
+// prompts or needs a host allow rule, and under `bypassPermissions` `~/.winter/settings.json` is
+// already writable through the same §6.7 arm -- and P5-B has the identical property (any key, any
+// uuid).
+//
+// (3) THIS REMOVES A FLOOR; IT DOES NOT GRANT. Nothing here auto-approves anything. The memory
+// directory is outside `boundedRoots`, so `acceptEdits` prompts for a memory write exactly as it does
+// for any other out-of-cwd write, and `plan` still withholds it by its own rule. That ceiling is
+// deliberate: smuggling a grant into a permission-BOUNDARY change would be wrong, and prompting is
+// already strictly better than the hard managed deny this replaces. A host that wants silent memory
+// writes must say so itself -- seed an allow rule for the path, or add the memory directory to the
+// session's additional directories.
+const MEMORY_SEGMENTS = ["memory"] as const;
 
 /**
  * True when `absPath` is inside a session's own persisted-workflow-script directory under `home`.
@@ -117,32 +182,54 @@ export function isWorkflowScriptCarveOut(absPath: string, home: string, resolved
   // the edit-then-rerun loop WS-11 §1.3 documents worked only because nothing denied the real
   // location either -- which the companion floor in `buildBaselineDenyRules` now does, so the
   // carve-out has to follow or the loop breaks as collateral damage.
-  if (resolvedWinterHome !== undefined && matchesCarveOut(pathSegments(absPath), [...pathSegments(resolve(resolvedWinterHome)), WINTER_PROJECTS_SEGMENT])) return true;
+  if (resolvedWinterHome !== undefined && matchesCarveOut(pathSegments(absPath), [...pathSegments(resolve(resolvedWinterHome)), WINTER_PROJECTS_SEGMENT], 2, WORKFLOW_SCRIPTS_SEGMENTS)) return true;
   const homeSegments = pathSegments(resolve(home));
   const segments = pathSegments(absPath);
   // Must start with <home>/<homeDirName>/projects/<key>/<uuid>/workflows/scripts/ and have at least one
   // more segment after it (the script file itself) -- the DIRECTORY is not itself writable, only its
   // contents, so a `Write` targeting the directory path is still denied.
-  return matchesCarveOut(segments, [...homeSegments, (brand ?? WINTER_BRAND).homeDirName, WINTER_PROJECTS_SEGMENT]);
+  return matchesCarveOut(segments, [...homeSegments, (brand ?? WINTER_BRAND).homeDirName, WINTER_PROJECTS_SEGMENT], 2, WORKFLOW_SCRIPTS_SEGMENTS);
 }
 
 /**
- * `<prefix>/<project-key>/<session-uuid>/workflows/scripts/<file>` -- the shape, factored so the two
- * anchors (the OS-home one and the resolved-root one) cannot drift apart.
+ * True when `absPath` is inside a project's own auto-memory directory under `home` (SDK 0.0.4).
  *
- * SIX FIXED POSITIONS WITH EXACTLY TWO WILDCARDS BETWEEN THEM, unchanged: a `projects/**` style
- * match would let a session write into another session's area by nesting, and a prefix match on
- * `workflows/scripts` alone would open one anywhere under `projects/`.
+ * Same contract as `isWorkflowScriptCarveOut` one function up -- an ALREADY-ABSOLUTE path, an
+ * explicit `home`, an optional resolved winter root, an optional brand -- and the same two anchors,
+ * for the same Phase-5-I1 reason: `context/memory-key.ts`'s `memoryDirFor` joins onto the RESOLVED
+ * winter home, so a carve-out anchored only at `<osHome>/<homeDirName>` would name a directory the
+ * feature never writes to whenever `<PREFIX>HOME` points elsewhere.
  */
-function matchesCarveOut(segments: readonly string[], prefix: readonly string[]): boolean {
+export function isMemoryCarveOut(absPath: string, home: string, resolvedWinterHome?: string, brand?: ProtectedBrand): boolean {
+  if (resolvedWinterHome !== undefined && matchesCarveOut(pathSegments(absPath), [...pathSegments(resolve(resolvedWinterHome)), WINTER_PROJECTS_SEGMENT], 1, MEMORY_SEGMENTS)) return true;
+  const homeSegments = pathSegments(resolve(home));
+  return matchesCarveOut(pathSegments(absPath), [...homeSegments, (brand ?? WINTER_BRAND).homeDirName, WINTER_PROJECTS_SEGMENT], 1, MEMORY_SEGMENTS);
+}
+
+/**
+ * `<prefix>/<wildcard x N>/<tail...>/<at least one more segment>` -- the shape both carve-outs are
+ * spelled in, factored so neither the two ANCHORS of one carve-out nor the two CARVE-OUTS can drift
+ * apart.
+ *
+ * P5-B is `(wildcards: 2, tail: ["workflows","scripts"])` -- six fixed positions with exactly two
+ * wildcards between them, unchanged: a `projects/**` style match would let a session write into
+ * another session's area by nesting, and a prefix match on `workflows/scripts` alone would open one
+ * anywhere under `projects/`. Auto-memory is `(wildcards: 1, tail: ["memory"])` -- one segment
+ * tighter, and refusing the nested `projects/<key>/<uuid>/memory/**` for exactly the first of those
+ * two reasons and `projects/memory/**` for the second.
+ *
+ * FIXED-COUNT WILDCARDS, never "zero or more": that is the whole enforcement, and the reason this
+ * helper counts positions instead of scanning for the tail segments anywhere in the path.
+ */
+function matchesCarveOut(segments: readonly string[], prefix: readonly string[], wildcards: number, tail: readonly string[]): boolean {
   // The DIRECTORY itself is not writable -- only its contents -- so at least one segment must follow.
-  if (segments.length < prefix.length + 2 + WORKFLOW_SCRIPTS_SEGMENTS.length + 1) return false;
+  if (segments.length < prefix.length + wildcards + tail.length + 1) return false;
   for (let i = 0; i < prefix.length; i++) {
     if (segments[i] !== prefix[i]) return false;
   }
-  const scriptsStart = prefix.length + 2;
-  for (let i = 0; i < WORKFLOW_SCRIPTS_SEGMENTS.length; i++) {
-    if (segments[scriptsStart + i] !== WORKFLOW_SCRIPTS_SEGMENTS[i]) return false;
+  const tailStart = prefix.length + wildcards;
+  for (let i = 0; i < tail.length; i++) {
+    if (segments[tailStart + i] !== tail[i]) return false;
   }
   return true;
 }
@@ -188,6 +275,14 @@ export function isProtectedWrite(path: string, ctx: { cwd: string; home: string;
   // pre-existing worktree-area exception one function down, and for the same reason: a subtree
   // the agent is meant to work in cannot also be protected from it.
   if (isWorkflowScriptCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
+  // SDK 0.0.4: the auto-memory carve-out, checked in the SAME position and for the same reason --
+  // it too lives inside the brand's own dot-dir, which `isInsideProtectedDirectory` would otherwise
+  // reject unconditionally. This is the half that makes the memory directory writable in the
+  // PROMPTING modes: without it, `default`/`acceptEdits`/`plan` reach `resolveProtectedWrite` and
+  // the model's every memory write becomes an approval prompt for a path the product told it to use
+  // freely. (Under `bypassPermissions` §6.7 already returns `allow`, so that mode was blocked by the
+  // stage-2 managed deny alone -- the OTHER half, in evaluator.ts.)
+  if (isMemoryCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
   const basename = basenameOf(absPath);
   // The instructions file is brand-derived, so it is matched from the PROFILE as well as from the
   // seeded default set -- a reuser's ACME.md must be as protected as Winter's own file is.

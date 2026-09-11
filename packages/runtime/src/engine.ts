@@ -1444,6 +1444,18 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
     //
     // Two entries per tool for the same reason as `~/.winter/run` above: the bare pattern covers the
     // directory itself, `/**` covers its contents.
+    //
+    // TWO SUBTREES ARE CARVED OUT of this deny, both at stage 2 and both in evaluator.ts (never by
+    // weakening the rule strings here, which would also weaken the Bash-shaped coverage
+    // `findFileDenyBlockingEdit` derives from them): RULING P5-B's
+    // `projects/<key>/<uuid>/workflows/scripts/**` (WS-11 §1.3's edit-then-rerun loop) and SDK
+    // 0.0.4's `projects/<key>/memory/**` (the auto-memory directory `context/memory-key.ts` resolves
+    // and `context/memory.ts` tells the model to write with ordinary file tools). Both are
+    // exact-segment shapes with a fixed wildcard count, both keep the DIRECTORY itself unwritable,
+    // and the memory one additionally admits only the write-class tools -- see
+    // `permissions/protected.ts` and evaluator.ts's `projectsCarveOutSkip` for the full argument.
+    // Everything else under `projects/` -- the JSONL transcripts a resume rebuilds from, the roster
+    // sidecars, the provider-state sidecars -- stays denied.
     sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/projects` }, "deny", "managed"),
     sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/projects/**` }, "deny", "managed"),
     sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/projects` }, "deny", "managed"),
