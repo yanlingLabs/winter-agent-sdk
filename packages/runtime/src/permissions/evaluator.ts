@@ -51,7 +51,7 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
 // field mapping (see that module's own header for why it lives there, not here).
 import { recognizeEditOperation, fileRulePathField, shellCommandOf } from "./edit-recognition.ts";
-import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, type ProtectedBrand } from "./protected.ts";
+import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, isMemoryCarveOut, type ProtectedBrand } from "./protected.ts";
 // P7a fix r1 (Important-2): the reading for an evaluation context that carries no brand -- every
 // hand-built one in this package's tests, and a host driving the evaluator directly.
 import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
@@ -735,13 +735,73 @@ export function workflowScriptCarveOutSkip(call: PermissionCall, ctx: Evaluation
   return (entry) => isProjectsBaselineDeny(entry, ctx);
 }
 
+// --- SDK 0.0.4: the auto-memory carve-out, evaluator side -----------------------------------------
+//
+// `permissions/protected.ts` handles the §6.7 protected-write half (`isMemoryCarveOut`). This
+// handles the other half, exactly as P5-B does one function up: the M13 baseline
+// `Write/Edit/NotebookEdit(~/.winter/projects/**)` DENY, which no allow rule and no permission mode
+// can ever beat, because stage 2 runs before stages 3-6 by design. That deny is what blocked
+// Winter's OWN auto-memory feature -- `context/memory.ts` hands the model
+// `<winterHome>/projects/<memory-key>/memory` every turn with "read and write it with the ordinary
+// file tools", and every such write was refused by the product's own floor.
+//
+// THREE CONDITIONS, and the THIRD is what P5-B does not have:
+//   1. the entry must be a MANAGED deny naming the projects subtree -- `isProjectsBaselineDeny`,
+//      shared verbatim with P5-B, so a user-authored `Write(~/.winter/projects/**)` deny still wins;
+//   2. EVERY candidate write path of the call must be inside the memory carve-out, so a compound
+//      command touching one memory file and one transcript is denied outright;
+//   3. the CALL'S TOOL must be one of the write-class tools. `Bash` is deliberately untouched: its
+//      write hole into `projects/**` is closed by `findFileDenyBlockingEdit`'s cross-tool rule, the
+//      memory feature never needs a shell to maintain its own directory, and a shell carve-out would
+//      hand the model an arbitrary-command door keyed on one operand's path. `echo x >>
+//      <memory>/MEMORY.md` therefore stays DENIED, and a test pins that it does.
+const MEMORY_CARVE_OUT_TOOLS: ReadonlySet<string> = new Set([
+  "Write",
+  "Edit",
+  // `MultiEdit` is named because the carve-out's own definition is "the write-class tools" and a
+  // reuser's tool surface may carry it. This runtime implements no such tool today, and
+  // `recognizeEditOperation` has no case for the name, so `extractCandidateWritePaths` returns an
+  // empty list for it and condition 2 fails first -- the membership is INERT here rather than a
+  // silent grant, and deliberately does NOT invent a path field for a tool that does not exist.
+  "MultiEdit",
+  "NotebookEdit",
+]);
+
+function callIsEntirelyMemoryWrite(call: PermissionCall, ctx: EvaluationContext): boolean {
+  if (!MEMORY_CARVE_OUT_TOOLS.has(call.toolName)) return false;
+  const paths = extractCandidateWritePaths(call, ctx);
+  if (paths.length === 0) return false;
+  return paths.every((p) => isMemoryCarveOut(resolve(ctx.cwd, p), ctx.home, ctx.winterHome, ctx.brand));
+}
+
+/** The auto-memory `skip` predicate, or `undefined` when this call earns no carve-out at all. */
+export function memoryCarveOutSkip(call: PermissionCall, ctx: EvaluationContext): ((entry: SourcedRuleEntry) => boolean) | undefined {
+  if (!callIsEntirelyMemoryWrite(call, ctx)) return undefined;
+  return (entry) => isProjectsBaselineDeny(entry, ctx);
+}
+
+/**
+ * The ONE skip both stage-2 deny lookups pass: the union of the two `projects/**` carve-outs.
+ *
+ * A union rather than a third predicate, so each carve-out keeps its own independently-testable
+ * entry point (`brand-rebrand.test.ts` pins `workflowScriptCarveOutSkip` by name) and neither can
+ * widen the other. Both arms return the identical `isProjectsBaselineDeny` predicate, so which arm
+ * produced it is not observable downstream -- only WHETHER this call earns one at all.
+ */
+export function projectsCarveOutSkip(call: PermissionCall, ctx: EvaluationContext): ((entry: SourcedRuleEntry) => boolean) | undefined {
+  return workflowScriptCarveOutSkip(call, ctx) ?? memoryCarveOutSkip(call, ctx);
+}
+
 function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
   const candidatePaths = extractCandidateWritePaths(call, ctx);
   if (candidatePaths.length === 0) return undefined;
-  // RULING P5-B: the same carve-out the stage-2 lookup applies. Without it here, a `Write` into the
-  // scripts subtree would walk past the stage-2 skip and be caught by the SIBLING `Edit`/`NotebookEdit`
-  // baseline deny through this function's cross-tool rule -- a denial from the rule next door.
-  const carveOutSkip = workflowScriptCarveOutSkip(call, ctx);
+  // RULING P5-B (+ SDK 0.0.4's auto-memory arm): the same carve-out the stage-2 lookup applies.
+  // Without it here, a `Write` into the scripts subtree -- or into the memory directory -- would walk
+  // past the stage-2 skip and be caught by the SIBLING `Edit`/`NotebookEdit` baseline deny through
+  // this function's cross-tool rule: a denial from the rule next door. The tool gate on the memory
+  // arm is what keeps Bash out of BOTH lookups, which is exactly how `echo x >> <memory>/MEMORY.md`
+  // still lands on a denial here.
+  const carveOutSkip = projectsCarveOutSkip(call, ctx);
   const pool = ctx.allowManagedPermissionRulesOnly ? ctx.policy.rules.entries.filter((e) => e.source === "managed") : ctx.policy.rules.entries;
   for (const entry of pool) {
     // A rule for the SAME tool the call is already using is left to the ordinary stage-2 lookup
@@ -1345,11 +1405,12 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   const carriedTransform = hookResult.transformedInput;
 
   // --- Stage 2: deny rules ---------------------------------------------------------------------
-  // RULING P5-B: the ONE skip applied here -- see workflowScriptCarveOutSkip. `undefined` for every
-  // call that is not entirely a write into a session's own persisted-workflow-script directory, which
-  // is every call in every pre-P5 fixture, so stage 2 is byte-identical for them.
-  const projectsCarveOutSkip = workflowScriptCarveOutSkip(effectiveCall, ctx);
-  const denyEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "deny", ctx, projectsCarveOutSkip !== undefined ? { skip: projectsCarveOutSkip } : undefined);
+  // RULING P5-B (+ SDK 0.0.4's auto-memory arm): the ONE skip applied here -- see
+  // projectsCarveOutSkip. `undefined` for every call that is not entirely a write into a session's
+  // own persisted-workflow-script directory or into a project's own auto-memory directory, which is
+  // every call in every pre-P5 fixture, so stage 2 is byte-identical for them.
+  const carveOutSkip = projectsCarveOutSkip(effectiveCall, ctx);
+  const denyEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "deny", ctx, carveOutSkip !== undefined ? { skip: carveOutSkip } : undefined);
   if (denyEntry) {
     return {
       decision: "deny",
