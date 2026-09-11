@@ -101,6 +101,33 @@ function text(body: string, isError = false): WinterToolResult {
   return { text: body, ...(isError ? { isError: true } : {}) };
 }
 
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * A THROW OUT OF THE PORT IS A TOOL RESULT, NOT AN EXCEPTION (whole-branch fix wave).
+ *
+ * These handlers promise `{ text, isError? }`, and a port that threw used to break that promise by
+ * propagating — leaving the contract true only because each host happens to wrap its executor
+ * boundary. That is two hosts' error handling standing in for one library's, which is precisely the
+ * arrangement ruling R-8-1 exists to end: the model on one branch would see whatever that host's
+ * boundary renders, and on the other branch something else.
+ *
+ * The posture matches `advisor.ts`'s, deliberately: name the tool, say what failed, carry the
+ * message, and mark it an error the model can act on. A port's own POLICY answers ("refused",
+ * "not_found") already arrive as typed outcomes and never come through here — what reaches this is an
+ * adapter that crashed, which is exactly the case a model should be told about rather than have
+ * silently turned into a transport-level failure of the whole turn.
+ */
+async function guarded(what: string, run: () => Promise<WinterToolResult> | WinterToolResult): Promise<WinterToolResult> {
+  try {
+    return await run();
+  } catch (err) {
+    return text(`Error: ${what}: ${describe(err)}`, true);
+  }
+}
+
 export function createMessagingToolHandlers(port: MessagingToolPort, caller: WinterToolCaller | (() => WinterToolCaller)): MessagingToolHandlers {
   const identity = (): WinterToolCaller => (typeof caller === "function" ? caller() : caller);
 
@@ -116,38 +143,51 @@ export function createMessagingToolHandlers(port: MessagingToolPort, caller: Win
       const perCall = toolUseIdFromExtra(extra);
       const who: WinterToolCaller = perCall === undefined ? bound : { ...bound, toolUseId: perCall };
       const summary = deriveSendMessageSummary(accepted.args.summary, accepted.args.message);
-      const result = await port.sendDetailed({
-        from: callerAddress(who),
-        to: accepted.args.to,
-        body: accepted.args.message,
-        ...(summary === undefined ? {} : { summary }),
-        ...(accepted.args.notify_when_idle === undefined ? {} : { notifyWhenIdle: accepted.args.notify_when_idle }),
-        ...(who.toolUseId === undefined ? {} : { originToolCallId: who.toolUseId }),
+      return guarded("SendMessage could not reach the messaging system", async () => {
+        const result = await port.sendDetailed({
+          from: callerAddress(who),
+          to: accepted.args.to,
+          body: accepted.args.message,
+          ...(summary === undefined ? {} : { summary }),
+          ...(accepted.args.notify_when_idle === undefined ? {} : { notifyWhenIdle: accepted.args.notify_when_idle }),
+          ...(who.toolUseId === undefined ? {} : { originToolCallId: who.toolUseId }),
+        });
+        // WS-10 §10.1: the result "reports success/message and MAY include a message ID, routing/receipt
+        // information … or a CLASSIFIED FAILURE" — so the typed outcome IS the result, rendered whole.
+        // The supplementary `notify` fact rides beside it rather than as an eleventh outcome status,
+        // which is the shape the shared core already chose for a combined call.
+        const payload = result.notify === undefined ? result.outcome : { ...result.outcome, notify: result.notify };
+        return text(JSON.stringify(payload), MODEL_FACING_FAILURES.has(result.outcome.status));
       });
-      // WS-10 §10.1: the result "reports success/message and MAY include a message ID, routing/receipt
-      // information … or a CLASSIFIED FAILURE" — so the typed outcome IS the result, rendered whole.
-      // The supplementary `notify` fact rides beside it rather than as an eleventh outcome status,
-      // which is the shape the shared core already chose for a combined call.
-      const payload = result.notify === undefined ? result.outcome : { ...result.outcome, notify: result.notify };
-      return text(JSON.stringify(payload), MODEL_FACING_FAILURES.has(result.outcome.status));
     },
 
     async listAgents(rawArgs) {
       const accepted = acceptNativeListAgentsArgs(rawArgs);
       if (!accepted.ok) return text(accepted.reason, true);
-      const rows = await port.listReachable({ from: callerAddress(identity()) });
-      // WS-10 §10.2: "Output is EXACTLY `{ listing: string }`" — one string field, and nothing else.
-      // The rows behind it are never enumerated as structured output here, and an exited transcript
-      // is never among them: the listing view drops exited sessions by construction. The caller's own
-      // row is dropped by the PORT (both hosts' `listReachable` do it), never re-filtered here.
-      return text(JSON.stringify({ listing: formatListing(rows) }));
+      return guarded("ListAgents could not reach the messaging system", async () => {
+        const rows = await port.listReachable({ from: callerAddress(identity()) });
+        // WS-10 §10.2: "Output is EXACTLY `{ listing: string }`" — one string field, and nothing else.
+        // The rows behind it are never enumerated as structured output here, and an exited transcript
+        // is never among them: the listing view drops exited sessions by construction.
+        //
+        // WHOSE ROW IS EXCLUDED IS THE PORT'S ANSWER, and it is narrower than "never yourself": both
+        // hosts filter by the RESOLVED OWNING SESSION, so a top-level caller does not see itself,
+        // while a CHILD caller (an `agent:<parent>:<child>` address) is resolved to its owning session
+        // first and its own row can still appear in the listing. Pre-existing on both branches, and
+        // recorded here rather than papered over — a re-filter at this layer would be a second,
+        // divergent answer to the same question, since the handler knows only the address it was
+        // handed. Ledgered for the 0.0.4 patch wave.
+        return text(JSON.stringify({ listing: formatListing(rows) }));
+      });
     },
 
     async readNotifications(rawArgs) {
       const accepted = acceptNativeReadNotificationsArgs(rawArgs);
       if (!accepted.ok) return text(accepted.reason, true);
-      const { notifications, remaining } = port.readNotifications(identity().sessionId);
-      return text(JSON.stringify({ notifications, remaining }));
+      return guarded("ReadNotifications could not drain the notification queue", () => {
+        const { notifications, remaining } = port.readNotifications(identity().sessionId);
+        return text(JSON.stringify({ notifications, remaining }));
+      });
     },
   };
 }

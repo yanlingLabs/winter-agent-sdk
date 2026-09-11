@@ -230,3 +230,64 @@ describe("readNotifications: the drained page and what is left", () => {
     expect(recorder.reads).toHaveLength(0);
   });
 });
+
+describe("a THROWING port is a tool result, never an exception (whole-branch fix wave)", () => {
+  // The handlers promise `{ text, isError? }`. A port that threw used to propagate, leaving that
+  // promise true only because each host happens to wrap its own executor boundary -- two hosts'
+  // error handling standing in for one library's, which is the arrangement R-8-1 exists to end.
+  // A port's POLICY answers ("refused", "not_found") arrive as typed outcomes and never come through
+  // here; what does is an adapter that crashed, which is exactly what a model should be told.
+  const boom = (): never => {
+    throw new Error("adapter exploded");
+  };
+
+  function throwingPort(which: "sendDetailed" | "listReachable" | "readNotifications"): MessagingToolPort {
+    const base = recordingPort().port;
+    return { ...base, [which]: boom } as MessagingToolPort;
+  }
+
+  test("sendMessage: the throw becomes an error result naming the tool and carrying the message", async () => {
+    const handlers = createMessagingToolHandlers(throwingPort("sendDetailed"), CALLER);
+    const result = await handlers.sendMessage({ to: "x", message: "m" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("SendMessage");
+    expect(result.text).toContain("adapter exploded");
+  });
+
+  test("listAgents: the same", async () => {
+    const handlers = createMessagingToolHandlers(throwingPort("listReachable"), CALLER);
+    const result = await handlers.listAgents({});
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("ListAgents");
+    expect(result.text).toContain("adapter exploded");
+  });
+
+  test("readNotifications: the same, and its port method is SYNCHRONOUS -- a sync throw counts too", async () => {
+    const handlers = createMessagingToolHandlers(throwingPort("readNotifications"), CALLER);
+    const result = await handlers.readNotifications({});
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("ReadNotifications");
+    expect(result.text).toContain("adapter exploded");
+  });
+
+  test("a REJECTED promise is caught too, not only a synchronous throw", async () => {
+    const base = recordingPort().port;
+    const port: MessagingToolPort = { ...base, sendDetailed: async () => Promise.reject(new Error("upstream gone")) };
+    const result = await createMessagingToolHandlers(port, CALLER).sendMessage({ to: "x", message: "m" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("upstream gone");
+  });
+
+  test("a non-Error throw is still rendered, never `[object Object]` or a crash", async () => {
+    const base = recordingPort().port;
+    const port: MessagingToolPort = {
+      ...base,
+      listReachable: () => {
+        throw "just a string";
+      },
+    };
+    const result = await createMessagingToolHandlers(port, CALLER).listAgents({});
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("just a string");
+  });
+});

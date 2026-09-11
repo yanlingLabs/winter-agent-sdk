@@ -128,10 +128,25 @@ describe("listReachable and readNotifications", () => {
     expect(listCalls[0]?.parent).toEqual(SELF);
   });
 
-  test("the caller's OWN row never appears in the listing -- the port is where that rule already lives", async () => {
+  test("a TOP-LEVEL caller's own row is excluded -- the port is where that rule already lives", async () => {
     const { adapter } = fakeAdapter([peerRow("s_caller"), peerRow("s_peer")]);
     const port = messagingToolPortFromRuntimeDeps(makeDeps(adapter));
     expect((await port.listReachable({ from: SELF })).map((r) => r.address)).toEqual(["session:s_peer"]);
+  });
+
+  test("...but the exclusion is by OWNING SESSION, so a CHILD caller can still see its own row", async () => {
+    // Recorded, not asserted as desirable (whole-branch fix wave): `listReachable` resolves an
+    // `agent:<parent>:<child>` address to `session:<parent>` before scoping, so the row the child
+    // itself occupies is not the row that gets dropped. Pre-existing on both branches and unchanged
+    // this round -- this test exists so the behaviour is written down where the next reader of
+    // port.ts will find it, and so the 0.0.4 fix has a test to invert rather than one to write.
+    const child: RuntimeAddress = { objectKind: "agent", runtimeKind: "winter-agent", winterSessionId: "s_caller", parentWinterSessionId: "s_caller", childId: "c1" };
+    const childRow = peerRow("s_caller", { address: "agent:s_caller:c1", objectKind: "agent" });
+    const { adapter } = fakeAdapter([childRow, peerRow("s_caller"), peerRow("s_peer")]);
+    const port = messagingToolPortFromRuntimeDeps(makeDeps(adapter));
+    const rows = (await port.listReachable({ from: child })).map((r) => r.address);
+    expect(rows).toContain("agent:s_caller:c1"); // the caller's own row, still there
+    expect(rows).not.toContain("session:s_caller"); // the OWNING SESSION's row is what was dropped
   });
 
   test("readNotifications DRAINS: the second read of the same session is empty", () => {

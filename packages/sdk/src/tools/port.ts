@@ -64,10 +64,20 @@ function callerFromAddress(from: RuntimeAddress, originToolCallId: string | unde
  * The Winter-runtime side of the port: `MessagingRuntimeDeps` in, `MessagingToolPort` out.
  *
  * `listReachable` goes through the core's own `listAgents` rather than straight to
- * `deps.adapter.listReachable`, because the core is where "never yourself" lives (WS-10 §10.2). The
- * router's handle applies the same filter in its own `listReachable`, so BOTH sides of this port
- * hand back rows the caller is already excluded from — which is why the handlers must not filter
- * again (they are the layer least able to know the caller's real address).
+ * `deps.adapter.listReachable`, because the core is where the self-exclusion rule lives (WS-10
+ * §10.2) — so the handlers never filter again (they are the layer least able to know the caller's
+ * real address).
+ *
+ * WHAT THAT FILTER ACTUALLY EXCLUDES, stated precisely rather than as "never yourself" (whole-branch
+ * fix wave). The `from` address is resolved to its OWNING SESSION before the core is asked, and the
+ * core drops the row matching that session address. For a top-level caller those are the same thing
+ * and the rule reads as written. For a CHILD caller (`agent:<parent>:<child>`) they are not: the
+ * scope collapses to `session:<parent>`, so the child's OWN `agent:` row can still appear in the
+ * listing it gets back. The router's handle filters the same way, by the address it was scoped with.
+ *
+ * Pre-existing on both branches and left alone here deliberately — this round changed no behaviour,
+ * and the fix belongs where the resolution happens, not in a re-filter bolted onto the port.
+ * Ledgered for the 0.0.4 patch wave.
  */
 export function messagingToolPortFromRuntimeDeps(deps: MessagingRuntimeDeps): MessagingToolPort {
   return {
