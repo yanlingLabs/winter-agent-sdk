@@ -29,28 +29,14 @@ import "../descriptors/send-message.ts";
 import "../descriptors/winter-send-message.ts"; // rider 15: the canonical alias-target descriptor this file also installs an executor for.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
-import { acceptNativeSendMessageArgs, createMessagingToolHandlers, messagingToolPortFromRuntimeDeps, SEND_MESSAGE_DEFINITION, type WinterToolCaller } from "@yanlinglabs/winter-agent-sdk/tools";
+import { acceptNativeSendMessageArgs, createMessagingToolHandlers, messagingToolPortFromRuntimeDeps, SEND_MESSAGE_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
 import { getMessagingRuntime } from "../../messaging/router.ts";
+// Side-effect-free (types only), so importing this executor does not register anyone else's tool --
+// see impl/_caller.ts's own header (SB review r1).
+import { callerContextFrom } from "./_caller.ts";
 
 /** Read off the one definition, so the registered name and the descriptor's can never disagree. */
 export const SEND_MESSAGE_TOOL_NAME = SEND_MESSAGE_DEFINITION.builtinName ?? SEND_MESSAGE_DEFINITION.toolName;
-
-/**
- * WHO IS CALLING — from the execution context, never from the arguments.
- *
- * `ctx.toolUseId` is real (registry.ts threads `EngineToolCall.id` onto every context it builds), so
- * WS-10 §12's retry-stable messageId derivation is live in production. It is passed through as
- * possibly-undefined rather than defaulted here: the SDK's port allocates the fallback, once, for
- * both hosts, and its posture is the one this file used to carry — a fresh id per call and NO dedupe,
- * because two distinct model calls must never be mistaken for one retry of each other.
- */
-export function callerContextFrom(ctx: ToolExecutionContext): WinterToolCaller {
-  return {
-    sessionId: ctx.sessionId,
-    ...(ctx.agentId !== undefined ? { agentId: ctx.agentId } : {}),
-    ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
-  };
-}
 
 export const sendMessageExecutor: ToolExecutor = {
   async execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {

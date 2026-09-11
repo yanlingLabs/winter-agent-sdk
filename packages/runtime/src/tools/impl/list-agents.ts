@@ -17,7 +17,9 @@ import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type Too
 import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
 import { acceptNativeListAgentsArgs, createMessagingToolHandlers, LIST_AGENTS_DEFINITION, messagingToolPortFromRuntimeDeps } from "@yanlinglabs/winter-agent-sdk/tools";
 import { getMessagingRuntime } from "../../messaging/router.ts";
-import { callerContextFrom } from "./send-message.ts";
+// Side-effect-free (types only): importing THIS executor must not also register SendMessage and
+// its canonical twin, which is what importing it from `./send-message.ts` did (SB review r1).
+import { callerContextFrom } from "./_caller.ts";
 
 /** Read off the one definition, so the registered name and the descriptor's can never disagree. */
 export const LIST_AGENTS_TOOL_NAME = LIST_AGENTS_DEFINITION.builtinName ?? LIST_AGENTS_DEFINITION.toolName;

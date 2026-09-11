@@ -14,7 +14,9 @@ import "../descriptors/read-notifications.ts";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { acceptNativeReadNotificationsArgs, createMessagingToolHandlers, messagingToolPortFromRuntimeDeps, READ_NOTIFICATIONS_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
 import { getMessagingRuntime } from "../../messaging/router.ts";
-import { callerContextFrom } from "./send-message.ts";
+// Side-effect-free (types only): importing THIS executor must not also register SendMessage and
+// its canonical twin, which is what importing it from `./send-message.ts` did (SB review r1).
+import { callerContextFrom } from "./_caller.ts";
 
 /** Read off the one definition, so the registered name and the descriptor's can never disagree. */
 export const READ_NOTIFICATIONS_TOOL_NAME = READ_NOTIFICATIONS_DEFINITION.builtinName ?? READ_NOTIFICATIONS_DEFINITION.toolName;
