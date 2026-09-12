@@ -5,7 +5,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   discoverPublishablePackages,
   findPackageManifests,
@@ -311,9 +311,16 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
         // demand it there, and `pnpm pack` produces a tarball with NO `bin/` entry at all -- an empty
         // directory is never packed. Asserting presence unconditionally here is exactly the bug that
         // failed this test for real on ubuntu the first time this ran.
+        // …EXCEPT when the binary was RESTORED onto a mismatched host — which is exactly what
+        // release.yml's publish jobs do (the macOS `build-platform` artifact is untarred into
+        // packages/platform/darwin-arm64/bin/ on ubuntu before `bun test` runs there). The v0.0.5
+        // publish failed PRE-PUBLISH on this very line for asserting "no bin on ubuntu". The honest
+        // expectation: a matching host MUST ship the bin; any host ships it iff it is on disk.
         const manifest = JSON.parse(readFileSync(source.packageJsonPath, "utf8")) as { os?: string[]; cpu?: string[] };
         const hostMatches = (manifest.os === undefined || manifest.os.includes(process.platform)) && (manifest.cpu === undefined || manifest.cpu.includes(process.arch));
-        expect([p.name, hostMatches, paths.some((f) => f.startsWith("package/bin/"))]).toEqual([p.name, hostMatches, hostMatches]);
+        const binOnDisk = existsSync(join(dirname(source.packageJsonPath), "bin", "winter"));
+        if (hostMatches) expect([p.name, binOnDisk]).toEqual([p.name, true]);
+        expect([p.name, hostMatches, binOnDisk, paths.some((f) => f.startsWith("package/bin/"))]).toEqual([p.name, hostMatches, binOnDisk, binOnDisk]);
       } else {
         // ...and `dist/` really is there, so "no src" is not "nothing at all".
         expect([p.name, paths.some((f) => f.startsWith("package/dist/"))]).toEqual([p.name, true]);
