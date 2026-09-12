@@ -274,9 +274,16 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
       expect([p.name, paths.filter((f) => /^package\/src\//.test(f))]).toEqual([p.name, []]);
       const source = discoverPublishablePackages().find((pkg) => pkg.name === p.name)!;
       if (isBinOnly(source)) {
-        // P9a-3: the platform package ships a native BINARY, never `dist/` -- verified via `bin/`
-        // instead, and it carries a LICENSE + README exactly like every other publishable package.
-        expect([p.name, paths.some((f) => f.startsWith("package/bin/"))]).toEqual([p.name, true]);
+        // P9a-3/P9a-5 MEASURED: the platform package ships a native BINARY, never `dist/` -- but
+        // ONLY on a host that could have built it (darwin/arm64). On any other host (this repo's
+        // own ubuntu `pack-smoke` jobs, and `bun test`'s run inside ci.yml's `build` job) the binary
+        // is genuinely absent on disk, `assertDeclaredBinsExistOnMatchingHost` correctly does not
+        // demand it there, and `pnpm pack` produces a tarball with NO `bin/` entry at all -- an empty
+        // directory is never packed. Asserting presence unconditionally here is exactly the bug that
+        // failed this test for real on ubuntu the first time this ran.
+        const manifest = JSON.parse(readFileSync(source.packageJsonPath, "utf8")) as { os?: string[]; cpu?: string[] };
+        const hostMatches = (manifest.os === undefined || manifest.os.includes(process.platform)) && (manifest.cpu === undefined || manifest.cpu.includes(process.arch));
+        expect([p.name, hostMatches, paths.some((f) => f.startsWith("package/bin/"))]).toEqual([p.name, hostMatches, hostMatches]);
       } else {
         // ...and `dist/` really is there, so "no src" is not "nothing at all".
         expect([p.name, paths.some((f) => f.startsWith("package/dist/"))]).toEqual([p.name, true]);

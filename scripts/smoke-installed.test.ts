@@ -10,8 +10,8 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverPublishablePackages } from "./release-pack.ts";
-import { assertInstalledTreeIsDistOnly, deriveImportTargets, runBinTarget, runSmoke, runtimesFor, type BinTarget, type SmokeResult } from "./smoke-installed.ts";
+import { discoverPublishablePackages, type PackedPackage } from "./release-pack.ts";
+import { assertInstalledTreeIsDistOnly, deriveImportTargets, installableOnThisHost, runBinTarget, runSmoke, runtimesFor, type BinTarget, type SmokeResult } from "./smoke-installed.ts";
 
 // --- P7a fix wave (item 11, N-3): the pack+install legs are OPT-IN outside CI --------------------
 //
@@ -155,6 +155,39 @@ describe("runBinTarget (P9a-5)", () => {
     const target: BinTarget = { kind: "bin", package: "@t/fake-no-platform-fields", version: "0.0.4", bin };
     const result = await runBinTarget(target);
     expect(result).toEqual({ ok: true, skipped: false, output: expect.stringContaining("OK") as unknown as string });
+  });
+});
+
+// P9a-5 MEASURED: the real bug this exists for. `npm install <tarball-a> <tarball-b>` refuses the
+// WHOLE command with EBADPLATFORM the instant ONE explicitly-named tarball's os/cpu mismatches --
+// reproduced for real on ubuntu's `pack-smoke`/`pack-smoke-node18` jobs before this filter existed.
+describe("installableOnThisHost (P9a-5)", () => {
+  const fake = (name: string): PackedPackage => ({ name, version: "0.0.4", tarballPath: `/tmp/${name}.tgz`, file: `${name}.tgz`, sha256: "x".repeat(64), size: 1 });
+
+  test("a bin-only package whose os/cpu MATCHES the given host is included", () => {
+    const packages = [fake("@t/js-pkg"), fake("@t/bin-pkg")];
+    const targets: BinTarget[] = [{ kind: "bin", package: "@t/bin-pkg", version: "0.0.4", bin: "/x/bin", os: ["darwin"], cpu: ["arm64"] }];
+    const result = installableOnThisHost(packages, targets, "darwin", "arm64");
+    expect(result.map((p) => p.name)).toEqual(["@t/js-pkg", "@t/bin-pkg"]);
+  });
+
+  test("a bin-only package whose os/cpu MISMATCHES the given host is EXCLUDED -- the JS packages are not", () => {
+    const packages = [fake("@t/js-pkg"), fake("@t/bin-pkg")];
+    const targets: BinTarget[] = [{ kind: "bin", package: "@t/bin-pkg", version: "0.0.4", bin: "/x/bin", os: ["darwin"], cpu: ["arm64"] }];
+    const result = installableOnThisHost(packages, targets, "linux", "x64");
+    expect(result.map((p) => p.name)).toEqual(["@t/js-pkg"]);
+  });
+
+  test("an os-only or cpu-only mismatch is excluded too -- both fields must agree, not just one", () => {
+    const packages = [fake("@t/bin-pkg")];
+    const targets: BinTarget[] = [{ kind: "bin", package: "@t/bin-pkg", version: "0.0.4", bin: "/x/bin", os: ["darwin"], cpu: ["arm64"] }];
+    expect(installableOnThisHost(packages, targets, "darwin", "x64")).toEqual([]); // cpu mismatch alone
+    expect(installableOnThisHost(packages, targets, "linux", "arm64")).toEqual([]); // os mismatch alone
+  });
+
+  test("a package with no bin target at all (every JS package) is never excluded, regardless of host", () => {
+    const packages = [fake("@t/js-pkg")];
+    expect(installableOnThisHost(packages, [], "linux", "x64")).toEqual(packages);
   });
 });
 

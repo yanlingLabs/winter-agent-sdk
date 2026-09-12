@@ -26,7 +26,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverPublishablePackages, releasePack, type PublishablePackage } from "./release-pack.ts";
+import { discoverPublishablePackages, releasePack, type PackedPackage, type PublishablePackage } from "./release-pack.ts";
 
 export type SmokeRuntime = "node" | "bun";
 
@@ -177,15 +177,49 @@ async function importUnder(runtime: SmokeRuntime, specifier: string, probeDir: s
 }
 
 /**
+ * Does `target`'s declared `os`/`cpu` match a host? Defaults to the CURRENT host; `platform`/`arch`
+ * are injectable so `installableOnThisHost`'s own test can plant a mismatch without touching
+ * `process.platform`/`process.arch` (which bun/node do not allow reassigning on some builds anyway).
+ */
+export function hostMatchesBinTarget(target: BinTarget, platform: string = process.platform, arch: string = process.arch): boolean {
+  return (target.os === undefined || target.os.includes(platform)) && (target.cpu === undefined || target.cpu.includes(arch));
+}
+
+/**
+ * P9a-5 MEASURED (not assumed): which packed packages can be handed to `npm install` DIRECTLY, on
+ * `platform`/`arch` (defaults to the current host).
+ *
+ * `bun install`'s own tolerance for a mismatched OPTIONAL dependency (M1: the package directory is
+ * still created, `bin/` is empty) does NOT extend to plain `npm install <tarball-path>` -- npm
+ * treats every EXPLICITLY-named command-line argument as a REQUIRED install target regardless of
+ * what the wrapper's own `optionalDependencies` say about it, and refuses the WHOLE install with
+ * `EBADPLATFORM` the instant one argument's `os`/`cpu` mismatches (measured on the real ubuntu
+ * `pack-smoke`/`pack-smoke-node18` jobs the first time this ran: one mismatched tarball killed the
+ * entire offline install, every OTHER package included, not just the platform one). So a mismatched
+ * bin-only package is excluded from the install command line entirely -- its own check is answered
+ * as a SKIP without ever attempting to install or spawn it, never a failed install of everything.
+ */
+export function installableOnThisHost(
+  packages: readonly PackedPackage[],
+  targets: readonly SmokeTarget[],
+  platform: string = process.platform,
+  arch: string = process.arch,
+): PackedPackage[] {
+  const binTargetsByPackage = new Map(targets.filter((t): t is BinTarget => t.kind === "bin").map((t) => [t.package, t]));
+  return packages.filter((p) => {
+    const binTarget = binTargetsByPackage.get(p.name);
+    return binTarget === undefined || hostMatchesBinTarget(binTarget, platform, arch);
+  });
+}
+
+/**
  * P9a-5: executes `<bin> --version` when the target's declared `os`/`cpu` matches the CURRENT host,
  * and asserts the printed line equals the package's own `version` exactly. On a mismatching host the
  * file cannot exist by construction (P9a-4), so this SKIPS with the exact printed reason rather than
  * attempting a spawn that could only ever fail with ENOENT for the wrong reason.
  */
 export async function runBinTarget(target: BinTarget, binPath: string = target.bin): Promise<{ ok: boolean; output: string; skipped: boolean }> {
-  const osOk = target.os === undefined || target.os.includes(process.platform);
-  const cpuOk = target.cpu === undefined || target.cpu.includes(process.arch);
-  if (!osOk || !cpuOk) {
+  if (!hostMatchesBinTarget(target)) {
     const line = `smoke-installed: SKIP ${target.package} (bin-only; os/cpu mismatch on ${process.platform}/${process.arch})`;
     console.log(line);
     return { ok: true, output: line, skipped: true };
@@ -251,11 +285,13 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
     }
     const targets = deriveImportTargets();
 
+    const installable = installableOnThisHost(packed.packages, targets);
+
     // Outside the monorepo on purpose: a fresh mkdtemp, no pnpm-workspace.yaml, no lockfile, no
     // committed .npmrc in scope -- the only thing that could make this succeed is the packed
     // tarballs themselves resolving each other correctly.
     writeFileSync(join(probeDir, "package.json"), JSON.stringify({ name: "winter-smoke-probe", private: true, version: "0.0.0" }, null, 2) + "\n");
-    const install = Bun.spawnSync(["npm", "install", "--offline", ...packed.packages.map((p) => p.tarballPath)], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
+    const install = Bun.spawnSync(["npm", "install", "--offline", ...installable.map((p) => p.tarballPath)], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
     if (install.exitCode !== 0) {
       throw new Error(`npm install --offline failed (exit ${install.exitCode}):\n${decode(install.stdout)}${decode(install.stderr)}`);
     }
@@ -266,7 +302,7 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
     // condition surviving here would send Bun to a `src/` path that is not on disk, which is the one
     // failure the source-condition design makes possible and the one no import test would attribute
     // correctly (it looks like a missing module, not a manifest that lies).
-    const distOnly = assertInstalledTreeIsDistOnly(probeDir, packed.packages.map((p) => p.name));
+    const distOnly = assertInstalledTreeIsDistOnly(probeDir, installable.map((p) => p.name));
     if (distOnly.length > 0) throw new Error(`the installed tree is not dist-only:\n${distOnly.join("\n")}`);
 
     // P9a-5: bin targets run ONCE per `runSmoke()` call, independent of which `runtimes` were
@@ -276,6 +312,14 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
     // a non-matching host, and a real execution on a matching one (the new macOS job).
     for (const target of targets) {
       if (target.kind !== "bin") continue;
+      if (!hostMatchesBinTarget(target)) {
+        // Never installed above -- resolving its path or spawning it would fail for the WRONG
+        // reason (a missing node_modules entry, not a deliberate platform mismatch).
+        const line = `smoke-installed: SKIP ${target.package} (bin-only; os/cpu mismatch on ${process.platform}/${process.arch})`;
+        console.log(line);
+        results.push({ kind: "bin", package: target.package, ok: true, output: line, skipped: true });
+        continue;
+      }
       const binPath = resolveBinTargetPath(target, probeDir);
       const result = await runBinTarget(target, binPath);
       results.push({ kind: "bin", package: target.package, ok: result.ok, output: result.output, skipped: result.skipped });
