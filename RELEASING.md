@@ -29,14 +29,53 @@ pnpm strips `scripts` from the packed manifest, so the published package carries
 
 | Registry | Job | Packages | Credential |
 | --- | --- | --- | --- |
-| GitHub Packages | `publish` | all five | `secrets.GITHUB_TOKEN`, `packages: write` |
-| public npm | `publish-npm` | the closure of the wrapper + the two harness roots — all five today | `secrets.NPM_TOKEN`, `id-token: write` for provenance |
+| GitHub Packages | `publish` | all six | `secrets.GITHUB_TOKEN`, `packages: write` |
+| public npm | `publish-npm` | the closure of the wrapper + the two harness roots + the wrapper's `optionalDependency` — all six today | `secrets.NPM_TOKEN`, `id-token: write` for provenance |
 
 Neither registry is chosen on a command line. `--registry` sets only `registries.default`, and both
 pnpm and npm consult the **scope** binding first — a committed `@yanlinglabs:registry` line would
 therefore beat it, which is why the project `.npmrc` pins nothing. Each job binds its own scope *and*
 credential with `actions/setup-node` (`registry-url` + `scope`), and
 `scripts/publish-routing.test.ts` proves the routing with real `npm publish --dry-run` runs.
+
+## The darwin-arm64 platform package (P9a-3/P9a-4)
+
+`@yanlinglabs/winter-agent-sdk-darwin-arm64` ships the compiled `winter` runtime binary — the
+artifact the wrapper spawns — as an `optionalDependency` of `@yanlinglabs/winter-agent-sdk`. It is
+bin-only: no `main`, no `types`, no `exports` at all, just `bin: { winter: "bin/winter" }`, gated on
+`os: ["darwin"]` / `cpu: ["arm64"]` so a package manager that honours those fields (npm; `bun install`
+partially — see below) simply does not fetch it on any other platform.
+
+**Built ONLY on a macOS `arm64` runner.** `bun build --compile` targets the CURRENT host — it does not
+cross-compile — so a `build-platform` job (`runs-on: macos-15`) exists in BOTH workflows: `ci.yml`
+runs it on every push (no tag pin, and it runs the smoke's real EXECUTE path —
+`smoke-installed.ts --runtime=bun` actually spawns the just-built binary, since `os`/`cpu` match on
+that runner) so a broken darwin build fails long before a tag exists; `release.yml` runs the same
+build, additionally checks the binary's own `--version` against the pushed tag, tars it (GitHub
+Actions artifact uploads drop the executable bit, which is exactly why this matters), and uploads it
+as one artifact. Both jobs assert `uname -s`/`uname -m` themselves rather than trusting the `macos-15`
+label.
+
+**Both publish jobs `needs: build-platform`, download that ONE artifact, and restore + verify it —
+`chmod +x`, `test -x`, `file` reports `Mach-O 64-bit executable arm64`, `shasum -a 256 -c` against the
+recorded checksum — BEFORE their own version-tag gate and BEFORE the publish step.** Neither job
+rebuilds the binary itself: they ship exactly what `build-platform` produced.
+
+**Locally**, `bun run build:runtime --platform-package` (or `bun run scripts/build-runtime.ts
+--platform-package`) stages `packages/platform/darwin-arm64/bin/winter` — git-ignored, built on
+demand, never committed. `scripts/release-pack.ts` HARD-FAILS a pack attempted on a matching host
+(`darwin`/`arm64`) with that file missing, naming the exact command to run first; on a non-matching
+host (e.g. this repo's own `ubuntu-latest` `pack-smoke` jobs) the same absence is expected and
+tolerated — a package manager on Linux was never going to fetch this binary either.
+
+**The smoke (`scripts/smoke-installed.ts`) treats a bin-only package differently from an importable
+one**: it executes `<bin> --version` and compares it to the package's own `version` when `os`/`cpu`
+match the current host, and prints an explicit `SKIP … (bin-only; os/cpu mismatch on …)` line
+otherwise — never a silent no-op, and never an import attempt that would fail for the wrong reason.
+
+A Norma consumer (`packages/core`) resolves this package via `createRequire(...).resolve` and never
+needs `dist/winter` built from an SDK checkout once it installs from a real release —
+see that repo's `runtime-sdk/executable.ts` and P9a-8/P9a-9.
 
 The npm set is **data** (`winter.publish.npm` per manifest), asserted to equal the transitive
 workspace `dependencies` closure of the ROOTS: the wrapper, plus every package flagged
@@ -101,7 +140,7 @@ English, and a regex over English is a heuristic:
 Round 4 narrowed the negation skip to the matched clause and accepts unbackticked `src/`, which closes
 the two evasions the review demonstrated. The class remains: these gates catch the mistakes people
 actually make (a stale sentence surviving a rewrite) and cannot prove a README is true. **When you
-change what ships, re-read the five package READMEs** — the gate is a net, not a proof.
+change what ships, re-read the six package READMEs** — the gate is a net, not a proof.
 
 ## What ships
 

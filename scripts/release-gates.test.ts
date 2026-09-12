@@ -104,11 +104,14 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
   });
 
   test("each publish job's permissions are exactly what that registry needs -- nothing broader", () => {
-    // TWO JOBS since the pre-publish round (item 5), with DIFFERENT minimal grants: `packages: write`
-    // is GitHub Packages' and stays there; `id-token: write` is npm provenance's and exists only on
-    // the npm job. Neither has the other's -- which is the whole reason they are separate jobs.
+    // TWO PUBLISH JOBS since the pre-publish round (item 5), with DIFFERENT minimal grants:
+    // `packages: write` is GitHub Packages' and stays there; `id-token: write` is npm provenance's
+    // and exists only on the npm job. Neither has the other's -- which is the whole reason they are
+    // separate jobs. P9a-4 adds a THIRD job, `build-platform`, which publishes nothing and therefore
+    // carries no elevated permissions at all (the default token grant, unstated here).
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    expect(Object.keys(doc.jobs)).toEqual(["publish", "publish-npm"]);
+    expect(Object.keys(doc.jobs)).toEqual(["build-platform", "publish", "publish-npm"]);
+    expect(doc.jobs["build-platform"]?.permissions).toBeUndefined();
     expect(doc.jobs["publish"]?.permissions).toEqual({ packages: "write", contents: "read" });
     expect(doc.jobs["publish-npm"]?.permissions).toEqual({ "id-token": "write", contents: "read" });
   });
@@ -196,9 +199,9 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     // The `dist`-typed fixture is the one gate that crosses `tsc --emitDeclarationOnly` +
     // `rewriteDeclarationSpecifiers` -- the link an installed consumer resolves and no other gate
     // touches. Asserted in both files, and after the build, since it needs `dist` by construction.
-    for (const [file, yml, jobName] of [["ci.yml", CI_YML, "build"], ["release.yml", RELEASE_YML, undefined]] as const) {
+    for (const [file, yml, jobName] of [["ci.yml", CI_YML, "build"], ["release.yml", RELEASE_YML, "publish"]] as const) {
       const doc = Bun.YAML.parse(yml) as WorkflowDoc;
-      const job = jobName !== undefined ? doc.jobs[jobName]! : Object.values(doc.jobs)[0]!;
+      const job = doc.jobs[jobName]!;
       const runs = job.steps.map((s) => s.run ?? "");
       const distFixtureAt = runs.findIndex((r) => r.includes("tsconfig.winter-dist.json"));
       expect([file, distFixtureAt >= 0]).toEqual([file, true]);
@@ -240,8 +243,13 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     // Widened from job 1 only. Job 2 satisfies the property intrinsically -- `publish-npm-set.ts`
     // calls `releasePack()`, which builds before packing -- but "satisfied intrinsically" is a claim
     // about today's implementation, and this test is the place it should be written down.
+    //
+    // P9a-4: named explicitly rather than `Object.entries(doc.jobs)` over ALL of them -- `build-platform`
+    // is a THIRD job now, and it builds the RUNTIME BINARY (`build-runtime.ts`), never the JS emit
+    // (`build:packages`), and publishes nothing at all; it is pinned separately (its own describe).
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    for (const [jobName, job] of Object.entries(doc.jobs)) {
+    for (const jobName of ["publish", "publish-npm"] as const) {
+      const job = doc.jobs[jobName]!;
       const jobRuns = job.steps.map((s) => s.run ?? "");
       const build = jobRuns.map((r) => r.startsWith("bun run build:packages")).lastIndexOf(true);
       const publish = jobRuns.findIndex(IS_PUBLISH_STEP);
@@ -257,7 +265,7 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
 
   test("release.yml builds the emit explicitly BEFORE its own gates AND immediately before the publish", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    const runs = Object.values(doc.jobs)[0]!.steps.map((s) => s.run ?? "");
+    const runs = doc.jobs["publish"]!.steps.map((s) => s.run ?? "");
     const firstBuild = runs.findIndex((r) => r.startsWith("bun run build:packages"));
     const lastBuild = runs.map((r) => r.startsWith("bun run build:packages")).lastIndexOf(true);
     const testAt = runs.findIndex((r) => r.startsWith("bun test"));
@@ -295,7 +303,7 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
 
   test("scripts/smoke-installed.ts (which packs + scans internally) runs as a gate BEFORE the publish step", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
-    const steps = Object.values(doc.jobs)[0]!.steps;
+    const steps = doc.jobs["publish"]!.steps;
     const runLines = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
     const smokeIndex = runLines.findIndex((r) => r.includes("smoke-installed.ts"));
     const publishIndex = runLines.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
@@ -410,13 +418,16 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     expect(doc.on).toEqual({ push: { tags: ["v*"] }, workflow_dispatch: {} });
   });
 
-  test("there are exactly two publish jobs, and the npm one DEPENDS on GitHub Packages succeeding", () => {
+  test("there are exactly two PUBLISH jobs (plus the P9a-4 build job), and the npm one DEPENDS on GitHub Packages succeeding", () => {
     // Order matters in one direction only: npm is the registry a version can never be taken back
     // from, so it must not run until the recoverable one has succeeded.
+    //
+    // P9a-4: a third job, `build-platform`, exists to produce the darwin-arm64 binary -- it publishes
+    // nothing (pinned separately below) and BOTH publish jobs now `needs` it too.
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    expect(Object.keys(doc.jobs)).toEqual(["publish", "publish-npm"]);
-    expect(doc.jobs["publish-npm"]?.needs).toBe("publish");
-    expect(doc.jobs["publish"]?.needs).toBeUndefined();
+    expect(Object.keys(doc.jobs)).toEqual(["build-platform", "publish", "publish-npm"]);
+    expect(doc.jobs["publish"]?.needs).toBe("build-platform");
+    expect(doc.jobs["publish-npm"]?.needs).toEqual(["publish", "build-platform"]);
   });
 
   test("the npm publish is TOKEN-GATED, so a missing NPM_TOKEN never blocks the GitHub Packages publish", () => {
@@ -1096,20 +1107,85 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
   });
 });
 
+// --- P9a-4: the darwin-arm64 binary, built on a macOS runner, gated before either publish ----------
+describe("P9a-4: build-platform builds the darwin-arm64 binary on a real macOS arm64 runner and never publishes", () => {
+  test("build-platform runs on a `macos-` labeled runner and asserts `uname -m`/`uname -s` rather than trusting the label", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const job = doc.jobs["build-platform"]!;
+    expect(String((job as unknown as { ["runs-on"]?: unknown })["runs-on"] ?? "")).toMatch(/^macos-/);
+    const runs = job.steps.map((s) => s.run ?? "").join("\n");
+    expect(runs).toContain("uname -m");
+    expect(runs).toContain("uname -s");
+  });
+
+  test("build-platform runs NO publish command -- it produces the binary, never ships it to a registry", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const job = doc.jobs["build-platform"]!;
+    for (const step of job.steps) expect(IS_PUBLISH_STEP(step.run ?? "")).toBe(false);
+    // The general sweep (containsPublishCommand, comment-stripped) agrees, over the job's own text.
+    const jobText = RELEASE_YML.slice(RELEASE_YML.indexOf("build-platform:"), RELEASE_YML.indexOf("publish:"));
+    expect(containsPublishCommand(jobText)).toBe(false);
+  });
+
+  test("build-platform stages the binary via `bun run scripts/build-runtime.ts --platform-package` and uploads ONE artifact", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    const job = doc.jobs["build-platform"]!;
+    const runs = job.steps.map((s) => s.run ?? "");
+    expect(runs.some((r) => r.includes("build-runtime.ts") && r.includes("--platform-package"))).toBe(true);
+    const upload = job.steps.find((s) => s.uses?.startsWith("actions/upload-artifact"));
+    expect(upload).toBeDefined();
+    expect((upload as unknown as { with?: { name?: string } })?.with?.name).toBe("winter-darwin-arm64");
+  });
+
+  test("both publish jobs restore + verify the binary (test -x, Mach-O arm64, sha256) BEFORE their own gates and BEFORE the publish step", () => {
+    const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
+    for (const jobName of ["publish", "publish-npm"] as const) {
+      const runs = doc.jobs[jobName]!.steps.map((s) => s.run ?? "");
+      const download = doc.jobs[jobName]!.steps.findIndex((s) => s.uses?.startsWith("actions/download-artifact"));
+      const restoreAt = runs.findIndex((r) => r.includes("shasum -a 256 -c"));
+      const gateAt = runs.findIndex((r) => r.includes("check-release-version.ts"));
+      const publishAt = runs.findIndex(IS_PUBLISH_STEP);
+      expect([jobName, download >= 0]).toEqual([jobName, true]);
+      expect([jobName, restoreAt >= 0]).toEqual([jobName, true]);
+      expect([jobName, restoreAt < gateAt]).toEqual([jobName, true]);
+      expect([jobName, restoreAt < publishAt]).toEqual([jobName, true]);
+      // The three checks the Interfaces block names, all present in the restore step's own text.
+      const restoreStep = doc.jobs[jobName]!.steps.find((s) => (s.run ?? "").includes("shasum -a 256 -c"))!;
+      expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("test -x") as unknown as string]);
+      expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("Mach-O 64-bit executable arm64") as unknown as string]);
+      expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("chmod +x") as unknown as string]);
+    }
+  });
+
+  test("ci.yml carries the SAME macOS build job (minus the tag pin), on every push, and it never publishes", () => {
+    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
+    const job = doc.jobs["build-platform"];
+    expect(job).toBeDefined();
+    expect(String((job as unknown as { ["runs-on"]?: unknown })["runs-on"] ?? "")).toMatch(/^macos-/);
+    const runs = job!.steps.map((s) => s.run ?? "");
+    expect(runs.some((r) => r.includes("uname -m"))).toBe(true);
+    expect(runs.some((r) => r.includes("build-runtime.ts") && r.includes("--platform-package"))).toBe(true);
+    // P9a-5: the EXECUTE path -- smoke-installed.ts --runtime=bun runs for real on a matching host.
+    expect(runs.some((r) => r.includes("smoke-installed.ts") && r.includes("--runtime=bun"))).toBe(true);
+    for (const step of job!.steps) expect(IS_PUBLISH_STEP(step.run ?? "")).toBe(false);
+    expect(containsPublishCommand(CI_YML.slice(CI_YML.indexOf("build-platform:"), CI_YML.indexOf("\n  build:")))).toBe(false);
+  });
+});
+
 describe("release.yml's own Node 18 smoke (R-7a-16): BLOCKING, as ci.yml's leg now is too", () => {
   test("the publish job has no job-level continue-on-error", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    expect(Object.values(doc.jobs)[0]?.["continue-on-error"]).toBeUndefined();
+    expect(doc.jobs["publish"]?.["continue-on-error"]).toBeUndefined();
   });
 
   test("no step in the publish job sets continue-on-error -- including the Node 18 smoke steps specifically", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    for (const step of Object.values(doc.jobs)[0]!.steps) expect(step["continue-on-error"]).toBeUndefined();
+    for (const step of doc.jobs["publish"]!.steps) expect(step["continue-on-error"]).toBeUndefined();
   });
 
   test("it runs a Node 18 smoke via scripts/smoke-installed.ts, pinned via actions/setup-node, strictly before publish", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    const steps = Object.values(doc.jobs)[0]!.steps;
+    const steps = doc.jobs["publish"]!.steps;
     const setupNode = steps.find((s) => s.uses?.startsWith("actions/setup-node"));
     // The `with` block gained `registry-url`/`scope` in round 3 (that is what gives this job a
     // GitHub Packages credential at all -- review C2), so the pin is on the node VERSION, which is
@@ -1125,7 +1201,7 @@ describe("release.yml's own Node 18 smoke (R-7a-16): BLOCKING, as ci.yml's leg n
 
   test("the Bun leg runs too (WS-02 §9 item 3 names both runtimes), also strictly before publish", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
-    const steps = Object.values(doc.jobs)[0]!.steps;
+    const steps = doc.jobs["publish"]!.steps;
     const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
     const bunSmokeIndex = runValues.findIndex((r) => r.includes("smoke-installed.ts") && r.includes("--runtime=bun"));
     const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));

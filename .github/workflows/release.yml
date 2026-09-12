@@ -11,13 +11,70 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 jobs:
+  # --- P9a-3/P9a-4: THE DARWIN-ARM64 BINARY, BUILT ONLY ON A MATCHING RUNNER --------------------
+  #
+  # `bun build --compile` targets the CURRENT host -- it does not cross-compile (M1/P9a-4) -- so the
+  # darwin-arm64 binary can only ever be produced on a `darwin`/`arm64` runner, and this job's FIRST
+  # step asserts that with `uname` rather than trusting the `macos-15` label (a label names an image,
+  # not a guarantee of what `uname` reports on it). Both publish jobs `needs: build-platform` and
+  # download this job's artifact rather than rebuilding -- GitHub Actions strips the executable bit
+  # from artifact uploads, which is why this job tars the binary and the publish jobs untar it and
+  # restore the bit explicitly, verifying identity (Mach-O arm64, matching sha256) before either
+  # registry ever sees it. This job never runs a publish command -- `release-gates.test.ts` pins that.
+  build-platform:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: "assert a REAL macOS arm64 runner (P9a-4) -- never trust the `macos-15` label alone"
+        run: |
+          set -euo pipefail
+          UNAME_S="$(uname -s)"
+          UNAME_M="$(uname -m)"
+          if [ "$UNAME_S" != "Darwin" ] || [ "$UNAME_M" != "arm64" ]; then
+            echo "build-platform: expected Darwin/arm64, got $UNAME_S/$UNAME_M -- refusing to build the darwin-arm64 binary here" >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: pnpm install
+      - run: bun run scripts/build-runtime.ts --platform-package
+      - name: "the binary's own --version matches the tag being published (workflow_dispatch has no tag: skipped)"
+        run: |
+          set -euo pipefail
+          BIN=packages/platform/darwin-arm64/bin/winter
+          ACTUAL="$("$BIN" --version)"
+          echo "build-platform: binary reports --version $ACTUAL"
+          case "${GITHUB_REF:-}" in
+            refs/tags/v*)
+              EXPECTED="${GITHUB_REF#refs/tags/v}"
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "build-platform: binary reports --version $ACTUAL but the pushed tag names $EXPECTED" >&2
+                exit 1
+              fi
+              ;;
+            *) echo "build-platform: no v* tag on this ref (workflow_dispatch) -- version-vs-tag check skipped" ;;
+          esac
+      - run: shasum -a 256 packages/platform/darwin-arm64/bin/winter | tee winter-darwin-arm64.sha256
+      - run: tar -cf winter-darwin-arm64.tar -C packages/platform/darwin-arm64 bin/winter
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winter-darwin-arm64
+          path: |
+            winter-darwin-arm64.tar
+            winter-darwin-arm64.sha256
+          retention-days: 7
+
   # --- TWO REGISTRIES, TWO JOBS (P7a pre-publish item 5; user ruling 2026-09-08) ------------------
   #
   # GitHub Packages first, npm second, and SEPARATE jobs on purpose: the npm leg needs a secret this
   # repository may not have, and a missing `NPM_TOKEN` must never block the GitHub Packages publish.
   # `needs:` makes the dependency explicit -- npm runs only if GitHub Packages SUCCEEDED, so the two
   # registries can never disagree about which versions exist because the first leg failed halfway.
+  # BOTH jobs now also `needs: build-platform` (P9a-4): the darwin-arm64 binary this workflow ships
+  # must exist, on the real artifact, before either registry publish begins.
   publish:
+    needs: build-platform
     runs-on: ubuntu-latest
     # R-7-1: GitHub Packages, scope @yanlinglabs. `contents: read` is the default job permission
     # this repeats explicitly; `packages: write` is the one elevated grant a publish needs and the
@@ -47,6 +104,20 @@ jobs:
           registry-url: "https://npm.pkg.github.com"
           scope: "@yanlinglabs"
       - run: pnpm install
+      # P9a-4: restore the darwin-arm64 binary `build-platform` produced, and VERIFY it before this
+      # job's own gates or the publish step ever run -- a downloaded GitHub Actions artifact loses its
+      # executable bit, so this is not optional ceremony; without `chmod +x` the smoke below fails.
+      - uses: actions/download-artifact@v4
+        with: { name: winter-darwin-arm64 }
+      - name: "restore + verify the platform binary before anything downstream can publish it"
+        run: |
+          set -euo pipefail
+          tar -xf winter-darwin-arm64.tar -C packages/platform/darwin-arm64
+          BIN=packages/platform/darwin-arm64/bin/winter
+          chmod +x "$BIN"
+          test -x "$BIN"
+          file "$BIN" | grep -q "Mach-O 64-bit executable arm64" || { echo "restore: $BIN is not a Mach-O 64-bit arm64 executable" >&2; file "$BIN" >&2; exit 1; }
+          shasum -a 256 -c winter-darwin-arm64.sha256
 
       # --- the gates: the exact verification sequence ci.yml's `build` and `official-fixture-compile`
       # jobs already run on every push, repeated here so a tag pushed out of step with CI history (or
@@ -160,7 +231,10 @@ jobs:
   # job -- carries `id-token: write`. `contents: read` is repeated explicitly beside it; nothing here
   # needs `packages: write` (that is the other job's grant and stays there).
   publish-npm:
-    needs: publish
+    # P9a-4: keeps `needs: publish` (npm never runs until GitHub Packages succeeded) AND gains
+    # `needs: build-platform` (the darwin-arm64 binary this job's own npm publish ships must exist on
+    # the real artifact too -- this job checks out and downloads afresh, exactly like job 1).
+    needs: [publish, build-platform]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -179,6 +253,18 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           scope: "@yanlinglabs"
       - run: pnpm install
+      # P9a-4: same restore + verify as job 1 -- BEFORE this job's own gates or its publish step.
+      - uses: actions/download-artifact@v4
+        with: { name: winter-darwin-arm64 }
+      - name: "restore + verify the platform binary before anything downstream can publish it"
+        run: |
+          set -euo pipefail
+          tar -xf winter-darwin-arm64.tar -C packages/platform/darwin-arm64
+          BIN=packages/platform/darwin-arm64/bin/winter
+          chmod +x "$BIN"
+          test -x "$BIN"
+          file "$BIN" | grep -q "Mach-O 64-bit executable arm64" || { echo "restore: $BIN is not a Mach-O 64-bit arm64 executable" >&2; file "$BIN" >&2; exit 1; }
+          shasum -a 256 -c winter-darwin-arm64.sha256
       # The same two gates the GitHub Packages job ran, repeated here because this job checks out
       # afresh: the version/tag agreement, and the compiled emit the tarballs must contain.
       - run: bun run scripts/check-release-version.ts

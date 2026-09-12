@@ -1,6 +1,33 @@
 name: ci
 on: [push, pull_request]
 jobs:
+  # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
+  # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at
+  # publish time. Runs the smoke's EXECUTE path (real `--version` spawn of the just-built binary)
+  # rather than the SKIP path the two ubuntu `pack-smoke*` jobs below take on this same publishable
+  # package (M1: `os`/`cpu` mismatch there is expected and permanent, never a reason to fail). This
+  # job never publishes anything -- `release-gates.test.ts` pins that alongside every other job here.
+  build-platform:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: "assert a REAL macOS arm64 runner (P9a-4) -- never trust the `macos-15` label alone"
+        run: |
+          set -euo pipefail
+          UNAME_S="$(uname -s)"
+          UNAME_M="$(uname -m)"
+          if [ "$UNAME_S" != "Darwin" ] || [ "$UNAME_M" != "arm64" ]; then
+            echo "build-platform: expected Darwin/arm64, got $UNAME_S/$UNAME_M -- refusing to build the darwin-arm64 binary here" >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: pnpm install
+      - run: bun run scripts/build-runtime.ts --platform-package
+      - run: ./packages/platform/darwin-arm64/bin/winter --version
+      - run: bun run scripts/smoke-installed.ts --runtime=bun   # the EXECUTE path (P9a-5): os/cpu match here
+
   build:
     runs-on: ubuntu-latest
     steps:
