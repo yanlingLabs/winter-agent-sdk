@@ -71,9 +71,15 @@ describe("npmPublishOrder (review I1)", () => {
     // created: `winter-provider-conformance` imports values from `winter-provider-runtime`, so its
     // packed manifest pins that version -- the same 404 shape as the original catalog/sdk finding,
     // one package over.
+    //
+    // P9a-3 adds a sixth: the darwin-arm64 platform package, the wrapper's `optionalDependency` --
+    // walked by the SAME edge-following order (`npmPublishOrder` now walks `optionalDependencies`
+    // too), so it publishes BEFORE the sdk exactly like the catalog does (both are things the sdk's
+    // own manifest names, required or not).
     const { npmPublishOrder } = await import("./npm-publish-set.ts");
     expect(npmPublishOrder().map((p) => p.name)).toEqual([
       "@yanlinglabs/winter-provider-catalog",
+      "@yanlinglabs/winter-agent-sdk-darwin-arm64",
       "@yanlinglabs/winter-agent-sdk",
       "@yanlinglabs/winter-conformance",
       "@yanlinglabs/winter-provider-runtime",
@@ -93,7 +99,7 @@ describe("npmPublishOrder (review I1)", () => {
         : {},
     ).map((p) => p.name);
     expect(reversed.indexOf("@yanlinglabs/winter-agent-sdk")).toBeLessThan(reversed.indexOf("@yanlinglabs/winter-provider-catalog"));
-    expect(reversed).toHaveLength(5);
+    expect(reversed).toHaveLength(6);
   });
 
   test("no package appears before one it depends on -- the property, over the real graph", async () => {

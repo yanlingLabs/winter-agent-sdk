@@ -54,11 +54,19 @@ export function npmPublishSet(root: string = REPO_ROOT): PublishablePackage[] {
 }
 
 /**
- * The transitive WORKSPACE dependency closure of `roots`, computed from `dependencies` alone.
+ * The transitive WORKSPACE dependency closure of `roots`, computed from `dependencies` AND
+ * `optionalDependencies`.
  *
- * `dependencies` and not `devDependencies` or `optionalDependencies`: the question is what a consumer
- * needs at RUN TIME after `npm install <root>`. The platform binary package is an
- * `optionalDependency` and is not published at 7a (R-7-2), so it is correctly outside this set.
+ * `dependencies` alone was the P7a rule, and P9a-3 widens it by exactly one edge type: the question
+ * is what a consumer needs (required OR optional) at RUN TIME after `npm install <root>`. The
+ * platform binary package (`@yanlinglabs/winter-agent-sdk-darwin-arm64`) is the wrapper's own
+ * `optionalDependency` and was correctly outside this set while R-7-2 left it unpublished -- but
+ * once it publishes (P9a-3), excluding it here is M3's exact bug: the npm publish would filter it
+ * out of the set it never walks, so `npm install @yanlinglabs/winter-agent-sdk` would name an
+ * `optionalDependency` that never exists on the registry, and a darwin-arm64 consumer silently never
+ * gets the binary -- forever, since npm treats a missing optional dependency as "skip it", not a
+ * failure loud enough for anyone to notice. `devDependencies` stays excluded: that edge answers a
+ * different question (what THIS repo's own tooling needs), never what an installer of the root gets.
  *
  * `roots` defaults to the wrapper plus every harness root (R-7b-5), which makes this THE WHOLE
  * DEFINITION of the npm set: `npmPublishSet()` (the `winter.publish.npm` flag, which is what the
@@ -74,8 +82,12 @@ export function npmRequiredClosure(root: string = REPO_ROOT, roots: readonly str
     const pkg = byName.get(name);
     if (pkg === undefined) return; // not a workspace package -- an ordinary npm dependency
     seen.add(name);
-    const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { dependencies?: Record<string, string> };
+    const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as {
+      dependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+    };
     for (const dep of Object.keys(manifest.dependencies ?? {})) visit(dep);
+    for (const dep of Object.keys(manifest.optionalDependencies ?? {})) visit(dep);
   };
   for (const name of roots) visit(name);
   return [...seen].sort();
@@ -92,17 +104,20 @@ export function npmRequiredClosure(root: string = REPO_ROOT, roots: readonly str
  * state persisted on a registry from which the version can never be withdrawn or re-published, until
  * a re-drive landed the dependency.
  *
- * Derived from the SAME `dependencies` edges `npmRequiredClosure()` walks -- a depth-first POST-order,
- * where a node is emitted only after everything it depends on. Correct for any future set, not just a
- * two-element one, and it is the graph rather than a second hand-maintained list.
+ * Derived from the SAME `dependencies`+`optionalDependencies` edges `npmRequiredClosure()` walks -- a
+ * depth-first POST-order, where a node is emitted only after everything it depends on. Correct for
+ * any future set, not just a two-element one, and it is the graph rather than a second hand-maintained
+ * list. Widened alongside `npmRequiredClosure` (P9a-3): the wrapper's `optionalDependency` on the
+ * darwin-arm64 platform package is not one npm enforces at install time (a missing optional dependency
+ * is skipped, not a failure), but publishing it first is still correct and costs nothing.
  *
  * `readManifest` is injectable so a test can plant a reversed graph and see the order follow it: an
  * order that happened to be right because the real graph agrees with the alphabet would prove nothing.
  */
 export function npmPublishOrder(
   root: string = REPO_ROOT,
-  readManifest: (pkg: PublishablePackage) => { dependencies?: Record<string, string> } = (pkg) =>
-    JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { dependencies?: Record<string, string> },
+  readManifest: (pkg: PublishablePackage) => { dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> } = (pkg) =>
+    JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> },
 ): PublishablePackage[] {
   const inSet = new Map(npmPublishSet(root).map((p) => [p.name, p]));
   const ordered: PublishablePackage[] = [];
@@ -113,7 +128,9 @@ export function npmPublishOrder(
     // A cycle cannot be published in any order, so it is a refusal rather than an arbitrary choice.
     if (seen === "visiting") throw new Error(`npm-publish-set: dependency cycle through ${pkg.name}`);
     state.set(pkg.name, "visiting");
-    for (const dep of Object.keys(readManifest(pkg).dependencies ?? {})) {
+    const manifest = readManifest(pkg);
+    const deps = [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.optionalDependencies ?? {})];
+    for (const dep of deps) {
       const target = inSet.get(dep);
       if (target !== undefined) visit(target); // only edges INSIDE the npm set can constrain the order
     }

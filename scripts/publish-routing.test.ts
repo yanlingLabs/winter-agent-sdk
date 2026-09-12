@@ -91,7 +91,7 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
   test("job 1's config sends EVERY publishable package to GitHub Packages", async () => {
     const dir = mkdtempSync(join(scratch, "gh-"));
     const userconfig = setupNodeUserconfig(dir, GITHUB_PACKAGES);
-    expect(packed).toHaveLength(5);
+    expect(packed).toHaveLength(6); // P9a-3 adds the darwin-arm64 platform package to the previous five
     for (const pkg of packed) {
       const line = await dryRunTarget(pkg.tarballPath, userconfig);
       expect([pkg.name, line.includes(GITHUB_PACKAGES)]).toEqual([pkg.name, true]);
@@ -120,7 +120,7 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
     // dependencies, read from the PACKED manifests (which is where the exact-version pin that makes
     // the order load-bearing actually lives). Position assertions would have to be rewritten every
     // time the set grows, and rewriting an order assertion is exactly how one stops being checked.
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(6);
     for (const line of lines) expect(line).toContain(NPMJS);
     const indexOf = (name: string): number => lines.findIndex((l) => l.startsWith(`${name} ::`));
     for (const name of order) {
@@ -150,7 +150,7 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
     const dir = mkdtempSync(join(scratch, "npm-"));
     const userconfig = setupNodeUserconfig(dir, NPMJS);
     const npmNames = new Set(npmPublishSet().map((p) => p.name));
-    expect(npmNames.size).toBe(5); // R-7b-5: the wrapper's closure plus the two harness roots and what they pull in
+    expect(npmNames.size).toBe(6); // R-7b-5's five (the wrapper's closure plus the two harness roots) + P9a-3's platform package
     for (const pkg of packed.filter((p) => npmNames.has(p.name))) {
       // `--access public` because `publishConfig.access` stays `restricted` (GitHub Packages'
       // setting) and npm filters a `publishConfig` key that is also a CLI flag.

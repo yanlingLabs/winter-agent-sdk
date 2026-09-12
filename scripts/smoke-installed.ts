@@ -31,6 +31,7 @@ import { discoverPublishablePackages, releasePack, type PublishablePackage } fro
 export type SmokeRuntime = "node" | "bun";
 
 export interface ImportTarget {
+  kind: "import";
   /** The exact specifier to import, e.g. "@yanlinglabs/winter-agent-sdk" or "@yanlinglabs/winter-conformance/trace". */
   specifier: string;
   packageName: string;
@@ -38,9 +39,38 @@ export interface ImportTarget {
   runtimes: SmokeRuntime[];
 }
 
+/**
+ * P9a-5: a BIN-ONLY package's smoke target (the darwin-arm64 platform package today). There is no
+ * `specifier` to import -- the package declares no `exports` at all -- so the smoke instead runs the
+ * declared binary itself with `--version` and checks the printed version against the package's own.
+ * `os`/`cpu` mirror the manifest fields verbatim (M1): when they do not match the CURRENT host, the
+ * target is a SKIP, never an attempt (the file cannot exist there by construction -- P9a-4, `bun
+ * build --compile` never cross-compiles).
+ */
+export interface BinTarget {
+  kind: "bin";
+  package: string;
+  version: string;
+  /** Absolute path to the bin file this package's manifest declares. */
+  bin: string;
+  os?: string[];
+  cpu?: string[];
+}
+
+export type SmokeTarget = ImportTarget | BinTarget;
+
+/** One attempt's outcome, discriminated the same way as the target it came from. */
+export type SmokeAttempt =
+  | { kind: "import"; specifier: string; runtime: SmokeRuntime; ok: boolean; output: string }
+  | { kind: "bin"; package: string; ok: boolean; output: string; skipped: boolean };
+
 interface ExportsField {
   exports?: Record<string, unknown> | string;
   engines?: Record<string, string>;
+  bin?: string | Record<string, string>;
+  os?: string[];
+  cpu?: string[];
+  version?: string;
 }
 
 /**
@@ -75,23 +105,63 @@ export function runtimesFor(manifest: ExportsField): SmokeRuntime[] {
  * each package's OWN package.json (never hand-maintained) -- review r1 Important-4's "cannot be
  * forgotten" property. A package with no `exports` map (or a single-string one) contributes just its
  * bare name; a package with a `{ ".": ..., "./sub": ... }` map contributes one target per key.
+ *
+ * P9a-5: a package with NO `exports` AND a `bin` field (the darwin-arm64 platform package) is
+ * BIN-ONLY -- it contributes a single `BinTarget` instead of an (unimportable) bare specifier. The
+ * `bin` path is resolved relative to the INSTALLED package directory at smoke time (`probeDir`'s
+ * `node_modules/<name>/...`), so this function alone cannot make it absolute; `runBinTarget` and the
+ * caller in `runSmoke` do that once the probe install exists (see `resolveBinTargetPath`).
  */
-export function deriveImportTargets(packages: readonly PublishablePackage[] = discoverPublishablePackages()): ImportTarget[] {
-  const targets: ImportTarget[] = [];
+export function deriveImportTargets(packages: readonly PublishablePackage[] = discoverPublishablePackages()): SmokeTarget[] {
+  const targets: SmokeTarget[] = [];
   for (const pkg of packages) {
     const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as ExportsField;
-    const runtimes = runtimesFor(manifest);
     const exportsField = manifest.exports;
+    if (exportsField === undefined && manifest.bin !== undefined) {
+      const binField = manifest.bin;
+      const relBin = typeof binField === "string" ? binField : Object.values(binField)[0];
+      if (relBin === undefined) continue; // malformed manifest -- nothing to smoke, nothing to import either
+      targets.push({
+        kind: "bin",
+        package: pkg.name,
+        version: manifest.version ?? pkg.version,
+        bin: join(pkg.dir, relBin),
+        ...(manifest.os !== undefined ? { os: manifest.os } : {}),
+        ...(manifest.cpu !== undefined ? { cpu: manifest.cpu } : {}),
+      });
+      continue;
+    }
+    const runtimes = runtimesFor(manifest);
     if (exportsField === undefined || typeof exportsField === "string") {
-      targets.push({ specifier: pkg.name, packageName: pkg.name, runtimes });
+      targets.push({ kind: "import", specifier: pkg.name, packageName: pkg.name, runtimes });
       continue;
     }
     for (const key of Object.keys(exportsField)) {
       const specifier = key === "." ? pkg.name : `${pkg.name}/${key.replace(/^\.\//, "")}`;
-      targets.push({ specifier, packageName: pkg.name, runtimes });
+      targets.push({ kind: "import", specifier, packageName: pkg.name, runtimes });
     }
   }
-  return targets.sort((a, b) => a.specifier.localeCompare(b.specifier));
+  return targets.sort((a, b) => {
+    const an = a.kind === "import" ? a.specifier : a.package;
+    const bn = b.kind === "import" ? b.specifier : b.package;
+    return an.localeCompare(bn);
+  });
+}
+
+/**
+ * `deriveImportTargets()` reads a `BinTarget`'s `bin` from the WORKSPACE package dir -- there is no
+ * other source of truth for the relative path there. `runSmoke`'s probe installs into a throwaway
+ * project instead, so the file actually executed there is the INSTALLED copy; re-read from the
+ * INSTALLED manifest (never by mangling the workspace path into a probe one) so a package whose
+ * `bin` moves is still found correctly.
+ */
+export function resolveBinTargetPath(target: BinTarget, probeDir: string): string {
+  const installedPkgDir = join(probeDir, "node_modules", ...target.package.split("/"));
+  const manifest = JSON.parse(readFileSync(join(installedPkgDir, "package.json"), "utf8")) as { bin?: string | Record<string, string> };
+  const binField = manifest.bin;
+  const relBin = typeof binField === "string" ? binField : binField !== undefined ? Object.values(binField)[0] : undefined;
+  if (relBin === undefined) throw new Error(`resolveBinTargetPath: ${target.package}'s installed manifest has no "bin" entry`);
+  return join(installedPkgDir, relBin);
 }
 
 function decode(bytes: Uint8Array): string {
@@ -104,6 +174,32 @@ async function importUnder(runtime: SmokeRuntime, specifier: string, probeDir: s
   const proc = Bun.spawn([runtime, "-e", code], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { ok: exitCode === 0, output: (stdout + stderr).trim() };
+}
+
+/**
+ * P9a-5: executes `<bin> --version` when the target's declared `os`/`cpu` matches the CURRENT host,
+ * and asserts the printed line equals the package's own `version` exactly. On a mismatching host the
+ * file cannot exist by construction (P9a-4), so this SKIPS with the exact printed reason rather than
+ * attempting a spawn that could only ever fail with ENOENT for the wrong reason.
+ */
+export async function runBinTarget(target: BinTarget, binPath: string = target.bin): Promise<{ ok: boolean; output: string; skipped: boolean }> {
+  const osOk = target.os === undefined || target.os.includes(process.platform);
+  const cpuOk = target.cpu === undefined || target.cpu.includes(process.arch);
+  if (!osOk || !cpuOk) {
+    const line = `smoke-installed: SKIP ${target.package} (bin-only; os/cpu mismatch on ${process.platform}/${process.arch})`;
+    console.log(line);
+    return { ok: true, output: line, skipped: true };
+  }
+  const proc = Bun.spawn([binPath, "--version"], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  if (exitCode !== 0) {
+    return { ok: false, output: `${target.package}: \`${binPath} --version\` exited ${exitCode}: ${(stdout + stderr).trim()}`, skipped: false };
+  }
+  const printed = stdout.trim();
+  if (printed !== target.version) {
+    return { ok: false, output: `${target.package}: \`${binPath} --version\` printed "${printed}", expected "${target.version}"`, skipped: false };
+  }
+  return { ok: true, output: `${target.package}: --version OK (${printed})`, skipped: false };
 }
 
 /**
@@ -138,9 +234,9 @@ export function assertInstalledTreeIsDistOnly(probeDir: string, packageNames: re
 
 export interface SmokeResult {
   ok: boolean;
-  /** Every (runtime, target) pair attempted, in order, up to and including the first failure. */
-  results: Array<{ specifier: string; runtime: SmokeRuntime; ok: boolean; output: string }>;
-  targets: ImportTarget[];
+  /** Every attempt (import or bin), in order, up to and including the first failure. */
+  results: SmokeAttempt[];
+  targets: SmokeTarget[];
 }
 
 export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}): Promise<SmokeResult> {
@@ -173,14 +269,32 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
     const distOnly = assertInstalledTreeIsDistOnly(probeDir, packed.packages.map((p) => p.name));
     if (distOnly.length > 0) throw new Error(`the installed tree is not dist-only:\n${distOnly.join("\n")}`);
 
+    // P9a-5: bin targets run ONCE per `runSmoke()` call, independent of which `runtimes` were
+    // requested -- a compiled binary is not a Node/Bun import, so there is nothing for the runtime
+    // loop below to gate it on. Both single-runtime CI jobs (`--runtime=node`/`--runtime=bun`) still
+    // reach this exactly once each, which is the "both jobs stay on the skip path" ruling (P9a-5) on
+    // a non-matching host, and a real execution on a matching one (the new macOS job).
+    for (const target of targets) {
+      if (target.kind !== "bin") continue;
+      const binPath = resolveBinTargetPath(target, probeDir);
+      const result = await runBinTarget(target, binPath);
+      results.push({ kind: "bin", package: target.package, ok: result.ok, output: result.output, skipped: result.skipped });
+      if (!result.ok) {
+        console.error(`smoke-installed FAILED: bin check of "${target.package}"\n${result.output}`);
+        return { ok: false, results, targets };
+      }
+      if (!result.skipped) console.log(`smoke-installed OK: bin check of "${target.package}"`);
+    }
+
     for (const runtime of runtimes) {
       for (const target of targets) {
+        if (target.kind !== "import") continue;
         if (!target.runtimes.includes(runtime)) {
           console.log(`smoke-installed SKIP: ${runtime} import of "${target.specifier}" -- that package declares no \`engines.${runtime}\``);
           continue;
         }
         const result = await importUnder(runtime, target.specifier, probeDir);
-        results.push({ specifier: target.specifier, runtime, ok: result.ok, output: result.output });
+        results.push({ kind: "import", specifier: target.specifier, runtime, ok: result.ok, output: result.output });
         if (!result.ok) {
           console.error(`smoke-installed FAILED: ${runtime} import of "${target.specifier}"\n${result.output}`);
           return { ok: false, results, targets };
@@ -202,7 +316,7 @@ if (import.meta.main) {
     process.exit(1);
   }
   const { ok, targets } = await runSmoke(runtimeArg ? { runtimes: [runtimeArg] } : {});
-  console.log(`smoke-installed: ${targets.length} target(s) across every publishable package's exports map`);
+  console.log(`smoke-installed: ${targets.length} target(s) across every publishable package's exports map and bin entries`);
   if (!ok) process.exitCode = 1;
-  else console.log("smoke-installed OK -- every target imports cleanly under every requested runtime");
+  else console.log("smoke-installed OK -- every target imports/executes cleanly under every requested runtime");
 }

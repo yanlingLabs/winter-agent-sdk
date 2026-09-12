@@ -2,17 +2,35 @@
   "name": "@yanlinglabs/winter-agent-sdk-darwin-arm64",
   "version": "0.0.4",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanlingLabs/winter-agent-sdk.git",
+    "directory": "packages/platform/darwin-arm64"
+  },
+  "homepage": "https://github.com/yanlingLabs/winter-agent-sdk",
+  "bugs": {
+    "url": "https://github.com/yanlingLabs/winter-agent-sdk/issues"
+  },
   "os": [
     "darwin"
   ],
   "cpu": [
     "arm64"
   ],
-  "private": true,
   "bin": {
     "winter": "bin/winter"
   },
   "files": [
-    "bin"
-  ]
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "winter": {
+    "publish": {
+      "npm": true
+    }
+  }
 }

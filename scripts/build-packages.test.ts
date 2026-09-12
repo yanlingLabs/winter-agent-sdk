@@ -26,12 +26,24 @@ if (!BUILD_ENABLED) {
   );
 }
 
+// P9a-3: the darwin-arm64 platform package ships a compiled BINARY under `bin/`, never a JS
+// entry point -- it declares no `exports` at all, so every test below that reads `manifest.exports`
+// unconditionally must carve it out rather than crash on `Object.keys(undefined)`.
+function isBinOnly(pkg: { packageJsonPath: string }): boolean {
+  const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: unknown; bin?: unknown };
+  return manifest.exports === undefined && manifest.bin !== undefined;
+}
+
 describe("build-packages: the plan is DERIVED from each manifest", () => {
   test("every publishable package's every exports subpath becomes a build entry", () => {
     // The property that makes a forgotten subpath impossible: a manifest key with no entry would
     // publish a `default` condition pointing at a file nobody emitted, and only the smoke -- after a
     // pack -- would notice.
     for (const pkg of discoverPublishablePackages()) {
+      if (isBinOnly(pkg)) {
+        expect([pkg.name, entriesFor(pkg)]).toEqual([pkg.name, []]); // bin-only: nothing to build
+        continue;
+      }
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports: Record<string, unknown> };
       const entries = entriesFor(pkg);
       expect([pkg.name, entries.map((e) => e.subpath).sort()]).toEqual([pkg.name, Object.keys(manifest.exports).sort()]);
@@ -65,6 +77,7 @@ describe("build-packages: the plan is DERIVED from each manifest", () => {
     // drifted from the built entry would give this repo's own tests and a published consumer two
     // different modules under one specifier -- the failure mode a source condition invites.
     for (const pkg of discoverPublishablePackages()) {
+      if (isBinOnly(pkg)) continue; // bin-only: no exports map to describe
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports: Record<string, Record<string, string>>; main?: string; types?: string };
       for (const [subpath, conditions] of Object.entries(manifest.exports)) {
         expect([pkg.name, subpath, Object.keys(conditions)]).toEqual([pkg.name, subpath, ["types", "bun", "default"]]);
@@ -79,9 +92,13 @@ describe("build-packages: the plan is DERIVED from each manifest", () => {
     }
   });
 
-  test("`dist` is in every publishable `files` list -- the emit is what ships", () => {
+  test("`dist` is in every publishable `files` list -- the emit is what ships (bin-only packages ship `bin` instead)", () => {
     for (const pkg of discoverPublishablePackages()) {
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { files: string[] };
+      if (isBinOnly(pkg)) {
+        expect([pkg.name, manifest.files.includes("bin")]).toEqual([pkg.name, true]);
+        continue;
+      }
       expect([pkg.name, manifest.files.includes("dist")]).toEqual([pkg.name, true]);
     }
   });
@@ -116,9 +133,14 @@ describe.skipIf(!BUILD_ENABLED)("build-packages: the real build", () => {
     result = await buildPackages();
   }, 240_000);
 
-  test("every entry emits BOTH a .js and a .d.ts, at the path its manifest condition names", () => {
+  test("every entry emits BOTH a .js and a .d.ts, at the path its manifest condition names (bin-only packages emit none)", () => {
     expect(result.packages.length).toBe(discoverPublishablePackages().length);
     for (const pkg of result.packages) {
+      const source = discoverPublishablePackages().find((p) => p.name === pkg.name)!;
+      if (isBinOnly(source)) {
+        expect([pkg.name, pkg.entries]).toEqual([pkg.name, []]); // bin-only: nothing was built, by design
+        continue;
+      }
       expect([pkg.name, pkg.entries.length > 0]).toEqual([pkg.name, true]);
       for (const entry of pkg.entries) {
         expect([pkg.name, entry.js, existsSync(join(pkg.dir, entry.js))]).toEqual([pkg.name, entry.js, true]);

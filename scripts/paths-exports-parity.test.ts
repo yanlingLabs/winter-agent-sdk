@@ -112,14 +112,22 @@ describe("P7a pre-publish (item 4): tsconfig `paths` and package `exports` agree
     }
   });
 
-  test("the parity is not vacuous: it covers every publishable package and all twelve subpaths", () => {
+  test("the parity is not vacuous: it covers every EXPORTS-BEARING publishable package and all twelve subpaths", () => {
     const expected = expectedFromExports();
     // 12 since SDK 0.0.3's `@yanlinglabs/winter-agent-sdk/tools` (R-8-1: Winter's default tools,
     // declared once for both hosts). The literal is the tripwire -- a subpath added to `exports` with
     // no `paths` entry, or vice versa, is caught by the two tests above only if this one keeps
     // counting what they cover.
     expect(expected.size).toBe(12);
-    expect(new Set([...expected.keys()].map((s) => s.split("/").slice(0, 2).join("/"))).size).toBe(discoverPublishablePackages().length);
+    // P9a-3: the darwin-arm64 platform package is publishable but BIN-ONLY -- no `exports` map, so it
+    // contributes zero specifiers here and must not be counted on the RHS (this test's own denominator
+    // is "packages this parity check actually covers", not "every publishable package" -- the platform
+    // package has no `paths`/`exports` parity to keep, by construction).
+    const exportsBearing = discoverPublishablePackages().filter((pkg) => {
+      const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as Manifest;
+      return manifest.exports !== undefined;
+    });
+    expect(new Set([...expected.keys()].map((s) => s.split("/").slice(0, 2).join("/"))).size).toBe(exportsBearing.length);
     // And each mapped file really exists -- a `paths` pair that agreed on a path nobody wrote would
     // satisfy both tests above.
     for (const [, source] of expected) expect([source, readFileSync(`${REPO_ROOT}${source.replace(/^\.\//, "")}`, "utf8").length > 0]).toEqual([source, true]);

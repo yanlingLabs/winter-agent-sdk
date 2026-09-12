@@ -85,8 +85,14 @@ export interface BuildPackagesResult {
  * reads the `bun` condition -- the source path -- rather than the compiled one.
  */
 export function entriesFor(pkg: PublishablePackage): Array<{ subpath: string; sourceRelative: string }> {
-  const manifest = JSON.parse(require("node:fs").readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: Record<string, unknown> | string };
+  const manifest = JSON.parse(require("node:fs").readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: Record<string, unknown> | string; bin?: unknown };
   const field = manifest.exports;
+  // P9a-3: a BIN-ONLY package (the darwin-arm64 platform package: no `exports` at all, only `bin`)
+  // ships a compiled native BINARY, never a JS entry point -- there is nothing here for `bun build`/
+  // `tsc` to build, and no `dist/` for it to land in. Checked before the "no exports -> src/index.ts"
+  // default below, which exists for a package that has JS but omits `exports` (none exist in this
+  // workspace today; kept as the documented fallback for one that might).
+  if (field === undefined && manifest.bin !== undefined) return [];
   if (field === undefined) return [{ subpath: ".", sourceRelative: "src/index.ts" }];
   if (typeof field === "string") return [{ subpath: ".", sourceRelative: field.replace(/^\.\//, "") }];
   const out: Array<{ subpath: string; sourceRelative: string }> = [];
@@ -207,6 +213,15 @@ export async function buildPackages(opts: { root?: string; packages?: readonly P
   const built: BuiltPackage[] = [];
 
   for (const pkg of packages) {
+    // P9a-3: a bin-only package has no JS to build at all -- `entriesFor` returns `[]` for it, and
+    // there is nothing here to clean, create, bundle or declare. Recorded in `built` with zero
+    // entries so `result.packages.length` still equals every publishable package's count.
+    const entryPlan = entriesFor(pkg);
+    if (entryPlan.length === 0) {
+      built.push({ name: pkg.name, dir: pkg.dir, entries: [] });
+      continue;
+    }
+
     const distDir = join(pkg.dir, "dist");
     // A FULL CLEAN per build, never an incremental overlay: a source file deleted between builds
     // would otherwise leave its stale `.js`/`.d.ts` in the tarball, still resolvable and wrong.
@@ -232,7 +247,6 @@ export async function buildPackages(opts: { root?: string; packages?: readonly P
     //
     // `--packages=external` still keeps every bare specifier a real import the consumer resolves;
     // only RELATIVE imports are bundled, and now deduplicated across entries.
-    const entryPlan = entriesFor(pkg);
     for (const { sourceRelative } of entryPlan) mkdirSync(dirname(join(pkg.dir, distPathFor(sourceRelative, ".js"))), { recursive: true });
     const buildCommand = [
       "bun",

@@ -7,11 +7,11 @@
 // ship green (`bun test` and "manually verified... resolve correctly" both only ever exercised the
 // in-repo, workspace-resolved path).
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverPublishablePackages } from "./release-pack.ts";
-import { assertInstalledTreeIsDistOnly, deriveImportTargets, runSmoke, runtimesFor, type SmokeResult } from "./smoke-installed.ts";
+import { assertInstalledTreeIsDistOnly, deriveImportTargets, runBinTarget, runSmoke, runtimesFor, type BinTarget, type SmokeResult } from "./smoke-installed.ts";
 
 // --- P7a fix wave (item 11, N-3): the pack+install legs are OPT-IN outside CI --------------------
 //
@@ -39,10 +39,19 @@ if (!PACK_SMOKE_ENABLED) {
   );
 }
 
+// P9a-5: a package with NO `exports` and a `bin` field (the darwin-arm64 platform package) is
+// BIN-ONLY -- it has no importable specifier at all, so it is covered by a SEPARATE describe below
+// rather than the exports-subpath property here.
+function isBinOnlyPkg(pkg: { packageJsonPath: string }): boolean {
+  const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: unknown; bin?: unknown };
+  return manifest.exports === undefined && manifest.bin !== undefined;
+}
+
 describe("deriveImportTargets", () => {
   test("every publishable package's OWN exports map is fully covered -- no subpath silently skipped", () => {
     const targets = deriveImportTargets();
     for (const pkg of discoverPublishablePackages()) {
+      if (isBinOnlyPkg(pkg)) continue; // covered by the "bin targets" describe below
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: Record<string, unknown> | string };
       const exportsField = manifest.exports;
       const expectedSpecifiers =
@@ -50,18 +59,102 @@ describe("deriveImportTargets", () => {
           ? Object.keys(exportsField).map((k) => (k === "." ? pkg.name : `${pkg.name}/${k.replace(/^\.\//, "")}`))
           : [pkg.name];
       for (const specifier of expectedSpecifiers) {
-        expect(targets.some((t) => t.specifier === specifier)).toBe(true);
+        expect(targets.some((t) => t.kind === "import" && t.specifier === specifier)).toBe(true);
       }
     }
   });
 
-  test("covers a generous floor (today: 5 packages, 10 targets total across their exports maps)", () => {
-    expect(deriveImportTargets().length).toBeGreaterThanOrEqual(10);
+  test("covers a generous floor (today: 5 exports-based packages, 10 targets total across their exports maps)", () => {
+    expect(deriveImportTargets().filter((t) => t.kind === "import").length).toBeGreaterThanOrEqual(10);
   });
 
-  test("every target's packageName is one of the five R-7-1 publishable packages", () => {
+  test("every import target's packageName is one of the publishable packages", () => {
     const names = new Set(discoverPublishablePackages().map((p) => p.name));
-    for (const target of deriveImportTargets()) expect(names.has(target.packageName)).toBe(true);
+    for (const target of deriveImportTargets()) {
+      if (target.kind !== "import") continue;
+      expect(names.has(target.packageName)).toBe(true);
+    }
+  });
+
+  test("P9a-5: a bin-only package (no `exports`, a `bin` field) contributes exactly one BinTarget, never an ImportTarget", () => {
+    const binOnly = discoverPublishablePackages().filter((p) => isBinOnlyPkg(p));
+    // Not vacuous: the darwin-arm64 platform package is exactly this shape once publishable.
+    expect(binOnly.length).toBeGreaterThanOrEqual(1);
+    const targets = deriveImportTargets();
+    for (const pkg of binOnly) {
+      const matches = targets.filter((t) => (t.kind === "bin" ? t.package === pkg.name : t.packageName === pkg.name));
+      expect([pkg.name, matches]).toEqual([pkg.name, [expect.objectContaining({ kind: "bin", package: pkg.name })]]);
+    }
+  });
+});
+
+// P9a-5's own three required cases, against a FAKE bin-only package -- never the real compiled
+// `winter` binary (that leg is `smoke-installed --runtime=bun`'s real run, exercised via the
+// "bin targets" describe above once the platform binary is built).
+describe("runBinTarget (P9a-5)", () => {
+  const dirs: string[] = [];
+  function fakeBin(script: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "smoke-bin-target-"));
+    dirs.push(dir);
+    const bin = join(dir, "fake-bin");
+    writeFileSync(bin, script);
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+  afterAll(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  test("on a MATCHING platform, executes `<bin> --version` and passes when it equals the package's version", async () => {
+    const bin = fakeBin("#!/bin/sh\necho 0.0.4\n");
+    const target: BinTarget = { kind: "bin", package: "@t/fake-darwin-arm64", version: "0.0.4", bin, os: [process.platform], cpu: [process.arch] };
+    const result = await runBinTarget(target);
+    expect(result).toEqual({ ok: true, output: expect.stringContaining("OK") as unknown as string, skipped: false });
+  });
+
+  test("on a MISMATCHING os, SKIPS with the exact printed reason -- never attempts a spawn", async () => {
+    const bin = fakeBin("#!/bin/sh\necho should-never-run\nexit 1\n");
+    const target: BinTarget = { kind: "bin", package: "@t/fake-other-platform", version: "0.0.4", bin, os: ["definitely-not-a-real-os"], cpu: [process.arch] };
+    const result = await runBinTarget(target);
+    expect(result).toEqual({
+      ok: true,
+      skipped: true,
+      output: `smoke-installed: SKIP @t/fake-other-platform (bin-only; os/cpu mismatch on ${process.platform}/${process.arch})`,
+    });
+  });
+
+  test("on a MISMATCHING cpu, SKIPS the same way", async () => {
+    const bin = fakeBin("#!/bin/sh\necho should-never-run\nexit 1\n");
+    const target: BinTarget = { kind: "bin", package: "@t/fake-other-arch", version: "0.0.4", bin, os: [process.platform], cpu: ["definitely-not-a-real-arch"] };
+    const result = await runBinTarget(target);
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  test("a bin-only package whose bin prints the WRONG version FAILS -- never a silent pass", async () => {
+    const bin = fakeBin("#!/bin/sh\necho 9.9.9\n");
+    const target: BinTarget = { kind: "bin", package: "@t/fake-wrong-version", version: "0.0.4", bin, os: [process.platform], cpu: [process.arch] };
+    const result = await runBinTarget(target);
+    expect(result.ok).toBe(false);
+    expect(result.skipped).toBe(false);
+    expect(result.output).toContain("9.9.9");
+    expect(result.output).toContain("0.0.4");
+  });
+
+  test("a nonzero exit FAILS, distinctly from a version mismatch", async () => {
+    const bin = fakeBin("#!/bin/sh\necho broken >&2\nexit 3\n");
+    const target: BinTarget = { kind: "bin", package: "@t/fake-broken", version: "0.0.4", bin, os: [process.platform], cpu: [process.arch] };
+    const result = await runBinTarget(target);
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("exited 3");
+    expect(result.output).toContain("broken");
+  });
+
+  test("no `os`/`cpu` declared at all -- matches every host (permissive fallback, never fail-closed on an absent field)", async () => {
+    const bin = fakeBin("#!/bin/sh\necho 0.0.4\n");
+    const target: BinTarget = { kind: "bin", package: "@t/fake-no-platform-fields", version: "0.0.4", bin };
+    const result = await runBinTarget(target);
+    expect(result).toEqual({ ok: true, skipped: false, output: expect.stringContaining("OK") as unknown as string });
   });
 });
 
@@ -78,7 +171,7 @@ describe.skipIf(!PACK_SMOKE_ENABLED)("runSmoke: the real pack -> install -> impo
   });
 
   test("specifically covers the two packages review r1 found broken: winter-conformance (+ ./official) and winter-provider-conformance (+ ./fakes)", () => {
-    const specifiers = result.results.map((r) => r.specifier);
+    const specifiers = result.results.flatMap((r) => (r.kind === "import" ? [r.specifier] : []));
     expect(specifiers).toContain("@yanlinglabs/winter-conformance");
     expect(specifiers).toContain("@yanlinglabs/winter-conformance/official");
     expect(specifiers).toContain("@yanlinglabs/winter-provider-conformance");
@@ -99,13 +192,16 @@ describe.skipIf(!PACK_SMOKE_ENABLED)("runSmoke: the Node leg is GREEN since the 
 
   test("every Node-declared target imports cleanly under Node -- nothing fails", () => {
     expect(result.ok).toBe(true);
-    for (const r of result.results) expect([r.specifier, r.ok]).toEqual([r.specifier, true]);
+    for (const r of result.results) {
+      const label = r.kind === "import" ? r.specifier : r.package;
+      expect([label, r.ok]).toEqual([label, true]);
+    }
   });
 
   test("the Node leg actually RAN over the Node-declared packages -- it is not vacuously green", () => {
     // A gate that skipped everything would satisfy the test above forever. These four packages
     // declare `engines.node`, so all eight of their targets must appear in the Node results.
-    const attempted = new Set(result.results.filter((r) => r.runtime === "node").map((r) => r.specifier));
+    const attempted = new Set(result.results.flatMap((r) => (r.kind === "import" && r.runtime === "node" ? [r.specifier] : [])));
     for (const specifier of [
       "@yanlinglabs/winter-agent-sdk",
       "@yanlinglabs/winter-provider-catalog",
@@ -125,7 +221,7 @@ describe.skipIf(!PACK_SMOKE_ENABLED)("runSmoke: the Node leg is GREEN since the 
     // `tsconfig.sdk-fence.json` already records. It declares `engines.bun` and no `engines.node`, and
     // `runtimesFor` is what turns that declaration into the skip -- so a package that ACQUIRES a
     // Node engine is gated the moment it says so.
-    const attempted = new Set(result.results.filter((r) => r.runtime === "node").map((r) => r.specifier));
+    const attempted = new Set(result.results.flatMap((r) => (r.kind === "import" && r.runtime === "node" ? [r.specifier] : [])));
     expect(attempted.has("@yanlinglabs/winter-provider-conformance")).toBe(false);
     expect(runtimesFor({ engines: { bun: ">=1.2" } })).toEqual(["bun"]);
     expect(runtimesFor({ engines: { node: ">=18" } })).toEqual(["node", "bun"]);

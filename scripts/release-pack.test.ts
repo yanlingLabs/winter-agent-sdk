@@ -15,14 +15,24 @@ import {
   type ReleasePackResult,
 } from "./release-pack.ts";
 
-/** R-7-1's publishable set at 7a, sorted -- discoverPublishablePackages's own contract. */
+/**
+ * The publishable set, sorted -- discoverPublishablePackages's own contract. R-7-1's five JS
+ * packages PLUS the darwin-arm64 platform package, publishable as of P9a-3 (R-7-2's gap closed).
+ */
 const EXPECTED_PACKAGE_NAMES = [
   "@yanlinglabs/winter-agent-sdk",
+  "@yanlinglabs/winter-agent-sdk-darwin-arm64",
   "@yanlinglabs/winter-conformance",
   "@yanlinglabs/winter-provider-catalog",
   "@yanlinglabs/winter-provider-conformance",
   "@yanlinglabs/winter-provider-runtime",
 ];
+
+/** P9a-3: a BIN-ONLY package (no `exports`, a `bin` field) -- ships a native binary, not JS. */
+function isBinOnly(pkg: { packageJsonPath: string }): boolean {
+  const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: unknown; bin?: unknown };
+  return manifest.exports === undefined && manifest.bin !== undefined;
+}
 
 describe("isPublishable", () => {
   test("private:true is never publishable, publishConfig or not", () => {
@@ -45,11 +55,13 @@ describe("findPackageManifests / discoverPublishablePackages against the real re
     for (const m of manifests) expect(m.split(/[\\/]/)).not.toContain("node_modules");
   });
 
-  test("the publishable set is exactly R-7-1's five packages -- excludes the private runtime and the unpublished (R-7-2) platform package", () => {
+  test("the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) -- excludes only the private runtime", () => {
     const names = discoverPublishablePackages().map((p) => p.name);
     expect(names).toEqual(EXPECTED_PACKAGE_NAMES);
     expect(names).not.toContain("winter-agent-runtime");
-    expect(names).not.toContain("@yanlinglabs/winter-agent-sdk-darwin-arm64");
+    // R-7-2's gap: the platform package existed but stayed unpublished (`private: true`) until this
+    // binary could actually be produced by CI (P9a-4). It is IN the set now, by name.
+    expect(names).toContain("@yanlinglabs/winter-agent-sdk-darwin-arm64");
   });
 
   test("every discovered package's dir actually contains the package.json it was read from", () => {
@@ -197,7 +209,7 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
     for (const p of result.packages) expect(p.tarballPath.startsWith(outDir)).toBe(true);
   });
 
-  test("the manifest names match the five R-7-1 packages, each a real tarball on disk", () => {
+  test("the manifest names match every publishable package (R-7-1's five JS packages + the P9a-3 platform package), each a real tarball on disk", () => {
     expect(result.packages.map((p) => p.name)).toEqual(EXPECTED_PACKAGE_NAMES);
     for (const p of result.packages) {
       expect(existsSync(p.tarballPath)).toBe(true);
@@ -260,8 +272,15 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
       expect(await proc.exited).toBe(0);
       const paths = listing.trim().split("\n");
       expect([p.name, paths.filter((f) => /^package\/src\//.test(f))]).toEqual([p.name, []]);
-      // ...and `dist/` really is there, so "no src" is not "nothing at all".
-      expect([p.name, paths.some((f) => f.startsWith("package/dist/"))]).toEqual([p.name, true]);
+      const source = discoverPublishablePackages().find((pkg) => pkg.name === p.name)!;
+      if (isBinOnly(source)) {
+        // P9a-3: the platform package ships a native BINARY, never `dist/` -- verified via `bin/`
+        // instead, and it carries a LICENSE + README exactly like every other publishable package.
+        expect([p.name, paths.some((f) => f.startsWith("package/bin/"))]).toEqual([p.name, true]);
+      } else {
+        // ...and `dist/` really is there, so "no src" is not "nothing at all".
+        expect([p.name, paths.some((f) => f.startsWith("package/dist/"))]).toEqual([p.name, true]);
+      }
       // Every tarball carries its own licence (item 9) and README.
       expect([p.name, paths.includes("package/LICENSE")]).toEqual([p.name, true]);
       expect([p.name, paths.includes("package/README.md")]).toEqual([p.name, true]);
@@ -279,27 +298,38 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
         const proc = Bun.spawn(["tar", "-xzf", p.tarballPath, "-C", dir], { stdout: "pipe", stderr: "pipe" });
         expect(await proc.exited).toBe(0);
         const packed = JSON.parse(readFileSync(join(dir, "package", "package.json"), "utf8")) as {
-          exports: Record<string, Record<string, string>>;
+          exports?: Record<string, Record<string, string>>;
           files?: string[];
           license?: string;
           scripts?: Record<string, string>;
           publishConfig?: Record<string, unknown>;
           repository?: { type?: string; url?: string; directory?: string };
         };
-        for (const [subpath, conditions] of Object.entries(packed.exports)) {
-          expect([p.name, subpath, Object.keys(conditions)]).toEqual([p.name, subpath, ["types", "default"]]);
-          for (const target of Object.values(conditions)) expect([p.name, subpath, target.startsWith("./dist/")]).toEqual([p.name, subpath, true]);
+        const source = discoverPublishablePackages().find((pkg) => pkg.name === p.name)!;
+        if (isBinOnly(source)) {
+          // P9a-3: bin-only -- no `exports` map to describe, and it carries NO `prepack` guard
+          // (S.2's decision, recorded in the report: the guard's stated reason -- a non-pnpm packer
+          // silently dropping `publishConfig.exports` -- does not apply to a package with no
+          // `exports` at all). `publishConfig.access` is `"public"` here, not `"restricted"`
+          // (Interfaces block, verbatim) -- the one deliberate divergence from every other package.
+          expect([p.name, packed.exports]).toEqual([p.name, undefined]);
+          expect([p.name, packed.publishConfig]).toEqual([p.name, { access: "public" }]);
+        } else {
+          for (const [subpath, conditions] of Object.entries(packed.exports!)) {
+            expect([p.name, subpath, Object.keys(conditions)]).toEqual([p.name, subpath, ["types", "default"]]);
+            for (const target of Object.values(conditions)) expect([p.name, subpath, target.startsWith("./dist/")]).toEqual([p.name, subpath, true]);
+          }
+          expect([p.name, packed.files?.includes("src")]).toEqual([p.name, false]);
+          // P7a pre-publish r3 (I1): pnpm STRIPS `scripts` from the packed manifest, so the `prepack`
+          // guard that refuses a non-pnpm packer never reaches a consumer -- which is what makes the
+          // guard free rather than a behaviour change for anyone installing these packages.
+          expect([p.name, packed.scripts ?? {}]).toEqual([p.name, {}]);
+          // M2 (r2 review, correcting the round-2 report): pnpm removes only the override keys it
+          // LIFTS -- `exports` -- so `publishConfig` SURVIVES with its remaining keys. The report said
+          // the block was stripped; it is not, and `access` is deliberately still there.
+          expect([p.name, packed.publishConfig]).toEqual([p.name, { access: "restricted" }]);
         }
-        expect([p.name, packed.files?.includes("src")]).toEqual([p.name, false]);
-        // P7a pre-publish r3 (I1): pnpm STRIPS `scripts` from the packed manifest, so the `prepack`
-        // guard that refuses a non-pnpm packer never reaches a consumer -- which is what makes the
-        // guard free rather than a behaviour change for anyone installing these packages.
-        expect([p.name, packed.scripts ?? {}]).toEqual([p.name, {}]);
-        // M2 (r2 review, correcting the round-2 report): pnpm removes only the override keys it
-        // LIFTS -- `exports` -- so `publishConfig` SURVIVES with its remaining keys. The report said
-        // the block was stripped; it is not, and `access` is deliberately still there.
-        expect([p.name, packed.publishConfig]).toEqual([p.name, { access: "restricted" }]);
-        // Item 9 + 10, on the artifact a registry actually receives.
+        // Item 9 + 10, on the artifact a registry actually receives -- every publishable package alike.
         expect([p.name, packed.license]).toEqual([p.name, "MIT"]);
         expect([p.name, packed.repository?.url]).toEqual([p.name, "git+https://github.com/yanlingLabs/winter-agent-sdk.git"]);
       } finally {
@@ -337,31 +367,41 @@ describe("releasePack: the real, hermetic, mkdtemp-destined pack (WS-02 §9 Step
     expect(listing).not.toContain("xai-oauth.testing.ts");
   });
 
-  test("P7a pre-publish r2 (item 8): every publishable manifest declares a DIST-ONLY `files`, and a publishConfig.exports without `bun`", () => {
-    // The declaration half. The assertions above are about the OUTPUT of today's five packages; this
-    // one fails the moment a sixth is added wrong, before anybody packs.
+  test("P7a pre-publish r2 (item 8): every publishable manifest declares a DIST-ONLY `files`, and a publishConfig.exports without `bun` (bin-only packages ship `bin` and declare no exports at all)", () => {
+    // The declaration half. The assertions above are about the OUTPUT of today's packages; this one
+    // fails the moment a new one is added wrong, before anybody packs.
     //
     // Was: `files` must CONTAIN `src` plus two test negations. The dist-only ruling inverts it --
     // `src` must be absent, and the negations went with it (nothing to prune once no source ships).
     for (const pkg of discoverPublishablePackages()) {
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as {
         files: string[];
-        exports: Record<string, Record<string, string>>;
-        publishConfig: { exports?: Record<string, Record<string, string>> };
+        exports?: Record<string, Record<string, string>>;
+        publishConfig: { exports?: Record<string, Record<string, string>>; access?: string };
+        bin?: unknown;
       };
-      expect([pkg.name, manifest.files]).toEqual([pkg.name, expect.arrayContaining(["dist", "README.md", "LICENSE"])]);
       expect([pkg.name, manifest.files.some((f) => f === "src" || f.startsWith("!src/"))]).toEqual([pkg.name, false]);
 
+      if (isBinOnly(pkg)) {
+        // P9a-3: the platform package. No JS at all -- no `exports`, no `publishConfig.exports` to
+        // drop a `bun` condition from, `bin`/`README.md`/`LICENSE` in `files` instead of `dist`.
+        expect([pkg.name, manifest.files]).toEqual([pkg.name, expect.arrayContaining(["bin", "README.md", "LICENSE"])]);
+        expect([pkg.name, manifest.exports]).toEqual([pkg.name, undefined]);
+        expect([pkg.name, manifest.publishConfig.exports]).toEqual([pkg.name, undefined]);
+        continue;
+      }
+
+      expect([pkg.name, manifest.files]).toEqual([pkg.name, expect.arrayContaining(["dist", "README.md", "LICENSE"])]);
       // The IN-REPO map keeps its `bun` condition -- this monorepo and the compiled binary run source.
-      for (const conditions of Object.values(manifest.exports)) expect([pkg.name, Object.keys(conditions)]).toEqual([pkg.name, ["types", "bun", "default"]]);
+      for (const conditions of Object.values(manifest.exports!)) expect([pkg.name, Object.keys(conditions)]).toEqual([pkg.name, ["types", "bun", "default"]]);
       // The PUBLISHED map drops it, entry for entry, naming the same compiled targets.
       const published = manifest.publishConfig.exports;
       expect([pkg.name, published !== undefined]).toEqual([pkg.name, true]);
-      expect([pkg.name, Object.keys(published!)]).toEqual([pkg.name, Object.keys(manifest.exports)]);
+      expect([pkg.name, Object.keys(published!)]).toEqual([pkg.name, Object.keys(manifest.exports!)]);
       for (const [subpath, conditions] of Object.entries(published!)) {
         expect([pkg.name, subpath, Object.keys(conditions)]).toEqual([pkg.name, subpath, ["types", "default"]]);
-        expect([pkg.name, subpath, conditions["types"]]).toEqual([pkg.name, subpath, manifest.exports[subpath]!["types"]]);
-        expect([pkg.name, subpath, conditions["default"]]).toEqual([pkg.name, subpath, manifest.exports[subpath]!["default"]]);
+        expect([pkg.name, subpath, conditions["types"]]).toEqual([pkg.name, subpath, manifest.exports![subpath]!["types"]]);
+        expect([pkg.name, subpath, conditions["default"]]).toEqual([pkg.name, subpath, manifest.exports![subpath]!["default"]]);
       }
     }
   });

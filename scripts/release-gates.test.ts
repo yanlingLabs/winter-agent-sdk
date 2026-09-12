@@ -43,6 +43,17 @@ function workflowFiles(): string[] {
   return readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
 }
 
+/**
+ * P9a-3: is this publishable package BIN-ONLY (no `exports` at all, only a `bin` field)? Today: the
+ * darwin-arm64 platform package. Several gates below exist to police a JS package's `exports`/`bun`
+ * condition drifting from what it ships (S.2's whole reason for a `prepack` guard) -- properties that
+ * do not apply to a package with no `exports` map to drift in the first place.
+ */
+function isBinOnly(pkg: { packageJsonPath: string }): boolean {
+  const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { exports?: unknown; bin?: unknown };
+  return manifest.exports === undefined && manifest.bin !== undefined;
+}
+
 /** Strips a trailing `#...` comment (YAML or shell -- both use `#`), keyed on the `#` being preceded by start-of-line or whitespace so it never eats a real token. */
 function stripComment(line: string): string {
   const idx = line.search(/(^|\s)#/);
@@ -463,8 +474,13 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     const flagged = npmPublishSet().map((p) => p.name).sort();
     expect(flagged).toEqual(npmExpectedSet());
     // The set as it stands, pinned so a change is a deliberate edit here too.
+    //
+    // P9a-3: the closure now walks `optionalDependencies` too (M3's exact bug: the wrapper's
+    // optional dependency on the darwin-arm64 platform package must be ON npm, or a consumer's
+    // install names a package that 404s forever). That widens the closure by exactly one package.
     expect(npmExpectedSet()).toEqual([
       "@yanlinglabs/winter-agent-sdk",
+      "@yanlinglabs/winter-agent-sdk-darwin-arm64",
       "@yanlinglabs/winter-conformance",
       "@yanlinglabs/winter-provider-catalog",
       "@yanlinglabs/winter-provider-conformance",
@@ -473,7 +489,12 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // The two roles stay distinct: `provider-runtime` is on npm BY CLOSURE (provider-conformance
     // imports values from it), never by being a harness.
     expect(npmHarnessSet()).toEqual(["@yanlinglabs/winter-conformance", "@yanlinglabs/winter-provider-conformance"]);
-    expect(npmRequiredClosure(undefined, ["@yanlinglabs/winter-agent-sdk"])).toEqual(["@yanlinglabs/winter-agent-sdk", "@yanlinglabs/winter-provider-catalog"]);
+    // The wrapper's OWN closure (no harness roots) now includes its optionalDependency, sorted.
+    expect(npmRequiredClosure(undefined, ["@yanlinglabs/winter-agent-sdk"])).toEqual([
+      "@yanlinglabs/winter-agent-sdk",
+      "@yanlinglabs/winter-agent-sdk-darwin-arm64",
+      "@yanlinglabs/winter-provider-catalog",
+    ]);
   });
 
   test("R-7b-5: the harness ROOTS are exactly the two conformance packages, by name", () => {
@@ -487,12 +508,13 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // Every publishable package is now on npm -- which is exactly why the plants below exist: on THIS
     // tree the rule and "all of them" give the same answer, so only a synthetic tree can show it
     // refusing anything.
-    expect(npmPublishSet()).toHaveLength(5);
-    expect(discoverPublishablePackages()).toHaveLength(5);
-    // The packages outside the publishable set are outside it for reasons that have nothing to do
-    // with this flag: the PRIVATE runtime, and R-7-2's unbuilt platform package.
+    expect(npmPublishSet()).toHaveLength(6);
+    expect(discoverPublishablePackages()).toHaveLength(6);
+    // The one package outside the publishable set is outside it for a reason that has nothing to do
+    // with this flag: the PRIVATE runtime. The darwin-arm64 platform package is IN the set now
+    // (P9a-3 -- R-7-2's gap is closed, CI can build the binary it needs, P9a-4).
     expect(discoverPublishablePackages().some((p) => p.name === "winter-agent-runtime")).toBe(false);
-    expect(discoverPublishablePackages().some((p) => p.name.endsWith("-darwin-arm64"))).toBe(false);
+    expect(discoverPublishablePackages().some((p) => p.name.endsWith("-darwin-arm64"))).toBe(true);
   });
 
   // --- the PLANTS ---------------------------------------------------------------------------------
@@ -825,7 +847,7 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     }
   });
 
-  test("r3 (I1): every publishable package refuses a non-pnpm packer, and RELEASING.md says why", () => {
+  test("r3 (I1): every JS publishable package refuses a non-pnpm packer, and RELEASING.md says why (bin-only packages carry no prepack guard -- S.2's decision, see below)", () => {
     // The measured failure: `npm pack` IGNORES `publishConfig.exports`, so an npm-packed tarball keeps
     // `"bun": "./src/index.ts"` while `files` ships no `src/` -- it installs and imports fine under
     // NODE and dies under BUN, which is the runtime this SDK is built for. No gate could see it
@@ -835,8 +857,20 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // The guard runs under `npm pack` AND `npm publish`, passes under pnpm (how both release jobs and
     // `releasePack()` pack), and never reaches a consumer: pnpm strips `scripts` from the packed
     // manifest, which the packed-manifest test asserts.
+    //
+    // P9a-3 (S.2's decision, recorded here rather than silently relaxed): the darwin-arm64 platform
+    // package is BIN-ONLY -- it declares no `exports`/`publishConfig.exports` at all, so there is no
+    // `bun`-condition-vs-`files` drift for a non-pnpm packer to introduce, which is this guard's ENTIRE
+    // stated reason. `pnpm pack`/`npm pack` behave identically for a manifest with no `exports`
+    // override to apply or skip. It carries no `prepack` script, checked explicitly (never a
+    // guard that would apply to nothing) so a future JS entry point added to this package without one
+    // is still caught by every OTHER assertion in this describe.
     for (const pkg of discoverPublishablePackages()) {
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { scripts?: Record<string, string> };
+      if (isBinOnly(pkg)) {
+        expect([pkg.name, manifest.scripts?.["prepack"]]).toEqual([pkg.name, undefined]);
+        continue;
+      }
       const prepack = manifest.scripts?.["prepack"];
       expect([pkg.name, prepack !== undefined]).toEqual([pkg.name, true]);
       expect([pkg.name, prepack!.includes("npm_config_user_agent")]).toEqual([pkg.name, true]);
@@ -918,7 +952,7 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     }
   });
 
-  test("r3 (C1): `publishConfig.access` stays `restricted`, and NO manifest pins a `registry`", () => {
+  test("r3 (C1): `publishConfig.access` stays `restricted` for every JS package, and NO manifest pins a `registry`", () => {
     // `access` stays: it is GitHub Packages' setting, and npm's own default for a scoped package
     // would be restricted too, which the free plan cannot do -- so the npm leg's `--access public` is
     // load-bearing rather than redundant.
@@ -927,10 +961,21 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // `publishConfig.registry ?? pickRegistryForPackage(...)` and DISCARDS the operator's
     // `--registry`, so a pinned registry sent both npm-set packages to GitHub Packages -- the npm leg
     // could never reach npm. This assertion used to REQUIRE the field; inverting it is the fix.
+    //
+    // P9a-3: the darwin-arm64 platform package is the ONE deliberate exception, `access: "public"`
+    // verbatim (the Interfaces block) -- job 1's `pnpm publish -r` sends it to GitHub Packages exactly
+    // like every other package regardless of this field's value (GitHub Packages does not gate on
+    // npm's public/restricted distinction the way npmjs.org's free plan does), and job 2 already
+    // passes `--access public` on the CLI for every npm-set package, overriding the manifest either
+    // way -- so this is a documented divergence, not a behavior difference for either publish job.
     for (const pkg of discoverPublishablePackages()) {
       const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { publishConfig?: Record<string, unknown> };
-      expect([pkg.name, manifest.publishConfig?.["access"]]).toEqual([pkg.name, "restricted"]);
       expect([pkg.name, "registry" in (manifest.publishConfig ?? {})]).toEqual([pkg.name, false]);
+      if (isBinOnly(pkg)) {
+        expect([pkg.name, manifest.publishConfig?.["access"]]).toEqual([pkg.name, "public"]);
+        continue;
+      }
+      expect([pkg.name, manifest.publishConfig?.["access"]]).toEqual([pkg.name, "restricted"]);
     }
   });
 

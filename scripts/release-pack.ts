@@ -62,7 +62,7 @@
 // (if ever wanted) is a decision for the eventual PUBLIC npm publish (P9's own `Publishable set`),
 // not this restricted-GitHub-Packages pipeline — recorded here rather than silently declined.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -186,6 +186,62 @@ interface PnpmPackJson {
   version: string;
   filename: string;
   files: Array<{ path: string }>;
+}
+
+interface BinAwareManifest {
+  bin?: string | Record<string, string>;
+  os?: string[];
+  cpu?: string[];
+}
+
+/**
+ * P9a-5/P9a-3: every `bin` FILE a package's manifest declares, resolved to an absolute path.
+ *
+ * A package with no `bin` field (every JS package here) returns `[]`. A bin-only platform package's
+ * single-key `bin` map returns its one file. Exported for `release-pack.test.ts`'s own fixtures.
+ */
+export function declaredBinFiles(pkg: PublishablePackage): string[] {
+  const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as BinAwareManifest;
+  if (manifest.bin === undefined) return [];
+  const entries = typeof manifest.bin === "string" ? [manifest.bin] : Object.values(manifest.bin);
+  return entries.map((rel) => join(pkg.dir, rel));
+}
+
+/**
+ * M1/P9a-4: does the package's declared `os`/`cpu` match the CURRENT host? A package with neither
+ * field declared matches every host (nothing in this workspace omits both AND ships a `bin`, but the
+ * fallback is permissive rather than fail-closed on a hypothetical one).
+ */
+function hostMatchesPackageTarget(pkg: PublishablePackage): boolean {
+  const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as BinAwareManifest;
+  const osOk = manifest.os === undefined || manifest.os.includes(process.platform);
+  const cpuOk = manifest.cpu === undefined || manifest.cpu.includes(process.arch);
+  return osOk && cpuOk;
+}
+
+/**
+ * P9a-3 (S.2): a publishable package whose declared `bin` FILE is absent at pack time is a HARD
+ * failure naming the file -- never a packed tarball with an empty `bin/`. `pnpm pack` does not
+ * verify a declared `bin` entry actually exists on disk (measured while wiring this in: it happily
+ * packs a `bin`-only manifest with nothing behind it), so nothing upstream of this check would
+ * catch a forgotten `build:runtime --platform-package` before a publish did.
+ *
+ * GATED ON THE CURRENT HOST MATCHING the package's declared `os`/`cpu` (M1): the darwin-arm64
+ * binary can only ever exist on a `darwin`/`arm64` host (P9a-4 -- `bun build --compile` targets the
+ * CURRENT platform, it does not cross-compile), so `ci.yml`'s ubuntu `pack-smoke` jobs pack this
+ * same publishable package with its `bin/winter` genuinely, permanently absent -- and that is the
+ * CORRECT, expected state there (`resolveRuntimeExecutable`'s own "package present, bin absent"
+ * path exists for exactly this), never a reason to fail a Linux pack. Only a host that COULD have
+ * built the binary and didn't is refused.
+ */
+function assertDeclaredBinsExistOnMatchingHost(pkg: PublishablePackage): void {
+  if (!hostMatchesPackageTarget(pkg)) return;
+  for (const binPath of declaredBinFiles(pkg)) {
+    if (!existsSync(binPath)) {
+      const platformLabel = `${process.platform}-${process.arch}`;
+      throw new Error(`release-pack: ${binPath} is missing — run \`bun run build:runtime --platform-package\` on ${platformLabel} first`);
+    }
+  }
 }
 
 /** Packs one workspace package by name via `pnpm --filter <name> pack` -- never `-r` (see header: `-r` does not honour `private`). */
@@ -407,6 +463,7 @@ export async function releasePack(opts: { outDir?: string; root?: string; build?
   let filesScanned = 0;
 
   for (const pkg of targets) {
+    assertDeclaredBinsExistOnMatchingHost(pkg);
     const packed = await packOne(pkg, outDir, root);
     packages.push(packed);
 

@@ -126,10 +126,15 @@ describe("checkReleaseVersion", () => {
 
   test("THIS repository agrees with itself right now", () => {
     // The live fact: `VERSION`, every publishable manifest, and therefore any `v<VERSION>` tag.
+    // P9a-3: 6 packages now that the darwin-arm64 platform package is publishable (discovered as
+    // publishable once `discoverPublishablePackages` stops excluding it, per its own manifest fields
+    // -- covered here rather than assumed, since a version-check gate that silently missed a package
+    // would ship it under the wrong number without failing).
     const r = checkReleaseVersion({});
     expect(r.ok, r.ok ? "" : r.reason).toBe(true);
     if (r.ok) {
-      expect(r.packages).toHaveLength(5);
+      expect(r.packages).toHaveLength(6);
+      expect(r.packages.map((p) => p.name)).toContain("@yanlinglabs/winter-agent-sdk-darwin-arm64");
       expect(checkReleaseVersion({ ref: `refs/tags/v${r.version}` }).ok).toBe(true);
     }
   });
