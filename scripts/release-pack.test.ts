@@ -141,6 +141,36 @@ describe("scanExtractedPackage: a synthetic dirty fixture proves the scan has te
     }
   });
 
+  test("P9a (S.2): a bin-only package whose bin is REAL binary content (Mach-O-shaped, non-UTF8 bytes) passes the scan clean, and the identity category still runs beside it", () => {
+    // The platform package ships exactly one artifact: a compiled Mach-O executable. The scan is
+    // path/name driven (it reads no file content except package.json), so binary bytes must never
+    // make it throw or false-flag -- and category 5 (identity) must still fire on a wrong-name
+    // manifest planted next to the binary, proving the binary did not short-circuit the pass.
+    const machO = Buffer.concat([Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00, 0x00, 0x01]), Buffer.from(Array.from({ length: 4096 }, (_, i) => (i * 131 + 7) & 0xff))]);
+    const clean = mkdtempSync(join(tmpdir(), "winter-release-pack-macho-clean-"));
+    const dirty = mkdtempSync(join(tmpdir(), "winter-release-pack-macho-dirty-"));
+    try {
+      for (const dir of [clean, dirty]) {
+        mkdirSync(join(dir, "bin"), { recursive: true });
+        writeFileSync(join(dir, "bin", "winter"), machO, { mode: 0o755 });
+      }
+      writeFileSync(join(clean, "package.json"), JSON.stringify({ name: "@yanlinglabs/winter-agent-sdk-darwin-arm64", version: "0.0.4", os: ["darwin"], cpu: ["arm64"], bin: { winter: "bin/winter" } }));
+      const ok = scanExtractedPackage("@yanlinglabs/winter-agent-sdk-darwin-arm64", clean);
+      expect(ok.filesScanned).toBe(2);
+      expect(ok.violations).toEqual([]);
+
+      writeFileSync(join(dirty, "package.json"), JSON.stringify({ name: "@yanlinglabs/winter-provider-runtime", version: "0.0.4" }));
+      const bad = scanExtractedPackage("@yanlinglabs/winter-agent-sdk-darwin-arm64", dirty);
+      expect(bad.filesScanned).toBe(2);
+      expect(bad.violations.some((v) => v.includes('declares "@yanlinglabs/winter-provider-runtime" instead'))).toBe(true);
+      // the binary itself is never a violation: every hit names package.json, none names bin/winter
+      expect(bad.violations.some((v) => v.includes("bin/winter"))).toBe(false);
+    } finally {
+      rmSync(clean, { recursive: true, force: true });
+      rmSync(dirty, { recursive: true, force: true });
+    }
+  });
+
   test("a missing root package.json is caught, not silently accepted", () => {
     const dir = mkdtempSync(join(tmpdir(), "winter-release-pack-nomanifest-"));
     try {
