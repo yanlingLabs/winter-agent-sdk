@@ -12,7 +12,7 @@
 // executable. Every import below is a static, literal specifier resolved at BUILD time; nothing
 // here touches the filesystem to find its own code.
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
+import { splitFrames, encodeFrame, SDK_VERSION } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { stubExecutor, isTestProviderName, testProviderForNamespace, registerBgTaskTestTool } from "./provider/mock.ts";
@@ -125,6 +125,19 @@ const stdoutFrameSink: FrameSink = {
     // observes completion via this process's exit (WS-04 §6.1), not a synthetic stream-end frame.
   },
 };
+
+// --- P9a-6: the `--version` door -------------------------------------------------------------------
+//
+// Checked FIRST -- before the `__workflow-worker` dispatch below and before `parseConfigFromArgv` --
+// so `--version --run ...` still prints the version (this door wins over every other argv shape).
+// Exact flag only (no `-v`, no `--help`): the surface stays minimal, matching WS-02 §4's stated
+// interface. Prints to STDOUT (not the frame stream -- no session ever starts for this invocation)
+// and exits 0, mirroring `SDK_VERSION`'s own bare semver string (no leading "v", no trailing newline
+// baked into the constant -- the newline is this door's own doing, for a clean CLI line).
+if (process.argv.includes("--version")) {
+  process.stdout.write(SDK_VERSION + "\n");
+  process.exit(0);
+}
 
 // --- Phase 5 Task 3 (R5-5/R5-15): the `__workflow-worker` argv dispatch ---------------------------
 //
