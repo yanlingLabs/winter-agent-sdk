@@ -1152,7 +1152,7 @@ describe("P9a-4: build-platform builds the darwin-arm64 binary on a real macOS a
       // The three checks the Interfaces block names, all present in the restore step's own text.
       const restoreStep = doc.jobs[jobName]!.steps.find((s) => (s.run ?? "").includes("shasum -a 256 -c"))!;
       expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("test -x") as unknown as string]);
-      expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("Mach-O 64-bit executable arm64") as unknown as string]);
+      expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("Mach-O 64-bit (executable arm64|arm64 executable)") as unknown as string]);
       expect([jobName, restoreStep.run]).toEqual([jobName, expect.stringContaining("chmod +x") as unknown as string]);
     }
   });

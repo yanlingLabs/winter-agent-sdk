@@ -57,7 +57,7 @@ as one artifact. Both jobs assert `uname -s`/`uname -m` themselves rather than t
 label.
 
 **Both publish jobs `needs: build-platform`, download that ONE artifact, and restore + verify it —
-`chmod +x`, `test -x`, `file` reports `Mach-O 64-bit executable arm64`, `shasum -a 256 -c` against the
+`chmod +x`, `test -x`, `file` reports a Mach-O 64-bit arm64 executable (both file(1) wordings: macOS `executable arm64`, ubuntu `arm64 executable`), `shasum -a 256 -c` against the
 recorded checksum — BEFORE their own version-tag gate and BEFORE the publish step.** Neither job
 rebuilds the binary itself: they ship exactly what `build-platform` produced.
 

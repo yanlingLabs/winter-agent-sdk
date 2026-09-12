@@ -116,7 +116,7 @@ jobs:
           BIN=packages/platform/darwin-arm64/bin/winter
           chmod +x "$BIN"
           test -x "$BIN"
-          file "$BIN" | grep -q "Mach-O 64-bit executable arm64" || { echo "restore: $BIN is not a Mach-O 64-bit arm64 executable" >&2; file "$BIN" >&2; exit 1; }
+          file "$BIN" | grep -Eq "Mach-O 64-bit (executable arm64|arm64 executable)" || { echo "restore: $BIN is not a Mach-O 64-bit arm64 executable" >&2; file "$BIN" >&2; exit 1; }   # macOS file(1) prints "executable arm64", ubuntu's prints "arm64 executable" (the v0.0.5 first run failed here, pre-publish)
           shasum -a 256 -c winter-darwin-arm64.sha256
 
       # --- the gates: the exact verification sequence ci.yml's `build` and `official-fixture-compile`
@@ -263,7 +263,7 @@ jobs:
           BIN=packages/platform/darwin-arm64/bin/winter
           chmod +x "$BIN"
           test -x "$BIN"
-          file "$BIN" | grep -q "Mach-O 64-bit executable arm64" || { echo "restore: $BIN is not a Mach-O 64-bit arm64 executable" >&2; file "$BIN" >&2; exit 1; }
+          file "$BIN" | grep -Eq "Mach-O 64-bit (executable arm64|arm64 executable)" || { echo "restore: $BIN is not a Mach-O 64-bit arm64 executable" >&2; file "$BIN" >&2; exit 1; }   # macOS file(1) prints "executable arm64", ubuntu's prints "arm64 executable" (the v0.0.5 first run failed here, pre-publish)
           shasum -a 256 -c winter-darwin-arm64.sha256
       # The same two gates the GitHub Packages job ran, repeated here because this job checks out
       # afresh: the version/tag agreement, and the compiled emit the tarballs must contain.
