@@ -388,17 +388,26 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
           // WHOLE-FILE `byUuid` index this function built at its own top, exactly the entries the
           // ancestry walk deliberately excluded. Order is summary, then `uuids` in order, then
           // everything appended after the boundary -- byte-exact to the golden's own relink order.
+          //
+          // Micro-round (pre-0.0.10-publish): this path also reads transcripts written by the REAL
+          // claude binary on the Claude -> Winter return trip, so Winter's own writer invariants
+          // (which never name a uuid in both `preservedMessages` and the post-boundary lineage) do
+          // not bind here. De-duplicate by uuid against `restAfterSummary`: a uuid reachable both
+          // ways appears exactly ONCE, at its post-cut position -- dropped from the preserved splice,
+          // never from the post-cut tail.
           if (isClaudeBoundary(boundary)) {
             const claudeMeta = isRecord(boundary.compactMetadata) ? boundary.compactMetadata : undefined;
             const claudePreserved = claudeMeta !== undefined && isRecord(claudeMeta.preservedMessages) ? claudeMeta.preservedMessages : undefined;
             const claudePreservedUuids = claudePreserved !== undefined && Array.isArray(claudePreserved.uuids) ? (claudePreserved.uuids as unknown[]).filter((u): u is string => typeof u === "string") : [];
+            const summaryAndAfter = lineage.slice(lastBoundaryIndex + 1);
+            const [summaryEntry, ...restAfterSummary] = summaryAndAfter;
+            const restAfterSummaryUuids = new Set(restAfterSummary.map((e) => e.uuid));
             const claudePreservedInOrder = claudePreservedUuids.flatMap((u) => {
+              if (restAfterSummaryUuids.has(u)) return [];
               const found = byUuid.get(u);
               return found !== undefined ? [found] : [];
             });
-            const summaryAndAfter = lineage.slice(lastBoundaryIndex + 1);
             if (claudePreservedInOrder.length === 0) return summaryAndAfter;
-            const [summaryEntry, ...restAfterSummary] = summaryAndAfter;
             return summaryEntry !== undefined ? [summaryEntry, ...claudePreservedInOrder, ...restAfterSummary] : [...claudePreservedInOrder, ...restAfterSummary];
           }
 

@@ -405,6 +405,38 @@ describe("rebuildProviderMessages — compaction, both shapes (W18-13)", () => {
     expect(rebuilt.map((m) => m.content)).toEqual([`${PREAMBLE}\n\nSUMMARY`, "PRESERVED-FIRST", "PRESERVED-SECOND"]);
   });
 
+  // Micro-round (pre-0.0.10-publish): this path also reads transcripts written by the REAL claude
+  // binary on the Claude -> Winter return trip, so Winter's own writer invariants (which never name
+  // a uuid in both `preservedMessages` and the post-boundary lineage) do not bind here. A uuid named
+  // in `preservedMessages.uuids` that is ALSO the uuid of an entry reachable after the cut must
+  // appear exactly ONCE in the rebuild, at its post-cut position -- never spliced in a second time
+  // right after the summary.
+  test("(b4) a preserved uuid that is ALSO reachable after the cut appears exactly once, at its post-cut position", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "turn one" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply one" }] } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "PRE-CUT (never reachable — same uuid resurfaces after the cut)" } },
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        uuid: "b1",
+        parentUuid: null,
+        logicalParentUuid: "u2",
+        compactMetadata: { trigger: "auto", preTokens: 1, preservedMessages: { anchorUuid: "s1", uuids: ["u2"] } },
+      },
+      { type: "user", uuid: "s1", parentUuid: "b1", message: { role: "user", content: `${PREAMBLE}\n\nSUMMARY` }, isCompactSummary: true },
+      // Same uuid ("u2") as the preserved entry above, but this is the copy the real binary actually
+      // parents AFTER the cut — this is the one that must survive, exactly once.
+      { type: "user", uuid: "u2", parentUuid: "s1", message: { role: "user", content: "POST-CUT (the surviving copy)" } },
+      { type: "user", uuid: "u3", parentUuid: "u2", message: { role: "user", content: "after" } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt.map((m) => m.content)).toEqual([`${PREAMBLE}\n\nSUMMARY`, "POST-CUT (the surviving copy)", "after"]);
+    // Exactly once — not duplicated by the preserved-messages splice.
+    expect(rebuilt.filter((m) => m.content === "POST-CUT (the surviving copy)")).toHaveLength(1);
+    expect(JSON.stringify(rebuilt)).not.toContain("PRE-CUT");
+  });
+
   test("(c) an isApiErrorMessage assistant entry is skipped", () => {
     const entries: DialectEntry[] = [
       { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },
