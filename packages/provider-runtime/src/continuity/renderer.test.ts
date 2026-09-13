@@ -140,9 +140,34 @@ describe("the matrix: cross domain", () => {
     expect(toExposed.report.decorations[0]!.kind).toBe("summary");
   });
 
-  test("no captured summary -> NO decoration and a counted gap (never a fabricated one)", () => {
+  // Phase 10b Lane S, S5 (W18-17, G1): a Claude message with no sidecar summary is no longer a gap --
+  // its own VISIBLE thinking text (never `signature`) becomes its summary. `claudeMessage()`'s own
+  // fixture always carries real visible thinking, so this is real, first-party material, not a
+  // fabrication; the true "nothing to carry" case (no summary AND no visible thinking) is the next test.
+  test("no captured summary -> falls back to the message's OWN visible thinking text (G1)", () => {
     const renderer = createHistoryRenderer(buildRegistry());
     const { messages, report } = renderer.renderWithReport([claudeMessage("m1")], chainOf({ m1: {} }), OPENAI);
+    expect(messages[0]!.decoration).toEqual({
+      text: `<${RECOVERED_REASONING_TAG} kind="summary" provider="anthropic" model="anthropic/claude-a">private claude reasoning</${RECOVERED_REASONING_TAG}>`,
+      door: "tag",
+    });
+    // The signature and the redacted payload never enter the decoration, even though the visible
+    // thinking text this decoration IS built from rode right beside them in the same content array.
+    expect(messages[0]!.decoration!.text).not.toContain("SIG-OPAQUE");
+    expect(messages[0]!.decoration!.text).not.toContain("REDACTED-OPAQUE");
+    expect(report.withoutMaterial).toBe(0);
+    expect(report.decorations).toHaveLength(1);
+  });
+
+  test("truly no material -- no sidecar summary AND no visible thinking blocks -- is still a counted gap, never a fabricated decoration", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const bareClaudeMessage: ProviderMessageLike = {
+      role: "assistant",
+      content: [{ type: "text", text: "the visible answer" }],
+      uuid: "m1",
+      origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic", continuationDomain: "anthropic/claude-a" },
+    };
+    const { messages, report } = renderer.renderWithReport([bareClaudeMessage], chainOf({ m1: {} }), OPENAI);
     expect(messages[0]!.decoration).toBeUndefined();
     expect(report.withoutMaterial).toBe(1);
     expect(report.decorations).toHaveLength(0);
@@ -186,11 +211,17 @@ describe("compaction stops the carriage", () => {
     expect(report.decorations).toHaveLength(0);
   });
 
-  test("an anchor that survives but whose sidecar record is gone carries nothing", () => {
+  // W18-17 (G1): an anchor whose sidecar record is GONE ENTIRELY (`chainOf({})`, not merely empty)
+  // no longer carries nothing either -- the message's own visible thinking is still right there in
+  // its content, independent of whatever the sidecar did or didn't keep.
+  test("an anchor that survives but whose sidecar record is gone still carries the message's OWN visible thinking", () => {
     const renderer = createHistoryRenderer(buildRegistry());
     const { messages, report } = renderer.renderWithReport([claudeMessage("m1")], chainOf({}), OPENAI);
-    expect(messages[0]!.decoration).toBeUndefined();
-    expect(report.withoutMaterial).toBe(1);
+    expect(messages[0]!.decoration).toEqual({
+      text: `<${RECOVERED_REASONING_TAG} kind="summary" provider="anthropic" model="anthropic/claude-a">private claude reasoning</${RECOVERED_REASONING_TAG}>`,
+      door: "tag",
+    });
+    expect(report.withoutMaterial).toBe(0);
   });
 });
 
@@ -327,5 +358,78 @@ describe("MINOR 6: stale-decoration symmetry on the no-origin path", () => {
     const renderer = createHistoryRenderer(buildRegistry());
     const plain: ProviderMessageLike = { role: "assistant", content: "pre-P6" };
     expect(renderer.render([plain], chainOf({}), OPENAI)[0]).toBe(plain);
+  });
+});
+
+// --- Phase 10b Lane S, S5 (W18-17 renderer half, R-10b-9, G1): Claude's reasoning crosses ----------
+//
+// An OFFICIAL-written assistant entry has NO sidecar record at all (the official leg's own child
+// never goes through Winter's `recordAssistant`), so `message.origin` and the chain lookup are BOTH
+// always absent -- the only provenance it carries is claude's own `message.model`, read here
+// structurally (never added to `ProviderMessageLike` itself; the real dialect reader in a later lane
+// is what actually attaches it).
+describe("W18-17 (G1): an official-written entry with no sidecar origin", () => {
+  // Two thinking blocks (never merged into one on the wire) to prove ORDER, not just presence.
+  function officialClaudeMessage(): ProviderMessageLike & { model: string } {
+    return {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "first, weigh option A", signature: "SIG-FIRST-OPAQUE" },
+        { type: "thinking", thinking: "then, decide on option B", signature: "SIG-SECOND-OPAQUE" },
+        { type: "redacted_thinking", data: "REDACTED-PAYLOAD-OPAQUE" },
+        { type: "text", text: "the visible final answer" },
+      ],
+      model: "anthropic/claude-a",
+    };
+  }
+
+  test("takes its origin from message.model (provider anthropic) and decorates a foreign target from it", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([officialClaudeMessage()], chainOf({}), OPENAI);
+    expect(messages[0]!.decoration).toBeDefined();
+    expect(messages[0]!.decoration!.door).toBe("tag");
+    expect(report.decorations[0]).toMatchObject({ source: { providerId: "anthropic", modelKey: "anthropic/claude-a" }, kind: "summary" });
+  });
+
+  test("its visible thinking text, JOINED IN ORDER, is rendered for an OpenAI target as kind=\"summary\"", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([officialClaudeMessage()], chainOf({}), OPENAI);
+    expect(messages[0]!.decoration!.text).toBe(
+      `<${RECOVERED_REASONING_TAG} kind="summary" provider="anthropic" model="anthropic/claude-a">first, weigh option A\n\nthen, decide on option B</${RECOVERED_REASONING_TAG}>`,
+    );
+    expect(report.decorations[0]!.kind).toBe("summary");
+  });
+
+  test("its visible thinking text is rendered for a DeepSeek (exposed-reasoning) target ALSO as kind=\"summary\" -- Claude's own material is never relabelled exposed", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([officialClaudeMessage()], chainOf({}), DEEPSEEK);
+    expect(messages[0]!.decoration!.door).toBe("thinking-channel");
+    expect(messages[0]!.decoration!.text).toContain("first, weigh option A");
+    expect(messages[0]!.decoration!.text).toContain("then, decide on option B");
+    expect(report.decorations[0]!.kind).toBe("summary");
+  });
+
+  test("signature and redacted_thinking.data NEVER appear in any rendered string, for either target (byte-grep assertion)", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    for (const target of [OPENAI, DEEPSEEK]) {
+      const { messages } = renderer.renderWithReport([officialClaudeMessage()], chainOf({}), target);
+      const serialized = JSON.stringify(messages);
+      expect(serialized).not.toContain("SIG-FIRST-OPAQUE");
+      expect(serialized).not.toContain("SIG-SECOND-OPAQUE");
+      expect(serialized).not.toContain("REDACTED-PAYLOAD-OPAQUE");
+      expect(serialized).not.toContain("signature");
+    }
+  });
+
+  test("a Claude target replays it NATIVELY -- same domain, no decoration, the real thinking blocks (with their real signatures) ride unchanged", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([officialClaudeMessage()], chainOf({}), CLAUDE_A);
+    expect(messages[0]!.decoration).toBeUndefined();
+    const content = messages[0]!.content as ContentBlockLike[];
+    expect(content.map((b) => b.type)).toEqual(["thinking", "thinking", "redacted_thinking", "text"]);
+    // Native replay keeps the REAL signature -- this is the one leg where it is legitimate for it to
+    // still be present, because the target is claude itself.
+    expect(JSON.stringify(content)).toContain("SIG-FIRST-OPAQUE");
+    expect(report.replayedNatively).toBe(0); // no nativeState on this message -- the counter is for THAT carrier, not for the thinking blocks
   });
 });
