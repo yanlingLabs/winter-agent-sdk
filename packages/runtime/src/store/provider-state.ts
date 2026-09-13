@@ -281,6 +281,15 @@ export interface ContinuationLink {
   origin?: MessageOrigin;
   nativeState?: ProviderNativeState;
   summary?: string;
+  // Phase 10b Lane S, S4 (W18-15): which of two things `summary` actually is. Absent means a
+  // provider-authored SUMMARY (the historical, only shape); `"exposed"` means the text is an open
+  // model's own RAW reasoning, recorded verbatim because the family produces no summary of its own
+  // (`engine.ts`'s `turnProvenance`) -- and `complete` says whether the WHOLE trace survived (a
+  // normal stop, no dropped delta) or only a partial one. Never both a provider summary AND exposed
+  // material on the same record: `turnProvenance` writes one payload per anchor, `summary` wins when
+  // both are present on the turn.
+  material?: "exposed";
+  complete?: boolean;
 }
 
 /**
@@ -327,6 +336,10 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
       case "summary": {
         const text = readSummaryText(record.payload);
         if (text !== undefined) link.summary = text;
+        const material = readSummaryMaterial(record.payload);
+        if (material !== undefined) link.material = material;
+        const complete = readSummaryComplete(record.payload);
+        if (complete !== undefined) link.complete = complete;
         break;
       }
       case "handoff":
@@ -353,4 +366,18 @@ function readSummaryText(payload: unknown): string | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   const text = (payload as { text?: unknown }).text;
   return typeof text === "string" ? text : undefined;
+}
+
+/** W18-15: `material` is `"exposed"` or absent -- any other value is unknown-provenance and read as absent, never guessed at. */
+function readSummaryMaterial(payload: unknown): "exposed" | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const material = (payload as { material?: unknown }).material;
+  return material === "exposed" ? "exposed" : undefined;
+}
+
+/** W18-15: `complete` -- whether the recorded exposed reasoning is the WHOLE trace. */
+function readSummaryComplete(payload: unknown): boolean | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const complete = (payload as { complete?: unknown }).complete;
+  return typeof complete === "boolean" ? complete : undefined;
 }

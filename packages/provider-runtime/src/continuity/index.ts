@@ -8,8 +8,8 @@
 // `fixtures.ts` is NOT exported here: it is test support for this directory's own fixtures, and a
 // package surface that hands out catalog builders invites production code to build a catalog.
 
-export { RECOVERED_REASONING_TAG, MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, escapeAttribute, escapeInline, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
-export type { Decoration, DecorationDoor, DecorationInput, DecorationSource } from "./decoration.ts";
+export { RECOVERED_REASONING_TAG, LEGACY_RECOVERED_REASONING_TAG, MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, escapeAttribute, escapeInline, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
+export type { Decoration, DecorationDoor, DecorationInput, DecorationKind, DecorationSource } from "./decoration.ts";
 
 export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
 export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.ts";

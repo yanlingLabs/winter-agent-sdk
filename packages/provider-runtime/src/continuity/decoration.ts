@@ -8,7 +8,7 @@
 // the producing provider's own attestation. There are therefore exactly two doors, and neither is a
 // validated channel:
 //
-//   1. the TAG door -- `<recovered_reasoning_summary provider="…" model="…">…</recovered_reasoning_summary>`
+//   1. the TAG door -- `<recovered_reasoning kind="summary|exposed" provider="…" model="…">…</recovered_reasoning>`
 //      as ORDINARY TEXT inside the target's own message -- for hidden-reasoning targets (Anthropic,
 //      Gemini-3, any model whose reasoning channel validates what it is given). Text is the only door
 //      into those families;
@@ -19,12 +19,27 @@
 // Both doors label the content as another model's, and neither presents it as instruction. That is
 // the injection floor (§9.3): quoted content is DATA from a previous model, never a user command and
 // never system authority.
+//
+// Phase 10b Lane S, S4 (W18-15, R-10b-7): ONE tag name with a `kind` attribute, replacing the old
+// `<recovered_reasoning_summary>` name. `kind="summary"` is a private family's own RETURNED summary
+// (Claude, OpenAI, Gemini); `kind="exposed"` is an open model's COMPLETE raw reasoning (DeepSeek,
+// GLM) -- the distinction the sidecar's `material`/`complete` fields (provider-state.ts) now carry
+// too, so a downstream reviewer can tell "this is a returned summary" from "this is the whole trace"
+// without re-deriving it from the provider family. `LEGACY_RECOVERED_REASONING_TAG` names the OLD
+// spelling for exactly one purpose: `neutralizeDelimiters` still escapes it, so text this codebase
+// carried under the old name (or a model's forged copy of it) can never terminate a NEW wrapper.
 
 /** Which door a decoration goes through. Mirrors `ProviderMessageLike.decoration.door`. */
 export type DecorationDoor = "tag" | "thinking-channel";
 
+/** Whether the carried material is a private family's own summary, or an open model's complete exposed reasoning. Mirrors `renderer.ts`'s `MaterialKind`. */
+export type DecorationKind = "summary" | "exposed";
+
 /** The tag name of the text door, in ONE place: the renderer, the corpus and the escaping all name it from here. */
-export const RECOVERED_REASONING_TAG = "recovered_reasoning_summary";
+export const RECOVERED_REASONING_TAG = "recovered_reasoning";
+
+/** The RETIRED tag name (pre-P10b). No production path writes it any more; `neutralizeDelimiters` still escapes it so old text can never forge a new wrapper's close. */
+export const LEGACY_RECOVERED_REASONING_TAG = "recovered_reasoning_summary";
 
 /** Who produced the reasoning being carried. Ids only -- never a credential, never opaque state. */
 export interface DecorationSource {
@@ -37,6 +52,8 @@ export interface DecorationInput {
   text: string;
   source: DecorationSource;
   door: DecorationDoor;
+  /** W18-15: which of the two the text above actually is -- rendered as the tag door's `kind` attribute. */
+  kind: DecorationKind;
   /**
    * §9.6's context budget for this one decoration, counted on the FINISHED text -- wrapper included.
    *
@@ -76,33 +93,33 @@ export function doorFor(target: { readableState: "none" | "summary" | "full-expo
  * text and the wrapper's own closing tag remains the only one.
  */
 export function buildDecoration(input: DecorationInput): Decoration {
-  const budget = input.maxChars === undefined ? undefined : Math.max(0, input.maxChars - decorationOverhead(input.source, input.door));
+  const budget = input.maxChars === undefined ? undefined : Math.max(0, input.maxChars - decorationOverhead(input.source, input.door, input.kind));
   // NEUTRALISE FIRST, THEN TRIM. Escaping a forged delimiter GROWS the body by three characters per
   // occurrence, so trimming first and escaping after let a hostile body overshoot the budget it had
   // just been trimmed to fit (measured: 531 characters returned for `maxChars: 501`) -- and the whole
   // point of bounding the finished text is that the number is true for every input, including the
   // adversarial one.
   const { text, truncated } = trimToBudget(neutralizeDelimiters(input.text), budget);
-  return { text: wrap(text, input.source, input.door), door: input.door, truncated };
+  return { text: wrap(text, input.source, input.door, input.kind), door: input.door, truncated };
 }
 
 /**
- * How many characters a decoration spends on its wrapper alone, for THIS source and door.
+ * How many characters a decoration spends on its wrapper alone, for THIS source, door and kind.
  *
  * Exported because the renderer has to decide whether a remaining budget can hold a decoration at all
  * BEFORE building one: a wrapper with an empty body is not a decoration, it is noise with a delimiter
  * around it, and the honest response to "no room" is to drop the material and say so.
  */
-export function decorationOverhead(source: DecorationSource, door: DecorationDoor): number {
-  return wrap("", source, door).length;
+export function decorationOverhead(source: DecorationSource, door: DecorationDoor, kind: DecorationKind): number {
+  return wrap("", source, door, kind).length;
 }
 
 /** The minimum body a decoration must be able to carry to be worth sending at all. */
 export const MIN_DECORATION_BODY_CHARS = 32;
 
-function wrap(body: string, source: DecorationSource, door: DecorationDoor): string {
+function wrap(body: string, source: DecorationSource, door: DecorationDoor, kind: DecorationKind): string {
   if (door === "tag") {
-    return `<${RECOVERED_REASONING_TAG} provider="${escapeAttribute(source.providerId)}" model="${escapeAttribute(source.modelKey)}">${body}</${RECOVERED_REASONING_TAG}>`;
+    return `<${RECOVERED_REASONING_TAG} kind="${kind}" provider="${escapeAttribute(source.providerId)}" model="${escapeAttribute(source.modelKey)}">${body}</${RECOVERED_REASONING_TAG}>`;
   }
   // The thinking-channel door NAMES THE ORIGIN INSIDE THE TEXT (WS-13 §8.2's own wording). Without
   // it, the target's reasoning channel would carry another model's reasoning with nothing marking it
@@ -160,5 +177,13 @@ export function neutralizeDelimiters(text: string): string {
   // CASE-INSENSITIVE: HTML-ish tag names are matched case-insensitively by the readers that matter,
   // so `</RECOVERED_REASONING_SUMMARY>` closes the block just as well as the lowercase spelling --
   // and a case-sensitive guard is one shift key away from being no guard at all.
-  return text.replace(new RegExp(`<(/?)${RECOVERED_REASONING_TAG}`, "gi"), "&lt;$1" + RECOVERED_REASONING_TAG);
+  //
+  // W18-15: BOTH names are covered -- the current tag AND the retired `LEGACY_RECOVERED_REASONING_TAG`
+  // (text carried under the old name before this rename, or a model's forged copy of it, must never
+  // be able to close a NEW wrapper either). Named explicitly rather than relied on as an accident of
+  // the new name happening to prefix the old one, so a future rename of either constant can't
+  // silently reopen this gap.
+  return text
+    .replace(new RegExp(`<(/?)${LEGACY_RECOVERED_REASONING_TAG}`, "gi"), "&lt;$1" + LEGACY_RECOVERED_REASONING_TAG)
+    .replace(new RegExp(`<(/?)${RECOVERED_REASONING_TAG}(?!_)`, "gi"), "&lt;$1" + RECOVERED_REASONING_TAG);
 }

@@ -535,7 +535,7 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
  * the impersonation R6-8 exists to forbid. So the annotation is carried plainly, on both doors.
  *
  * VERBATIM — this layer adds NOTHING, not even a label. The text arrives from Lane C already
- * finished and already delimited (the `<recovered_reasoning_summary>` tag WS-13 §8.2 names for the
+ * finished and already delimited (the `<recovered_reasoning kind=…>` tag WS-13 §8.2 names for the
  * tag door, the bracketed label for the thinking-channel door), and Lane C's §9.6 budget is counted
  * on exactly these bytes. A wrapper of this layer's own would double-label the second door, would
  * add a delimiter `neutralizeDelimiters` does not neutralise (so a foreign summary containing the

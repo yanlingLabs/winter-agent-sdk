@@ -111,7 +111,7 @@ describe("the matrix: cross domain", () => {
     // ... and the private thinking TEXT is not forwarded either: only the provider's own summary is.
     expect(serialized).not.toContain("private claude reasoning");
     expect(rendered.decoration).toEqual({
-      text: `<${RECOVERED_REASONING_TAG} provider="anthropic" model="anthropic/claude-a">claude's own summary</${RECOVERED_REASONING_TAG}>`,
+      text: `<${RECOVERED_REASONING_TAG} kind="summary" provider="anthropic" model="anthropic/claude-a">claude's own summary</${RECOVERED_REASONING_TAG}>`,
       door: "tag",
     });
     expect(report).toMatchObject({ droppedNativeState: 1, strippedInDialectBlocks: 2, withoutMaterial: 0, truncated: false });

@@ -727,3 +727,76 @@ describe("Ruling E-3: `fallbackModel` engages on an R6-6 retryable-class failure
     expect((bad as ProviderTurnError).retryable).toBe(false);
   });
 });
+
+// --- Phase 10b Lane S, S4 (W18-15): exposedComplete reaching announceLossyTransfer ----------------
+//
+// A minimal, wiring-free harness (no catalog, no HTTP fake): `providerIdentity` seeds
+// `currentProviderIdentity` directly and a scripted `resolveModelSwitch` hands back the target
+// endpoint the SAME way the production seam would, so `announceLossyTransfer`'s own logic runs
+// unmodified. Deliberately NOT going through `drive()`/a real catalog: this test is about ONE fact
+// (does a complete exposed turn suppress the warning?), not about wire ids or sidecar records.
+describe("W18-15: a complete-exposed source classifies as lossless-portable (no warning frame)", () => {
+  function deepseekConfig(): RuntimeConfig {
+    return { sessionId: "s-w18-15", cwd: "/tmp/w18-15", model: "deepseek/r-reason" };
+  }
+
+  const DEEPSEEK_IDENTITY: EngineProviderIdentity = { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai", continuationDomain: "deepseek/r-reason" };
+
+  function driveExposedSwitch(opts: { exposed: string; exposedComplete: boolean }): { switchResolve: (m: string, from?: unknown) => unknown; run: () => Promise<SdkMessage[]> } {
+    let calls = 0;
+    const provider: Provider = {
+      async generate() {
+        calls++;
+        if (calls === 1) return { kind: "text", text: "reply one", thinking: { exposed: opts.exposed, exposedComplete: opts.exposedComplete } };
+        return { kind: "text", text: "reply two" };
+      },
+    };
+    const resolveModelSwitch: ResolveModelSwitch = (model): ModelSwitchResolution => ({
+      provider: { async generate() { return { kind: "text", text: "reply two" }; } },
+      identity: { providerId: "glm-provider", modelKey: model, family: "openai", continuationDomain: "glm/different-domain" },
+      to: { providerId: "glm-provider", modelKey: model, family: "openai", continuationDomain: "glm/different-domain", readableState: "full-exposed" },
+      from: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai", continuationDomain: "deepseek/r-reason", readableState: "full-exposed" },
+    });
+    const run = async () => {
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: deepseekConfig(),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        tools: stubExecutor,
+        providerIdentity: DEEPSEEK_IDENTITY,
+        resolveModelSwitch,
+        // A store IS required for `recordAssistant` to populate `sessionChain` at all (its own
+        // `if (!store) return undefined` gate) -- without one, `announceLossyTransfer`'s own lookup
+        // finds no link, `exposedComplete` reads as unset, and this test would falsely warn. Mirrors
+        // `drive()`'s own minimal double above.
+        store: { recordUserEntry() {}, recordAssistantEntry() {}, recordProviderState() {}, recordProviderSwitch() {}, setProviderIdentity() {} },
+      });
+      host.output.write({ type: "user", text: "hello" });
+      host.output.write({ type: "control_request", requestId: "sm", subtype: "set_model", payload: { model: "glm-provider/x" } });
+      host.output.write({ type: "user", text: "carry on" });
+      host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+      const frames: WinterFrame[] = [];
+      for await (const f of host.input) frames.push(f);
+      await done;
+      return dataMessages(frames);
+    };
+    return { switchResolve: resolveModelSwitch as never, run };
+  }
+
+  test("exposedComplete: true -> no continuity_warning frame is emitted", async () => {
+    const { run } = driveExposedSwitch({ exposed: "the model's whole raw reasoning trace", exposedComplete: true });
+    const messages = await run();
+    expect(warningFrames(messages)).toHaveLength(0);
+    // The switch still happened and was announced -- this is "no warning", never "no switch".
+    expect(switchFrames(messages)).toHaveLength(1);
+  });
+
+  test("contrast: exposedComplete: false on the SAME shape DOES warn -- proving the suppression above is earned by the flag, not by the source family", async () => {
+    const { run } = driveExposedSwitch({ exposed: "only part of the trace", exposedComplete: false });
+    const messages = await run();
+    expect(warningFrames(messages)).toHaveLength(1);
+    expect(String(warningFrames(messages)[0]!.detail)).toContain("part of this turn's trace was not captured");
+  });
+});

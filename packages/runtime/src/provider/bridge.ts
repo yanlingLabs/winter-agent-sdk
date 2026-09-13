@@ -341,11 +341,19 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
     calls.push({ id, name: pending.name, input: parseToolArguments(pending.argumentsJson) });
   }
 
+  // W18-15 (Phase 10b Lane S, S4): whether the ACCUMULATED exposed text is the model's WHOLE
+  // reasoning trace for this turn, never a partial one. "Normal stop" excludes `max_tokens`
+  // (truncated by the provider's own limit), `aborted` and `refusal` -- and an error mid-stream never
+  // reaches this point at all (the `throw` above ends the fold before `stopReason` is ever read), so
+  // there is no separate "a delta was dropped" case left to detect independently: every way a
+  // reasoning delta could go missing already fails one of these two checks.
+  const exposedComplete = exposed.length > 0 && (stopReason === "end_turn" || stopReason === "tool_use");
+
   const thinking: ProviderThinkingOutput | undefined =
     summary.length > 0 || exposed.length > 0 || thinkingBlocks.length > 0
       ? {
           ...(summary.length > 0 ? { summary } : {}),
-          ...(exposed.length > 0 ? { exposed } : {}),
+          ...(exposed.length > 0 ? { exposed, exposedComplete } : {}),
           ...(thinkingBlocks.length > 0 ? { blocks: thinkingBlocks } : {}),
         }
       : undefined;

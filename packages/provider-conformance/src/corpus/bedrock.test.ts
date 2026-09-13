@@ -236,7 +236,7 @@ describe("T10 review round 1 (#16): Lane C's decoration text reaches the Bedrock
     // about the assertion existing on a real recorded request, not about which fake carries it.
     // Lane C's REAL output shape, already delimited: the ruling is that this layer adds nothing to
     // it, so a fixture whose text carries no delimiters of its own cannot show a re-delimiting.
-    const DECORATION = '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">WINTER-T10-DECORATION-MARKER</recovered_reasoning_summary>';
+    const DECORATION = '<recovered_reasoning kind="summary" provider="openai" model="gpt-5.6-sol">WINTER-T10-DECORATION-MARKER</recovered_reasoning>';
     const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
     try {
       const harness = createBedrockHarness(fake);

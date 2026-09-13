@@ -203,7 +203,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // A budget that cannot hold the wrapper plus a usable body buys nothing: sending a delimiter
       // around three characters spends context and carries no meaning. Dropped, counted, and the
       // whole transfer flips to lossy.
-      if (perDecoration !== undefined && perDecoration < decorationOverhead(source, door) + MIN_DECORATION_BODY_CHARS) {
+      if (perDecoration !== undefined && perDecoration < decorationOverhead(source, door, plan.material.kind) + MIN_DECORATION_BODY_CHARS) {
         report.budgetDropped++;
         report.truncated = true;
         continue;
@@ -212,6 +212,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         text: plan.material.text,
         source,
         door,
+        kind: plan.material.kind,
         ...(perDecoration !== undefined ? { maxChars: perDecoration } : {}),
       });
       if (remaining !== undefined) remaining = Math.max(0, remaining - decoration.text.length);
