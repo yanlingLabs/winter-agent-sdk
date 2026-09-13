@@ -87,9 +87,10 @@ export { BunRequiredError, hasBunRuntime, requireBunRuntime } from "./bun-requir
 // `adapters/index.ts` — which the star-export below already republishes — for the same collision
 // reason the original comment gave.
 export { CONSOLE_BEARER, anthropicCredentialRef } from "./adapters/anthropic/index.ts";
-// D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13): the SDK-owned replacement, spawning Anthropic's
-// OWN broker binaries (`claude auth login --console` / `ant auth print-credentials`) rather than
-// re-implementing OAuth. Exported from here for the same reason as the line above.
+// D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13; corrected Lane S round 2): the SDK-owned
+// replacement, spawning Anthropic's OWN `ant` broker binary (never `claude` -- measured to write no
+// Anthropic profile) rather than re-implementing OAuth. Exported from here for the same reason as
+// the line above.
 export {
   DEFAULT_ANTHROPIC_CONSOLE_PROFILE,
   anthropicConsoleProfileExists,

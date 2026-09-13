@@ -83,8 +83,14 @@ executed: both artifacts were read as bytes and deleted.
 > genuinely read out of the pinned artifact, and nothing here disputes that — but only `betaHeader`
 > (§2.1/§2.5) still ships, renamed `CONSOLE_BEARER.betaHeader`, kept because retiring the header is a
 > separate, unmeasured decision (M3). A SAME-DAY AMENDMENT then put the broker that replaced this
-> login (spawning the two binaries above, never speaking OAuth to Anthropic) in this SDK too
+> login (spawning the binary below, never speaking OAuth to Anthropic) in this SDK too
 > (`console-broker.ts`), rather than solely in Winter's daemon as the ruling first stated.
+>
+> **LANE S ROUND 2 CORRECTION (2026-09-13):** the line above naming `claude auth login --console` as
+> one of the two brokers was itself wrong, per a live measurement: on `claude` 2.1.250, that command
+> writes NO Anthropic profile for this org (it mints a Console API key into the login Keychain
+> instead), so `console-broker.ts` never spawns `claude` for anything. `ant auth login --profile <p>`
+> is the ONE door onto both legs; see `console-broker.ts`'s own banner for the full measured account.
 
 Recorded in full so that the exclusions are on the record beside the admissions. The configuration
 object appears identically in both artifacts (`A@805496`, `B@74074572` and `B@153685480`), which is

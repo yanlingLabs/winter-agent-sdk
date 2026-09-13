@@ -1,12 +1,11 @@
 // D20 (RETIRED 2026-09-13, P10a-1): this file used to drive the Anthropic Console PKCE login
 // end-to-end against a loopback fake -- the callback server, the PKCE binding, the profile lookup
 // that named the record, the whole flow. That flow is gone for good: on 2026-09-13 the platform
-// refused its grant for every derivable request shape, and the user ruled that Console OAuth goes
-// ONLY through Anthropic's own brokers (`claude auth login --console` / `ant auth print-credentials`),
-// never a re-implementation of the OAuth protocol itself. `console-oauth.ts`'s own banner carries the
-// full account of what was retired and why. The REPLACEMENT -- spawning those two binaries, proved
-// against real executable stubs -- lives in `console-broker.test.ts`, per the same-day amendment
-// putting that broker in this SDK too; this file now proves only what survives of the OLD one.
+// refused its grant for every derivable request shape. `console-oauth.ts`'s own banner carries the
+// full account of what was retired and why, INCLUDING Lane S round 2's correction that the REPLACEMENT
+// broker spawns `ant` only, never `claude` (a live measurement found `claude auth login --console`
+// writes no Anthropic profile for this org). The replacement itself, proved against real executable
+// stubs, lives in `console-broker.test.ts`; this file now proves only what survives of the OLD one.
 //
 // THE DERIVATION RECORD STAYS. `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md`
 // §2 and `derived-p6b.ts` are UNCHANGED as history (the doc's §2 header now says RETIRED, dated) --
