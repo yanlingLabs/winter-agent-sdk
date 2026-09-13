@@ -148,6 +148,8 @@ export {
   buildPortableHandoff,
   handoffDecoration,
   toClaudeReady,
+  switchFactsFor,
+  reviewModelSwitch,
 } from "./continuity/index.ts";
 export type {
   Decoration,
@@ -177,4 +179,5 @@ export type {
   ProviderStateRecord,
   ToClaudeReadyOptions,
   ToClaudeReadyResult,
+  SwitchReview,
 } from "./continuity/index.ts";

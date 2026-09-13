@@ -39,3 +39,7 @@ export type { HandoffToolFact, PortableHandoff, PortableHandoffOptions, Portable
 // direct dependency on this package instead -- see the phase report).
 export { toClaudeReady } from "./claude-ready.ts";
 export type { ProviderStateKind, ProviderStateRecord, ToClaudeReadyOptions, ToClaudeReadyResult } from "./claude-ready.ts";
+
+// Phase 10b Lane S, S7 (W18-20/21): the one pre-flight switch review.
+export { switchFactsFor, reviewModelSwitch } from "./switch-review.ts";
+export type { SwitchReview } from "./switch-review.ts";
