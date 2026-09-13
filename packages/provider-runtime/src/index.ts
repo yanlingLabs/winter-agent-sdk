@@ -147,6 +147,7 @@ export {
   PRIOR_MODEL_HANDOFF_TAG,
   buildPortableHandoff,
   handoffDecoration,
+  toClaudeReady,
 } from "./continuity/index.ts";
 export type {
   Decoration,
@@ -172,4 +173,8 @@ export type {
   PortableHandoff,
   PortableHandoffOptions,
   PortableHandoffSections,
+  ProviderStateKind,
+  ProviderStateRecord,
+  ToClaudeReadyOptions,
+  ToClaudeReadyResult,
 } from "./continuity/index.ts";
