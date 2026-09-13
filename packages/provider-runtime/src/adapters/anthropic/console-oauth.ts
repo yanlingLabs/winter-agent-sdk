@@ -10,6 +10,13 @@
 // WRONG, by measurement: it writes no Anthropic profile for this org, so `console-broker.ts` spawns
 // `ant` ONLY. See that file's own banner for the full measured account.
 //
+// LANE S ROUND 3 (2026-09-13): an Opus review found a data-loss defect in the account name itself --
+// `refreshAnthropicBearer`/`logoutAnthropicConsole` were writing/deleting the console bearer at
+// `anthropic:default`, the SAME account `winter login --anthropic-key` stores the user's pasted API
+// key at. `ANTHROPIC_CONSOLE_ACCOUNT_ID`/`ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT` below fix that with
+// the console bearer's own account (`"console"`); `messages.ts`'s auth selection now also refuses a
+// `bearer` found anywhere else on the `anthropic` row rather than risk dispatching it.
+//
 // WHAT SURVIVES, and why each one still earns its place with no login attached to it:
 //
 //   `ANTHROPIC_CONSOLE_PROVIDER_ID` -- the provider-id gate `messages.ts` uses to keep the beta
@@ -80,3 +87,27 @@ export const CONSOLE_BEARER = {
 export function anthropicCredentialRef(accountId: string, service?: string): Extract<CredentialRef, { kind: "keychain" }> {
   return { kind: "keychain", account: `anthropic:${accountId}`, ...(service !== undefined ? { service } : {}) };
 }
+
+/**
+ * P10a-4, AMENDED (2026-09-13, Lane S round 3): the account id the console-broker's bearer material
+ * lives under -- deliberately NOT `"default"`. `anthropic:default` is the account
+ * `winter login --anthropic-key` writes the user's pasted API key to (`storeProviderCredential`'s
+ * ordinary door). Before this fix, `refreshAnthropicBearer` wrote the console bearer there too and
+ * `logoutAnthropicConsole` deleted from there too: an Opus review found this a genuine data-loss
+ * defect -- a Console login silently overwrote a stored API key, and a Console logout silently erased
+ * one. `"console"` is its own account, colliding with nothing.
+ */
+export const ANTHROPIC_CONSOLE_ACCOUNT_ID = "console";
+
+/**
+ * The FIXED Keychain account the console-broker's bearer material lives under: `anthropic:console`.
+ *
+ * Built THROUGH `anthropicCredentialRef` itself (`.account`, no `service` -- the account string does
+ * not vary with it) rather than retyped as a second literal, so it can never drift from what the one
+ * ref-builder in this file actually produces. Every door on the console path -- login (via
+ * `refreshAnthropicBearer`), logout, and `credential-api.ts`'s login result -- reads or writes ONLY
+ * this account; `anthropic:default` must never be touched by any of them. The daemon pins an
+ * equality test against this exact export, so its literal value (`"anthropic:console"`) is part of
+ * this file's public contract, not an implementation detail.
+ */
+export const ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID).account;

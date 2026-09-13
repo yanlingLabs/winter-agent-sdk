@@ -86,7 +86,7 @@ export { BunRequiredError, hasBunRuntime, requireBunRuntime } from "./bun-requir
 // `CONSOLE_OAUTH`) and `anthropicCredentialRef` are what remain; exported from HERE rather than from
 // `adapters/index.ts` — which the star-export below already republishes — for the same collision
 // reason the original comment gave.
-export { CONSOLE_BEARER, anthropicCredentialRef } from "./adapters/anthropic/index.ts";
+export { ANTHROPIC_CONSOLE_ACCOUNT_ID, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER, anthropicCredentialRef } from "./adapters/anthropic/index.ts";
 // D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13; corrected Lane S round 2): the SDK-owned
 // replacement, spawning Anthropic's OWN `ant` broker binary (never `claude` -- measured to write no
 // Anthropic profile) rather than re-implementing OAuth. Exported from here for the same reason as

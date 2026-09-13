@@ -25,7 +25,14 @@
 // is the redacted ref, the operation, and the typed code — which is what makes the failure
 // actionable in the first place.
 import type { CredentialMaterial, CredentialStatus, CredentialStore, ProviderContext, ProviderRegistry } from "@yanlinglabs/winter-provider-runtime";
-import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleBrokerLogin, startCodexLogin, startXaiLogin } from "@yanlinglabs/winter-provider-runtime";
+import {
+  ANTHROPIC_CONSOLE_ACCOUNT_ID,
+  CredentialResolutionError,
+  WinterProviderResolutionError,
+  startAnthropicConsoleBrokerLogin,
+  startCodexLogin,
+  startXaiLogin,
+} from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
 import { keychainAccountName } from "./keychain-store.ts";
 import { redactCredentialRef } from "./selection.ts";
@@ -430,10 +437,14 @@ export async function startProviderLogin(providerId: ProviderLoginId, store: Cre
       // wrong code, a broker binary's own refusal). `outcome.reason` is already vetted safe by
       // `console-broker.ts`'s own contract: never a URL, never a token, never the pasted code.
       if (!outcome.ok) throw new Error(outcome.reason);
-      const ref = providerCredentialRef({ providerId: "anthropic", accountId: "default", ...(options.service !== undefined ? { service: options.service } : {}) });
+      // Lane S round 3 (Opus review, data-loss fix): the console bearer's OWN account
+      // (`ANTHROPIC_CONSOLE_ACCOUNT_ID`, "console") -- never `"default"`, which is the account
+      // `winter login --anthropic-key` stores the user's pasted API key under. Reading it back from
+      // ANY other account here would answer with a ref this door never actually wrote.
+      const ref = providerCredentialRef({ providerId: "anthropic", accountId: ANTHROPIC_CONSOLE_ACCOUNT_ID, ...(options.service !== undefined ? { service: options.service } : {}) });
       const material = await store.get(ref);
       const expiresAt = material !== null && material.kind === "bearer" && material.expiresAt !== undefined ? material.expiresAt : Date.now();
-      return { ref, accountId: "default", expiresAt };
+      return { ref, accountId: ANTHROPIC_CONSOLE_ACCOUNT_ID, expiresAt };
     }
     case "codex-oauth":
       return await startCodexLogin(store, options);

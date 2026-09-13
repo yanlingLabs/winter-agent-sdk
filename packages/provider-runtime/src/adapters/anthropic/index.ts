@@ -20,7 +20,7 @@ export type { AnthropicAdapterOptions, EffortMapping } from "./messages.ts";
 // `messages.ts` still sends alongside an `oauth`-kind Anthropic credential's bearer. See
 // `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md` §2 (headed RETIRED) for the
 // full derivation record that login once shipped.
-export { CONSOLE_BEARER, anthropicCredentialRef } from "./console-oauth.ts";
+export { ANTHROPIC_CONSOLE_ACCOUNT_ID, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER, anthropicCredentialRef } from "./console-oauth.ts";
 // D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13; corrected Lane S round 2): Console sign-in
 // through Anthropic's OWN `ant` broker binary (`auth login`/`auth logout`/`auth print-credentials`)
 // -- spawned by the SDK runtime, never a re-implementation of the OAuth protocol, and never `claude`

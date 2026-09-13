@@ -26,7 +26,7 @@ import {
   startAnthropicConsoleBrokerLogin,
   type AnthropicConsoleBrokerOptions,
 } from "./console-broker.ts";
-import { anthropicCredentialRef } from "./console-oauth.ts";
+import { ANTHROPIC_CONSOLE_ACCOUNT_ID, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, anthropicCredentialRef } from "./console-oauth.ts";
 
 const EXPECTED_CODE = "test-code-9f2a-do-not-reuse";
 const STUB_BEARER_TOKEN = "fake-token";
@@ -183,8 +183,9 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
     const outcome = await handle.done;
     expect(outcome).toEqual({ ok: true, profile: "winter" });
 
-    // The bearer write (via the in-memory store), under the fixed `anthropic:default` record.
-    const ref = anthropicCredentialRef("default", "com.winter.core.dev");
+    // The bearer write (via the in-memory store), under the fixed `anthropic:console` record
+    // (Lane S round 3) -- NEVER `anthropic:default`, the api-key slot.
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID, "com.winter.core.dev");
     const material = await store.get(ref);
     expect(material).toEqual({ kind: "bearer", token: STUB_BEARER_TOKEN, expiresAt: FIXTURE_EXPIRES_AT });
   });
@@ -286,7 +287,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
     const store = createMemoryCredentialStore();
     const result = await refreshAnthropicBearer(store, { antExecutable, anthropicConfigDir });
     expect(result).toEqual({ ok: true, expiresAt: FIXTURE_EXPIRES_AT });
-    const material = await store.get(anthropicCredentialRef("default"));
+    const material = await store.get(anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID));
     expect(material).toEqual({ kind: "bearer", token: STUB_BEARER_TOKEN, expiresAt: FIXTURE_EXPIRES_AT });
   });
 
@@ -303,7 +304,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
     const { anthropicConfigDir, binDir } = mkConfigDirs();
     const failingAnt = writeFailingAntStub(binDir);
     const store = createMemoryCredentialStore();
-    const ref = anthropicCredentialRef("default");
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "already-there", expiresAt: 123 });
     const result = await refreshAnthropicBearer(store, { antExecutable: failingAnt, anthropicConfigDir });
     expect(result).toEqual({ ok: false, reason: "ant: profile not found" });
@@ -332,7 +333,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
     const { anthropicConfigDir, binDir } = mkConfigDirs();
     const antExecutable = writeAntLogoutStub(binDir);
     const store = createMemoryCredentialStore();
-    const ref = anthropicCredentialRef("default");
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "to-be-deleted", expiresAt: 999 });
     await logoutAnthropicConsole(store, { antExecutable, anthropicConfigDir });
     expect(await store.get(ref)).toBeNull();
@@ -341,7 +342,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
   test("logoutAnthropicConsole: still deletes the material even when the binary cannot be started at all", async () => {
     const { anthropicConfigDir } = mkConfigDirs();
     const store = createMemoryCredentialStore();
-    const ref = anthropicCredentialRef("default");
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "to-be-deleted", expiresAt: 999 });
     await logoutAnthropicConsole(store, { antExecutable: join(anthropicConfigDir, "does-not-exist"), anthropicConfigDir });
     expect(await store.get(ref)).toBeNull();
@@ -350,7 +351,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
   test("logoutAnthropicConsole: NO antExecutable skips the spawn, names the reason on `onLine`, and STILL deletes the material (item 2)", async () => {
     const { anthropicConfigDir } = mkConfigDirs();
     const store = createMemoryCredentialStore();
-    const ref = anthropicCredentialRef("default");
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "to-be-deleted", expiresAt: 999 });
     const lines: string[] = [];
     await logoutAnthropicConsole(store, { anthropicConfigDir, onLine: (l) => lines.push(l) });
@@ -414,7 +415,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
       expect(result.ok).toBe(true);
       // `refreshAnthropicBearer` writes the child's stdout (here, the whole env dump) as the bearer
       // token -- the store IS the observation point for what the child actually received.
-      const material = await store.get(anthropicCredentialRef("default"));
+      const material = await store.get(anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID));
       const dump = material?.kind === "bearer" ? material.token : "";
       expect(dump.length).toBeGreaterThan(0);
       for (const key of Object.keys(forbidden)) expect(dump).not.toContain(`${key}=`);
@@ -537,7 +538,7 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
     const lines: string[] = [];
     const result = await refreshAnthropicBearer(store, { antExecutable, anthropicConfigDir, now: () => now, onLine: (line) => lines.push(line) });
     expect(result).toEqual({ ok: true, expiresAt: now + 60_000 });
-    const material = await store.get(anthropicCredentialRef("default"));
+    const material = await store.get(anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID));
     expect(material).toEqual({ kind: "bearer", token: STUB_BEARER_TOKEN, expiresAt: now + 60_000 });
     // Named by the function's own name only -- never the profile's raw value.
     expect(lines.some((line) => line.includes("refreshAnthropicBearer"))).toBe(true);
@@ -560,5 +561,38 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment; Lane S round 2
     for (const line of lines) expect(line).not.toContain(EXPECTED_CODE);
     expect(lines.some((l) => l.includes("code=…"))).toBe(true);
     expect(lines.some((l) => l.includes("MORE TEXT"))).toBe(false);
+  });
+
+  test("DATA-LOSS REGRESSION (Opus review, Lane S round 3): a full login -> refresh -> logout cycle never touches api-key material stored at anthropic:default", async () => {
+    // The exact defect: refreshAnthropicBearer/logoutAnthropicConsole used to write/delete
+    // `anthropic:default` -- the SAME account `winter login --anthropic-key` stores the user's pasted
+    // API key at. Pre-seeded here and asserted BYTE-IDENTICAL after every step of the cycle.
+    const { anthropicConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeMultiCommandAntStub(binDir);
+    const store = createMemoryCredentialStore();
+    const apiKeyRef = anthropicCredentialRef("default");
+    const apiKeyMaterial = { kind: "api-key" as const, key: "sk-ant-api03-user-pasted-key-do-not-touch" };
+    await store.set(apiKeyRef, apiKeyMaterial);
+
+    // Login (its OWN internal refresh, on success, is step one of the cycle).
+    const handle = startAnthropicConsoleBrokerLogin(store, { antExecutable, anthropicConfigDir });
+    await handle.submitCode("anything");
+    const loginOutcome = await handle.done;
+    expect(loginOutcome).toEqual({ ok: true, profile: "winter" });
+    expect(await store.get(apiKeyRef)).toEqual(apiKeyMaterial);
+
+    // A standalone refresh (the host's own timer, per P10a-4).
+    const refreshResult = await refreshAnthropicBearer(store, { antExecutable, anthropicConfigDir });
+    expect(refreshResult.ok).toBe(true);
+    expect(await store.get(apiKeyRef)).toEqual(apiKeyMaterial);
+
+    // Logout.
+    await logoutAnthropicConsole(store, { antExecutable, anthropicConfigDir });
+    expect(await store.get(apiKeyRef)).toEqual(apiKeyMaterial);
+
+    // The console bearer itself really was written and really was deleted -- at ITS OWN account, so
+    // this is a positive proof the cycle did its job, not merely a no-op that touched nothing.
+    expect(await store.get(anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID))).toBeNull();
+    expect(ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT).toBe("anthropic:console");
   });
 });

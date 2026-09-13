@@ -553,7 +553,7 @@ describe("WS-13b: the `--login` door", () => {
     expect(printed).not.toContain("claude");
   });
 
-  test("`anthropic` (Lane S round 2): with the `ant` broker wired via `overrides`, runs against a real `ant` stub and prints the `anthropic:default` CREDENTIAL_REF -- NO claude executable is built or supplied", async () => {
+  test("`anthropic` (Lane S round 3): with the `ant` broker wired via `overrides`, runs against a real `ant` stub and prints the `anthropic:console` CREDENTIAL_REF -- NEVER `anthropic:default`, and NO claude executable is built or supplied", async () => {
     const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -582,6 +582,11 @@ describe("WS-13b: the `--login` door", () => {
 
       const io = collect();
       const store = createMemoryCredentialStore();
+      // Lane S round 3 (Opus review, data-loss fix): a pre-seeded API key at `anthropic:default`
+      // must survive this login untouched.
+      const apiKeyRef = { kind: "keychain" as const, account: "anthropic:default", service: "com.winter.live.test" };
+      const apiKeyMaterial = { kind: "api-key" as const, key: "sk-ant-api03-user-pasted-key-do-not-touch" };
+      await store.set(apiKeyRef, apiKeyMaterial);
       const ok = await runLogin(
         "anthropic",
         { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.test" },
@@ -595,8 +600,9 @@ describe("WS-13b: the `--login` door", () => {
         },
       );
       expect(ok).toBe(true);
-      expect(io.lines.join("\n")).toContain(`export WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF='keychain:com.winter.live.test/anthropic:default'`);
-      expect((await store.get({ kind: "keychain", account: "anthropic:default", service: "com.winter.live.test" }))?.kind).toBe("bearer");
+      expect(io.lines.join("\n")).toContain(`export WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF='keychain:com.winter.live.test/anthropic:console'`);
+      expect((await store.get({ kind: "keychain", account: "anthropic:console", service: "com.winter.live.test" }))?.kind).toBe("bearer");
+      expect(await store.get(apiKeyRef)).toEqual(apiKeyMaterial);
     } finally {
       rmSync(anthropicConfigDir, { recursive: true, force: true });
       rmSync(binDir, { recursive: true, force: true });
