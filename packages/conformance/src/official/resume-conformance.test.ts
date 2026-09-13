@@ -21,7 +21,15 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { hasBunRuntime } from "../bun-required.ts";
 import { fetchAndVerifyUpstream } from "./fetch.ts";
-import { userEntry, assistantEntry, claudeCompactBoundaryEntry, claudeCompactSummaryEntry, CLAUDE_COMPACT_SUMMARY_PREAMBLE, type SessionCtx, type Chain } from "winter-agent-runtime";
+// Fix round 1 (reviewer #3, minor): a RELATIVE path straight to the runtime package's own source,
+// never a package.json dependency -- `packages/conformance` publishes independently of
+// `winter-agent-runtime` (which is private, never published), and a devDependency on it created a
+// cyclic workspace-devDependency triangle with packages/sdk (which already devDepends on
+// @yanlinglabs/winter-conformance for ITS OWN tests). This file is never built into conformance's
+// own `dist/` (test files are excluded from the package build), so the relative import never
+// reaches a published tarball either -- it exists only for `bun test`/`tsc --noEmit` inside this
+// repository checkout, exactly where the sibling package's source already lives on disk.
+import { userEntry, assistantEntry, claudeCompactBoundaryEntry, claudeCompactSummaryEntry, CLAUDE_COMPACT_SUMMARY_PREAMBLE, type SessionCtx, type Chain } from "../../../runtime/src/store/dialect.ts";
 
 const CLAUDE_VERSION = "0.3.250";
 

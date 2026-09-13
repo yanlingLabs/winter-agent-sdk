@@ -33,11 +33,7 @@ importers:
         specifier: workspace:*
         version: link:packages/runtime
 
-  packages/conformance:
-    devDependencies:
-      winter-agent-runtime:
-        specifier: workspace:*
-        version: link:../runtime
+  packages/conformance: {}
 
   packages/platform/darwin-arm64: {}
 
