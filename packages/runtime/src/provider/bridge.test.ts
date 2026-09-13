@@ -231,6 +231,16 @@ describe("R6-8: a FOREIGN summary never becomes content", () => {
       ).rejects.toThrow();
     });
 
+    // Fix round 1 (reviewer #4, minor): a stream that ends with NO `done` event at all (the
+    // AsyncIterable simply completes -- an adapter bug, or a connection that closes cleanly without
+    // ever sending the terminal event) leaves `stopReason` as `undefined`, which is neither
+    // `"end_turn"` nor `"tool_use"` -- so `exposedComplete` must read `false`, the same as an
+    // explicit `max_tokens`/`aborted`/`refusal`, never `true` by some absent-means-fine default.
+    test("a stream with NO stop reason at all (ends without a `done` event) yields exposedComplete: false", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "partial reasoning, stream just ends" }]));
+      expect(turn.thinking?.exposedComplete).toBe(false);
+    });
+
     test("no exposed reasoning at all -- exposedComplete is simply absent, never a bare `false` on a thinking object that doesn't exist", async () => {
       const turn = await foldProviderStream(scripted([{ type: "text_delta", text: "answer" }, { type: "done", stopReason: "end_turn" }]));
       expect(turn.thinking).toBeUndefined();
