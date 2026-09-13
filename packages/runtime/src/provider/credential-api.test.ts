@@ -558,7 +558,7 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
     }
   });
 
-  test("`anthropic` (Lane S round 2): with the `ant` broker fully wired, this door spawns the real `ant` stub, awaits `readConsoleCode`, and answers with the `anthropic:default` ref -- NO claude executable is built or supplied", async () => {
+  test("`anthropic` (Lane S round 3): with the `ant` broker fully wired, this door spawns the real `ant` stub, awaits `readConsoleCode`, and answers with the `anthropic:console` ref -- NEVER `anthropic:default`, and NO claude executable is built or supplied", async () => {
     // A real executable `ant` stub under mkdtemp, exactly like `console-broker.test.ts`'s own
     // fixtures -- this test proves the WIRING (this file's fields reach
     // `startAnthropicConsoleBrokerLogin` correctly), not the broker's own behaviour, which that file
@@ -599,6 +599,11 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
       chmodSync(antExecutable, 0o755);
 
       const store = createMemoryCredentialStore();
+      // Lane S round 3 (Opus review, data-loss fix): a pre-seeded API key at `anthropic:default`
+      // must survive this login untouched -- the exact defect this round fixes.
+      const apiKeyRef = providerCredentialRef({ providerId: "anthropic", accountId: "default" });
+      const apiKeyMaterial = { kind: "api-key" as const, key: "sk-ant-api03-user-pasted-key-do-not-touch" };
+      await store.set(apiKeyRef, apiKeyMaterial);
       const progressLines: string[] = [];
       const result = await startProviderLogin("anthropic", store, {
         openUrl: async () => {
@@ -610,10 +615,12 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
         onAuthStatus: (status) => progressLines.push(...(status.output ?? [])),
       });
 
-      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: "default" }));
-      expect(result.accountId).toBe("default");
+      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: "console" }));
+      expect(result.accountId).toBe("console");
       expect(result.expiresAt).toBe(1999999999999);
       expect(await store.get(result.ref)).toEqual({ kind: "bearer", token: "fake-bearer-token", expiresAt: 1999999999999 });
+      // The pre-seeded API key is byte-identical -- never overwritten by the console login.
+      expect(await store.get(apiKeyRef)).toEqual(apiKeyMaterial);
       // The URL reached the host over the PROGRESS channel, redacted -- never through `openUrl`.
       expect(progressLines.some((l) => l.includes("https://platform.claude.com/oauth/authorize?…"))).toBe(true);
       expect(progressLines.join("\n")).not.toContain(expectedCode);

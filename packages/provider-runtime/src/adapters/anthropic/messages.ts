@@ -51,7 +51,7 @@ import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type Iden
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
-import { ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_BEARER } from "./console-oauth.ts";
+import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_BEARER } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
   CredentialMaterial,
@@ -522,6 +522,21 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
 
 async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
+  // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
+  // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
+  // (`anthropic:console`) -- never under `anthropic:default`, the account `winter login
+  // --anthropic-key` writes the user's pasted API key to. Checked BEFORE anything else runs (no
+  // header is built, no beta is added) and refused with a NAMED, TYPED reason rather than being
+  // dispatched: a `bearer` sitting at `anthropic:default` -- however it got there -- must never be
+  // sent as `Authorization: Bearer`, and must never be silently treated as the api-key credential
+  // either (the two kinds are never interchangeable regardless of account). Scoped to
+  // `isConsoleProvider(ctx)` exactly like the beta gate below: a sibling `<id>-anthropic` row's
+  // `bearer` material is a different credential space entirely and is untouched by this check.
+  if (material?.kind === "bearer" && isConsoleProvider(ctx) && !(ctx.authRef.kind === "keychain" && ctx.authRef.account === ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT)) {
+    throw capabilityRefusal(
+      `a "bearer" credential for the Anthropic Console provider is only honoured under the "${ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT}" account (the console-broker's own record) -- this one is not, so it is refused rather than dispatched: it must never be sent as an Authorization header, and never treated as the "anthropic:default" api-key credential`,
+    );
+  }
   // D20: an OAuth bearer and the `oauth_auth` beta travel together on this family -- the pinned
   // artifact's own auth builder is a ternary between `{Authorization, anthropic-beta}` and
   // `{x-api-key}`, and all 13 of its sites that set the beta also set a bearer

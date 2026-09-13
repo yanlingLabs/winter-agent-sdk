@@ -46,7 +46,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { requireBunRuntime } from "../../bun-required.ts";
 import type { CredentialMaterial, CredentialStore } from "../../types.ts";
-import { anthropicCredentialRef } from "./console-oauth.ts";
+import { ANTHROPIC_CONSOLE_ACCOUNT_ID, anthropicCredentialRef } from "./console-oauth.ts";
 
 /** `ant`'s `--profile` value (P10a-2) -- one profile for the login and every subsequent `ant` call. */
 export const DEFAULT_ANTHROPIC_CONSOLE_PROFILE = "winter";
@@ -316,9 +316,10 @@ export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options
 
 /**
  * Runs `ant auth print-credentials --profile <profile> --access-token` and writes the bearer material
- * `anthropic:default` (P10a-4) -- called automatically by `startAnthropicConsoleBrokerLogin` on a
- * successful login, and separately by a host's own refresh timer (60 s before `expiresAt`, per
- * P10a-4) since renewal never re-runs the interactive login.
+ * to `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT` (`anthropic:console`, P10a-4, amended Lane S round 3 --
+ * NEVER `anthropic:default`, the api-key slot) -- called automatically by
+ * `startAnthropicConsoleBrokerLogin` on a successful login, and separately by a host's own refresh
+ * timer (60 s before `expiresAt`, per P10a-4) since renewal never re-runs the interactive login.
  *
  * A FAILURE LEAVES ANY EXISTING MATERIAL UNTOUCHED: this function never calls `store.set` on any path
  * that did not itself produce a fresh token, so a transient failure of the broker cannot erase a
@@ -372,7 +373,9 @@ export async function refreshAnthropicBearer(store: CredentialStore, options: An
     expiresAt = nowValue + 60_000;
   }
   const material: Extract<CredentialMaterial, { kind: "bearer" }> = { kind: "bearer", token, expiresAt };
-  const ref = anthropicCredentialRef("default", options.service);
+  // Lane S round 3: the console bearer's OWN account, never `"default"` -- see
+  // `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`'s own doc comment for the data-loss defect this fixes.
+  const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID, options.service);
   try {
     await store.set(ref, material);
   } catch {
@@ -474,5 +477,7 @@ export async function logoutAnthropicConsole(store: CredentialStore, options: An
       // Best-effort, per the doc comment above.
     }
   }
-  await store.delete(anthropicCredentialRef("default", options.service));
+  // Lane S round 3: deletes ONLY the console bearer's own account -- never `anthropic:default`,
+  // which a logout must never touch (that is the user's separately-configured API key).
+  await store.delete(anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID, options.service));
 }

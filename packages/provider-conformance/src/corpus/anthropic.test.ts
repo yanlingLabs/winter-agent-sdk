@@ -15,6 +15,8 @@ import {
   createMemoryCredentialStore,
   createAnthropicMessagesAdapter,
   ANTHROPIC_ADAPTER_ID,
+  ANTHROPIC_CONSOLE_ACCOUNT_ID,
+  ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT,
   ANTHROPIC_DEFAULT_BASE_URL,
   CONSOLE_BEARER,
   anthropicCredentialRef,
@@ -669,8 +671,10 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
     // `messages.ts` previously keyed on `material.kind === "oauth"` alone, which meant this exact
     // shape -- the one the host broker actually produces -- silently never got the header. The gate
     // now also fires for `bearer` material, scoped to `isConsoleProvider(ctx)` exactly as before.
+    // Lane S round 3: under the console's OWN account (`ANTHROPIC_CONSOLE_ACCOUNT_ID`) -- a `bearer`
+    // anywhere else on this row is refused (see the dedicated test below).
     const store = createMemoryCredentialStore();
-    const ref = anthropicCredentialRef(FAKE_CONSOLE_ACCOUNT_ID);
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "test-token-console-bearer" });
     const adapter = testAnthropicAdapter();
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
@@ -687,7 +691,7 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
     // `resolveFreshMaterial` pair (`messages.ts`), so one assertion on the OTHER path is enough to
     // confirm they cannot diverge -- there is only one header builder to diverge from.
     const store = createMemoryCredentialStore();
-    const ref = anthropicCredentialRef(FAKE_CONSOLE_ACCOUNT_ID);
+    const ref = anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "test-token-console-bearer-count" });
     const adapter = testAnthropicAdapter();
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
@@ -697,6 +701,24 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
       expect(turn.headers["authorization"]).toBe("Bearer ***");
       expect(turn.headers["x-api-key"]).toBeUndefined();
       expect(turn.headers["anthropic-beta"]).toContain(CONSOLE_BEARER.betaHeader);
+    });
+  });
+
+  test("SECURITY (Opus review, Lane S round 3, data-loss fix): a `bearer` credential found under `anthropic:default` -- the api-key slot -- is a TYPED REFUSAL, never dispatched and never treated as the api-key credential", async () => {
+    // The exact defect this round fixes: refreshAnthropicBearer/logoutAnthropicConsole used to
+    // write/delete `anthropic:default`, so a `bearer` could end up there by accident (or by a stale
+    // pre-fix write). Whatever the cause, this adapter must never send it -- as an Authorization
+    // header OR as x-api-key -- and must fail BEFORE any request leaves the process.
+    const store = createMemoryCredentialStore();
+    const ref = anthropicCredentialRef("default"); // the api-key slot's own account, on purpose
+    await store.set(ref, { kind: "bearer", token: "must-never-be-sent" });
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await expect(foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }))).rejects.toThrow(
+        new RegExp(ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT.replace(":", "\\:")),
+      );
+      expect(fake.requests).toHaveLength(0);
+      expect(noRequestContains(fake, "must-never-be-sent")).toBe(true);
     });
   });
 
