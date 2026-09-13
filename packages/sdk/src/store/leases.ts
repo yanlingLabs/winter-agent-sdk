@@ -6,6 +6,17 @@
 // accepted P1 gap the brief explicitly defers). Same-PROCESS re-entry (the same OS pid re-acquiring
 // its own live lease — e.g. two `WinterCompatibilitySessionStore` instances in one process) always
 // succeeds; a DIFFERENT, still-live pid throws WinterStoreLeaseError.
+//
+// Fix round 1 (reviewer #2, minor) -- LOAD-BEARING INVARIANT, mirrored at
+// WinterCompatibilitySessionStore.append/releaseSessionLease (session-store.ts) since it is THEIR
+// call sequences that actually matter, not this file's own functions in isolation: every function
+// here (acquireLease, releaseLease, readLeaseInfo) is PLAIN SYNCHRONOUS fs I/O, with no `await`
+// anywhere in this module. That is what lets append's own claim -> write -> fsync stretch and a
+// same-process releaseSessionLease call never interleave -- JS's run-to-completion semantics mean
+// once either one starts, nothing else on that process's event loop runs until it returns. This
+// module gaining a real async gap (a network call, a setTimeout-based retry, etc.) inside
+// acquireLease or releaseLease would silently break that guarantee for every caller; such a change
+// needs an explicit in-process lock around the callers, not just around here.
 import { openSync, readFileSync, writeSync, fsyncSync, closeSync, renameSync, linkSync, unlinkSync } from "node:fs";
 
 // Phase 10b Lane S, S8 (W18-5): the sibling of `acquireLease` this repo never needed until a router

@@ -507,4 +507,42 @@ describe("releaseSessionLease (W18-5)", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  // Fix round 1 (reviewer #2, minor): the run-to-completion invariant documented on
+  // `append`/`releaseSessionLease` (session-store.ts) and in `leases.ts`'s own header, made
+  // concrete -- release BETWEEN two appends, then check the file itself stays structurally valid
+  // (every line still parses, the lock re-names THIS pid, and nothing was corrupted or duplicated),
+  // not merely that `load()` happens to return the right entries.
+  test("release BETWEEN two appends: the next append re-claims the lease cleanly and the file stays valid", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-release", sessionId: "sess-5" };
+      const jsonlPath = join(home, "projects", "proj-release", "sess-5.jsonl");
+      const lockPath = join(home, "projects", "proj-release", "sess-5.lock");
+
+      const e1 = entry();
+      await store.append(key, [e1]);
+      expect(await store.releaseSessionLease(key)).toBe(true);
+      expect(existsSync(lockPath)).toBe(false); // released cleanly -- no stale lock file left behind
+
+      const e2 = entry();
+      await store.append(key, [e2]); // re-claims fresh, same pid
+
+      // The lock file is well-formed and names THIS pid -- a clean re-claim, not a corrupted or
+      // half-written one.
+      const lease = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      expect(lease.pid).toBe(process.pid);
+
+      // The jsonl itself is still valid: every line parses, in append order, with nothing dropped,
+      // duplicated, or interleaved by the release landing between the two appends.
+      const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
+      expect(rawLines).toHaveLength(2);
+      const parsed = rawLines.map((line) => JSON.parse(line) as SessionStoreEntry);
+      expect(parsed).toEqual([e1, e2]);
+      expect(await store.load(key)).toEqual([e1, e2]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
