@@ -18,6 +18,7 @@ import type { RuntimeConfig, WinterFrame, SpawnedRuntimeProcess } from "@yanling
 import {
   userEntry,
   assistantEntry,
+  winterMessageIdFor,
   invokedSkillsEntry,
   fileHistoryEntry,
   INVOKED_SKILLS_ENTRY_TYPE,
@@ -98,7 +99,34 @@ describe("assistantEntry", () => {
     expect(entry.cwd).toBe(CTX.cwd);
     expect(entry.version).toBe(CTX.version);
     expect(entry.isSidechain).toBe(false);
-    expect(entry.message).toEqual({ role: "assistant", content: blocks });
+    // W18-11 (Phase 10b, S1): every assistant entry now carries a Claude-shaped `message.id` +
+    // `message.type` alongside the pre-existing role/content -- the ONLY diff this task's golden
+    // regeneration (see below) is allowed to introduce on any previously-pinned assistant entry.
+    expect(entry.message).toEqual({ id: winterMessageIdFor(entry.uuid), type: "message", role: "assistant", content: blocks });
+  });
+
+  test("W18-11: message.id is exactly winterMessageIdFor(uuid) with dashes removed", () => {
+    const chain: Chain = { parentUuid: null };
+    const entry = assistantEntry({ content: [{ type: "text", text: "hi" }], chain, ctx: CTX });
+    expect(entry.message.id).toBe(`msg_winter_${entry.uuid.replaceAll("-", "")}`);
+    expect(entry.message.id).not.toContain("-");
+    expect(entry.message.type).toBe("message");
+  });
+
+  test("W18-11: a pre-allocated uuid gives the same message.id as a fresh entry with that uuid", () => {
+    const chain: Chain = { parentUuid: null };
+    const preAllocated = randomUUID();
+    const entry = assistantEntry({ content: [{ type: "text", text: "hi" }], chain, ctx: CTX, uuid: preAllocated });
+    expect(entry.uuid).toBe(preAllocated);
+    expect(entry.message.id).toBe(winterMessageIdFor(preAllocated));
+  });
+
+  test("W18-11: model, usage and stop_reason are NOT invented on the message", () => {
+    const chain: Chain = { parentUuid: null };
+    const entry = assistantEntry({ content: [{ type: "text", text: "hi" }], chain, ctx: CTX });
+    expect("model" in entry.message).toBe(false);
+    expect("usage" in entry.message).toBe(false);
+    expect("stop_reason" in entry.message).toBe(false);
   });
 });
 

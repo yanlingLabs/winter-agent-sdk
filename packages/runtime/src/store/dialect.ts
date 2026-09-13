@@ -275,6 +275,18 @@ export function userEntry(
   };
 }
 
+// W18-11 (Phase 10b Lane S, S1): Claude merges assistant entries across a tool_result when they
+// carry no `message.id` (probe P2) -- a silent corruption of the resumed history. Every assistant
+// entry this runtime writes now stamps a stable, deterministic id derived from the entry's own
+// uuid, so two writers (or two re-materializations of the same entry, e.g. the router's
+// Claude-ready copy, W18-14b) that start from the same uuid always agree on the same message id.
+// Deliberately NOT a random id: determinism is what lets `toClaudeReady` (agent-SDK 0.0.10,
+// provider-runtime/src/continuity/claude-ready.ts) stamp the identical id on re-materialization
+// without tracking any additional state.
+export function winterMessageIdFor(uuid: string): string {
+  return "msg_winter_" + uuid.replaceAll("-", "");
+}
+
 export function assistantEntry(opts: {
   content: Block[];
   chain: Chain;
@@ -289,13 +301,21 @@ export function assistantEntry(opts: {
    * to before this task.
    */
   uuid?: string;
-}): DialectEntryBase & { type: "assistant"; message: { role: "assistant"; content: Block[] } } {
+}): DialectEntryBase & { type: "assistant"; message: { id: string; type: "message"; role: "assistant"; content: Block[] } } {
+  const base = baseFields(opts.ctx, opts.chain);
+  // The uuid a pre-allocated caller passes always wins over baseFields' own freshly minted one
+  // (mirrors the pre-existing `...(opts.uuid !== undefined ? { uuid: opts.uuid } : {})` override
+  // below) -- this is the SAME final uuid the entry itself carries, so `message.id` and `entry.uuid`
+  // never disagree about which uuid the entry actually has.
+  const uuid = opts.uuid ?? base.uuid;
   return {
     type: "assistant",
-    ...baseFields(opts.ctx, opts.chain),
-    ...(opts.uuid !== undefined ? { uuid: opts.uuid } : {}),
+    ...base,
+    uuid,
     ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
-    message: { role: "assistant", content: opts.content },
+    // model/usage/stop_reason are deliberately NOT invented (W18-11: probe A3 behaved exactly like
+    // A2 without them) -- only id/type are Claude-required for the merge-across-tool_result fix.
+    message: { id: winterMessageIdFor(uuid), type: "message", role: "assistant", content: opts.content },
   };
 }
 
