@@ -528,13 +528,21 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
   // (derived-shapes-p6b.md 2.5). It is a PROTOCOL header (R6-L): the endpoint needs it to be spoken
   // to under this auth kind, and it names no account.
   //
-  // KEYED ON `oauth` MATERIAL **AND ON THE PROVIDER**, not on the adapter or a flag. A `bearer`
-  // credential is Winter's generic "some token" kind -- a gateway or proxy token, which this beta
-  // says nothing about. And this adapter is multi-provider (R6b-5): a third party speaking this
-  // dialect ships as its own `<id>-anthropic` row on this same `adapterId`, so keying on the
-  // material alone would stamp Anthropic's beta on that third party's request. Both widenings put a
-  // vendor beta on a host that never asked for it.
-  const betas = [...(opts.betas ?? []), ...(material?.kind === "oauth" && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : [])].filter((value, index, all) => all.indexOf(value) === index);
+  // KEYED ON `oauth` OR `bearer` MATERIAL **AND ON THE PROVIDER** (P10a, M5), not on the adapter or a
+  // flag. The provider gate is load-bearing on its own: this adapter is multi-provider (R6b-5), and a
+  // third party speaking this dialect ships as its own `<id>-anthropic` row on this same `adapterId`
+  // with its own `bearer`/`oauth` credentials that say nothing about this beta -- so `isConsoleProvider`
+  // alone is what keeps the header off `deepseek-anthropic`/`zai-anthropic` regardless of material
+  // kind. `bearer` was added to the material check because the host-brokered Console credential
+  // (`console-broker.ts`'s `ant auth print-credentials` output) is stored as `kind: "bearer"`, not
+  // `oauth` -- the derivation record's "every site that sends this beta also sends a bearer" was
+  // measured against `Authorization: Bearer`, not against `CredentialMaterial`'s two bearer-shaped
+  // kinds, and the ORIGINAL `oauth`-only gate silently excluded the one credential shape this leg
+  // actually produces post-P10a-1. Scoped to `isConsoleProvider(ctx)` exactly as before: a sibling
+  // row's `bearer` material still gets no vendor beta.
+  const betas = [...(opts.betas ?? []), ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : [])].filter(
+    (value, index, all) => all.indexOf(value) === index,
+  );
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
   // surfaces as an unexplained upstream 400 rather than as anything local.

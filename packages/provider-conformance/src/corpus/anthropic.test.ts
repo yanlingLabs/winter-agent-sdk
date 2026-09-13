@@ -661,16 +661,14 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
     });
   });
 
-  test("S2 (P10a): `bearer` material on the `anthropic` row itself rides as `Authorization: Bearer <token>` -- the shape the daemon's console-profile-broker will configure -- and carries NO anthropic-beta today", async () => {
+  test("S2/M5 (P10a): `bearer` material on the `anthropic` row itself rides as `Authorization: Bearer <token>` -- the shape the daemon's console-profile-broker configures -- AND carries the Console anthropic-beta", async () => {
     // This is the shape P10a-4 commits to: the daemon's broker writes an ordinary `bearer` material
     // (from `ant auth print-credentials`) under `anthropicCredentialRef`, not an `oauth` one. Unlike
-    // the sibling-row `bearer` test below, this ref is the `anthropic` PROVIDER ITSELF, so it is the
-    // one case that could plausibly earn the Console beta too -- and today it does NOT, because
-    // `messages.ts`'s beta gate keys on `material.kind === "oauth"`, not on the provider alone. Read
-    // off `CONSOLE_BEARER.betaHeader` rather than hardcoded, so the day the controller's M3
-    // measurement decides a `bearer` credential should ALSO carry it, changing the gate in
-    // `messages.ts` is the one-line flip and this assertion needs no edit to keep meaning the same
-    // thing -- only its outcome flips with it.
+    // the sibling-row `bearer` test below, this ref is the `anthropic` PROVIDER ITSELF -- the one case
+    // that earns the Console beta too. M5 (whole-branch review of P10a): the beta gate in
+    // `messages.ts` previously keyed on `material.kind === "oauth"` alone, which meant this exact
+    // shape -- the one the host broker actually produces -- silently never got the header. The gate
+    // now also fires for `bearer` material, scoped to `isConsoleProvider(ctx)` exactly as before.
     const store = createMemoryCredentialStore();
     const ref = anthropicCredentialRef(FAKE_CONSOLE_ACCOUNT_ID);
     await store.set(ref, { kind: "bearer", token: "test-token-console-bearer" });
@@ -680,15 +678,11 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
       const turn = fake.requests.at(-1)!;
       expect(turn.headers["authorization"]).toBe("Bearer ***");
       expect(turn.headers["x-api-key"]).toBeUndefined();
-      // TODAY's behaviour (measured, not assumed): a `bearer` credential gets no anthropic-beta at
-      // all, on the anthropic row or anywhere else -- `[CONSOLE_BEARER.betaHeader]` is added only for
-      // `material.kind === "oauth"`. `.toBeUndefined()` over a `not.toContain` is deliberate: the
-      // header is absent entirely, not merely missing this one value among others.
-      expect(turn.headers["anthropic-beta"]).toBeUndefined();
+      expect(turn.headers["anthropic-beta"]).toContain(CONSOLE_BEARER.betaHeader);
     });
   });
 
-  test("S2 (P10a): the `count_tokens` path sends the SAME bearer auth header as a generation turn -- both funnel through the one `buildHeaders`", async () => {
+  test("S2/M5 (P10a): the `count_tokens` path sends the SAME bearer auth header AND the same anthropic-beta as a generation turn -- both funnel through the one `buildHeaders`", async () => {
     // Cheap: `countTokens` and `streamTurn` are two callers of the same `buildHeaders`/
     // `resolveFreshMaterial` pair (`messages.ts`), so one assertion on the OTHER path is enough to
     // confirm they cannot diverge -- there is only one header builder to diverge from.
@@ -700,6 +694,28 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
       const count = await adapter.countTokens!({ model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }));
       expect(count).toBe(100);
       const turn = requestsTo(fake, "/v1/messages/count_tokens")[0]!;
+      expect(turn.headers["authorization"]).toBe("Bearer ***");
+      expect(turn.headers["x-api-key"]).toBeUndefined();
+      expect(turn.headers["anthropic-beta"]).toContain(CONSOLE_BEARER.betaHeader);
+    });
+  });
+
+  test("M5 (P10a): `zai-anthropic` -- a sibling row, NOT the `anthropic` provider itself -- gets NO Console beta even with `bearer` material, the exact shape M5 warned could over-widen", async () => {
+    // The whole point of gating on `isConsoleProvider(ctx)` in ADDITION to the material kind: widening
+    // the material check from `oauth` to `oauth | bearer` (M5) must not also widen WHICH ROWS can earn
+    // the header. `zai-anthropic` ships `authKinds: ["token"]`-shaped bearer credentials on this same
+    // `adapterId` (R6b-5) and must come back looking identical to the `api-key` sibling case below.
+    const store = createMemoryCredentialStore();
+    const ref = { kind: "keychain" as const, account: "zai-anthropic:bearer-fixture" };
+    await store.set(ref, { kind: "bearer", token: "test-token-zai-bearer" });
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] },
+        testContext(fake.url, { connection: { providerId: "zai-anthropic", baseUrl: fake.url, local: true }, credentials: store, authRef: ref }),
+      );
+      const turn = fake.requests.at(-1)!;
       expect(turn.headers["authorization"]).toBe("Bearer ***");
       expect(turn.headers["x-api-key"]).toBeUndefined();
       expect(turn.headers["anthropic-beta"]).toBeUndefined();

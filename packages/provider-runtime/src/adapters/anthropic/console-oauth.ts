@@ -55,13 +55,16 @@ export const ANTHROPIC_CONSOLE_PROVIDER_ID = "anthropic";
 
 /**
  * What survives of the old `CONSOLE_OAUTH` object once its login-only fields are gone: the ONE header
- * value `messages.ts` still sends alongside an `oauth`-kind Anthropic credential's bearer.
+ * value `messages.ts` still sends alongside an Anthropic Console credential's bearer -- an `oauth`-
+ * kind one, or (P10a, M5) a `bearer`-kind one from the host-brokered `console-broker.ts` leg, on the
+ * `anthropic` provider row only (`isConsoleProvider`).
  *
- * See the file banner for why this is renamed rather than trimmed in place, and P10a-1/M3 for why the
- * value itself is not yet a settled decision — the constant stays until a measurement says otherwise.
+ * See the file banner for why this is renamed rather than trimmed in place. P10a-1/M3 measured that
+ * the header belongs on the `anthropic` row's bearer material too, not only on `oauth`; see
+ * `messages.ts`'s `buildHeaders` for the settled gate.
  */
 export const CONSOLE_BEARER = {
-  /** The `anthropic-beta` value that accompanies an OAuth bearer on every request. */
+  /** The `anthropic-beta` value that accompanies an OAuth or Console bearer on every request. */
   betaHeader: "oauth-2025-04-20",
 } as const;
 
