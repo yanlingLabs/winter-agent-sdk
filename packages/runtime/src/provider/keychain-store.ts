@@ -139,7 +139,11 @@ function coerceMaterial(value: unknown): CredentialMaterial | undefined {
     case "api-key":
       return typeof v.key === "string" ? { kind: "api-key", key: v.key } : undefined;
     case "bearer":
-      return typeof v.token === "string" ? { kind: "bearer", token: v.token } : undefined;
+      // P10a-4 (2026-09-13): `expiresAt` is OPTIONAL on `bearer` (added for the host-brokered
+      // Anthropic Console material, refreshed on a timer ahead of it) -- read the same way `oauth`'s
+      // own optional fields are below, or a real Keychain round-trip would silently drop it and the
+      // renewal timer would never know when to fire again.
+      return typeof v.token === "string" ? { kind: "bearer", token: v.token, ...(typeof v.expiresAt === "number" ? { expiresAt: v.expiresAt } : {}) } : undefined;
     case "oauth":
       return typeof v.accessToken === "string"
         ? {

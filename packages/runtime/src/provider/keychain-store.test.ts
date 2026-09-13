@@ -65,7 +65,11 @@ describe("the keychain store's own behaviour", () => {
     const store = createKeychainCredentialStore("svc", { secrets: backend });
     const materials = [
       { kind: "api-key", key: SECRET },
-      { kind: "bearer", token: SECRET },
+      // P10a-4 (2026-09-13): `expiresAt` on `bearer` -- the host-brokered Anthropic Console material
+      // -- must round-trip through the REAL Keychain-backed store, not just the in-memory one; the
+      // coercion in `coerceMaterial` reconstructs the object field-by-field and had silently dropped
+      // it until this fixture caught it.
+      { kind: "bearer", token: SECRET, expiresAt: 1_999_999_999_999 },
       { kind: "oauth", accessToken: SECRET, refreshToken: "r", expiresAt: 1, accountId: "a" },
       { kind: "aws", accessKeyId: "AKIA", secretAccessKey: SECRET, sessionToken: "t" },
       { kind: "gcp-service-account", clientEmail: "a@b", privateKeyPem: SECRET, tokenUri: "https://x" },

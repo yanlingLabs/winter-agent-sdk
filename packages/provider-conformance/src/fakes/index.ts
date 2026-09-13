@@ -29,7 +29,9 @@ export {
 } from "./server.ts";
 export type { FakeRoute, FakeServer, RecordedRequest, ScenarioResponder, ScenarioTableOptions, SseFrame, SseResponseOptions, StartFakeOptions } from "./server.ts";
 
-export * as anthropicConsoleOauthFake from "./anthropic-console-oauth.ts";
+// P10a-1 (2026-09-13): `anthropicConsoleOauthFake` (the retired derived-PKCE login's loopback fake)
+// is DELETED with the flow it faked -- Console OAuth is host-brokered now (`console-broker.ts`,
+// spawning `claude`/`ant`), proved against real executable stubs, not a loopback HTTP fake.
 export * as anthropicFake from "./anthropic-messages.ts";
 export * as azureFake from "./azure-openai.ts";
 export * as bedrockFake from "./bedrock.ts";

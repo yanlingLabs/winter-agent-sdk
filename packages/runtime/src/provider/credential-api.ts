@@ -25,7 +25,7 @@
 // is the redacted ref, the operation, and the typed code — which is what makes the failure
 // actionable in the first place.
 import type { CredentialMaterial, CredentialStatus, CredentialStore, ProviderContext, ProviderRegistry } from "@yanlinglabs/winter-provider-runtime";
-import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleLogin, startCodexLogin, startXaiLogin } from "@yanlinglabs/winter-provider-runtime";
+import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleBrokerLogin, startCodexLogin, startXaiLogin } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
 import { keychainAccountName } from "./keychain-store.ts";
 import { redactCredentialRef } from "./selection.ts";
@@ -300,8 +300,6 @@ export interface StartProviderLoginOptions {
   /** Overridden by a fixture; production uses each flow's own derived constants. */
   authorizeUrl?: string;
   tokenUrl?: string;
-  /** Anthropic Console only: where the account id is read from. Ignored by flows that do not need one. */
-  profileUrl?: string;
   /**
    * Device-code flows only (RFC 8628): where the device authorization request is posted.
    *
@@ -320,6 +318,28 @@ export interface StartProviderLoginOptions {
   service?: string;
   /** A login-flow PROGRESS channel (R6-F). Never carries credential material. */
   onAuthStatus?: (status: { isAuthenticating: boolean; output?: string[]; error?: string }) => void;
+  /**
+   * `anthropic` (host-brokered Console OAuth, P10a-1 amendment) ONLY: the resolved `claude`/`ant`
+   * executables and the two config dirs `console-broker.ts` spawns with. Present ahead of their one
+   * consumer for the same reason `deviceCodeUrl` is: an option that only appears alongside its
+   * implementation is an option whose first test cannot be written. Ignored by every other flow.
+   */
+  claudeExecutable?: string;
+  antExecutable?: string;
+  anthropicConfigDir?: string;
+  claudeConfigDir?: string;
+  /** `anthropic` only: `ANTHROPIC_PROFILE`. Defaults to `console-broker.ts`'s own default (`"winter"`). */
+  profile?: string;
+  /**
+   * `anthropic` only: supplies the one-time code the operator pastes after visiting the URL this
+   * door's `onAuthStatus` progress lines print. `startProviderLogin` is a single flat `Promise`, and
+   * the Console login is genuinely TWO-PHASE (a URL appears, then — sometime later, off this
+   * process's clock — a human types a code) — so this callback is what lets that shape fit here at
+   * all, the same way `openUrl` lets every OTHER flow's browser leg fit: the host implements it
+   * however it renders the prompt (a CLI `readline`, a UI text field), and this door awaits it once
+   * the login is already running.
+   */
+  readConsoleCode?: () => Promise<string>;
 }
 
 export interface ProviderLoginResult {
@@ -344,8 +364,64 @@ export interface ProviderLoginResult {
  */
 export async function startProviderLogin(providerId: ProviderLoginId, store: CredentialStore, options: StartProviderLoginOptions): Promise<ProviderLoginResult> {
   switch (providerId) {
-    case "anthropic":
-      return await startAnthropicConsoleLogin(store, options);
+    case "anthropic": {
+      // P10a-1 (2026-09-13), AMENDED same day: the derived-PKCE re-implementation is retired for
+      // good (a client id read out of Claude Code's bundle, refused by the platform for every
+      // derivable request shape) -- but the user's follow-up ruling puts the REPLACEMENT broker in
+      // this SDK too, beside `codex-oauth`/`xai-oauth`, rather than solely in a host's daemon. So this
+      // door now spawns Anthropic's OWN binaries (`console-broker.ts`) instead of any OAuth exchange
+      // of this SDK's own. The four broker fields and `readConsoleCode` are host-supplied exactly the
+      // way `openUrl` is for every other flow; missing ANY of them is a REFUSAL raised BEFORE a
+      // process is spawned, named `console_login_is_host_brokered` because what is missing is
+      // precisely the wiring onto the external brokers, never a credential this SDK could mint itself.
+      if (options.claudeExecutable === undefined || options.anthropicConfigDir === undefined || options.claudeConfigDir === undefined || options.readConsoleCode === undefined) {
+        throw new CredentialResolutionError(
+          "console_login_is_host_brokered",
+          `the "${providerId}" Console login is brokered through Anthropic's OWN binaries ("claude auth login --console" / "ant auth print-credentials"), never an OAuth exchange this SDK runs itself -- this call is missing one or more of claudeExecutable, anthropicConfigDir, claudeConfigDir, readConsoleCode, which is what wires this door onto those binaries`,
+        );
+      }
+      const handle = startAnthropicConsoleBrokerLogin(store, {
+        claudeExecutable: options.claudeExecutable,
+        ...(options.antExecutable !== undefined ? { antExecutable: options.antExecutable } : {}),
+        anthropicConfigDir: options.anthropicConfigDir,
+        claudeConfigDir: options.claudeConfigDir,
+        ...(options.profile !== undefined ? { profile: options.profile } : {}),
+        ...(options.service !== undefined ? { service: options.service } : {}),
+        // Reuses the shared PROGRESS channel (R6-F): never material, and every line is already
+        // redacted of its URL query string by `console-broker.ts` before it ever reaches here.
+        onLine: (line) => options.onAuthStatus?.({ isAuthenticating: true, output: [line] }),
+      });
+      // Fix round 1, item 2 (MAJOR): RACED against `handle.done`, not awaited unconditionally. A
+      // `readConsoleCode()` that is still waiting on a human (or on a UI that never gets a code
+      // typed into it) must not block this call forever when the child has ALREADY told this door
+      // why it is never going to need one -- a bad profile, a broker binary that refuses before any
+      // prompt, anything that makes `done` settle first. Whichever settles first decides the
+      // outcome; the code is submitted only when it genuinely won the race.
+      const settled = await Promise.race([
+        options.readConsoleCode().then((code): { kind: "code"; code: string } => ({ kind: "code", code })),
+        handle.done.then((outcome): { kind: "done"; outcome: Awaited<typeof handle.done> } => ({ kind: "done", outcome })),
+      ]);
+      if (settled.kind === "code") {
+        try {
+          await handle.submitCode(settled.code);
+        } catch {
+          // The process exited in the narrow window between the race resolving and this call --
+          // `handle.done` below already carries the REAL reason, which is strictly more informative
+          // than this rejection would be, so it is swallowed rather than surfaced.
+        }
+      }
+      const outcome = settled.kind === "done" ? settled.outcome : await handle.done;
+      // A PLAIN Error here, deliberately NOT `CredentialResolutionError`: that type's `code` is a
+      // small closed set of WIRING categories (`console_login_is_host_brokered` above is exactly
+      // one), and this is a different thing -- the wiring was fine and the login itself failed (a
+      // wrong code, a broker binary's own refusal). `outcome.reason` is already vetted safe by
+      // `console-broker.ts`'s own contract: never a URL, never a token, never the pasted code.
+      if (!outcome.ok) throw new Error(outcome.reason);
+      const ref = providerCredentialRef({ providerId: "anthropic", accountId: "default", ...(options.service !== undefined ? { service: options.service } : {}) });
+      const material = await store.get(ref);
+      const expiresAt = material !== null && material.kind === "bearer" && material.expiresAt !== undefined ? material.expiresAt : Date.now();
+      return { ref, accountId: "default", expiresAt };
+    }
     case "codex-oauth":
       return await startCodexLogin(store, options);
     case "xai-oauth":

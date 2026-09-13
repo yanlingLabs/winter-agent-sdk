@@ -1,10 +1,17 @@
 // The §3 table of `derived-shapes-p6b.md`, as typed data.
 //
+// RETIRED AS A LOGIN, KEPT AS HISTORY (2026-09-13, P10a-1). The login these values once shipped as
+// `CONSOLE_OAUTH` is gone -- Console OAuth is host-brokered now (`console-broker.ts`, spawning
+// `claude`/`ant`, never speaking OAuth to Anthropic directly). This table is UNCHANGED regardless:
+// every value here was genuinely read out of the pinned artifact, and the record stays intact even
+// though only `betaHeader` still has a shipped consumer (`CONSOLE_BEARER.betaHeader` in
+// `console-oauth.ts`, asserted against `DERIVED.consoleOauth.betaHeader` alone, not field-by-field).
+// See `derived-shapes-p6b.md` §2's own RETIRED note for the full account.
+//
 // WHY A SECOND FILE SAYING THE SAME THING. `derived-shapes-p6b.md` is prose a human reads; nothing
-// makes the code agree with it. This file is the same values in a form a TEST can compare against,
-// and `packages/provider-runtime/src/adapters/anthropic/console-oauth.test.ts` asserts
-// `CONSOLE_OAUTH` field-by-field against it. So a constant that drifts — in either direction — fails
-// a test rather than quietly diverging from its own derivation.
+// makes the code agree with it. This file is the same values in a form a TEST can compare against.
+// So a constant that drifts — in either direction — fails a test rather than quietly diverging from
+// its own derivation.
 //
 // EVERY VALUE HERE WAS READ OUT OF THE PINNED ARTIFACT, never typed from memory. The document beside
 // this file records the byte offset each one came from and the two-artifact checksum chain that made

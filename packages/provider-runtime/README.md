@@ -61,12 +61,21 @@ not the same as runnable on every path — these exports need the Bun runtime:
 | Function | Import | Needs | Why |
 | --- | --- | --- | --- |
 | `startCodexLogin()` | `@yanlinglabs/winter-provider-runtime` | `Bun.serve` | The authorization-code flow receives the vendor's redirect on `127.0.0.1`, which needs a real HTTP listener. |
-| `startAnthropicConsoleLogin()` | `@yanlinglabs/winter-provider-runtime` | `Bun.serve` | Same flow, same listener. |
 | `startXaiOauthFake()` | `@yanlinglabs/winter-provider-runtime/testing` | `Bun.serve` | Binds a loopback server on `127.0.0.1:0` to stand in for the vendor. |
 | `startXaiChatFake()` | `@yanlinglabs/winter-provider-runtime/testing` | `Bun.serve` | Same. |
+| `startAnthropicConsoleBrokerLogin()` | `@yanlinglabs/winter-provider-runtime` | `Bun.spawn` | Spawns Anthropic's own `claude` binary and pipes its stdin/stdout/stderr for the host-brokered Console login (P10a-1 amendment) — never a loopback listener, since this SDK is not itself a party to the OAuth exchange. |
+| `refreshAnthropicBearer()` | `@yanlinglabs/winter-provider-runtime` | `Bun.spawn` | Spawns Anthropic's `ant` binary to mint the native provider's bearer token from the profile the login above wrote. |
+| `logoutAnthropicConsole()` | `@yanlinglabs/winter-provider-runtime` | `Bun.spawn` | Spawns `claude auth logout`. |
 
-(Internally all four go through one `runLoginFlow`/`Bun.serve` seam, which is not on either barrel
-and which a consumer cannot call.)
+(`startCodexLogin()` and the two loopback fakes go through one `runLoginFlow`/`Bun.serve` seam, which
+is not on either barrel and which a consumer cannot call. The Console-broker trio is a SEPARATE
+mechanism — each of the three guards itself directly, with no shared seam, since spawning a
+subprocess and piping its stdio is a different shape from opening a listener.)
+
+**`startAnthropicConsoleLogin()` is RETIRED (P10a-1, 2026-09-13)**: the derived PKCE login it ran —
+re-implementing Claude Code's private OAuth client — was deleted after the platform refused its grant
+for every derivable request shape. Console OAuth is host-brokered now, through the three functions
+above; this SDK must never re-implement the OAuth protocol itself again.
 
 Each throws `BunRequiredError` (exported from both barrels) as its FIRST action — before any network
 call, file write or credential read — naming the function, the Bun API and what to do instead. Catch

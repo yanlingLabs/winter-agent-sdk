@@ -14,10 +14,22 @@ export {
   toWireMessages,
 } from "./messages.ts";
 export type { AnthropicAdapterOptions, EffortMapping } from "./messages.ts";
-// D20: the Console OAuth login and its DERIVED constants. A credential lifecycle, not a second
-// adapter -- an Anthropic Console token speaks the ordinary Messages dialect to the ordinary
-// endpoint, so `messages.ts` gains an arm and the `anthropic` row gains an `authKind`. See
-// `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md` for where every constant
-// came from and for the whole of that artifact's OAuth surface that Winter deliberately refuses.
-export { CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS, anthropicCredentialRef, startAnthropicConsoleLogin } from "./console-oauth.ts";
-export type { AnthropicConsoleLoginOptions, AnthropicConsoleLoginResult } from "./console-oauth.ts";
+// D20 (RETIRED 2026-09-13, P10a-1): the derived-PKCE Console OAuth login (Claude Code's own private
+// client id, re-implemented) is gone for good -- `console-oauth.ts`'s banner has the full account.
+// What remains from that file is the credential-naming helper and the `anthropic-beta` value
+// `messages.ts` still sends alongside an `oauth`-kind Anthropic credential's bearer. See
+// `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md` §2 (headed RETIRED) for the
+// full derivation record that login once shipped.
+export { CONSOLE_BEARER, anthropicCredentialRef } from "./console-oauth.ts";
+// D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13): Console sign-in through Anthropic's OWN broker
+// binaries -- `claude auth login --console` / `ant auth print-credentials` -- spawned by the SDK
+// runtime (not a re-implementation of the OAuth protocol). See `console-broker.ts`'s own banner for
+// what was MEASURED about these binaries' behaviour.
+export {
+  DEFAULT_ANTHROPIC_CONSOLE_PROFILE,
+  anthropicConsoleProfileExists,
+  logoutAnthropicConsole,
+  refreshAnthropicBearer,
+  startAnthropicConsoleBrokerLogin,
+} from "./console-broker.ts";
+export type { AnthropicConsoleBrokerOptions, AnthropicConsoleLoginHandle } from "./console-broker.ts";
