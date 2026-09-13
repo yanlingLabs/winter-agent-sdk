@@ -415,3 +415,96 @@ describe("crash: lease-aware tail repair (Ruling P1-S)", () => {
     }
   });
 });
+
+// Phase 10b Lane S, S8 (W18-5): `releaseSessionLease` -- the store-level door onto `leases.ts`'s
+// `releaseLease`. The router calls this for a WINTER handoff destination, after its own write-ahead
+// producer record and BEFORE `confirmInit`, so the daemon's own pid writes nothing to the canonical
+// transcript once a winter child holds the lease.
+describe("releaseSessionLease (W18-5)", () => {
+  test("the same pid releases, and a second (different, injected) pid then succeeds where it would otherwise have been refused", async () => {
+    const home = freshHome();
+    let dummy: Subprocess | undefined;
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-release", sessionId: "sess-1" };
+      await store.append(key, [entry()]); // claims the lease under THIS test process's own pid
+
+      expect(await store.releaseSessionLease(key)).toBe(true);
+      const lockPath = join(home, "projects", "proj-release", "sess-1.lock");
+      expect(existsSync(lockPath)).toBe(false);
+
+      // A genuinely different, LIVE pid can now claim the freed lease outright -- before the
+      // release this same append would have thrown WinterStoreLeaseError (the earlier "live foreign
+      // pid" test in this file proves that refusal); after release there is nothing left to refuse.
+      dummy = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 2147483647);"], { stdout: "ignore", stderr: "ignore" });
+      writeFileSync(lockPath, JSON.stringify({ pid: dummy.pid, startTimeMs: Date.now() }));
+      let caught: unknown;
+      try {
+        await store.append(key, [entry()]); // this test process is no longer the holder -- refused
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(WinterStoreLeaseError);
+      expect((caught as WinterStoreLeaseError).heldByPid).toBe(dummy.pid);
+    } finally {
+      await reap(dummy);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("another pid's lease is untouched -- returns false, and that pid's own append keeps working", async () => {
+    const home = freshHome();
+    let child: Subprocess | undefined;
+    try {
+      const key = { projectKey: "proj-release", sessionId: "sess-2" };
+      const code = `(async () => {
+        const { pathToFileURL } = await import("node:url");
+        const mod = await import(pathToFileURL(${JSON.stringify(STORE_MODULE_PATH)}).href);
+        const store = new mod.WinterCompatibilitySessionStore({ winterHome: ${JSON.stringify(home)} });
+        await store.append(${JSON.stringify(key)}, [{ type: "test_entry", uuid: "child-1", timestamp: new Date().toISOString() }]);
+        await new Promise((r) => setTimeout(r, 5000));
+      })();`;
+      child = Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" });
+      const lockPath = join(home, "projects", "proj-release", "sess-2.lock");
+      await waitForPath(lockPath, 10_000);
+
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      expect(await store.releaseSessionLease(key)).toBe(false);
+      expect(existsSync(lockPath)).toBe(true);
+      const stillTheChild = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      expect(stillTheChild.pid).toBe(child.pid);
+    } finally {
+      await reap(child);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("idempotent: releasing twice in a row is a safe no-op the second time", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-release", sessionId: "sess-3" };
+      await store.append(key, [entry()]);
+      expect(await store.releaseSessionLease(key)).toBe(true);
+      expect(await store.releaseSessionLease(key)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a released key can be re-claimed by the SAME pid -- the next append succeeds as an ordinary fresh acquire", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-release", sessionId: "sess-4" };
+      const e1 = entry();
+      await store.append(key, [e1]);
+      expect(await store.releaseSessionLease(key)).toBe(true);
+      const e2 = entry();
+      await store.append(key, [e2]); // same pid, fresh acquire -- never a re-entry special case
+      expect(await store.load(key)).toEqual([e1, e2]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

@@ -32,7 +32,7 @@ import { join } from "node:path";
 // re-exported below (a separate `export ... from` binding, which needs no import of its own) — so
 // importing it here too was dead weight (TS6133). isPidAlive/readLeaseInfo are new imports for the
 // lease-aware tail repair below (Ruling P1-S).
-import { acquireLease, isPidAlive, readLeaseInfo, writeAllSync, WinterStoreError } from "./leases.ts";
+import { acquireLease, isPidAlive, readLeaseInfo, releaseLease, writeAllSync, WinterStoreError } from "./leases.ts";
 
 export { WinterStoreError, WinterStoreLeaseError } from "./leases.ts";
 
@@ -780,5 +780,21 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
     acquireLease(lockPath);
     chmodSync(lockPath, 0o600);
+  }
+
+  /**
+   * Phase 10b Lane S, S8 (W18-5): releases the writer lease `acquireSessionLease`/`append`'s own
+   * opening sequence took, but ONLY when THIS pid holds it -- `leases.ts`'s own `releaseLease` is
+   * the entire safety property, reproduced here just for the routing: same-pid, idempotent, never
+   * another pid's lease. The router calls this for a WINTER destination, after its own write-ahead
+   * producer record lands and BEFORE `confirmInit` -- so the daemon's pid writes NOTHING to the
+   * canonical transcript once the winter child holds the lease (W18-5's own ordering constraint).
+   *
+   * Deliberately NOT part of the exported `SessionStore` type (same posture as
+   * `acquireSessionLease` immediately above) -- lives only on this concrete class.
+   */
+  async releaseSessionLease(key: { projectKey: string; sessionId: string }): Promise<boolean> {
+    const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
+    return releaseLease(lockPath);
   }
 }

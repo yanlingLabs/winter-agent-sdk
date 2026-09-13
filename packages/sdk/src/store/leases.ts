@@ -8,6 +8,12 @@
 // succeeds; a DIFFERENT, still-live pid throws WinterStoreLeaseError.
 import { openSync, readFileSync, writeSync, fsyncSync, closeSync, renameSync, linkSync, unlinkSync } from "node:fs";
 
+// Phase 10b Lane S, S8 (W18-5): the sibling of `acquireLease` this repo never needed until a router
+// destination could give a lease AWAY mid-session (a handoff to a winter destination -- the write-
+// ahead ordering W18-5 describes). SAME-PID ONLY, and idempotent: releasing a lease this pid does
+// not hold (never held it, already released it, or it is held by a genuinely different pid) is a
+// safe no-op, never an error and never a mutation of someone else's lease.
+
 export class WinterStoreError extends Error {
   constructor(message: string) {
     super(message);
@@ -172,4 +178,29 @@ export function acquireLease(lockPath: string): LeaseInfo {
   // identity revalidation).
   writeLeaseInfoReplacing(lockPath, fresh);
   return fresh;
+}
+
+/**
+ * Releases the lease at `lockPath` -- but ONLY when THIS process currently holds it. Returns `true`
+ * when it did (and the lock file is now gone), `false` for every other case: no lease file at all,
+ * an unparseable one, or one a genuinely different pid holds. Idempotent -- a second call after a
+ * successful release finds nothing to release and returns `false`, never throws.
+ *
+ * Deliberately NOT "release whatever is there": a caller that raced with someone else's fresh
+ * acquire (this pid died and was stolen from, however unlikely between two calls in the same
+ * process) must never delete the NEW holder's lease out from under it. The pid check is the whole
+ * safety property.
+ */
+export function releaseLease(lockPath: string): boolean {
+  const existing = readLeaseInfo(lockPath);
+  if (existing === null || existing.pid !== process.pid) return false;
+  try {
+    unlinkSync(lockPath);
+  } catch (err) {
+    // Already gone (a concurrent release, or the file vanished some other way) -- still a no-op,
+    // never an error: the caller's own postcondition ("this pid no longer holds it") already holds.
+    if ((err as { code?: unknown }).code === "ENOENT") return false;
+    throw err;
+  }
+  return true;
 }

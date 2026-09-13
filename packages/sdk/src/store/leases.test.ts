@@ -6,8 +6,11 @@
 // same reason every other module in this repo gets a dedicated, complete unit-test file rather than
 // a single isolated case. This file was previously missing entirely (leases.ts's own coverage lived
 // only indirectly, through session-store.test.ts and crash.test.ts's higher-level scenarios).
-import { test, expect, afterEach } from "bun:test";
-import { isPidAlive } from "./leases.ts";
+import { test, expect, afterEach, describe } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { acquireLease, isPidAlive, releaseLease } from "./leases.ts";
 
 const originalKill = process.kill.bind(process);
 
@@ -50,4 +53,78 @@ test("isPidAlive: an unexpected error code rethrows rather than silently reporti
   }) as typeof process.kill;
 
   expect(() => isPidAlive(1)).toThrow("kill EINVAL");
+});
+
+// Phase 10b Lane S, S8 (W18-5): releaseLease -- the same-pid, idempotent sibling of acquireLease.
+describe("releaseLease", () => {
+  function freshLockPath(): { dir: string; lockPath: string } {
+    const dir = mkdtempSync(join(tmpdir(), "winter-lease-release-test-"));
+    return { dir, lockPath: join(dir, "sess.lock") };
+  }
+
+  test("the same pid releases its own lease -- the lock file is gone afterward, and a second (injected) pid can then claim it", () => {
+    const { dir, lockPath } = freshLockPath();
+    try {
+      const info = acquireLease(lockPath);
+      expect(info.pid).toBe(process.pid);
+
+      expect(releaseLease(lockPath)).toBe(true);
+      expect(existsSync(lockPath)).toBe(false);
+
+      // A different (injected) pid can now claim it cleanly -- nothing of THIS pid's ownership
+      // survives to block or confuse a fresh claimant. `999999` is never this test process's own
+      // pid, and no liveness check runs on the WRITE side of acquireLease -- only on contention.
+      writeFileSync(lockPath, JSON.stringify({ pid: 999999, startTimeMs: Date.now() }));
+      const claimed = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      expect(claimed.pid).toBe(999999);
+      expect(claimed.pid).not.toBe(process.pid);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("another pid's lease is untouched -- returns false, and the lock file survives with its original holder", () => {
+    const { dir, lockPath } = freshLockPath();
+    try {
+      writeFileSync(lockPath, JSON.stringify({ pid: 999999, startTimeMs: 1234 }));
+      expect(releaseLease(lockPath)).toBe(false);
+      expect(existsSync(lockPath)).toBe(true);
+      expect((JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number }).pid).toBe(999999);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("releasing a lease that was never acquired (no lock file at all) is a safe no-op", () => {
+    const { dir, lockPath } = freshLockPath();
+    try {
+      expect(releaseLease(lockPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("idempotent: releasing twice in a row -- the second call is a no-op, never an error", () => {
+    const { dir, lockPath } = freshLockPath();
+    try {
+      acquireLease(lockPath);
+      expect(releaseLease(lockPath)).toBe(true);
+      expect(releaseLease(lockPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a released key can be re-claimed by the SAME pid via acquireLease again", () => {
+    const { dir, lockPath } = freshLockPath();
+    try {
+      acquireLease(lockPath);
+      expect(releaseLease(lockPath)).toBe(true);
+      const reacquired = acquireLease(lockPath);
+      expect(reacquired.pid).toBe(process.pid);
+      expect(existsSync(lockPath)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
