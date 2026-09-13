@@ -840,7 +840,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/mcp/winter-server.ts:38": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side",
   "packages/runtime/src/context/winter-code-preset.ts:48": "WINTER_CODE_PRESET_VERSION -- an ATTRIBUTION of who authored the preset, not a name a reuser renames",
   // --- scripts: this repository's own harness ------------------------------------------------------
-  "scripts/verify-provider-live.ts:767": "the live gate is Winter's own harness and runs under no brand but Winter's",
+  "scripts/verify-provider-live.ts:786": "the live gate is Winter's own harness and runs under no brand but Winter's",
 };
 
 describe("P7a fix wave (item 12): every brand-less call site is named and justified", () => {
