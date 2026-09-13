@@ -60,9 +60,10 @@
 // resource-exhaustion-safety fix (acquire-then-register-cleanup, never a batch of acquisitions
 // ahead of one shared try).
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fetchAndVerifyUpstream } from "./fetch.ts";
 import { requireBunRuntime } from "../bun-required.ts";
 import { normalizeTrace, type ConformanceTraceEntry } from "../trace.ts";
@@ -1853,6 +1854,181 @@ async function runCostCapture(officialSdk: OfficialSdk): Promise<void> {
   }
 }
 
+// --- Scenario L (Phase 10b Lane S, S2 — W18-12/R-10b-3): the compaction golden -------------------
+//
+// MEASURED (this task's own "measure the trigger before building" step, both NEGATIVE):
+//   - Spoofing `usage.input_tokens` near the model's context window on turn 1 (so the runtime
+//     should decide it needs to compact before issuing turn 2's real request) never fired, whether
+//     that escalation crossed separate `resume`d processes OR happened entirely within ONE
+//     continuous process across several internal tool-use rounds. The runtime's own auto-compact
+//     threshold check evidently estimates context size from REAL message content it has itself
+//     accumulated, never from a provider's self-reported `usage.input_tokens` -- so this lever
+//     cannot be driven hermetically without genuinely large real content (which scenario H's own
+//     `BULK_TEXT` attempt, at a much smaller scale, already found insufficient too).
+//   - `/compact` as the prompt (scenario H's own attempt, repeated here) refuses LOCALLY --
+//     `system/local_command` content "Not enough messages to compact." -- and never reaches the
+//     loopback at all, UNLESS the resumed transcript already holds at least TWO completed
+//     user/assistant exchanges. Both scenario H's six real append turns (never completed as
+//     independent exchanges before the `/compact` attempt — see its own header) and a single
+//     completed exchange here reproduced the identical refusal; the fix was doing two SEPARATE,
+//     REAL, completed turns first.
+// WORKS: `/compact` issued via `resume` after two completed real exchanges reaches the network and
+// the pinned 2.1.250 binary writes a real `system/compact_boundary` + `isCompactSummary` pair to its
+// own on-disk transcript — captured below, hermetically (a loopback fake, no real key).
+//
+// UNLIKE every scenario above, this one WRITES a committed file rather than only printing for a
+// human to eyeball: `packages/conformance/goldens/claude-2.1.250/compaction.jsonl`, the byte-exact
+// reference `runtime/src/store/dialect.ts`'s `claudeCompactBoundaryEntry`/`claudeCompactSummaryEntry`
+// and `CLAUDE_COMPACT_SUMMARY_PREAMBLE` are pinned against (dialect.test.ts's own golden-comparison
+// test). `normalizeCompactionEntry` strips exactly the fields that differ on every real capture
+// (identity/timing/host noise) — never the fixed strings or field names the golden exists to pin.
+const COMPACTION_GOLDEN_VOLATILE_TOP_LEVEL = new Set([
+  "uuid",
+  "logicalParentUuid",
+  "timestamp",
+  "cwd",
+  "sessionId",
+  "version",
+  "gitBranch",
+  "slug",
+  "userType",
+  "entrypoint",
+  "isMeta",
+  "promptId",
+]);
+const COMPACTION_GOLDEN_VOLATILE_METADATA = new Set(["preTokens", "postTokens", "durationMs", "preservedSegment", "preservedMessages", "cumulativeDroppedTokens"]);
+
+/**
+ * Strips the fields that differ on every real capture (uuids, timestamps, host/session identity,
+ * the numeric token/timing counters, and any preserved-message relink data — Winter's own writer
+ * never reproduces `preservedMessages`/`preservedSegment`, P10b-7) while keeping `parentUuid` when
+ * it is the fixed `null` the boundary always carries (that value IS the shape, not noise).
+ */
+export function normalizeCompactionEntry(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (COMPACTION_GOLDEN_VOLATILE_TOP_LEVEL.has(k)) continue;
+    if (k === "parentUuid" && v !== null) continue; // the summary's real (volatile) link to the boundary
+    out[k] = v;
+  }
+  if (out.compactMetadata !== undefined && typeof out.compactMetadata === "object" && out.compactMetadata !== null) {
+    out.compactMetadata = Object.fromEntries(Object.entries(out.compactMetadata as Record<string, unknown>).filter(([k]) => !COMPACTION_GOLDEN_VOLATILE_METADATA.has(k)));
+  }
+  return out;
+}
+
+/** Replaces a real, capture-environment-specific absolute path with a fixed placeholder — the ONE
+ *  piece of prose claude's own summary entry emits that is neither a fixed string nor caller text. */
+function redactTranscriptPath(content: string, transcriptPath: string): string {
+  return content.split(transcriptPath).join("<TRANSCRIPT_PATH>");
+}
+
+export async function runCompactionCapture(officialSdk: OfficialSdk, opts: { writeGolden?: boolean } = {}): Promise<{ boundary: Record<string, unknown>; summary: Record<string, unknown> } | undefined> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const dirs = makeScenarioDirs("l", cleanups);
+    let requestCount = 0;
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        let body: { model?: string } = {};
+        try {
+          body = (await req.json()) as { model?: string };
+        } catch {
+          /* non-JSON */
+        }
+        const url = new URL(req.url);
+        console.error(`[loopback L] #${requestCount} ${req.method} ${url.pathname} model=${JSON.stringify(body.model)}`);
+        return jsonResponse({
+          id: `msg_capture_l_${requestCount}`,
+          type: "message",
+          role: "assistant",
+          model: body.model ?? "claude-haiku-4-5",
+          content: [{ type: "text", text: `capture: reply ${requestCount}` }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 20, output_tokens: 5 },
+        });
+      },
+    });
+    console.error(`\n=== Scenario L: the compaction golden (W18-12) ===`);
+    console.error(`[capture L] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} (fresh mkdtemp)`);
+
+    const sessionId = randomUUID();
+    const commonOptions = { model: "claude-haiku-4-5", cwd: dirs.fixtureCwd, settingSources: [] as string[] };
+
+    // Two SEPARATE, REAL, COMPLETED exchanges -- the measured precondition -- then `/compact`.
+    const ac1 = new AbortController();
+    await drainWithDeadline(
+      officialSdk.query({ prompt: "hi from turn one", options: { ...commonOptions, sessionId, abortController: ac1, env: hermeticEnv(dirs, server.url.href) } }),
+      [],
+      "capture L/turn1",
+      60_000,
+      ac1,
+    );
+    const ac2 = new AbortController();
+    await drainWithDeadline(
+      officialSdk.query({ prompt: "hi from turn two", options: { ...commonOptions, resume: sessionId, abortController: ac2, env: hermeticEnv(dirs, server.url.href) } }),
+      [],
+      "capture L/turn2",
+      60_000,
+      ac2,
+    );
+    const ac3 = new AbortController();
+    const entries3: ConformanceTraceEntry[] = [];
+    const r3 = await drainWithDeadline(
+      officialSdk.query({ prompt: "/compact", options: { ...commonOptions, resume: sessionId, abortController: ac3, env: hermeticEnv(dirs, server.url.href) } }),
+      entries3,
+      "capture L/compact",
+      60_000,
+      ac3,
+    );
+    if (r3.thrown) console.error(`[capture L] /compact threw: ${r3.thrown instanceof Error ? (r3.thrown.stack ?? r3.thrown.message) : String(r3.thrown)}`);
+
+    const transcripts = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${sessionId}.jsonl`);
+    if (transcripts.length === 0) {
+      console.log(`\n--- Scenario L: NOT CAPTURABLE — no ${sessionId}.jsonl transcript was written ---`);
+      return undefined;
+    }
+    const transcriptPath = transcripts[0]!;
+    const lines = readFileSync(transcriptPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const rawBoundary = lines.find((e) => e.type === "system" && e.subtype === "compact_boundary");
+    const rawSummary = lines.find((e) => e.isCompactSummary === true);
+    if (rawBoundary === undefined || rawSummary === undefined) {
+      console.log(`\n--- Scenario L: NOT CAPTURABLE — /compact ran but wrote no boundary+summary pair (types: ${lines.map((e) => e.type).join(",")}) ---`);
+      return undefined;
+    }
+
+    const boundary = normalizeCompactionEntry(rawBoundary);
+    const summaryMessage = (rawSummary.message as { role: string; content: string }).content;
+    const summary = normalizeCompactionEntry({ ...rawSummary, message: { ...(rawSummary.message as object), content: redactTranscriptPath(summaryMessage, transcriptPath) } });
+
+    console.log(`\n--- Scenario L: normalized boundary+summary ---`);
+    console.log(JSON.stringify({ boundary, summary }, null, 2));
+
+    if (opts.writeGolden === true) {
+      // This file lives at packages/conformance/src/official/capture.ts; the golden lives at
+      // packages/conformance/goldens/claude-2.1.250/ -- ../../goldens from here (mirrors goldens.ts's
+      // own `fileURLToPath(new URL("../goldens/", import.meta.url))`, one directory deeper).
+      const goldenPath = fileURLToPath(new URL("../../goldens/claude-2.1.250/compaction.jsonl", import.meta.url));
+      writeFileSync(goldenPath, `${JSON.stringify(boundary)}\n${JSON.stringify(summary)}\n`);
+      console.error(`[capture L] wrote ${goldenPath}`);
+    }
+
+    return { boundary, summary };
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
 export async function runCapture(): Promise<void> {
   // P7a fix wave r2 (item 3, re-review N1): FIRST, before the pinned tarball is fetched and before
   // any listener is bound. This function installs the official SDK with `Bun.spawn` and drives it
@@ -1902,6 +2078,10 @@ export async function runCapture(): Promise<void> {
     }
     if (want("J")) await runModelControlCapture(officialSdk);
     if (want("K")) await runCostCapture(officialSdk);
+    // Phase 10b Lane S (S2, W18-12): report-only by default, exactly like every scenario above --
+    // `RUN_OFFICIAL_CAPTURE_WRITE_GOLDEN=1` is the SEPARATE, explicit opt-in that lets a controller
+    // re-capture and overwrite the committed golden after a future claude upgrade.
+    if (want("L")) await runCompactionCapture(officialSdk, { writeGolden: process.env.RUN_OFFICIAL_CAPTURE_WRITE_GOLDEN === "1" });
   } finally {
     for (const cleanup of cleanups) cleanup();
   }
