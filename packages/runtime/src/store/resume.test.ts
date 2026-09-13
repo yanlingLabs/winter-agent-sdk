@@ -353,6 +353,58 @@ describe("rebuildProviderMessages — compaction, both shapes (W18-13)", () => {
     expect(JSON.stringify(rebuilt)).not.toContain("reply one");
   });
 
+  // Fix round 1 (controller ruling, LOAD-BEARING): a Claude-shape boundary that NAMES
+  // `compactMetadata.preservedMessages` relinks it -- summary, then the preserved entries (in
+  // `uuids` order, looked up from BEFORE the null-parent cut, which `lineage` itself excludes), then
+  // everything appended after the boundary. Without this, live == resumed would not hold.
+  test("(b2) Claude shape WITH preservedMessages: summary, then the preserved entry (from BEFORE the cut), then everything after", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "turn one" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply one" }] } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "turn two -- the one that gets preserved" } },
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        uuid: "b1",
+        parentUuid: null,
+        logicalParentUuid: "u2",
+        compactMetadata: { trigger: "auto", preTokens: 100, preservedMessages: { anchorUuid: "s1", uuids: ["u2"] } },
+      },
+      { type: "user", uuid: "s1", parentUuid: "b1", message: { role: "user", content: `${PREAMBLE}\n\nSUMMARY` }, isCompactSummary: true },
+      { type: "user", uuid: "u3", parentUuid: "s1", message: { role: "user", content: "after" } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt).toEqual([
+      { role: "user", content: `${PREAMBLE}\n\nSUMMARY` },
+      { role: "user", content: "turn two -- the one that gets preserved" },
+      { role: "user", content: "after" },
+    ]);
+    // "turn one"/"reply one" are genuinely excluded (never preserved); "turn two" IS included, but
+    // only via the relink -- never merely because it happened to survive some other way.
+    expect(JSON.stringify(rebuilt)).not.toContain("turn one");
+    expect(JSON.stringify(rebuilt)).not.toContain("reply one");
+  });
+
+  test("(b3) Claude shape with preservedMessages naming MULTIPLE uuids relinks them in `uuids` ORDER, not file order", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "turn one" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "PRESERVED-SECOND" }] } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "PRESERVED-FIRST" } },
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        uuid: "b1",
+        parentUuid: null,
+        logicalParentUuid: "u2",
+        // Deliberately file-order-REVERSED: u2 (file-later) named BEFORE a1 (file-earlier).
+        compactMetadata: { trigger: "auto", preTokens: 1, preservedMessages: { anchorUuid: "s1", uuids: ["u2", "a1"] } },
+      },
+      { type: "user", uuid: "s1", parentUuid: "b1", message: { role: "user", content: `${PREAMBLE}\n\nSUMMARY` }, isCompactSummary: true },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt.map((m) => m.content)).toEqual([`${PREAMBLE}\n\nSUMMARY`, "PRESERVED-FIRST", "PRESERVED-SECOND"]);
+  });
+
   test("(c) an isApiErrorMessage assistant entry is skipped", () => {
     const entries: DialectEntry[] = [
       { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },

@@ -877,17 +877,30 @@ describe("Claude-shape compaction writer vs. the real 2.1.250 golden (W18-12)", 
     expect(entry.message.content).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nS`);
   });
 
-  test("preservedMessages/preservedSegment are never written (P10b-7) -- the golden HAD them (a real retained message); Winter's writer never can", () => {
+  test("claudeCompactSummaryEntry accepts a PRE-ALLOCATED uuid (fix round 1's write-ahead need: the boundary must name the summary before the summary exists)", () => {
+    const preAllocated = randomUUID();
+    const entry = claudeCompactSummaryEntry({ summary: "S", boundaryUuid: "b", uuid: preAllocated, ctx: CTX });
+    expect(entry.uuid).toBe(preAllocated);
+  });
+
+  test("preservedSegment is NEVER written (Winter has no use for the head/tail/anchor triple; preservedMessages supersedes it) -- but preservedMessages IS, when the caller names one (fix round 1, superseding the original P10b-7 reading)", () => {
     const goldenMeta = golden.boundary.compactMetadata as Record<string, unknown>;
-    // The golden's OWN raw capture (before this test file's normalization import) had them; the
-    // committed golden already had them stripped by capture.ts's own normalization -- so what this
-    // asserts is that the CURRENT committed file has neither key, proving the golden itself was
-    // authored under the same no-preserved-fields discipline the writer now follows.
+    // The committed golden was normalized to strip BOTH fields (capture.ts's own volatile-field
+    // set) -- it exists to pin field NAMES and fixed strings, not the real capture's own retained
+    // uuids, which are meaningless outside that one real session.
     expect("preservedMessages" in goldenMeta).toBe(false);
     expect("preservedSegment" in goldenMeta).toBe(false);
-    const entry = claudeCompactBoundaryEntry({ trigger: "auto", preTokens: 1, logicalParentUuid: "leaf", ctx: CTX });
-    const entryMeta = entry.compactMetadata as unknown as Record<string, unknown>;
-    expect("preservedMessages" in entryMeta).toBe(false);
-    expect("preservedSegment" in entryMeta).toBe(false);
+
+    // Omitted when the caller retains nothing -- absence stays semantic, matching the reader.
+    const withoutPreserved = claudeCompactBoundaryEntry({ trigger: "auto", preTokens: 1, logicalParentUuid: "leaf", ctx: CTX });
+    const withoutMeta = withoutPreserved.compactMetadata as unknown as Record<string, unknown>;
+    expect("preservedMessages" in withoutMeta).toBe(false);
+    expect("preservedSegment" in withoutMeta).toBe(false);
+
+    // Fix round 1 (LOAD-BEARING, controller ruling): reproduced verbatim when the caller DOES name
+    // one -- `recordCompactBoundary` always does, whenever `retainedCount > 0`, so live == resumed.
+    const withPreserved = claudeCompactBoundaryEntry({ trigger: "auto", preTokens: 1, logicalParentUuid: "leaf", preservedMessages: { anchorUuid: "s1", uuids: ["a1", "a2"] }, ctx: CTX });
+    expect(withPreserved.compactMetadata.preservedMessages).toEqual({ anchorUuid: "s1", uuids: ["a1", "a2"] });
+    expect("preservedSegment" in (withPreserved.compactMetadata as unknown as Record<string, unknown>)).toBe(false);
   });
 });

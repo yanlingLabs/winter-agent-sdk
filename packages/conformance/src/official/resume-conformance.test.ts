@@ -95,11 +95,23 @@ function buildChain(ctx: SessionCtx) {
       entries.push(closingEntry);
       parentUuid = closingEntry.uuid;
     },
-    /** W18-12's own native shape, via the REAL S2 writers -- boundary first, then the summary parented on it. */
-    compact(summaryText: string, preTokens: number) {
-      const boundary = claudeCompactBoundaryEntry({ trigger: "manual", preTokens, logicalParentUuid: parentUuid!, ctx });
+    /**
+     * W18-12's own native shape, via the REAL S1/S2/fix-round-1 writers -- boundary first (with
+     * `preservedMessages` when `preserveUuids` names anything, exactly what `recordCompactBoundary`
+     * does for a live `retainedCount > 0` compaction), then the summary parented on it, pre-allocated
+     * so the boundary can name it as `preservedMessages.anchorUuid` before it exists.
+     */
+    compact(summaryText: string, preTokens: number, preserveUuids: string[] = []) {
+      const summaryUuid = randomUUID();
+      const boundary = claudeCompactBoundaryEntry({
+        trigger: "manual",
+        preTokens,
+        logicalParentUuid: parentUuid!,
+        ...(preserveUuids.length > 0 ? { preservedMessages: { anchorUuid: summaryUuid, uuids: preserveUuids } } : {}),
+        ctx,
+      });
       entries.push(boundary);
-      const summary = claudeCompactSummaryEntry({ summary: summaryText, boundaryUuid: boundary.uuid, ctx });
+      const summary = claudeCompactSummaryEntry({ summary: summaryText, boundaryUuid: boundary.uuid, uuid: summaryUuid, ctx });
       entries.push(summary);
       parentUuid = summary.uuid;
     },
@@ -259,6 +271,53 @@ describe.skipIf(skipReason !== undefined)(`resume conformance: Winter-written tr
       expect(joined).toContain("ORCHID-47");
       // The pre-compaction turn is genuinely excluded (P3's own failure mode: a lost summary AND
       // leaked pre-compaction text) -- BANANA-9 must never reach the wire.
+      expect(joined).not.toContain("BANANA-9");
+    } finally {
+      fake.stop();
+      rmSync(h.home, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  test("fix round 1 (LOAD-BEARING): a compaction with retainedCount > 0 resumes in the REAL binary with summary -> preserved message -> post entries, in order, non-preserved pre-compaction text excluded", async () => {
+    const sessionId = randomUUID();
+    const ctx: SessionCtx = { sessionId, cwd: "/winter-fixture", version: "0.0.10" };
+    const chain = buildChain(ctx);
+    chain.user("Remember the code word BANANA-9. Reply with just OK."); // excluded: summarized away
+    chain.assistant("OK."); // excluded: summarized away
+    const preserved = chain.user("Also keep this exact phrase in mind: TANGERINE-3-KEEP-ME."); // PRESERVED verbatim
+    chain.compact("Summary: the user set the code word to ORCHID-47.", 1200, [preserved.uuid]);
+    chain.user("Thanks, carry on.");
+    chain.assistant("Sure.");
+
+    const fake = startLoopback(() => "the code word is ORCHID-47, and I also see TANGERINE-3-KEEP-ME");
+    const h = makeHarness(binaryPath, fake.baseUrl);
+    try {
+      writeTranscript(h, sessionId, chain.entries);
+      const { exitCode } = await spawnClaude(binaryPath, ["-p", "What is the code word?", "--model", "claude-haiku-4-5", "--resume", sessionId, "--max-turns", "1", "--output-format", "json"], envFor(h));
+      expect(exitCode).toBe(0);
+      expect(fake.requests.length).toBeGreaterThan(0);
+      const last = fake.requests.at(-1)!;
+      const texts = last.messages.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)));
+      const joined = texts.join("\n");
+
+      // The summary is present, AND the preserved verbatim message survived the compaction --
+      // the real 2.1.250 binary itself relinks `compactMetadata.preservedMessages`, not just
+      // Winter's own `resume.ts` reader.
+      expect(joined).toContain(CLAUDE_COMPACT_SUMMARY_PREAMBLE);
+      expect(joined).toContain("ORCHID-47");
+      expect(joined).toContain("TANGERINE-3-KEEP-ME");
+      // ORDER: the summary arrives before the preserved message, which arrives before "carry on" --
+      // checked on the JOINED text rather than by separate message index, because claude's own
+      // resume coalesces CONSECUTIVE same-role (user) transcript entries into one API message when
+      // nothing separates them (the summary and the preserved entry are both role:"user" here, with
+      // no assistant turn between them) -- a wire-shape detail, not a relink-order violation.
+      const summaryOffset = joined.indexOf(CLAUDE_COMPACT_SUMMARY_PREAMBLE);
+      const preservedOffset = joined.indexOf("TANGERINE-3-KEEP-ME");
+      const postOffset = joined.indexOf("Thanks, carry on.");
+      expect(summaryOffset).toBeGreaterThanOrEqual(0);
+      expect(preservedOffset).toBeGreaterThan(summaryOffset);
+      expect(postOffset).toBeGreaterThan(preservedOffset);
+      // The NON-preserved pre-compaction turn is genuinely excluded.
       expect(joined).not.toContain("BANANA-9");
     } finally {
       fake.stop();

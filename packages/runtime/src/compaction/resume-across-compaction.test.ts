@@ -101,12 +101,10 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       expect(dataMessages(frames).filter((m) => (m as { subtype?: string }).subtype === "compact_boundary")).toHaveLength(1);
 
       // --- the durable half ----------------------------------------------------------------------
-      // Phase 10b Lane S, S2/S3 (W18-12, P10b-7): the on-disk entry is now Claude's own native
-      // shape. `retainedCount`/`live.retained` still exist (they feed the engine's own in-memory
-      // history AND the WIRE FRAME's `preserved_messages` -- both unchanged, see seam.contract.test.ts's
-      // M3 case), but the alignment this fixture ORIGINALLY existed for (retained.length == the
-      // durable entry's own preserved-uuid count) no longer applies: the new shape never names a
-      // preserved uuid at all, regardless of what the live controller retained.
+      // Phase 10b Lane S, fix round 1 (LOAD-BEARING, controller ruling): the on-disk entry is
+      // Claude's own native shape, and it NOW names `compactMetadata.preservedMessages` too -- the
+      // alignment this fixture exists for (retained.length == the durable entry's own preserved-uuid
+      // count) is restored, on the new shape.
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
       const boundary = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as
@@ -115,7 +113,7 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       expect(boundary).toBeDefined();
       expect(boundary!.compactMetadata.trigger).toBe("auto");
       expect(boundary!.compactMetadata.preTokens).toBe(950);
-      expect(boundary!.compactMetadata.preservedMessages).toBeUndefined();
+      expect(boundary!.compactMetadata.preservedMessages!.uuids).toHaveLength(live.retained.length);
 
       // --- the resume ----------------------------------------------------------------------------
       const resumed = await resolveEngineSession({
@@ -125,20 +123,16 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       });
       const texts = resumed.initialMessages.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)));
 
-      // Summary-only (P10b-7): the preamble-wrapped summary, then everything appended after the
-      // boundary. `live.retained` ("turn two", the trailing not-yet-replied user turn at compaction
-      // time) does NOT come back BY NAME -- there is no preserved-uuid relink in the new shape -- but
-      // "reply two" still appears because the engine generated it AFTER compaction, so it is an
-      // ordinary POST-boundary entry like "turn three"/"reply three", not a preserved one.
+      // Fix round 1: the summary, THEN the preserved message ("turn two", the trailing
+      // not-yet-replied user turn at compaction time), THEN everything appended after the boundary
+      // -- live == resumed, byte for byte.
       expect(texts[0]).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\n${live.summary}`);
-      expect(texts).toEqual([`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\n${live.summary}`, "reply two", "turn three", "reply three"]);
+      expect(texts).toEqual([`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\n${live.summary}`, "turn two", "reply two", "turn three", "reply three"]);
       // The turns the summary REPLACED never come back -- the failure mode T3 found and fixed
       // (a resume that rebuilt the whole pre-compaction conversation, straight back over the
-      // threshold that caused the compaction) -- and now neither does the pre-compaction "turn two"
-      // itself (only its post-compaction reply survives, as an ordinary post-boundary entry).
+      // threshold that caused the compaction).
       expect(texts).not.toContain("turn one");
       expect(texts).not.toContain("reply one");
-      expect(texts).not.toContain("turn two");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -191,16 +185,18 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       const boundary = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "compact_boundary") as {
         compact_metadata: { pre_tokens: number; post_tokens?: number; preserved_messages?: { anchor_uuid: string; uuids: string[] } };
       };
-      // Phase 10b Lane S, S2 (W18-12, P10b-7): the FRAME still carries `preserved_messages` (Winter's
-      // own protocol concept, unchanged) -- but the PERSISTED Claude-shape entry never does any more,
-      // so the two views deliberately DISAGREE on this one field now (see seam.contract.test.ts's M3
-      // case for the same finding).
+      // Phase 10b Lane S, fix round 1 (LOAD-BEARING, controller ruling): the FRAME carries
+      // `preserved_messages` (Winter's own protocol concept) and the PERSISTED Claude-shape entry
+      // NOW carries the same set too, as `preservedMessages` (camelCase) -- the two views must agree
+      // on what a resume relinks, or the live session and a cold resume silently diverge.
       expect(boundary.compact_metadata.preserved_messages).toBeDefined();
       expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(live.retained.length);
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
       const persisted = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as { compactMetadata: { preservedMessages?: { anchorUuid: string; uuids: string[] } } };
-      expect(persisted.compactMetadata.preservedMessages).toBeUndefined();
+      expect(persisted.compactMetadata.preservedMessages).toBeDefined();
+      expect(persisted.compactMetadata.preservedMessages!.anchorUuid).toBe(boundary.compact_metadata.preserved_messages!.anchor_uuid);
+      expect(persisted.compactMetadata.preservedMessages!.uuids).toEqual(boundary.compact_metadata.preserved_messages!.uuids);
       // A-8 (fix wave / whole-branch N2): `post_tokens` is now OMITTED. It used to carry
       // `contextTokens()`, which after the rebuild is still the PRE-compaction reading (the
       // accountant records the last GENERATION's usage, and no generation has run since the swap),

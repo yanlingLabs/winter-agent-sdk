@@ -376,11 +376,31 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
           // Claude's native shape: `logicalParentUuid` is NEVER followed for history (W18-13's own
           // text) -- the boundary's real chain `parentUuid` is already `null`, so `ancestryChain`
           // stops here by construction, and the summary that follows it in the SAME lineage (parented
-          // ON the boundary, per W18-12's write order) is already the very next lineage element.
-          // Winter's own writer (S2, P10b-7) never names `preservedMessages`/`preservedSegment` on
-          // this shape, so nothing needs re-splicing from before the cut: "everything after the
-          // boundary" already starts with the summary itself.
-          if (isClaudeBoundary(boundary)) return lineage.slice(lastBoundaryIndex + 1);
+          // ON the boundary, per W18-12's write order) is already the very next lineage element:
+          // "everything after the boundary" already starts with the summary itself, with NO
+          // re-splicing needed, when nothing was preserved.
+          //
+          // Fix round 1 (LOAD-BEARING, controller ruling): Winter's own writer NOW names
+          // `compactMetadata.preservedMessages` (camelCase) when it retained something (superseding
+          // the original P10b-7 "never" reading -- see `claudeCompactBoundaryEntry`'s own header).
+          // The preserved entries live BEFORE the null-parent cut, so unlike the legacy branch below
+          // they are NOT reachable inside `lineage` at all -- they must be looked up from the
+          // WHOLE-FILE `byUuid` index this function built at its own top, exactly the entries the
+          // ancestry walk deliberately excluded. Order is summary, then `uuids` in order, then
+          // everything appended after the boundary -- byte-exact to the golden's own relink order.
+          if (isClaudeBoundary(boundary)) {
+            const claudeMeta = isRecord(boundary.compactMetadata) ? boundary.compactMetadata : undefined;
+            const claudePreserved = claudeMeta !== undefined && isRecord(claudeMeta.preservedMessages) ? claudeMeta.preservedMessages : undefined;
+            const claudePreservedUuids = claudePreserved !== undefined && Array.isArray(claudePreserved.uuids) ? (claudePreserved.uuids as unknown[]).filter((u): u is string => typeof u === "string") : [];
+            const claudePreservedInOrder = claudePreservedUuids.flatMap((u) => {
+              const found = byUuid.get(u);
+              return found !== undefined ? [found] : [];
+            });
+            const summaryAndAfter = lineage.slice(lastBoundaryIndex + 1);
+            if (claudePreservedInOrder.length === 0) return summaryAndAfter;
+            const [summaryEntry, ...restAfterSummary] = summaryAndAfter;
+            return summaryEntry !== undefined ? [summaryEntry, ...claudePreservedInOrder, ...restAfterSummary] : [...claudePreservedInOrder, ...restAfterSummary];
+          }
 
           const meta = isRecord(boundary.compact_metadata) ? boundary.compact_metadata : undefined;
           const preserved = meta !== undefined && isRecord(meta.preserved_messages) ? meta.preserved_messages : undefined;
