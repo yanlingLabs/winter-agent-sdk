@@ -42,6 +42,7 @@ describe("D20: Anthropic Console OAuth", () => {
       "callbackPath",
       "callbackPort",
       "clientId",
+      "extraAuthorizeParams",
       "profileUrl",
       "scope",
       "tokenUrl",

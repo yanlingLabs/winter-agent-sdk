@@ -38,6 +38,8 @@ export const DERIVED = {
      * scope whose only consumer is a `claude_cli`-scoped endpoint (D21).
      */
     scope: "user:inference user:profile",
+    /** §2.2 row 1: `code=true` is the artifact's first authorize parameter (`B@155590290`). */
+    extraAuthorizeParams: { code: "true" },
     /**
      * `0` — an ephemeral port, which is the DERIVED behaviour rather than a fallback.
      * The artifact builds its redirect URI as `http://localhost:${port}/callback` with a runtime

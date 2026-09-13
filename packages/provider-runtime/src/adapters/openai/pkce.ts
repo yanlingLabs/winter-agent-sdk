@@ -101,6 +101,14 @@ export interface LoginConfig {
    */
   includeStateInTokenRequest?: boolean;
   scope: string;
+  /**
+   * Extra authorize-request query parameters a client's registration REQUIRES beyond the PKCE set —
+   * appended after the standard parameters. Opt-in per login so one endpoint's shape changes nothing
+   * about another's. The Anthropic Console client needs `code=true` (derived-shapes-p6b.md §2.2, the
+   * FIRST parameter of its authorize request); without it the authorize page answers
+   * "Authorization failed — Invalid request format" before any callback (measured 2026-09-13).
+   */
+  extraAuthorizeParams?: Record<string, string>;
   timeoutMs?: number;
   /** Opens the browser. HOST-supplied: the SDK never shells out to a browser itself. */
   openUrl: (url: string) => Promise<void>;
@@ -289,6 +297,7 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
+    ...(cfg.extraAuthorizeParams ?? {}),
   }).toString();
 
   const timeout = setTimeout(() => rejectFlow(new Error(`the ${label} login timed out`)), cfg.timeoutMs ?? 5 * 60_000);
@@ -326,7 +335,7 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
 }
 
 /** The authorize URL a login would open, for a fixture that wants to drive the callback without a browser. */
-export function buildAuthorizeUrl(cfg: { authorizeUrl: string; clientId: string; redirectUri: string; scope: string; state: string; challenge: string }): string {
+export function buildAuthorizeUrl(cfg: { authorizeUrl: string; clientId: string; redirectUri: string; scope: string; state: string; challenge: string; extraAuthorizeParams?: Record<string, string> }): string {
   const url = new URL(cfg.authorizeUrl);
   url.search = new URLSearchParams({
     response_type: "code",
@@ -336,6 +345,7 @@ export function buildAuthorizeUrl(cfg: { authorizeUrl: string; clientId: string;
     state: cfg.state,
     code_challenge: cfg.challenge,
     code_challenge_method: "S256",
+    ...(cfg.extraAuthorizeParams ?? {}),
   }).toString();
   return url.toString();
 }

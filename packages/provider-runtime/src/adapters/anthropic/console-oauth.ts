@@ -54,6 +54,8 @@ export const CONSOLE_OAUTH = {
   /** The account id is NOT in the token response; it is read from here, as `account.uuid`. */
   profileUrl: "https://api.anthropic.com/api/oauth/profile",
   scope: "user:inference user:profile",
+  /** `code=true` — the authorize request's first parameter in the derived table (§2.2); the Console refuses the request without it. */
+  extraAuthorizeParams: { code: "true" },
   /**
    * `0` — an ephemeral port, and the DERIVED value rather than a test convenience. This client's
    * registration accepts a loopback URI on any port; codex's fixed 1455/1457 pair is the opposite
@@ -155,6 +157,9 @@ export async function startAnthropicConsoleLogin(store: CredentialStore, options
     bodyEncoding: "json",
     includeStateInTokenRequest: true,
     scope: CONSOLE_OAUTH.scope,
+    // derived-shapes-p6b.md §2.2: `code=true` is the artifact's FIRST authorize parameter; omitted
+    // until 2026-09-13, when the Console answered every login with "Invalid request format".
+    extraAuthorizeParams: CONSOLE_OAUTH.extraAuthorizeParams,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     openUrl: options.openUrl,
     ...(options.onAuthStatus !== undefined ? { onAuthStatus: options.onAuthStatus } : {}),
