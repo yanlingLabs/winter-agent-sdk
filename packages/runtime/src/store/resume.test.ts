@@ -297,6 +297,125 @@ describe("rebuildProviderMessages — Ruling P1-Q (leaf-anchored ancestry, fix-r
   });
 });
 
+// --- Phase 10b Lane S, S3 (W18-13): reading both compaction shapes, forever ------------------------
+describe("rebuildProviderMessages — compaction, both shapes (W18-13)", () => {
+  const PREAMBLE = "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
+
+  test("(a) the legacy-shape rebuild is unchanged", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "turn one" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply one" }] } },
+      { type: "compact_summary", uuid: "s1", parentUuid: "a1", message: { role: "user", content: "SUMMARY" } },
+      {
+        type: "compact_boundary",
+        uuid: "b1",
+        parentUuid: "s1",
+        compact_metadata: { trigger: "manual", pre_tokens: 100, preserved_messages: { anchor_uuid: "s1", uuids: [] } },
+      },
+      { type: "user", uuid: "u2", parentUuid: "b1", message: { role: "user", content: "after" } },
+    ];
+    expect(rebuildProviderMessages(entries)).toEqual([
+      { role: "user", content: "SUMMARY" },
+      { role: "user", content: "after" },
+    ]);
+  });
+
+  test("(b) Claude shape: the rebuild starts at the summary, with the pre-compaction history excluded (a mid-file null-parent boundary)", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "turn one" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply one" }] } },
+      // The boundary's OWN chain parentUuid is null -- a SECOND root, mid-file, by design (W18-12) --
+      // even though it is not the first entry in the array.
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        uuid: "b1",
+        parentUuid: null,
+        logicalParentUuid: "a1",
+        compactMetadata: { trigger: "auto", preTokens: 100 },
+      },
+      {
+        type: "user",
+        uuid: "s1",
+        parentUuid: "b1",
+        message: { role: "user", content: `${PREAMBLE}\n\nSUMMARY` },
+        isCompactSummary: true,
+      },
+      { type: "user", uuid: "u2", parentUuid: "s1", message: { role: "user", content: "after" } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt).toEqual([
+      { role: "user", content: `${PREAMBLE}\n\nSUMMARY` },
+      { role: "user", content: "after" },
+    ]);
+    // The pre-compaction turn is genuinely excluded, not merely absent from the tail.
+    expect(JSON.stringify(rebuilt)).not.toContain("turn one");
+    expect(JSON.stringify(rebuilt)).not.toContain("reply one");
+  });
+
+  test("(c) an isApiErrorMessage assistant entry is skipped", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u1",
+        message: { role: "assistant", content: [{ type: "text", text: "should never be replayed" }] },
+        isApiErrorMessage: true,
+      },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "next" } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt).toEqual([
+      { role: "user", content: "hi" },
+      { role: "user", content: "next" },
+    ]);
+    expect(JSON.stringify(rebuilt)).not.toContain("should never be replayed");
+  });
+
+  test("(d) attachment/queue-operation/atis-latch/last-prompt/mode are ignored", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },
+      { type: "attachment", uuid: "att1", parentUuid: "u1" },
+      { type: "queue-operation", uuid: "q1", parentUuid: "att1" },
+      { type: "atis-latch", uuid: "atis1", parentUuid: "q1" },
+      { type: "assistant", uuid: "a1", parentUuid: "atis1", message: { role: "assistant", content: [{ type: "text", text: "reply" }] } },
+      { type: "last-prompt", uuid: "lp1", parentUuid: "a1" },
+      { type: "mode", uuid: "m1", parentUuid: "lp1" },
+      { type: "user", uuid: "u2", parentUuid: "m1", message: { role: "user", content: "next" } },
+    ];
+    expect(rebuildProviderMessages(entries)).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "reply", uuid: "a1" },
+      { role: "user", content: "next" },
+    ]);
+  });
+
+  test("(e) legacy then Claude compaction in one file cuts at the LAST boundary", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "turn one" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply one" }] } },
+      // An EARLIER legacy-shape compaction.
+      { type: "compact_summary", uuid: "s1", parentUuid: "a1", message: { role: "user", content: "OLD SUMMARY" } },
+      { type: "compact_boundary", uuid: "b1", parentUuid: "s1", compact_metadata: { trigger: "manual", pre_tokens: 1 } },
+      { type: "user", uuid: "u2", parentUuid: "b1", message: { role: "user", content: "turn two" } },
+      { type: "assistant", uuid: "a2", parentUuid: "u2", message: { role: "assistant", content: [{ type: "text", text: "reply two" }] } },
+      // A LATER Claude-shape compaction -- this one must win.
+      { type: "system", subtype: "compact_boundary", uuid: "b2", parentUuid: null, logicalParentUuid: "a2", compactMetadata: { trigger: "auto", preTokens: 2 } },
+      { type: "user", uuid: "s2", parentUuid: "b2", message: { role: "user", content: `${PREAMBLE}\n\nNEW SUMMARY` }, isCompactSummary: true },
+      { type: "user", uuid: "u3", parentUuid: "s2", message: { role: "user", content: "turn three" } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt).toEqual([
+      { role: "user", content: `${PREAMBLE}\n\nNEW SUMMARY` },
+      { role: "user", content: "turn three" },
+    ]);
+    expect(JSON.stringify(rebuilt)).not.toContain("OLD SUMMARY");
+    expect(JSON.stringify(rebuilt)).not.toContain("turn one");
+    expect(JSON.stringify(rebuilt)).not.toContain("turn two");
+  });
+});
+
 // --- P1-N: recorded project dir name (record + apply) --------------------------------------------
 
 async function drainAll(proc: SpawnedRuntimeProcess): Promise<WinterFrame[]> {

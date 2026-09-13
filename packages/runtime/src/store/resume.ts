@@ -167,6 +167,18 @@ export interface DialectEntry {
   // mirrors only what resume READS, and a structurally-typed metadata object here would make every
   // reader believe the field had already been validated.
   compact_metadata?: unknown;
+  // Phase 10b Lane S, S3 (W18-13): Claude's own native compaction shape. `subtype`/`compactMetadata`
+  // (camelCase) mirror the boundary; `logicalParentUuid` is the boundary's backward-looking link to
+  // the pre-compaction leaf (never followed for history -- W18-13's own text); `isCompactSummary` is
+  // the summary's own marker (its dialect `type` is the ordinary `"user"`, unlike the legacy
+  // `"compact_summary"`, so the type string alone can't tell the two shapes apart).
+  subtype?: string;
+  compactMetadata?: unknown;
+  logicalParentUuid?: string;
+  isCompactSummary?: boolean;
+  // W18-13 (c): claude writes a failed call as a synthetic `isApiErrorMessage: true` assistant entry
+  // (probe P6) -- Winter's reader must skip it, never replay it to a provider as a real turn.
+  isApiErrorMessage?: boolean;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -184,7 +196,25 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
     const rawMessage = (e as { message?: unknown }).message;
     const message = isRecord(rawMessage) && typeof rawMessage.role === "string" ? { role: rawMessage.role, content: rawMessage.content } : undefined;
     const compactMetadata = (e as { compact_metadata?: unknown }).compact_metadata;
-    result.push({ type: e.type, uuid: e.uuid, parentUuid, ...(message !== undefined ? { message } : {}), ...(compactMetadata !== undefined ? { compact_metadata: compactMetadata } : {}) });
+    const claudeCompactMetadata = (e as { compactMetadata?: unknown }).compactMetadata;
+    const rawSubtype = (e as { subtype?: unknown }).subtype;
+    const subtype = typeof rawSubtype === "string" ? rawSubtype : undefined;
+    const rawLogicalParentUuid = (e as { logicalParentUuid?: unknown }).logicalParentUuid;
+    const logicalParentUuid = typeof rawLogicalParentUuid === "string" ? rawLogicalParentUuid : undefined;
+    const isCompactSummary = (e as { isCompactSummary?: unknown }).isCompactSummary === true;
+    const isApiErrorMessage = (e as { isApiErrorMessage?: unknown }).isApiErrorMessage === true;
+    result.push({
+      type: e.type,
+      uuid: e.uuid,
+      parentUuid,
+      ...(message !== undefined ? { message } : {}),
+      ...(compactMetadata !== undefined ? { compact_metadata: compactMetadata } : {}),
+      ...(claudeCompactMetadata !== undefined ? { compactMetadata: claudeCompactMetadata } : {}),
+      ...(subtype !== undefined ? { subtype } : {}),
+      ...(logicalParentUuid !== undefined ? { logicalParentUuid } : {}),
+      ...(isCompactSummary ? { isCompactSummary: true as const } : {}),
+      ...(isApiErrorMessage ? { isApiErrorMessage: true as const } : {}),
+    });
   }
   return result;
 }
@@ -328,12 +358,30 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
   // -- the pin marks `preserved_messages` as SUPERSEDING it, and Winter never writes the older field.
   //
   // A boundary with NO `preserved_messages` (compaction summarized everything) keeps just the summary.
-  const lastBoundaryIndex = lineage.reduce((acc, e, i) => (e.type === "compact_boundary" ? i : acc), -1);
+  //
+  // Phase 10b Lane S, S3 (W18-13b): Claude's OWN native boundary is `type:"system",
+  // subtype:"compact_boundary"` -- a DIFFERENT dialect `type` string than the legacy
+  // `"compact_boundary"` entry, so both are recognised here. Whichever shape is LAST on the lineage
+  // wins (W18-13e: a file compacted once in each shape cuts at the more recent one), independent of
+  // which shape it happens to be.
+  const isLegacyBoundary = (e: DialectEntry) => e.type === "compact_boundary";
+  const isClaudeBoundary = (e: DialectEntry) => e.type === "system" && e.subtype === "compact_boundary";
+  const lastBoundaryIndex = lineage.reduce((acc, e, i) => (isLegacyBoundary(e) || isClaudeBoundary(e) ? i : acc), -1);
   const effectiveLineage =
     lastBoundaryIndex === -1
       ? lineage
       : (() => {
           const boundary = lineage[lastBoundaryIndex]!;
+
+          // Claude's native shape: `logicalParentUuid` is NEVER followed for history (W18-13's own
+          // text) -- the boundary's real chain `parentUuid` is already `null`, so `ancestryChain`
+          // stops here by construction, and the summary that follows it in the SAME lineage (parented
+          // ON the boundary, per W18-12's write order) is already the very next lineage element.
+          // Winter's own writer (S2, P10b-7) never names `preservedMessages`/`preservedSegment` on
+          // this shape, so nothing needs re-splicing from before the cut: "everything after the
+          // boundary" already starts with the summary itself.
+          if (isClaudeBoundary(boundary)) return lineage.slice(lastBoundaryIndex + 1);
+
           const meta = isRecord(boundary.compact_metadata) ? boundary.compact_metadata : undefined;
           const preserved = meta !== undefined && isRecord(meta.preserved_messages) ? meta.preserved_messages : undefined;
           const anchorUuid = preserved !== undefined && typeof preserved.anchor_uuid === "string" ? preserved.anchor_uuid : undefined;
@@ -386,6 +434,10 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
         messages.push({ role: "user", content: content as ContentBlock[] });
       }
     } else if (e.type === "assistant") {
+      // W18-13c (probe P6): claude writes a failed call as a synthetic `isApiErrorMessage: true`
+      // assistant entry (`model: "<synthetic>"`, an `error`/`apiErrorStatus` pair) -- replaying it to
+      // a provider as a real prior turn would feed it a call it never made. Skipped, never rebuilt.
+      if (e.isApiErrorMessage === true) continue;
       if (Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0]!.type === "text" && typeof content[0]!.text === "string") {
         messages.push({ role: "assistant", content: content[0]!.text as string, uuid: e.uuid });
       } else if (Array.isArray(content)) {
