@@ -21,10 +21,11 @@ export type { AnthropicAdapterOptions, EffortMapping } from "./messages.ts";
 // `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md` §2 (headed RETIRED) for the
 // full derivation record that login once shipped.
 export { CONSOLE_BEARER, anthropicCredentialRef } from "./console-oauth.ts";
-// D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13): Console sign-in through Anthropic's OWN broker
-// binaries -- `claude auth login --console` / `ant auth print-credentials` -- spawned by the SDK
-// runtime (not a re-implementation of the OAuth protocol). See `console-broker.ts`'s own banner for
-// what was MEASURED about these binaries' behaviour.
+// D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13; corrected Lane S round 2): Console sign-in
+// through Anthropic's OWN `ant` broker binary (`auth login`/`auth logout`/`auth print-credentials`)
+// -- spawned by the SDK runtime, never a re-implementation of the OAuth protocol, and never `claude`
+// (a live measurement found `claude auth login --console` writes no Anthropic profile for this org).
+// See `console-broker.ts`'s own banner for the full measured account.
 export {
   DEFAULT_ANTHROPIC_CONSOLE_PROFILE,
   anthropicConsoleProfileExists,
