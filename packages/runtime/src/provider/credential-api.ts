@@ -391,9 +391,26 @@ export async function startProviderLogin(providerId: ProviderLoginId, store: Cre
         // redacted of its URL query string by `console-broker.ts` before it ever reaches here.
         onLine: (line) => options.onAuthStatus?.({ isAuthenticating: true, output: [line] }),
       });
-      const code = await options.readConsoleCode();
-      await handle.submitCode(code);
-      const outcome = await handle.done;
+      // Fix round 1, item 2 (MAJOR): RACED against `handle.done`, not awaited unconditionally. A
+      // `readConsoleCode()` that is still waiting on a human (or on a UI that never gets a code
+      // typed into it) must not block this call forever when the child has ALREADY told this door
+      // why it is never going to need one -- a bad profile, a broker binary that refuses before any
+      // prompt, anything that makes `done` settle first. Whichever settles first decides the
+      // outcome; the code is submitted only when it genuinely won the race.
+      const settled = await Promise.race([
+        options.readConsoleCode().then((code): { kind: "code"; code: string } => ({ kind: "code", code })),
+        handle.done.then((outcome): { kind: "done"; outcome: Awaited<typeof handle.done> } => ({ kind: "done", outcome })),
+      ]);
+      if (settled.kind === "code") {
+        try {
+          await handle.submitCode(settled.code);
+        } catch {
+          // The process exited in the narrow window between the race resolving and this call --
+          // `handle.done` below already carries the REAL reason, which is strictly more informative
+          // than this rejection would be, so it is swallowed rather than surfaced.
+        }
+      }
+      const outcome = settled.kind === "done" ? settled.outcome : await handle.done;
       // A PLAIN Error here, deliberately NOT `CredentialResolutionError`: that type's `code` is a
       // small closed set of WIRING categories (`console_login_is_host_brokered` above is exactly
       // one), and this is a different thing -- the wiring was fine and the login itself failed (a

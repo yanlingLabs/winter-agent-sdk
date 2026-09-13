@@ -590,6 +590,49 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
     }
   });
 
+  test("`anthropic` (fix round 1, item 2, MAJOR): a child that exits BEFORE a code arrives settles immediately -- `readConsoleCode` is never awaited to completion", async () => {
+    // The stub refuses before printing any prompt at all. `readConsoleCode` below NEVER resolves --
+    // if this door awaited it unconditionally (the pre-fix shape), this test would hang forever
+    // rather than fail; racing it against `handle.done` is what lets it resolve at all.
+    const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-race-anthropic-"));
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-race-claude-"));
+    const binDir = mkdtempSync(join(tmpdir(), "winter-credential-api-race-bin-"));
+    try {
+      const claudeExecutable = join(binDir, "claude");
+      writeFileSync(claudeExecutable, '#!/bin/sh\necho "refused before any prompt" >&2\nexit 2\n', "utf8");
+      chmodSync(claudeExecutable, 0o755);
+
+      const store = createMemoryCredentialStore();
+      let readConsoleCodeCalled = false;
+      const outcome: unknown = await startProviderLogin("anthropic", store, {
+        openUrl: async () => {
+          throw new Error("this flow never opens a browser");
+        },
+        claudeExecutable,
+        anthropicConfigDir,
+        claudeConfigDir,
+        readConsoleCode: async () => {
+          readConsoleCodeCalled = true;
+          return await new Promise<string>(() => {}); // never resolves
+        },
+      }).catch((e: unknown) => e);
+
+      expect(outcome).toBeInstanceOf(Error);
+      expect((outcome as Error).message).toContain("refused before any prompt");
+      // `readConsoleCode` MAY have been called (the race starts both sides), but its own promise
+      // never had to settle for `startProviderLogin` to resolve -- that is the property under test.
+      expect(readConsoleCodeCalled).toBe(true);
+      expect(store.size()).toBe(0);
+    } finally {
+      rmSync(anthropicConfigDir, { recursive: true, force: true });
+      rmSync(claudeConfigDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   test("`codex-oauth` still routes to its own flow — adding a provider did not move an existing one", async () => {
     const fake = await startFake({ routes: [codexFake.codexTokenRoute({})] });
     try {
