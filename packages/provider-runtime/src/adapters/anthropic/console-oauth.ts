@@ -1,13 +1,14 @@
 // D20 (RETIRED 2026-09-13, P10a-1): this file used to run the Anthropic Console PKCE login itself,
 // re-implementing Claude Code's private client. On 2026-09-13 the platform refused that grant for
-// every derivable request shape, and the user ruled that Console OAuth goes ONLY through Anthropic's
-// own brokers -- `claude auth login --console` (the official leg) and `ant auth print-credentials`
-// (the native provider) -- never a re-implementation of the OAuth protocol itself. THIS FILE must
-// never implement THAT again. What replaced it -- `console-broker.ts`, which SPAWNS those two
-// binaries rather than speaking OAuth to Anthropic directly -- is a same-day AMENDMENT to where the
-// broker lives: the user's first ruling put it solely in Winter's daemon; the amendment puts it in
-// this SDK too, beside `codex-oauth.ts`/`xai-oauth.ts`, so every login lane is in one place. See that
-// file's own banner for what it does and what was measured about the binaries it drives.
+// every derivable request shape, and the user's FIRST ruling was that Console OAuth goes ONLY
+// through Anthropic's own brokers -- `claude auth login --console` (the official leg) and
+// `ant auth print-credentials` (the native provider) -- never a re-implementation of the OAuth
+// protocol itself. THIS FILE must never implement THAT again. A same-day AMENDMENT then moved the
+// broker that replaced it into this SDK too (`console-broker.ts`), beside `codex-oauth.ts`/
+// `xai-oauth.ts`, rather than solely in Winter's daemon as the first ruling stated. LANE S ROUND 2
+// (2026-09-13) then found the `claude auth login --console` half of that first ruling FACTUALLY
+// WRONG, by measurement: it writes no Anthropic profile for this org, so `console-broker.ts` spawns
+// `ant` ONLY. See that file's own banner for the full measured account.
 //
 // WHAT SURVIVES, and why each one still earns its place with no login attached to it:
 //
