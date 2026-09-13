@@ -84,6 +84,7 @@ import { describeThrown, formatClassifierSafetyReport, formatLiveRow, formatLive
 import { adapterAsProvider } from "../packages/runtime/src/provider/bridge.ts";
 import { createProviderContext, createSelectionRegistry, resolveSessionProvider } from "../packages/runtime/src/provider/selection.ts";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE } from "../packages/runtime/src/provider/keychain-store.ts";
+import { connectionForProvider } from "../packages/runtime/src/provider/session-provider.ts";
 import { startProviderLogin, type ProviderLoginId, type StartProviderLoginOptions } from "../packages/runtime/src/provider/credential-api.ts";
 import { createModelClassifier } from "../packages/runtime/src/provider/classifier/model-classifier.ts";
 import { normalizeAutoModeConfig } from "../packages/runtime/src/permissions/auto/config.ts";
@@ -475,7 +476,14 @@ async function loadAdapters(env: Record<string, string | undefined>): Promise<{ 
   }
   const specifier = source;
   const mod = (await import(specifier)) as Record<string, unknown>;
-  const adapters = collectAdapters(mod);
+  let adapters = collectAdapters(mod);
+  // The shipped barrel exports a FACTORY (`createShippedAdapters(catalog)`) rather than instances —
+  // the duck-typed scan above finds nothing there (measured 2026-09-13: "0 adapter(s) registered").
+  // A module that exports no instances but does export the factory is asked for its instances the
+  // same way production wiring is; a fixture module that exports instances is unaffected.
+  if (adapters.length === 0 && typeof mod["createShippedAdapters"] === "function") {
+    adapters = collectAdapters({ shipped: (mod["createShippedAdapters"] as (c: WinterCatalog) => ProviderAdapter[])(loadCatalog()) });
+  }
   return { adapters, note: `${adapters.length} adapter(s) registered from ${source}: ${adapters.map((a) => `${a.id}@${a.version}`).join(", ") || "(none found — the module exported no ProviderAdapter-shaped value)"}` };
 }
 
@@ -565,6 +573,17 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
     },
   };
 
+  // The endpoint is resolved EXACTLY as production resolves it (`connectionForProvider`): a user
+  // `_BASE_URL` wins, otherwise a provider that SHARES its adapter with others gets its own catalog
+  // `defaultEndpoints.api` copied in as a reviewed origin. Measured 2026-09-13 on the first real run:
+  // without this, every OpenAI-compatible third-party row (deepseek, xai, zai, openrouter, ...) sent
+  // its key to the adapter's built-in default `api.openai.com` and read back a vendor 401 that
+  // looked exactly like an invalid key.
+  const descriptor = catalog.providers.find((p) => p.id === target.providerId);
+  if (descriptor !== undefined && config.provider !== undefined) {
+    const connection = connectionForProvider(config, catalog, descriptor);
+    if (connection !== undefined) config.provider = { ...config.provider, connection };
+  }
   const base = credentialStoreFor(target.kind, process.env);
   const credentials = target.authStyle === "bearer" ? bearerStore(base) : base;
   const ctx = createProviderContext(config, {
