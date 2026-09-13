@@ -508,7 +508,7 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
   // offer sign-in for all four should compile against one door rather than discover a second one
   // later, and a case that throws a TYPED refusal is a far better thing to ship than a case that is
   // absent from the type and fails at the call site as `never`.
-  test("`anthropic` answers with its TYPED refusal (P10a-1) when the broker wiring is missing -- Console OAuth is host-brokered THROUGH Anthropic's own binaries, never an OAuth exchange this SDK runs itself", async () => {
+  test("`anthropic` answers with its TYPED refusal (P10a-1) when the broker wiring is missing -- Console OAuth is host-brokered THROUGH Anthropic's own `ant` binary, never an OAuth exchange this SDK runs itself", async () => {
     const store = createMemoryCredentialStore();
     let openUrlCalls = 0;
     const outcome: unknown = await startProviderLogin("anthropic", store, {
@@ -518,48 +518,84 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
     }).catch((e: unknown) => e);
     expect(outcome).toBeInstanceOf(CredentialResolutionError);
     expect((outcome as CredentialResolutionError).code).toBe("console_login_is_host_brokered");
-    // Named exactly like `qoder`'s refusal below: the two commands the missing wiring stands for.
-    expect((outcome as Error).message).toContain("claude auth login --console");
-    expect((outcome as Error).message).toContain("ant auth print-credentials");
+    // Lane S round 2: gated on what the broker actually needs (anthropicConfigDir, readConsoleCode)
+    // -- NEVER on claudeExecutable/claudeConfigDir, which the broker no longer reads at all.
+    expect((outcome as Error).message).toContain("anthropicConfigDir");
+    expect((outcome as Error).message).toContain("readConsoleCode");
+    expect((outcome as Error).message).not.toContain("claude");
     // No browser opened and no record written -- a refusal that had done either would be worse than
     // one that never started.
     expect(openUrlCalls).toBe(0);
     expect(store.size()).toBe(0);
   });
 
-  test("`anthropic` (P10a-1 amendment): with the broker fully wired, this door spawns the real `claude`/`ant` stubs, awaits `readConsoleCode`, and answers with the `anthropic:default` ref", async () => {
-    // Real executable stubs under mkdtemp, exactly like `console-broker.test.ts`'s own fixtures --
-    // this test proves the WIRING (this file's new fields reach `startAnthropicConsoleBrokerLogin`
-    // correctly), not the broker's own behaviour, which that file already covers exhaustively.
+  test("`anthropic` (Lane S round 2): a missing `antExecutable` alone is NOT this door's own gate -- it reaches the broker, which refuses BEFORE any spawn with its own typed reason", async () => {
+    // anthropicConfigDir + readConsoleCode are both present, so this door's OWN gate passes; the
+    // refusal must come from `startAnthropicConsoleBrokerLogin` itself (via `handle.done`), never a
+    // duplicated message here -- proving this file does not reproduce that wording.
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-noant-"));
+    try {
+      const store = createMemoryCredentialStore();
+      let openUrlCalls = 0;
+      const outcome: unknown = await startProviderLogin("anthropic", store, {
+        openUrl: async () => {
+          openUrlCalls += 1;
+        },
+        anthropicConfigDir,
+        readConsoleCode: async () => "unused",
+      }).catch((e: unknown) => e);
+      expect(outcome).toBeInstanceOf(Error);
+      // The broker's OWN wording (console-broker.ts), named by the missing binary -- not this file's.
+      expect((outcome as Error).message).toContain('"ant"');
+      expect((outcome as Error).message).not.toContain("claude");
+      expect(openUrlCalls).toBe(0);
+      expect(store.size()).toBe(0);
+    } finally {
+      rmSync(anthropicConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  test("`anthropic` (Lane S round 2): with the `ant` broker fully wired, this door spawns the real `ant` stub, awaits `readConsoleCode`, and answers with the `anthropic:default` ref -- NO claude executable is built or supplied", async () => {
+    // A real executable `ant` stub under mkdtemp, exactly like `console-broker.test.ts`'s own
+    // fixtures -- this test proves the WIRING (this file's fields reach
+    // `startAnthropicConsoleBrokerLogin` correctly), not the broker's own behaviour, which that file
+    // already covers exhaustively. Lane S round 2: no `claudeExecutable` is passed at all -- the
+    // login succeeds without it, which is the whole point.
     const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const expectedCode = "test-code-credential-api-9f2a";
     const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-anthropic-"));
-    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-claude-"));
     const binDir = mkdtempSync(join(tmpdir(), "winter-credential-api-bin-"));
     try {
-      const claudeExecutable = join(binDir, "claude");
+      const antExecutable = join(binDir, "ant");
       writeFileSync(
-        claudeExecutable,
+        antExecutable,
         [
           "#!/bin/sh",
-          `echo "Open this URL to continue: https://platform.claude.com/oauth/authorize?client_id=abc&code=${expectedCode}"`,
-          "read -r pasted",
-          `if [ "$pasted" = "${expectedCode}" ]; then`,
-          '  mkdir -p "$ANTHROPIC_CONFIG_DIR/credentials"',
-          '  printf \'{"access_token":"stub","expires_at":1999999999999}\' > "$ANTHROPIC_CONFIG_DIR/credentials/$ANTHROPIC_PROFILE.json"',
-          "  exit 0",
-          "else",
-          '  echo "refused" >&2',
-          "  exit 2",
-          "fi",
+          `case "$2" in`,
+          `login)`,
+          `  echo "Open this URL to continue: https://platform.claude.com/oauth/authorize?client_id=abc&code=${expectedCode}"`,
+          `  read -r pasted`,
+          `  if [ "$pasted" = "${expectedCode}" ]; then`,
+          '    mkdir -p "$ANTHROPIC_CONFIG_DIR/credentials"',
+          '    printf \'{"expires_at":1999999999999}\' > "$ANTHROPIC_CONFIG_DIR/credentials/winter.json"',
+          "    exit 0",
+          "  else",
+          '    echo "refused" >&2',
+          "    exit 2",
+          "  fi",
+          "  ;;",
+          `print-credentials)`,
+          `  echo "fake-bearer-token"`,
+          "  ;;",
+          "esac",
         ].join("\n") + "\n",
         "utf8",
       );
-      chmodSync(claudeExecutable, 0o755);
-      const antExecutable = join(binDir, "ant");
-      writeFileSync(antExecutable, "#!/bin/sh\necho fake-bearer-token\n", "utf8");
       chmodSync(antExecutable, 0o755);
 
       const store = createMemoryCredentialStore();
@@ -568,10 +604,8 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
         openUrl: async () => {
           throw new Error("this flow never opens a browser -- it prints a URL through the progress channel instead");
         },
-        claudeExecutable,
         antExecutable,
         anthropicConfigDir,
-        claudeConfigDir,
         readConsoleCode: async () => expectedCode,
         onAuthStatus: (status) => progressLines.push(...(status.output ?? [])),
       });
@@ -585,25 +619,24 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
       expect(progressLines.join("\n")).not.toContain(expectedCode);
     } finally {
       rmSync(anthropicConfigDir, { recursive: true, force: true });
-      rmSync(claudeConfigDir, { recursive: true, force: true });
       rmSync(binDir, { recursive: true, force: true });
     }
   });
 
-  test("`anthropic` (fix round 1, item 2, MAJOR): a child that exits BEFORE a code arrives settles immediately -- `readConsoleCode` is never awaited to completion", async () => {
+  test("`anthropic` (fix round 1, item 2, MAJOR; Lane S round 2: ant-only): a child that exits BEFORE a code arrives settles immediately -- `readConsoleCode` is never awaited to completion", async () => {
     // The stub refuses before printing any prompt at all. `readConsoleCode` below NEVER resolves --
     // if this door awaited it unconditionally (the pre-fix shape), this test would hang forever
-    // rather than fail; racing it against `handle.done` is what lets it resolve at all.
+    // rather than fail; racing it against `handle.done` is what lets it resolve at all. Lane S
+    // round 2: the stub is named/shaped `ant` -- NO claude executable is built or supplied.
     const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-race-anthropic-"));
-    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-race-claude-"));
     const binDir = mkdtempSync(join(tmpdir(), "winter-credential-api-race-bin-"));
     try {
-      const claudeExecutable = join(binDir, "claude");
-      writeFileSync(claudeExecutable, '#!/bin/sh\necho "refused before any prompt" >&2\nexit 2\n', "utf8");
-      chmodSync(claudeExecutable, 0o755);
+      const antExecutable = join(binDir, "ant");
+      writeFileSync(antExecutable, '#!/bin/sh\necho "refused before any prompt" >&2\nexit 2\n', "utf8");
+      chmodSync(antExecutable, 0o755);
 
       const store = createMemoryCredentialStore();
       let readConsoleCodeCalled = false;
@@ -611,9 +644,8 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
         openUrl: async () => {
           throw new Error("this flow never opens a browser");
         },
-        claudeExecutable,
+        antExecutable,
         anthropicConfigDir,
-        claudeConfigDir,
         readConsoleCode: async () => {
           readConsoleCodeCalled = true;
           return await new Promise<string>(() => {}); // never resolves
@@ -622,13 +654,13 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
 
       expect(outcome).toBeInstanceOf(Error);
       expect((outcome as Error).message).toContain("refused before any prompt");
+      expect((outcome as Error).message).not.toContain("claude");
       // `readConsoleCode` MAY have been called (the race starts both sides), but its own promise
       // never had to settle for `startProviderLogin` to resolve -- that is the property under test.
       expect(readConsoleCodeCalled).toBe(true);
       expect(store.size()).toBe(0);
     } finally {
       rmSync(anthropicConfigDir, { recursive: true, force: true });
-      rmSync(claudeConfigDir, { recursive: true, force: true });
       rmSync(binDir, { recursive: true, force: true });
     }
   }, 10_000);

@@ -319,14 +319,21 @@ export interface StartProviderLoginOptions {
   /** A login-flow PROGRESS channel (R6-F). Never carries credential material. */
   onAuthStatus?: (status: { isAuthenticating: boolean; output?: string[]; error?: string }) => void;
   /**
-   * `anthropic` (host-brokered Console OAuth, P10a-1 amendment) ONLY: the resolved `claude`/`ant`
-   * executables and the two config dirs `console-broker.ts` spawns with. Present ahead of their one
-   * consumer for the same reason `deviceCodeUrl` is: an option that only appears alongside its
-   * implementation is an option whose first test cannot be written. Ignored by every other flow.
+   * `anthropic` (host-brokered Console OAuth, P10a-1 amendment) ONLY: the resolved `ant` executable
+   * and the config dir `console-broker.ts` spawns with. Present ahead of their one consumer for the
+   * same reason `deviceCodeUrl` is: an option that only appears alongside its implementation is an
+   * option whose first test cannot be written. Ignored by every other flow.
    */
-  claudeExecutable?: string;
   antExecutable?: string;
   anthropicConfigDir?: string;
+  /**
+   * UNUSED (Lane S round 2, measured 2026-09-13): a live measurement found `claude auth login
+   * --console` writes no Anthropic profile for this org, so `console-broker.ts` never spawns
+   * `claude` for the Console login -- `ant` is the one broker binary. These two fields are accepted
+   * ONLY for source compatibility with existing callers that still pass them; this door never reads
+   * either, and never gates on them.
+   */
+  claudeExecutable?: string;
   claudeConfigDir?: string;
   /** `anthropic` only: `ANTHROPIC_PROFILE`. Defaults to `console-broker.ts`'s own default (`"winter"`). */
   profile?: string;
@@ -365,26 +372,28 @@ export interface ProviderLoginResult {
 export async function startProviderLogin(providerId: ProviderLoginId, store: CredentialStore, options: StartProviderLoginOptions): Promise<ProviderLoginResult> {
   switch (providerId) {
     case "anthropic": {
-      // P10a-1 (2026-09-13), AMENDED same day: the derived-PKCE re-implementation is retired for
-      // good (a client id read out of Claude Code's bundle, refused by the platform for every
-      // derivable request shape) -- but the user's follow-up ruling puts the REPLACEMENT broker in
+      // P10a-1 (2026-09-13), AMENDED same day, CORRECTED Lane S round 2: the derived-PKCE
+      // re-implementation is retired for good (a client id read out of Claude Code's bundle, refused
+      // by the platform for every derivable request shape) -- and the REPLACEMENT broker lives in
       // this SDK too, beside `codex-oauth`/`xai-oauth`, rather than solely in a host's daemon. So this
-      // door now spawns Anthropic's OWN binaries (`console-broker.ts`) instead of any OAuth exchange
-      // of this SDK's own. The four broker fields and `readConsoleCode` are host-supplied exactly the
-      // way `openUrl` is for every other flow; missing ANY of them is a REFUSAL raised BEFORE a
-      // process is spawned, named `console_login_is_host_brokered` because what is missing is
-      // precisely the wiring onto the external brokers, never a credential this SDK could mint itself.
-      if (options.claudeExecutable === undefined || options.anthropicConfigDir === undefined || options.claudeConfigDir === undefined || options.readConsoleCode === undefined) {
+      // door spawns Anthropic's OWN `ant` binary (`console-broker.ts`) instead of any OAuth exchange
+      // of this SDK's own -- NEVER `claude`: a live measurement found `claude auth login --console`
+      // writes no Anthropic profile for this org, so this door is gated on what the broker actually
+      // needs (`anthropicConfigDir`, to even construct its options; `readConsoleCode`, this door's
+      // own race partner) and NEVER on `claudeExecutable`/`claudeConfigDir`, which the broker no
+      // longer reads. A missing `antExecutable` is deliberately NOT checked here: it is optional on
+      // the broker's own options, and `startAnthropicConsoleBrokerLogin` already refuses BEFORE any
+      // spawn with its own typed reason when it is absent -- reproducing that wording here would be
+      // exactly the duplication this file's own redaction rules elsewhere warn against.
+      if (options.anthropicConfigDir === undefined || options.readConsoleCode === undefined) {
         throw new CredentialResolutionError(
           "console_login_is_host_brokered",
-          `the "${providerId}" Console login is brokered through Anthropic's OWN binaries ("claude auth login --console" / "ant auth print-credentials"), never an OAuth exchange this SDK runs itself -- this call is missing one or more of claudeExecutable, anthropicConfigDir, claudeConfigDir, readConsoleCode, which is what wires this door onto those binaries`,
+          `the "${providerId}" Console login is brokered through Anthropic's own "ant" binary, never an OAuth exchange this SDK runs itself -- this call is missing one or more of anthropicConfigDir, readConsoleCode, which is what wires this door onto that broker`,
         );
       }
       const handle = startAnthropicConsoleBrokerLogin(store, {
-        claudeExecutable: options.claudeExecutable,
         ...(options.antExecutable !== undefined ? { antExecutable: options.antExecutable } : {}),
         anthropicConfigDir: options.anthropicConfigDir,
-        claudeConfigDir: options.claudeConfigDir,
         ...(options.profile !== undefined ? { profile: options.profile } : {}),
         ...(options.service !== undefined ? { service: options.service } : {}),
         // Reuses the shared PROGRESS channel (R6-F): never material, and every line is already

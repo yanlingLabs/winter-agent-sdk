@@ -547,29 +547,37 @@ describe("WS-13b: the `--login` door", () => {
     expect(ok).toBe(false);
     expect(openUrlCalls).toBe(0);
     const printed = io.lines.join("\n");
-    // The two commands the missing wiring stands for -- named exactly like `qoder`'s refusal below.
-    expect(printed).toContain("claude auth login --console");
-    expect(printed).toContain("ant auth print-credentials");
+    // Lane S round 2: gated on what the broker actually needs -- never a claim about claude.
+    expect(printed).toContain("anthropicConfigDir");
+    expect(printed).toContain("readConsoleCode");
+    expect(printed).not.toContain("claude");
   });
 
-  test("`anthropic` (P10a-1 amendment): with the broker wired via `overrides`, runs against real `claude`/`ant` stubs and prints the `anthropic:default` CREDENTIAL_REF", async () => {
+  test("`anthropic` (Lane S round 2): with the `ant` broker wired via `overrides`, runs against a real `ant` stub and prints the `anthropic:default` CREDENTIAL_REF -- NO claude executable is built or supplied", async () => {
     const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const expectedCode = "test-code-verify-live-9f2a";
     const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-verify-live-anthropic-"));
-    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-verify-live-claude-"));
     const binDir = mkdtempSync(join(tmpdir(), "winter-verify-live-bin-"));
     try {
-      const claudeExecutable = join(binDir, "claude");
+      const antExecutable = join(binDir, "ant");
       writeFileSync(
-        claudeExecutable,
-        `#!/bin/sh\nread -r pasted\nif [ "$pasted" = "${expectedCode}" ]; then mkdir -p "$ANTHROPIC_CONFIG_DIR/credentials"; printf '{"expires_at":1999999999999}' > "$ANTHROPIC_CONFIG_DIR/credentials/$ANTHROPIC_PROFILE.json"; exit 0; else exit 2; fi\n`,
+        antExecutable,
+        [
+          `#!/bin/sh`,
+          `case "$2" in`,
+          `login)`,
+          `  read -r pasted`,
+          `  if [ "$pasted" = "${expectedCode}" ]; then mkdir -p "$ANTHROPIC_CONFIG_DIR/credentials"; printf '{"expires_at":1999999999999}' > "$ANTHROPIC_CONFIG_DIR/credentials/winter.json"; exit 0; else exit 2; fi`,
+          `  ;;`,
+          `print-credentials)`,
+          `  echo "fake-bearer-token"`,
+          `  ;;`,
+          `esac`,
+        ].join("\n") + "\n",
         "utf8",
       );
-      chmodSync(claudeExecutable, 0o755);
-      const antExecutable = join(binDir, "ant");
-      writeFileSync(antExecutable, "#!/bin/sh\necho fake-bearer-token\n", "utf8");
       chmodSync(antExecutable, 0o755);
 
       const io = collect();
@@ -583,7 +591,7 @@ describe("WS-13b: the `--login` door", () => {
           },
           log: io.log,
           store,
-          overrides: { claudeExecutable, antExecutable, anthropicConfigDir, claudeConfigDir, readConsoleCode: async () => expectedCode },
+          overrides: { antExecutable, anthropicConfigDir, readConsoleCode: async () => expectedCode },
         },
       );
       expect(ok).toBe(true);
@@ -591,7 +599,6 @@ describe("WS-13b: the `--login` door", () => {
       expect((await store.get({ kind: "keychain", account: "anthropic:default", service: "com.winter.live.test" }))?.kind).toBe("bearer");
     } finally {
       rmSync(anthropicConfigDir, { recursive: true, force: true });
-      rmSync(claudeConfigDir, { recursive: true, force: true });
       rmSync(binDir, { recursive: true, force: true });
     }
   });
