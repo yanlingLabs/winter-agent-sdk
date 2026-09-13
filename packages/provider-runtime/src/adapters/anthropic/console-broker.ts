@@ -300,7 +300,19 @@ export async function refreshAnthropicBearer(store: CredentialStore, options: An
   const token = stdout.trim();
   if (token.length === 0) return { ok: false, reason: '"ant auth print-credentials" printed no token' };
   const now = options.now ?? Date.now;
-  const expiresAt = (await readProfileExpiresAt(options.anthropicConfigDir, profile)) ?? now() + 3_600_000;
+  const nowValue = now();
+  let expiresAt = (await readProfileExpiresAt(options.anthropicConfigDir, profile)) ?? nowValue + 3_600_000;
+  // M3-units (P10a, whole-branch review): a normalised-but-still-wrong or clock-skewed profile value
+  // can come back at or before `now`. This function's contract to its caller is "a usable bearer, not
+  // an already-expired one" -- an `expiresAt` in the past would tell a refresh timer the credential is
+  // fine right up until the moment it fails upstream. Clamped to a short, clearly-a-clamp window
+  // rather than the normal 1h fallback, so a caller inspecting the value can tell this path fired.
+  // Named ONLY by this function's own name in the note (never the profile's raw value, which is not
+  // secret but is still host-file content this file has no other reason to echo).
+  if (expiresAt <= nowValue) {
+    options.onLine?.("refreshAnthropicBearer: profile expiresAt was not in the future; clamped to now+60s");
+    expiresAt = nowValue + 60_000;
+  }
   const material: Extract<CredentialMaterial, { kind: "bearer" }> = { kind: "bearer", token, expiresAt };
   const ref = anthropicCredentialRef("default", options.service);
   try {
@@ -330,11 +342,14 @@ const MAX_PROFILE_FILE_BYTES = 64 * 1024;
  * function already tolerates that, so the cap costs nothing on the happy path and stops an
  * unexpectedly huge file from being read into memory whole.
  *
- * UNVERIFIED UNIT (flagged for the controller's M3): assumed epoch MILLISECONDS, matching every other
- * `expiresAt` this package carries (`CredentialMaterial`'s `oauth` variant, `OAuthTokens`). If the
- * profile file's own `expires_at` turns out to be epoch SECONDS instead, this reads as ~1970 and the
- * broker refresh timer fires immediately rather than never -- wrong in the SAFE direction (refreshes
- * too often, never too rarely), but still worth measuring rather than shipping as an assumption.
+ * UNIT NORMALISED (M3-units, whole-branch review of P10a): the field's unit was previously assumed to
+ * be epoch MILLISECONDS with no measurement backing it, matching every other `expiresAt` this package
+ * carries (`CredentialMaterial`'s `oauth` variant, `OAuthTokens`) -- but a SECONDS value (the shape
+ * many CLI credential-store JSON files use, including the Anthropic ecosystem's `~/.claude/.credentials.json`
+ * lineage) would have read as ~1970 and fired the refresh timer immediately rather than never. Now
+ * normalised via {@link normalizeExpiresAt} rather than trusted as-is: a numeric value under 1e12 is
+ * treated as seconds (`*1000`); at or above 1e12 as milliseconds already; a string is parsed as
+ * ISO-8601; anything else is `undefined` (the existing conservative fallback in `refreshAnthropicBearer`).
  */
 async function readProfileExpiresAt(anthropicConfigDir: string, profile: string): Promise<number | undefined> {
   try {
@@ -342,10 +357,34 @@ async function readProfileExpiresAt(anthropicConfigDir: string, profile: string)
       .slice(0, MAX_PROFILE_FILE_BYTES)
       .text();
     const parsed = JSON.parse(raw) as { expires_at?: unknown };
-    return typeof parsed.expires_at === "number" ? parsed.expires_at : undefined;
+    return normalizeExpiresAt(parsed.expires_at);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * M3-units: normalises an unverified `expires_at` value into epoch milliseconds.
+ *
+ *   - a FINITE NUMBER under 1e12 is treated as epoch SECONDS (any millisecond timestamp for a date
+ *     after 2001-09-09 is >= 1e12, so this threshold never misclassifies a real ms value as seconds);
+ *     >= 1e12 is trusted as milliseconds already.
+ *   - a STRING is parsed as ISO-8601 via `Date.parse`; an unparseable string is `undefined`.
+ *   - anything else (missing, `null`, a non-finite number, an object) is `undefined`.
+ *
+ * `undefined` is deliberately NOT "expired" -- `refreshAnthropicBearer` treats it as "unknown" and
+ * falls back to its own conservative now+1h estimate, per this file's existing rule.
+ */
+function normalizeExpiresAt(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return undefined;
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
 }
 
 /** Does `<anthropicConfigDir>/credentials/<profile>.json` exist? A plain file-exists check -- this file never opens or parses it here. */

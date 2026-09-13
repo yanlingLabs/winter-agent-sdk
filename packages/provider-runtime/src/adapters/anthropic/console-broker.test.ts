@@ -334,6 +334,68 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment)", () => {
     expect(result).toEqual({ ok: true, expiresAt: now + 3_600_000 });
   });
 
+  test("M3-units: a numeric `expires_at` under 1e12 is treated as epoch SECONDS and normalised to milliseconds", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    const secondsValue = 4_000_000_000; // well under 1e12 -- a real-looking epoch-seconds timestamp, ~2096
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), JSON.stringify({ expires_at: secondsValue }));
+    const store = createMemoryCredentialStore();
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir });
+    expect(result).toEqual({ ok: true, expiresAt: secondsValue * 1000 });
+  });
+
+  test("M3-units: a numeric `expires_at` at or above 1e12 is trusted as milliseconds already, unchanged", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), JSON.stringify({ expires_at: FIXTURE_EXPIRES_AT }));
+    const store = createMemoryCredentialStore();
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir });
+    expect(result).toEqual({ ok: true, expiresAt: FIXTURE_EXPIRES_AT });
+  });
+
+  test("M3-units: an ISO-8601 string `expires_at` is parsed with `Date.parse`", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    const iso = "2099-01-01T00:00:00.000Z";
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), JSON.stringify({ expires_at: iso }));
+    const store = createMemoryCredentialStore();
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir });
+    expect(result).toEqual({ ok: true, expiresAt: Date.parse(iso) });
+  });
+
+  test("M3-units: an `expires_at` that is neither a number nor a parseable string is tolerated -- falls back to the conservative estimate", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), JSON.stringify({ expires_at: "not-a-date" }));
+    const store = createMemoryCredentialStore();
+    const now = 1_700_000_000_000;
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir, now: () => now });
+    expect(result).toEqual({ ok: true, expiresAt: now + 3_600_000 });
+  });
+
+  test("M3-units: refreshAnthropicBearer never returns an expiresAt in the past -- a profile value at/before now is clamped to now+60s and named (not detailed) on `onLine`", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    const now = 1_700_000_000_000;
+    // Epoch SECONDS for a moment well before `now` -- normalises to a firmly-past millisecond value,
+    // not merely a rounding edge case.
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), JSON.stringify({ expires_at: 1_000 }));
+    const store = createMemoryCredentialStore();
+    const lines: string[] = [];
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir, now: () => now, onLine: (line) => lines.push(line) });
+    expect(result).toEqual({ ok: true, expiresAt: now + 60_000 });
+    const material = await store.get(anthropicCredentialRef("default"));
+    expect(material).toEqual({ kind: "bearer", token: STUB_BEARER_TOKEN, expiresAt: now + 60_000 });
+    // Named by the function's own name only -- never the profile's raw value.
+    expect(lines.some((line) => line.includes("refreshAnthropicBearer"))).toBe(true);
+    expect(lines.join("\n")).not.toContain("1000");
+  });
+
   test("BELT-AND-BRACES REDACTION (fix round 1, item 6): a `code=` occurrence OUTSIDE a recognised URL is still redacted, and everything after it on that line is dropped", async () => {
     const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
     const claudeExecutable = writeStub(
