@@ -17,7 +17,7 @@ import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type Provider, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
-import { resolveEngineSession } from "../store/dialect.ts";
+import { resolveEngineSession, CLAUDE_COMPACT_SUMMARY_PREAMBLE } from "../store/dialect.ts";
 import { createCompactionController } from "./controller.ts";
 import type { CompactionController, CompactionInput, CompactionResult } from "./seam.ts";
 
@@ -101,16 +101,19 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       expect(dataMessages(frames).filter((m) => (m as { subtype?: string }).subtype === "compact_boundary")).toHaveLength(1);
 
       // --- the durable half ----------------------------------------------------------------------
+      // Phase 10b Lane S, fix round 1 (LOAD-BEARING, controller ruling): the on-disk entry is
+      // Claude's own native shape, and it NOW names `compactMetadata.preservedMessages` too -- the
+      // alignment this fixture exists for (retained.length == the durable entry's own preserved-uuid
+      // count) is restored, on the new shape.
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
-      const boundary = raw.find((e) => e.type === "compact_boundary") as unknown as { compact_metadata: { pre_tokens: number; trigger: string; preserved_messages?: { anchor_uuid: string; uuids: string[] } } } | undefined;
+      const boundary = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as
+        | { compactMetadata: { preTokens: number; trigger: string; preservedMessages?: { anchorUuid: string; uuids: string[] } } }
+        | undefined;
       expect(boundary).toBeDefined();
-      expect(boundary!.compact_metadata.trigger).toBe("auto");
-      expect(boundary!.compact_metadata.pre_tokens).toBe(950);
-      // THE ALIGNMENT THIS FIXTURE EXISTS FOR: one retained message, one preserved uuid. A
-      // controller whose `retained` counted something the writer does not treat as a conversational
-      // entry would silently preserve the wrong number of them, and only a resume would show it.
-      expect(boundary!.compact_metadata.preserved_messages!.uuids).toHaveLength(live.retained.length);
+      expect(boundary!.compactMetadata.trigger).toBe("auto");
+      expect(boundary!.compactMetadata.preTokens).toBe(950);
+      expect(boundary!.compactMetadata.preservedMessages!.uuids).toHaveLength(live.retained.length);
 
       // --- the resume ----------------------------------------------------------------------------
       const resumed = await resolveEngineSession({
@@ -120,10 +123,11 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       });
       const texts = resumed.initialMessages.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)));
 
-      // The summary, then the preserved message, then everything appended after the boundary.
-      expect(texts[0]).toBe(live.summary);
-      expect(texts[1]).toBe("turn two");
-      expect(texts).toEqual([live.summary, "turn two", "reply two", "turn three", "reply three"]);
+      // Fix round 1: the summary, THEN the preserved message ("turn two", the trailing
+      // not-yet-replied user turn at compaction time), THEN everything appended after the boundary
+      // -- live == resumed, byte for byte.
+      expect(texts[0]).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\n${live.summary}`);
+      expect(texts).toEqual([`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\n${live.summary}`, "turn two", "reply two", "turn three", "reply three"]);
       // The turns the summary REPLACED never come back -- the failure mode T3 found and fixed
       // (a resume that rebuilt the whole pre-compaction conversation, straight back over the
       // threshold that caused the compaction).
@@ -181,13 +185,18 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       const boundary = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "compact_boundary") as {
         compact_metadata: { pre_tokens: number; post_tokens?: number; preserved_messages?: { anchor_uuid: string; uuids: string[] } };
       };
-      // The uuids on the FRAME must be the same ones the transcript's own boundary names -- a host
-      // relinking from the frame and a resume relinking from the file have to agree.
+      // Phase 10b Lane S, fix round 1 (LOAD-BEARING, controller ruling): the FRAME carries
+      // `preserved_messages` (Winter's own protocol concept) and the PERSISTED Claude-shape entry
+      // NOW carries the same set too, as `preservedMessages` (camelCase) -- the two views must agree
+      // on what a resume relinks, or the live session and a cold resume silently diverge.
+      expect(boundary.compact_metadata.preserved_messages).toBeDefined();
+      expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(live.retained.length);
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
-      const persisted = raw.find((e) => e.type === "compact_boundary") as unknown as { compact_metadata: { preserved_messages?: { anchor_uuid: string; uuids: string[] } } };
-      expect(boundary.compact_metadata.preserved_messages).toEqual(persisted.compact_metadata.preserved_messages!);
-      expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(live.retained.length);
+      const persisted = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as { compactMetadata: { preservedMessages?: { anchorUuid: string; uuids: string[] } } };
+      expect(persisted.compactMetadata.preservedMessages).toBeDefined();
+      expect(persisted.compactMetadata.preservedMessages!.anchorUuid).toBe(boundary.compact_metadata.preserved_messages!.anchor_uuid);
+      expect(persisted.compactMetadata.preservedMessages!.uuids).toEqual(boundary.compact_metadata.preserved_messages!.uuids);
       // A-8 (fix wave / whole-branch N2): `post_tokens` is now OMITTED. It used to carry
       // `contextTokens()`, which after the rebuild is still the PRE-compaction reading (the
       // accountant records the last GENERATION's usage, and no generation has run since the swap),
@@ -240,7 +249,10 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
         resolveWinterHome: () => home,
         env: {},
       });
-      expect(resumed.initialMessages[0]!.content).toBe("The user's lucky number is 4242.");
+      // W18-12: the resumed content is claude's own preamble followed by the summary text, not the
+      // bare summary string -- the whole point of writing the summary through
+      // `claudeCompactSummaryEntry` rather than a raw string entry.
+      expect(resumed.initialMessages[0]!.content).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nThe user's lucky number is 4242.`);
       // The summarizer's own generation never entered the conversation history it summarized.
       expect(resumed.initialMessages.map((m) => m.content)).not.toContain("my lucky number is 4242");
     } finally {

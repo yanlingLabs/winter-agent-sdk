@@ -32,7 +32,7 @@ import { join } from "node:path";
 // re-exported below (a separate `export ... from` binding, which needs no import of its own) — so
 // importing it here too was dead weight (TS6133). isPidAlive/readLeaseInfo are new imports for the
 // lease-aware tail repair below (Ruling P1-S).
-import { acquireLease, isPidAlive, readLeaseInfo, writeAllSync, WinterStoreError } from "./leases.ts";
+import { acquireLease, isPidAlive, readLeaseInfo, releaseLease, writeAllSync, WinterStoreError } from "./leases.ts";
 
 export { WinterStoreError, WinterStoreLeaseError } from "./leases.ts";
 
@@ -442,6 +442,19 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     this.winterHome = opts.winterHome;
   }
 
+  // Fix round 1 (reviewer #2, minor): LOAD-BEARING INVARIANT, stated once here and mirrored at
+  // `releaseSessionLease` below and in `leases.ts`'s own module header. From `acquireLease` through
+  // the last synchronous fs write (`appendLinesAtomically`/`writeJsonAtomically`/`foldSummary`), this
+  // method's body contains NO `await` at all -- every one of those calls is a plain synchronous fs
+  // operation. JS's run-to-completion semantics are what make that matter: once this synchronous
+  // stretch starts, nothing else queued on THIS PROCESS's event loop (a same-process
+  // `releaseSessionLease` call included) can interleave until it returns, so a release can never
+  // land in the middle of a claim-then-write. This is NOT an accident of "it happens to work
+  // today" -- it is the entire safety property, and it holds ONLY as long as this stretch stays
+  // `await`-free. If a future change ever needs an `await` between `acquireLease` and the last
+  // write here, it needs an EXPLICIT in-process lock (a mutex/queue) around this method and
+  // `releaseSessionLease` together -- the implicit run-to-completion guarantee stops covering it
+  // the instant a real async gap opens.
   async append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void> {
     // T7 F6 (fix-wave, API-consistency note): deliberately returns BEFORE locateResource's own
     // key-shape validation below — an empty batch never calls it, so append(malformedKey, []) does
@@ -780,5 +793,29 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
     acquireLease(lockPath);
     chmodSync(lockPath, 0o600);
+  }
+
+  /**
+   * Phase 10b Lane S, S8 (W18-5): releases the writer lease `acquireSessionLease`/`append`'s own
+   * opening sequence took, but ONLY when THIS pid holds it -- `leases.ts`'s own `releaseLease` is
+   * the entire safety property, reproduced here just for the routing: same-pid, idempotent, never
+   * another pid's lease. The router calls this for a WINTER destination, after its own write-ahead
+   * producer record lands and BEFORE `confirmInit` -- so the daemon's pid writes NOTHING to the
+   * canonical transcript once the winter child holds the lease (W18-5's own ordering constraint).
+   *
+   * Deliberately NOT part of the exported `SessionStore` type (same posture as
+   * `acquireSessionLease` immediately above) -- lives only on this concrete class.
+   *
+   * Fix round 1 (reviewer #2, minor): the OTHER half of `append`'s own load-bearing invariant
+   * (see that method's own header comment). This method's body is synchronous too (`releaseLease`
+   * is a single plain fs call, no `await`), so a `releaseSessionLease` call and a same-process
+   * `append` call can never interleave mid-way -- whichever one the event loop runs next, it runs
+   * to completion before the other can start. That is what makes "release between two appends"
+   * safe without any lock object anywhere in this class: JS's run-to-completion is the lock, for as
+   * long as neither method's synchronous stretch grows an `await`.
+   */
+  async releaseSessionLease(key: { projectKey: string; sessionId: string }): Promise<boolean> {
+    const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
+    return releaseLease(lockPath);
   }
 }

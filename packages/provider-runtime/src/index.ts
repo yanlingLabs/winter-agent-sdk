@@ -124,6 +124,7 @@ export * from "./adapters/index.ts";
 // the ruling retired.
 export {
   RECOVERED_REASONING_TAG,
+  LEGACY_RECOVERED_REASONING_TAG,
   MIN_DECORATION_BODY_CHARS,
   buildDecoration,
   decorationOverhead,
@@ -146,11 +147,15 @@ export {
   PRIOR_MODEL_HANDOFF_TAG,
   buildPortableHandoff,
   handoffDecoration,
+  toClaudeReady,
+  switchFactsFor,
+  reviewModelSwitch,
 } from "./continuity/index.ts";
 export type {
   Decoration,
   DecorationDoor,
   DecorationInput,
+  DecorationKind,
   DecorationSource,
   ContinuityEndpoint,
   DomainFacts,
@@ -170,4 +175,9 @@ export type {
   PortableHandoff,
   PortableHandoffOptions,
   PortableHandoffSections,
+  ProviderStateKind,
+  ProviderStateRecord,
+  ToClaudeReadyOptions,
+  ToClaudeReadyResult,
+  SwitchReview,
 } from "./continuity/index.ts";

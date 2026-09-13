@@ -187,6 +187,65 @@ describe("R6-8: a FOREIGN summary never becomes content", () => {
     expect(turn.kind === "text" ? turn.text : "").toBe("answer");
     expect(turn.thinking?.exposed).toBe("raw chain");
   });
+
+  // Phase 10b Lane S, S4 (W18-15): `exposedComplete` -- a DeepSeek-style complete stream yields
+  // `true`; `max_tokens`, an abort, or an error mid-stream yields `false` (or throws before the fold
+  // ever returns, for the error case).
+  describe("W18-15: exposedComplete", () => {
+    test("a normal stop (end_turn) with exposed reasoning yields exposedComplete: true", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "step one, step two" }, { type: "text_delta", text: "answer" }, { type: "done", stopReason: "end_turn" }]));
+      expect(turn.thinking?.exposedComplete).toBe(true);
+    });
+
+    test("a tool_use stop with exposed reasoning ALSO yields exposedComplete: true -- tool_use is a normal stop, not a truncation", async () => {
+      const turn = await foldProviderStream(
+        scripted([
+          { type: "thinking_exposed_delta", text: "deciding which tool to call" },
+          { type: "tool_call_start", id: "c1", name: "Read" },
+          { type: "tool_call_delta", id: "c1", argumentsJsonDelta: "{}" },
+          { type: "tool_call_end", id: "c1" },
+          { type: "done", stopReason: "tool_use" },
+        ]),
+      );
+      expect(turn.thinking?.exposedComplete).toBe(true);
+    });
+
+    test("max_tokens yields exposedComplete: false -- the provider's own limit cut the trace short", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "partial reasoning" }, { type: "done", stopReason: "max_tokens" }]));
+      expect(turn.thinking?.exposedComplete).toBe(false);
+    });
+
+    test("an aborted turn yields exposedComplete: false", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "partial reasoning" }, { type: "done", stopReason: "aborted" }]));
+      expect(turn.thinking?.exposedComplete).toBe(false);
+    });
+
+    test("a refusal yields exposedComplete: false", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "partial reasoning" }, { type: "done", stopReason: "refusal" }]));
+      expect(turn.thinking?.exposedComplete).toBe(false);
+    });
+
+    test("an error mid-stream never yields a turn at all -- the fold throws before exposedComplete could be asserted true", async () => {
+      await expect(
+        foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "partial reasoning" }, { type: "error", error: { code: "server", message: "boom", retryable: true } }])),
+      ).rejects.toThrow();
+    });
+
+    // Fix round 1 (reviewer #4, minor): a stream that ends with NO `done` event at all (the
+    // AsyncIterable simply completes -- an adapter bug, or a connection that closes cleanly without
+    // ever sending the terminal event) leaves `stopReason` as `undefined`, which is neither
+    // `"end_turn"` nor `"tool_use"` -- so `exposedComplete` must read `false`, the same as an
+    // explicit `max_tokens`/`aborted`/`refusal`, never `true` by some absent-means-fine default.
+    test("a stream with NO stop reason at all (ends without a `done` event) yields exposedComplete: false", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "thinking_exposed_delta", text: "partial reasoning, stream just ends" }]));
+      expect(turn.thinking?.exposedComplete).toBe(false);
+    });
+
+    test("no exposed reasoning at all -- exposedComplete is simply absent, never a bare `false` on a thinking object that doesn't exist", async () => {
+      const turn = await foldProviderStream(scripted([{ type: "text_delta", text: "answer" }, { type: "done", stopReason: "end_turn" }]));
+      expect(turn.thinking).toBeUndefined();
+    });
+  });
 });
 
 describe("R6-5: the raw stream-event translation", () => {

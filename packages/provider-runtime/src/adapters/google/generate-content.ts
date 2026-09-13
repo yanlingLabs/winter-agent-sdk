@@ -303,7 +303,7 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
 
     // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
     // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
-    // `<recovered_reasoning_summary provider=… model=…>` tag WS-13 §8.2 names for the tag door, or
+    // `<recovered_reasoning kind=… provider=… model=…>` tag WS-13 §8.2 names for the tag door, or
     // the `[prior-model reasoning, carried as data — …]` label for the thinking-channel door -- and
     // the §9.6 budget is counted on that finished text.
     //

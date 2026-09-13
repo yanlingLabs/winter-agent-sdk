@@ -275,6 +275,18 @@ export function userEntry(
   };
 }
 
+// W18-11 (Phase 10b Lane S, S1): Claude merges assistant entries across a tool_result when they
+// carry no `message.id` (probe P2) -- a silent corruption of the resumed history. Every assistant
+// entry this runtime writes now stamps a stable, deterministic id derived from the entry's own
+// uuid, so two writers (or two re-materializations of the same entry, e.g. the router's
+// Claude-ready copy, W18-14b) that start from the same uuid always agree on the same message id.
+// Deliberately NOT a random id: determinism is what lets `toClaudeReady` (agent-SDK 0.0.10,
+// provider-runtime/src/continuity/claude-ready.ts) stamp the identical id on re-materialization
+// without tracking any additional state.
+export function winterMessageIdFor(uuid: string): string {
+  return "msg_winter_" + uuid.replaceAll("-", "");
+}
+
 export function assistantEntry(opts: {
   content: Block[];
   chain: Chain;
@@ -289,13 +301,21 @@ export function assistantEntry(opts: {
    * to before this task.
    */
   uuid?: string;
-}): DialectEntryBase & { type: "assistant"; message: { role: "assistant"; content: Block[] } } {
+}): DialectEntryBase & { type: "assistant"; message: { id: string; type: "message"; role: "assistant"; content: Block[] } } {
+  const base = baseFields(opts.ctx, opts.chain);
+  // The uuid a pre-allocated caller passes always wins over baseFields' own freshly minted one
+  // (mirrors the pre-existing `...(opts.uuid !== undefined ? { uuid: opts.uuid } : {})` override
+  // below) -- this is the SAME final uuid the entry itself carries, so `message.id` and `entry.uuid`
+  // never disagree about which uuid the entry actually has.
+  const uuid = opts.uuid ?? base.uuid;
   return {
     type: "assistant",
-    ...baseFields(opts.ctx, opts.chain),
-    ...(opts.uuid !== undefined ? { uuid: opts.uuid } : {}),
+    ...base,
+    uuid,
     ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
-    message: { role: "assistant", content: opts.content },
+    // model/usage/stop_reason are deliberately NOT invented (W18-11: probe A3 behaved exactly like
+    // A2 without them) -- only id/type are Claude-required for the merge-across-tool_result fix.
+    message: { id: winterMessageIdFor(uuid), type: "message", role: "assistant", content: opts.content },
   };
 }
 
@@ -357,6 +377,151 @@ export function compactBoundaryEntry(opts: {
     ...baseFields(opts.ctx, opts.chain),
     ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
     compact_metadata: opts.metadata,
+  };
+}
+
+// --- Phase 10b Lane S, S2 (W18-12, R-10b-3): Claude's OWN native compaction shape ------------------
+//
+// R-10b-3 measured Claude's own on-disk compaction shape as TEXT (not a Messages-API content shape),
+// so Winter now writes the Claude Agent SDK's shape from the start rather than translating at move
+// time. `compactSummaryEntry`/`compactBoundaryEntry` above stay exported for readers and existing
+// tests, but no production path calls them any more (`TranscriptWriter.recordCompactBoundary` below
+// calls these two instead).
+//
+// PROVENANCE (S2 step 1 -- a real, hermetic, golden-pinned capture, never a guess):
+//   - `conformance/goldens/claude-2.1.250/compaction.jsonl` is a REAL boundary+summary pair the
+//     pinned 2.1.250 binary itself wrote, captured via `conformance/src/official/capture.ts`'s
+//     `runCompactionCapture` against a loopback fake Anthropic endpoint (a manual `/compact` after
+//     two completed real turns -- see that function's own header for why "escalate usage.input_tokens
+//     to spoof a full context window" and "a single real turn's /compact" both measured NEGATIVE:
+//     the auto-compact and reactive-compact-on-context-estimate paths never fired in headless `-p`
+//     mode against either lever; only a `/compact` issued AFTER >=2 completed real exchanges reached
+//     the network and produced a real `system/compact_boundary` + `isCompactSummary` pair).
+//   - Field names, the boundary-then-summary order, `parentUuid: null` as a second root,
+//     `logicalParentUuid` naming the pre-compaction leaf, camelCase `compactMetadata`, and
+//     `CLAUDE_COMPACT_SUMMARY_PREAMBLE` below are ALL byte-exact to that golden.
+//   - `preservedMessages` IS present in the golden (the real capture had one retained message) and
+//     IS reproduced by `claudeCompactBoundaryEntry` below (fix round 1, controller ruling,
+//     superseding the original P10b-7 reading): `anchorUuid`/`uuids` and their ORDER are byte-exact
+//     to the golden (`anchorUuid` names the summary; `uuids` relink AFTER it), and Winter fills them
+//     from its OWN retained set -- never from claude's internal retention-selection heuristic, which
+//     this writer makes no attempt to reproduce. The reason this is load-bearing rather than a nicety:
+//     without it, the LIVE engine's in-memory history (which keeps the retained tail for the rest of
+//     that run) and a COLD RESUME's rebuilt history (which saw no preserved uuids to relink) silently
+//     diverged the instant the process restarted -- the retained tail was real and visible to the
+//     live session, then gone forever on the next resume. `preservedSegment` is NEVER written
+//     (`preservedMessages` supersedes it, matching the legacy reader's own contract, and Winter has
+//     no use for the head/tail/anchor triple `preservedSegment` carries beyond what `preservedMessages`
+//     already states). Proven three ways: S9's harness against the REAL pinned binary (a
+//     `retainedCount > 0` compaction resumes with summary -> preserved -> post entries, in order,
+//     pre-compaction non-preserved text excluded), `resume.ts`'s own rebuild (unit-tested), and
+//     `toClaudeReady`'s legacy-compaction translation (already carried `preserved_messages` ->
+//     `preservedMessages` since S6 -- this fix changes nothing there, only proves it explicitly).
+export const CLAUDE_COMPACT_SUMMARY_PREAMBLE =
+  "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
+
+/**
+ * Fix round 1 (controller ruling, LOAD-BEARING): the live engine's in-memory history and a cold
+ * resume's rebuilt history must never diverge after a compaction. `recordCompactBoundary` below
+ * computes exactly which conversational uuids the live run retained (`preserved`) -- omitting them
+ * from the persisted boundary (as the original P10b-7 comment here did) meant the LIVE session kept
+ * seeing its retained tail for the rest of that run while a COLD RESUME rebuilt only the summary,
+ * silently losing that tail forever the instant the process restarted. `anchorUuid`/`uuids` and their
+ * ordering are byte-exact to the real capture (`conformance/goldens/claude-2.1.250/compaction.jsonl`)
+ * -- `anchorUuid` names the summary (the entries in `uuids` relink AFTER it, never before), which is
+ * also exactly the retained set's own natural anchor: the summary IS the first surviving entry.
+ */
+export interface ClaudeCompactPreservedMessages {
+  anchorUuid: string;
+  uuids: string[];
+}
+
+export interface ClaudeCompactMetadata {
+  trigger: "manual" | "auto";
+  preTokens: number;
+  postTokens?: number;
+  durationMs?: number;
+  preservedMessages?: ClaudeCompactPreservedMessages;
+}
+
+/**
+ * The boundary half of Claude's native compaction shape (W18-12). A SECOND `parentUuid: null` root
+ * BY DESIGN (I-5 is worded to allow exactly this) -- `logicalParentUuid` is the backward-looking link
+ * to the pre-compaction leaf, which is what lets a transcript reader (and claude itself) find where
+ * the cut happened without the boundary sitting IN the chain it cuts.
+ */
+export function claudeCompactBoundaryEntry(opts: {
+  trigger: "manual" | "auto";
+  preTokens: number;
+  postTokens?: number;
+  durationMs?: number;
+  /** The pre-compaction chain's own leaf uuid -- never this entry's OWN chain parent (that is always `null`). */
+  logicalParentUuid: string;
+  /**
+   * Fix round 1: OMITTED entirely (never an empty `{uuids: []}`) when nothing was retained --
+   * absence stays semantic ("compaction summarized everything"), matching the golden and the reader
+   * (`resume.ts`) both.
+   */
+  preservedMessages?: ClaudeCompactPreservedMessages;
+  ctx: SessionCtx;
+}): DialectEntryBase & {
+  type: "system";
+  subtype: "compact_boundary";
+  content: "Conversation compacted";
+  level: "info";
+  logicalParentUuid: string;
+  compactMetadata: ClaudeCompactMetadata;
+} {
+  return {
+    type: "system",
+    subtype: "compact_boundary",
+    content: "Conversation compacted",
+    level: "info",
+    // `parentUuid: null` unconditionally -- the boundary is never chained onto the pre-compaction
+    // leaf (that link is `logicalParentUuid` alone); `chain` here exists only to reuse `baseFields`.
+    ...baseFields(opts.ctx, { parentUuid: null }),
+    logicalParentUuid: opts.logicalParentUuid,
+    compactMetadata: {
+      trigger: opts.trigger,
+      preTokens: opts.preTokens,
+      ...(opts.postTokens !== undefined ? { postTokens: opts.postTokens } : {}),
+      ...(opts.durationMs !== undefined ? { durationMs: opts.durationMs } : {}),
+      ...(opts.preservedMessages !== undefined ? { preservedMessages: opts.preservedMessages } : {}),
+    },
+  };
+}
+
+/**
+ * The summary half: a CONVERSATIONAL `user` entry (it carries a `message`, unlike the boundary),
+ * parented ON the boundary -- `resume.ts`'s ancestry walk stops at the boundary's own `null` parent,
+ * so this is the first entry a resumed lineage actually rebuilds into provider history.
+ */
+export function claudeCompactSummaryEntry(opts: {
+  summary: string;
+  boundaryUuid: string;
+  ctx: SessionCtx;
+  /**
+   * Fix round 1: a PRE-ALLOCATED entry uuid, mirroring `assistantEntry`'s own write-ahead pattern
+   * (R6-7). `recordCompactBoundary` needs the summary's uuid to name it as the boundary's OWN
+   * `compactMetadata.preservedMessages.anchorUuid` -- but the boundary is written FIRST (W18-12's
+   * order) -- so it mints this uuid before either entry exists and passes it to both. Omitted ->
+   * a fresh uuid is minted here, byte-identical to every pre-fix-round-1 caller.
+   */
+  uuid?: string;
+}): DialectEntryBase & {
+  type: "user";
+  message: { role: "user"; content: string };
+  isCompactSummary: true;
+  isVisibleInTranscriptOnly: true;
+} {
+  const base = baseFields(opts.ctx, { parentUuid: opts.boundaryUuid });
+  return {
+    type: "user",
+    ...base,
+    uuid: opts.uuid ?? base.uuid,
+    message: { role: "user", content: `${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\n${opts.summary}` },
+    isCompactSummary: true,
+    isVisibleInTranscriptOnly: true,
   };
 }
 
@@ -662,46 +827,75 @@ export class TranscriptWriter implements SessionPersistence {
     if (this.conversationalUuids.length > MAX_TRACKED_CONVERSATIONAL_UUIDS) this.conversationalUuids.splice(0, this.conversationalUuids.length - MAX_TRACKED_CONVERSATIONAL_UUIDS);
   }
 
-  // Phase 5 Task 3 (R5-4): the SessionPersistence method the engine calls when a compaction commits.
+  // Phase 5 Task 3 (R5-4); Phase 10b Lane S, S2 (W18-12) switched the ON-DISK shape to Claude's own
+  // native compaction entries. The SessionPersistence method the engine calls when a compaction
+  // commits.
   //
-  // Appends the summary FIRST, then the boundary that names it -- see compactBoundaryEntry's own
-  // header for why the boundary is backward-looking. `preserved_messages` names the last
-  // `retainedCount` conversational entries this chain has (the summary itself is the `anchor_uuid`,
-  // never one of the `uuids`), and is OMITTED ENTIRELY when nothing is retained, matching the pinned
-  // "both are unset when compaction summarizes everything".
+  // Order is now BOUNDARY then summary (the reverse of the legacy compactBoundaryEntry/
+  // compactSummaryEntry pair above): the boundary's `logicalParentUuid` names the pre-compaction
+  // leaf BEFORE either new entry exists, and the summary is parented ON the boundary -- exactly
+  // claudeCompactBoundaryEntry/claudeCompactSummaryEntry's own contract (W18-12).
   //
-  // Bounded-by-what-we-know, stated rather than hidden: if `retainedCount` exceeds the entries this
-  // chain has tracked, the boundary names every one it has. That under-names rather than
-  // over-names -- a resumed session then sees LESS context than the live one did, never context the
-  // live session had already dropped.
+  // `preservedUuids` on the RETURN VALUE (and therefore on the engine's own `system/compact_boundary`
+  // WIRE FRAME, engine.ts:4680-4745) is computed EXACTLY as before -- that is Winter's own protocol
+  // concept, independent of W18-12's disk-shape change, and callers that render it are unaffected.
+  //
+  // Fix round 1 (LOAD-BEARING, controller ruling): the SAME computed set is now ALSO handed to
+  // `claudeCompactBoundaryEntry` as `preservedMessages` (superseding the original P10b-7 reading,
+  // which left it out on the theory that reproducing claude's own retention-selection heuristic was
+  // out of scope -- true, but irrelevant: this writer names WINTER'S OWN retained set, not claude's,
+  // and the shape (`anchorUuid`/`uuids`, byte-exact to the golden) is exactly what the reader already
+  // knows how to relink). Without this, the LIVE engine's in-memory history (which keeps the retained
+  // tail for the rest of that run) and a COLD RESUME's rebuilt history (summary only) silently
+  // diverged the instant the process restarted. See `claudeCompactBoundaryEntry`'s own header for
+  // the full rationale and the golden's byte-exact field names.
   async recordCompactBoundary(record: CompactBoundaryRecord): Promise<CompactBoundaryWriteResult> {
-    const summary = compactSummaryEntry({
-      summary: record.summary,
-      chain: { parentUuid: this.parentUuid },
-      ctx: this.ctx,
-      ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}),
-    });
+    // The pre-compaction leaf -- captured BEFORE the boundary is appended, since the boundary's own
+    // chain `parentUuid` is unconditionally `null` (W18-12's "second root by design") and would
+    // otherwise be lost the instant `this.parentUuid` moves to the boundary's own uuid.
+    const preCompactionLeaf = this.parentUuid;
     // The preserved set is computed BEFORE the summary joins the tracked list, so a summary can
-    // never preserve itself.
+    // never preserve itself. Bounded-by-what-we-know: if `retainedCount` exceeds the entries this
+    // chain has tracked, this names every one it has -- unchanged from the legacy behaviour.
     const preserved = record.retainedCount > 0 ? this.conversationalUuids.slice(-record.retainedCount) : [];
-    await this.appendWithDialectRecord(summary);
-    this.parentUuid = summary.uuid;
 
-    const metadata: CompactMetadata = {
+    if (preCompactionLeaf === null) {
+      // No prior entry exists to cut at -- a compaction with nothing behind it. Never reachable in
+      // practice (the controller requires real turn history before it fires), but a null
+      // `logicalParentUuid` would be a dangling, meaningless reference, so this is refused rather
+      // than silently minted.
+      throw new TranscriptWriterError("recordCompactBoundary: no prior entry to compact -- the chain has no leaf yet");
+    }
+
+    // Fix round 1 (LOAD-BEARING, controller ruling): the summary's uuid is minted HERE, before
+    // either entry exists, so the boundary (written FIRST) can name it as
+    // `compactMetadata.preservedMessages.anchorUuid` -- exactly the write-ahead pattern
+    // `assistantEntry`'s own pre-allocated-uuid parameter already uses (R6-7), applied to the same
+    // circular need: the boundary must name the summary, and the summary must be parented on the
+    // boundary.
+    const summaryUuid = randomUUID();
+    const boundary = claudeCompactBoundaryEntry({
       trigger: record.trigger,
-      pre_tokens: record.preTokens,
-      ...(record.postTokens !== undefined ? { post_tokens: record.postTokens } : {}),
-      ...(record.durationMs !== undefined ? { duration_ms: record.durationMs } : {}),
-      ...(preserved.length > 0 ? { preserved_messages: { anchor_uuid: summary.uuid, uuids: preserved } } : {}),
-    };
-    const boundary = compactBoundaryEntry({ metadata, chain: { parentUuid: this.parentUuid }, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}) });
+      preTokens: record.preTokens,
+      ...(record.postTokens !== undefined ? { postTokens: record.postTokens } : {}),
+      ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
+      logicalParentUuid: preCompactionLeaf,
+      // OMITTED entirely (never `{uuids: []}`) when nothing was retained -- absence is the honest,
+      // golden-matching form of "compaction summarized everything".
+      ...(preserved.length > 0 ? { preservedMessages: { anchorUuid: summaryUuid, uuids: preserved } } : {}),
+      ctx: this.ctx,
+    });
     await this.appendWithDialectRecord(boundary);
     this.parentUuid = boundary.uuid;
 
-    // The summary is the new head of conversational history: everything before the boundary is
-    // replaced by it plus whatever `preserved` names, so the tracked list is rebuilt to match what a
-    // resume would rebuild. Without this, a SECOND compaction in the same run would name entries the
-    // first one already discarded.
+    const summary = claudeCompactSummaryEntry({ summary: record.summary, boundaryUuid: boundary.uuid, uuid: summaryUuid, ctx: this.ctx });
+    await this.appendWithDialectRecord(summary);
+    this.parentUuid = summary.uuid;
+
+    // The summary is the new head of conversational history for THIS WRITER's own live bookkeeping
+    // (used by a LATER compaction in the same run to compute its own `preserved`/return value) --
+    // unchanged from the legacy behaviour. As of fix round 1 this now ALSO matches what a cold
+    // resume rebuilds: the on-disk boundary names this exact same `preserved` set.
     this.conversationalUuids.length = 0;
     this.conversationalUuids.push(summary.uuid, ...preserved);
 
@@ -844,7 +1038,7 @@ export class TranscriptWriter implements SessionPersistence {
 // `bun test` — never compiled — so a real fs read there is safe) gets the same drift protection
 // without touching the compiled path at all. verify:compiled is the proof this constant survives
 // the real compiled binary unchanged.
-export const RUNTIME_ENGINE_VERSION = "0.0.9";
+export const RUNTIME_ENGINE_VERSION = "0.0.10";
 
 // Task 9: what runEngine actually needs once resume/continue/fork/resumeSessionAt (or none of them)
 // have been resolved — a persistence sink (or none, when persistSession:false), the prior

@@ -504,6 +504,10 @@ export interface RetryInfo {
 export interface ProviderThinkingOutput {
   summary?: string;
   exposed?: string;
+  // W18-15 (Phase 10b Lane S, S4): true iff `exposed` is the model's WHOLE reasoning trace for this
+  // turn -- a normal stop (`end_turn`/`tool_use`) with no delta dropped (`bridge.ts`'s
+  // `foldProviderStream`). Meaningless without `exposed` and never set otherwise.
+  exposedComplete?: boolean;
   blocks?: ContentBlock[];
 }
 
@@ -2482,7 +2486,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string }): Promise<string | undefined> => {
+  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }): Promise<string | undefined> => {
     if (!store) return undefined;
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
@@ -2498,7 +2502,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // itemIndex ORDERS the records under one anchor: 0 is always the mandatory `origin`.
       const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {} }];
       if (provenance?.nativeState !== undefined) records.push({ ...base, itemIndex: records.length, kind: "native-state", payload: { items: provenance.nativeState.items } });
-      if (provenance?.summary !== undefined) records.push({ ...base, itemIndex: records.length, kind: "summary", payload: { text: provenance.summary } });
+      if (provenance?.summary !== undefined)
+        records.push({
+          ...base,
+          itemIndex: records.length,
+          kind: "summary",
+          // W18-15: `material`/`complete` are OMITTED entirely (never `undefined`-valued keys) when
+          // this is a provider-authored summary rather than exposed reasoning -- absence is what a
+          // reader (this file's own `readSummaryMaterial`/`readSummaryComplete`, and the continuity
+          // package's `switchFactsFor`) takes as "a provider summary, not complete-exposed" (P10b-7).
+          payload: { text: provenance.summary, ...(provenance.material !== undefined ? { material: provenance.material, complete: provenance.complete === true } : {}) },
+        });
       for (const record of records) {
         try {
           await store.recordProviderState(record);
@@ -2509,9 +2523,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         }
       }
       // The in-memory half of the chain: origin + the readable summary, never the opaque state.
+      // W18-15: `material`/`complete` ride alongside so `announceLossyTransfer`'s own lookup below
+      // needs no extra sidecar re-read to tell a provider summary from complete exposed reasoning.
       sessionChain.set(uuid, {
         origin: { providerId: identity.providerId, modelKey: identity.modelKey, family: identity.family, ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}) },
         ...(provenance?.summary !== undefined ? { summary: provenance.summary } : {}),
+        ...(provenance?.material !== undefined ? { material: provenance.material, complete: provenance.complete === true } : {}),
       });
     }
     try {
@@ -4977,7 +4994,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   });
 
   /** R6-7/R6-8: what rides the SIDECAR for this turn -- the opaque native state and any FOREIGN reasoning summary, neither of which may enter the transcript. */
-  const turnProvenance = (turn: ProviderTurn): { nativeState?: ProviderNativeState; summary?: string } => ({
+  const turnProvenance = (turn: ProviderTurn): { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean } => ({
     ...("nativeState" in turn && turn.nativeState !== undefined ? { nativeState: turn.nativeState } : {}),
     // T10 (Lane C wiring item 8): `exposed` as well as `summary`.
     //
@@ -4991,10 +5008,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // `summary` WINS when both are present: a provider-authored summary is the shape R6-8 permits to
     // travel, and the raw exposed text is the fallback for a family that produces no summary of its own.
     // Either way it lands in the sidecar and NEVER in `assistant.message.content`.
+    //
+    // W18-15 (Phase 10b Lane S, S4): when the ONLY material is the model's own exposed reasoning
+    // (no provider-authored summary), the record is stamped `material: "exposed"` and `complete`
+    // (from the fold's own `exposedComplete`) -- so a later reader (the continuity renderer, the
+    // pre-flight switch review) can tell "this is the model's whole raw trace" from "this is a
+    // provider's own summary" instead of both looking like an identical bare string, which is what
+    // made DeepSeek -> GLM/GPT wrongly warn as lossy before this task (R-10b-8's `exposedComplete`
+    // rule has nothing to read without it).
     ...("thinking" in turn && turn.thinking?.summary !== undefined
       ? { summary: turn.thinking.summary }
       : "thinking" in turn && turn.thinking?.exposed !== undefined
-        ? { summary: turn.thinking.exposed }
+        ? { summary: turn.thinking.exposed, material: "exposed" as const, complete: turn.thinking.exposedComplete === true }
         : {}),
   });
 
@@ -5073,9 +5098,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    *
    * THE HANDOFF IS BUILT FIRST (the retired coordinator's own review C1 finding, kept): it is where
    * §9.6's trimming happens, and only its `reasoningTruncated` flag may flip a would-be-lossless
-   * classification to lossy. `exposedComplete` is never asserted -- the write path records exposed
-   * reasoning as a summary and cannot vouch for its completeness -- so a `full-exposed` source warns,
-   * which is the affirmative-evidence rule `warnings.ts` states.
+   * classification to lossy.
+   *
+   * W18-15 (Phase 10b Lane S, S4): `exposedComplete` is now ASSERTED, from the SAME sidecar record
+   * `summaryAvailable` already reads -- the source's last recorded turn carries `material: "exposed"`
+   * (an open model's own raw reasoning, recorded because the family produces no summary of its own)
+   * and `complete: true` (a normal stop, nothing dropped). Before this, the write path recorded
+   * exposed reasoning as an indistinguishable plain summary, so a `full-exposed` source ALWAYS warned
+   * even when its whole trace carried untouched -- the DeepSeek -> GLM/GPT no-warning case this
+   * assertion is what makes reachable.
    */
   function announceLossyTransfer(from: ContinuityEndpoint, to: ContinuityEndpoint, reason: "set_model" | "interrupt" | "fallback"): void {
     const lastSource = [...messages].reverse().find((m) => m.role === "assistant" && m.origin?.modelKey === from.modelKey && m.uuid !== undefined);
@@ -5083,9 +5114,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // list. The declared option had no producer, so a reuser's `ACME.md` could reach a handoff's
     // tool facts while the four names on that list -- Winter's own included -- were blocked.
     const handoff = buildPortableHandoff(messages, sessionChain, from, { instructionsFile: sessionBrand.instructionsFile });
-    const summaryAvailable = lastSource?.uuid !== undefined && sessionChain.get(lastSource.uuid)?.summary !== undefined;
+    const sourceLink = lastSource?.uuid !== undefined ? sessionChain.get(lastSource.uuid) : undefined;
+    const summaryAvailable = sourceLink?.summary !== undefined;
+    const exposedComplete = sourceLink?.material === "exposed" && sourceLink.complete === true;
     const classification = classifySwitch(from, to, {
       summaryAvailable,
+      exposedComplete,
       completedToolResults: handoff.sections.toolFacts.filter((fact) => fact.ok).length,
       ...(handoff.reasoningTruncated ? { truncated: true } : {}),
       ...(reason === "interrupt" ? { midTurnAbort: true } : {}),

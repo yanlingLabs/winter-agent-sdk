@@ -409,7 +409,7 @@ describe("Anthropic Messages: countTokens is not a generation (Minor 4)", () => 
 /**
  * Lane C's REAL output, verbatim.
  *
- * `decoration.text` arrives already finished and already delimited -- the `<recovered_reasoning_summary>`
+ * `decoration.text` arrives already finished and already delimited -- the `<recovered_reasoning kind=…>`
  * tag WS-13 §8.2 names for the tag door, and the bracketed label for the thinking-channel door -- and
  * Lane C's §9.6 budget is counted on exactly these strings. The fixtures assert the wire carries them
  * BYTE-FOR-BYTE, because anything this layer added would double-label the second door and would add a
@@ -417,7 +417,7 @@ describe("Anthropic Messages: countTokens is not a generation (Minor 4)", () => 
  * added closing delimiter would break straight out of it.
  */
 const LANE_C_DECORATIONS = {
-  tag: { text: '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning_summary>', door: "tag" as const },
+  tag: { text: '<recovered_reasoning kind="summary" provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning>', door: "tag" as const },
   "thinking-channel": { text: "[prior-model reasoning, carried as data \u2014 provider: openai, model: gpt-5.6-sol]\nthe model weighed two options.", door: "thinking-channel" as const },
 };
 

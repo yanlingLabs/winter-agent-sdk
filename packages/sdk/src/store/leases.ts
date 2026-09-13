@@ -6,7 +6,24 @@
 // accepted P1 gap the brief explicitly defers). Same-PROCESS re-entry (the same OS pid re-acquiring
 // its own live lease — e.g. two `WinterCompatibilitySessionStore` instances in one process) always
 // succeeds; a DIFFERENT, still-live pid throws WinterStoreLeaseError.
+//
+// Fix round 1 (reviewer #2, minor) -- LOAD-BEARING INVARIANT, mirrored at
+// WinterCompatibilitySessionStore.append/releaseSessionLease (session-store.ts) since it is THEIR
+// call sequences that actually matter, not this file's own functions in isolation: every function
+// here (acquireLease, releaseLease, readLeaseInfo) is PLAIN SYNCHRONOUS fs I/O, with no `await`
+// anywhere in this module. That is what lets append's own claim -> write -> fsync stretch and a
+// same-process releaseSessionLease call never interleave -- JS's run-to-completion semantics mean
+// once either one starts, nothing else on that process's event loop runs until it returns. This
+// module gaining a real async gap (a network call, a setTimeout-based retry, etc.) inside
+// acquireLease or releaseLease would silently break that guarantee for every caller; such a change
+// needs an explicit in-process lock around the callers, not just around here.
 import { openSync, readFileSync, writeSync, fsyncSync, closeSync, renameSync, linkSync, unlinkSync } from "node:fs";
+
+// Phase 10b Lane S, S8 (W18-5): the sibling of `acquireLease` this repo never needed until a router
+// destination could give a lease AWAY mid-session (a handoff to a winter destination -- the write-
+// ahead ordering W18-5 describes). SAME-PID ONLY, and idempotent: releasing a lease this pid does
+// not hold (never held it, already released it, or it is held by a genuinely different pid) is a
+// safe no-op, never an error and never a mutation of someone else's lease.
 
 export class WinterStoreError extends Error {
   constructor(message: string) {
@@ -172,4 +189,29 @@ export function acquireLease(lockPath: string): LeaseInfo {
   // identity revalidation).
   writeLeaseInfoReplacing(lockPath, fresh);
   return fresh;
+}
+
+/**
+ * Releases the lease at `lockPath` -- but ONLY when THIS process currently holds it. Returns `true`
+ * when it did (and the lock file is now gone), `false` for every other case: no lease file at all,
+ * an unparseable one, or one a genuinely different pid holds. Idempotent -- a second call after a
+ * successful release finds nothing to release and returns `false`, never throws.
+ *
+ * Deliberately NOT "release whatever is there": a caller that raced with someone else's fresh
+ * acquire (this pid died and was stolen from, however unlikely between two calls in the same
+ * process) must never delete the NEW holder's lease out from under it. The pid check is the whole
+ * safety property.
+ */
+export function releaseLease(lockPath: string): boolean {
+  const existing = readLeaseInfo(lockPath);
+  if (existing === null || existing.pid !== process.pid) return false;
+  try {
+    unlinkSync(lockPath);
+  } catch (err) {
+    // Already gone (a concurrent release, or the file vanished some other way) -- still a no-op,
+    // never an error: the caller's own postcondition ("this pid no longer holds it") already holds.
+    if ((err as { code?: unknown }).code === "ENOENT") return false;
+    throw err;
+  }
+  return true;
 }

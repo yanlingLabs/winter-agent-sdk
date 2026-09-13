@@ -8,8 +8,8 @@
 // `fixtures.ts` is NOT exported here: it is test support for this directory's own fixtures, and a
 // package surface that hands out catalog builders invites production code to build a catalog.
 
-export { RECOVERED_REASONING_TAG, MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, escapeAttribute, escapeInline, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
-export type { Decoration, DecorationDoor, DecorationInput, DecorationSource } from "./decoration.ts";
+export { RECOVERED_REASONING_TAG, LEGACY_RECOVERED_REASONING_TAG, MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, escapeAttribute, escapeInline, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
+export type { Decoration, DecorationDoor, DecorationInput, DecorationKind, DecorationSource } from "./decoration.ts";
 
 export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
 export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.ts";
@@ -32,3 +32,14 @@ export type { LossClass, SwitchClassification, SwitchFacts } from "./warnings.ts
 
 export { INSTRUCTION_FILE_BASENAMES, PRIOR_MODEL_HANDOFF_TAG, buildPortableHandoff, handoffDecoration } from "./handoff.ts";
 export type { HandoffToolFact, PortableHandoff, PortableHandoffOptions, PortableHandoffSections } from "./handoff.ts";
+
+// Phase 10b Lane S, S6 (W18-14): the Claude-ready copy -- the router wraps the sessionStore it hands
+// the official leg with this pure transform (P10b-5: exported here, and re-exported from the SDK's
+// own public entry only if `sdk` depends on `provider-runtime`; it does not, so the router takes a
+// direct dependency on this package instead -- see the phase report).
+export { toClaudeReady } from "./claude-ready.ts";
+export type { ProviderStateKind, ProviderStateRecord, ToClaudeReadyOptions, ToClaudeReadyResult } from "./claude-ready.ts";
+
+// Phase 10b Lane S, S7 (W18-20/21): the one pre-flight switch review.
+export { switchFactsFor, reviewModelSwitch } from "./switch-review.ts";
+export type { SwitchReview } from "./switch-review.ts";

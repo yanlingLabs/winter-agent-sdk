@@ -131,13 +131,17 @@ export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore }
 export {
   userEntry,
   assistantEntry,
+  winterMessageIdFor,
+  claudeCompactBoundaryEntry,
+  claudeCompactSummaryEntry,
+  CLAUDE_COMPACT_SUMMARY_PREAMBLE,
   TranscriptWriter,
   TranscriptWriterError,
   RUNTIME_ENGINE_VERSION,
   resolveEngineSession,
   resolveProductionWinterHome,
 } from "./store/dialect.ts";
-export type { Block, Chain, SessionCtx, DialectEntryBase, UserEntryOpts, TranscriptWriterOptions, ResolvedEngineSession } from "./store/dialect.ts";
+export type { Block, Chain, SessionCtx, DialectEntryBase, UserEntryOpts, TranscriptWriterOptions, ResolvedEngineSession, ClaudeCompactMetadata } from "./store/dialect.ts";
 
 // Resume/continue/resume-at (Task 9, WS-05 §7): the pure store-level primitives resume.ts
 // implements and resolveEngineSession above orchestrates. Task 10 relocated the fourth primitive,

@@ -650,7 +650,7 @@ describe("live wire details the corpus does not ask about", () => {
     //
     // Lane C's REAL output is used, not a bare marker: the text arrives already delimited and its
     // §9.6 budget is counted on exactly these bytes, so a layer that re-delimits it is visible here.
-    const marker = '<recovered_reasoning_summary provider="anthropic" model="claude-opus-5">DECORATION-REACHED-THE-WIRE</recovered_reasoning_summary>';
+    const marker = '<recovered_reasoning kind="summary" provider="anthropic" model="claude-opus-5">DECORATION-REACHED-THE-WIRE</recovered_reasoning>';
     await withResponsesFake(async (fake) => {
       const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "tag" } }] }, testContext({ stallTimeoutMs: STALL_MS })));

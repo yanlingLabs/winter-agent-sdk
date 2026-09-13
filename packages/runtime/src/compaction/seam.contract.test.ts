@@ -14,7 +14,7 @@ import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, createContextAccountant, type ContextAccountant, type Provider, type ProviderTurn, type SessionPersistence } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
-import { resolveEngineSession } from "../store/dialect.ts";
+import { resolveEngineSession, CLAUDE_COMPACT_SUMMARY_PREAMBLE } from "../store/dialect.ts";
 import { fakeCompactionController, type CompactBoundaryRecord, type CompactionInput } from "./seam.ts";
 
 const baseConfig = (overrides: Partial<RuntimeConfig> = {}): RuntimeConfig => ({ sessionId: "s", cwd: "/tmp/x", model: "sonnet", ...overrides });
@@ -311,17 +311,26 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
       // precisely so it can be. A real count needs WS-13's token counter over the rebuilt list.
       expect("post_tokens" in boundary.compact_metadata).toBe(false);
 
-      // The frame and the DURABLE entry name the same uuids and the same boundary -- the two views
-      // must agree, or a host that relinks from the stream and one that relinks from the transcript
-      // reconstruct different conversations.
+      // Phase 10b Lane S, fix round 1 (LOAD-BEARING, controller ruling): the WIRE FRAME above is
+      // Winter's own protocol concept, and the DURABLE entry is now Claude's own native shape
+      // (`type:"system", subtype:"compact_boundary"`, camelCase `compactMetadata`) -- but the two
+      // MUST agree on which uuids were retained, or the live session's own view and a future resume
+      // diverge. `CompactBoundaryWriteResult.preservedUuids` (the frame's source) and
+      // `claudeCompactBoundaryEntry`'s own `preservedMessages` (the durable entry's source) are now
+      // fed from the exact SAME computed `preserved` set inside `recordCompactBoundary`.
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
-      const durable = raw.find((e) => e.type === "compact_boundary") as unknown as {
+      const durable = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as {
         uuid: string;
-        compact_metadata: { preserved_messages?: { anchor_uuid: string; uuids: string[] } };
+        compactMetadata: { trigger: string; preTokens: number; preservedMessages?: { anchorUuid: string; uuids: string[] } };
       };
       expect(durable.uuid).toBe(boundary.uuid);
-      expect(durable.compact_metadata.preserved_messages).toEqual(boundary.compact_metadata.preserved_messages!);
+      expect(durable.compactMetadata.trigger).toBe("manual");
+      expect(durable.compactMetadata.preservedMessages).toBeDefined();
+      // Same VALUES, different key CASING by design (the frame is snake_case Winter protocol; the
+      // durable entry is camelCase Claude dialect) -- compared field by field, never by object shape.
+      expect(durable.compactMetadata.preservedMessages!.anchorUuid).toBe(boundary.compact_metadata.preserved_messages!.anchor_uuid);
+      expect(durable.compactMetadata.preservedMessages!.uuids).toEqual(boundary.compact_metadata.preserved_messages!.uuids);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -370,7 +379,7 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
 
   // --- Persistence + resume (Lane K's own listed fixture: a persisted boundary rebuilds on resume) ---
 
-  test("the boundary + summary persist, and a RESUMED session rebuilds the COMPACTED history, not the original", async () => {
+  test("the boundary + summary persist in Claude's native shape, and a RESUMED session rebuilds the COMPACTED history WITH the retained tail (fix round 1: live == resumed)", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-compact-"));
     try {
       const cwd = join(home, "work");
@@ -385,26 +394,39 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
       await persistence.recordAssistantEntry([{ type: "text", text: "reply one" }]);
       await persistence.recordUserEntry("turn two");
       await persistence.recordAssistantEntry([{ type: "text", text: "reply two" }]);
+      // `retainedCount: 1` feeds the WIRE FRAME's own `preserved_messages` (unchanged, see
+      // seam.contract.test.ts's M3 case above) AND, as of fix round 1, the DURABLE Claude-shape
+      // entry's own `compactMetadata.preservedMessages` -- the two must never disagree about what
+      // survives a cold resume.
       const record: CompactBoundaryRecord = { trigger: "manual", preTokens: 4242, summary: "THE SUMMARY", retainedCount: 1 };
       await persistence.recordCompactBoundary!(record);
       await persistence.recordUserEntry("after compaction");
 
       const raw = (await store.load(key)) ?? [];
-      const boundary = raw.find((e) => e.type === "compact_boundary") as unknown as { compact_metadata: { trigger: string; pre_tokens: number; preserved_messages?: { anchor_uuid: string; uuids: string[] } } } | undefined;
+      const boundary = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as
+        | { compactMetadata: { trigger: string; preTokens: number; preservedMessages?: { anchorUuid: string; uuids: string[] } }; logicalParentUuid: string; parentUuid: null }
+        | undefined;
       expect(boundary).toBeDefined();
-      expect(boundary!.compact_metadata.trigger).toBe("manual");
-      expect(boundary!.compact_metadata.pre_tokens).toBe(4242);
-      expect(boundary!.compact_metadata.preserved_messages!.uuids).toHaveLength(1);
-      expect(raw.some((e) => e.type === "compact_summary")).toBe(true);
+      expect(boundary!.parentUuid).toBeNull();
+      expect(typeof boundary!.logicalParentUuid).toBe("string");
+      expect(boundary!.compactMetadata.trigger).toBe("manual");
+      expect(boundary!.compactMetadata.preTokens).toBe(4242);
+      expect(boundary!.compactMetadata.preservedMessages).toBeDefined();
+      expect(boundary!.compactMetadata.preservedMessages!.uuids).toHaveLength(1);
+      const summaryEntry = raw.find((e) => (e as { isCompactSummary?: boolean }).isCompactSummary === true) as { uuid: string } | undefined;
+      expect(summaryEntry).toBeDefined();
+      expect(boundary!.compactMetadata.preservedMessages!.anchorUuid).toBe(summaryEntry!.uuid);
 
       // --- run 2: resume ---------------------------------------------------------------------------
       const resumed = await resolveEngineSession({ config: { sessionId: "fresh", cwd, model: "sonnet", winterHome: home, resume: sessionId }, resolveWinterHome: () => home, env: {} });
       const texts = resumed.initialMessages.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)));
-      // The summary, the ONE preserved message, and everything appended after the boundary --
-      // never the pre-compaction turns the summary replaced.
-      expect(texts).toEqual(["THE SUMMARY", "reply two", "after compaction"]);
+      // Fix round 1 (LOAD-BEARING): the retained tail ("reply two", the last conversational entry
+      // before the cut) IS relinked on a cold resume now -- summary, then the preserved entry, then
+      // everything appended after the boundary. The pre-compaction turns it REPLACED never come back.
+      expect(texts).toEqual([`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nTHE SUMMARY`, "reply two", "after compaction"]);
       expect(texts).not.toContain("turn one");
       expect(texts).not.toContain("reply one");
+      expect(texts).not.toContain("turn two");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -423,13 +445,15 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
 
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
-      const boundary = raw.find((e) => e.type === "compact_boundary") as unknown as { compact_metadata: Record<string, unknown> };
-      // "Both are unset when compaction summarizes everything" -- the pinned rule, held literally.
-      expect(boundary.compact_metadata.preserved_messages).toBeUndefined();
-      expect(boundary.compact_metadata.preserved_segment).toBeUndefined();
+      const boundary = raw.find((e) => e.type === "system" && (e as { subtype?: string }).subtype === "compact_boundary") as unknown as { compactMetadata: Record<string, unknown> };
+      // "Both are unset when compaction summarizes everything" -- the pinned rule, held literally --
+      // and now ALSO the unconditional case for a boundary that DID name something to retain (see
+      // the test above): the new shape never writes either field (P10b-7).
+      expect(boundary.compactMetadata.preservedMessages).toBeUndefined();
+      expect(boundary.compactMetadata.preservedSegment).toBeUndefined();
 
       const resumed = await resolveEngineSession({ config: { sessionId: "fresh", cwd, model: "sonnet", winterHome: home, resume: sessionId }, resolveWinterHome: () => home, env: {} });
-      expect(resumed.initialMessages.map((m) => m.content)).toEqual(["ONLY THE SUMMARY"]);
+      expect(resumed.initialMessages.map((m) => m.content)).toEqual([`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nONLY THE SUMMARY`]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

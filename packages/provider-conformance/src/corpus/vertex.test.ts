@@ -332,7 +332,7 @@ describe("Vertex Gemini: the shared wire mapping", () => {
     // two same-named Gemini/Anthropic cases, and Vertex had no decoration coverage at all. It does
     // now, driven through the Vertex transport rather than through `toContents` directly, so the
     // claim is about the wire rather than about a shared function.
-    const decoration = { text: '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning_summary>', door: "tag" as const };
+    const decoration = { text: '<recovered_reasoning kind="summary" provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning>', door: "tag" as const };
     const adapter = testVertexAdapter();
     const harness = await createVertexHarness();
     await withFake({ routes: harness.routes }, async (fake) => {

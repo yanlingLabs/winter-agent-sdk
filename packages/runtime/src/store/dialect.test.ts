@@ -18,6 +18,7 @@ import type { RuntimeConfig, WinterFrame, SpawnedRuntimeProcess } from "@yanling
 import {
   userEntry,
   assistantEntry,
+  winterMessageIdFor,
   invokedSkillsEntry,
   fileHistoryEntry,
   INVOKED_SKILLS_ENTRY_TYPE,
@@ -27,6 +28,9 @@ import {
   buildChildTranscriptWriter,
   childTranscriptSubpath,
   listChildAgentIds,
+  claudeCompactBoundaryEntry,
+  claudeCompactSummaryEntry,
+  CLAUDE_COMPACT_SUMMARY_PREAMBLE,
   type Chain,
   type SessionCtx,
 } from "./dialect.ts";
@@ -98,7 +102,34 @@ describe("assistantEntry", () => {
     expect(entry.cwd).toBe(CTX.cwd);
     expect(entry.version).toBe(CTX.version);
     expect(entry.isSidechain).toBe(false);
-    expect(entry.message).toEqual({ role: "assistant", content: blocks });
+    // W18-11 (Phase 10b, S1): every assistant entry now carries a Claude-shaped `message.id` +
+    // `message.type` alongside the pre-existing role/content -- the ONLY diff this task's golden
+    // regeneration (see below) is allowed to introduce on any previously-pinned assistant entry.
+    expect(entry.message).toEqual({ id: winterMessageIdFor(entry.uuid), type: "message", role: "assistant", content: blocks });
+  });
+
+  test("W18-11: message.id is exactly winterMessageIdFor(uuid) with dashes removed", () => {
+    const chain: Chain = { parentUuid: null };
+    const entry = assistantEntry({ content: [{ type: "text", text: "hi" }], chain, ctx: CTX });
+    expect(entry.message.id).toBe(`msg_winter_${entry.uuid.replaceAll("-", "")}`);
+    expect(entry.message.id).not.toContain("-");
+    expect(entry.message.type).toBe("message");
+  });
+
+  test("W18-11: a pre-allocated uuid gives the same message.id as a fresh entry with that uuid", () => {
+    const chain: Chain = { parentUuid: null };
+    const preAllocated = randomUUID();
+    const entry = assistantEntry({ content: [{ type: "text", text: "hi" }], chain, ctx: CTX, uuid: preAllocated });
+    expect(entry.uuid).toBe(preAllocated);
+    expect(entry.message.id).toBe(winterMessageIdFor(preAllocated));
+  });
+
+  test("W18-11: model, usage and stop_reason are NOT invented on the message", () => {
+    const chain: Chain = { parentUuid: null };
+    const entry = assistantEntry({ content: [{ type: "text", text: "hi" }], chain, ctx: CTX });
+    expect("model" in entry.message).toBe(false);
+    expect("usage" in entry.message).toBe(false);
+    expect("stop_reason" in entry.message).toBe(false);
   });
 });
 
@@ -780,5 +811,96 @@ describe("B-M1: the rider-16 entry types", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+// --- Phase 10b Lane S, S2 (W18-12): the writer's output against the real 2.1.250 golden ------------
+//
+// `conformance/goldens/claude-2.1.250/compaction.jsonl` is a REAL boundary+summary pair the pinned
+// binary itself wrote, captured hermetically via `conformance/src/official/capture.ts`'s
+// `runCompactionCapture` (see that function's own header for the measured trigger and why "two
+// completed real exchanges, then /compact" is what actually reaches the network). Read here via a
+// plain relative fs path -- deliberately NOT a workspace dependency on `@yanlinglabs/winter-
+// conformance` (that package already depends on this one; the reverse edge would be circular).
+//
+// The comparison mirrors `normalizeCompactionEntry`'s own volatile-field set (capture.ts) rather
+// than importing it, for the same anti-circularity reason -- this file's ONE authority on which
+// fields are "the noise a real capture can't reproduce byte-for-byte" is the SAME set capture.ts
+// used to author the golden in the first place.
+const COMPACTION_GOLDEN_VOLATILE_TOP_LEVEL = new Set(["uuid", "logicalParentUuid", "timestamp", "cwd", "sessionId", "version", "gitBranch", "slug", "userType", "entrypoint", "isMeta", "promptId"]);
+const COMPACTION_GOLDEN_VOLATILE_METADATA = new Set(["preTokens", "postTokens", "durationMs", "preservedSegment", "preservedMessages", "cumulativeDroppedTokens"]);
+
+function normalizeForGoldenCompare(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (COMPACTION_GOLDEN_VOLATILE_TOP_LEVEL.has(k)) continue;
+    if (k === "parentUuid" && v !== null) continue;
+    out[k] = v;
+  }
+  if (out.compactMetadata !== undefined && typeof out.compactMetadata === "object" && out.compactMetadata !== null) {
+    out.compactMetadata = Object.fromEntries(Object.entries(out.compactMetadata as Record<string, unknown>).filter(([k]) => !COMPACTION_GOLDEN_VOLATILE_METADATA.has(k)));
+  }
+  return out;
+}
+
+function loadCompactionGolden(): { boundary: Record<string, unknown>; summary: Record<string, unknown> } {
+  const path = join(import.meta.dir, "..", "..", "..", "conformance", "goldens", "claude-2.1.250", "compaction.jsonl");
+  const lines = readFileSync(path, "utf8").trim().split("\n").filter((l) => l.length > 0);
+  return { boundary: JSON.parse(lines[0]!), summary: JSON.parse(lines[1]!) };
+}
+
+describe("Claude-shape compaction writer vs. the real 2.1.250 golden (W18-12)", () => {
+  const golden = loadCompactionGolden();
+
+  test("claudeCompactBoundaryEntry equals the golden boundary modulo the normalized (volatile) fields", () => {
+    const entry = claudeCompactBoundaryEntry({ trigger: "manual", preTokens: 4242, logicalParentUuid: randomUUID(), ctx: CTX });
+    // The diff this golden exists to pin: field names, `content`, `level`, `subtype`, and the fixed
+    // `parentUuid: null` -- exactly what `normalizeForGoldenCompare` does NOT strip.
+    expect(normalizeForGoldenCompare(entry)).toEqual(golden.boundary);
+  });
+
+  test("claudeCompactSummaryEntry equals the golden summary's own field set (message.content compared separately, below)", () => {
+    const entry = claudeCompactSummaryEntry({ summary: "GOLDEN-COMPARE-SUMMARY", boundaryUuid: randomUUID(), ctx: CTX });
+    const { message: goldenMessage, ...goldenRest } = golden.summary as { message: { role: string; content: string } };
+    const { message: entryMessage, ...entryRest } = normalizeForGoldenCompare(entry) as { message: { role: string; content: string } };
+    expect(entryRest).toEqual(goldenRest);
+    expect(entryMessage.role).toBe(goldenMessage.role);
+  });
+
+  test("the golden's summary content starts with CLAUDE_COMPACT_SUMMARY_PREAMBLE -- byte-exact to the real capture", () => {
+    const content = (golden.summary.message as { content: string }).content;
+    expect(content.startsWith(CLAUDE_COMPACT_SUMMARY_PREAMBLE)).toBe(true);
+  });
+
+  test("claudeCompactSummaryEntry's own content is exactly PREAMBLE + \"\\n\\n\" + the summary -- no trailing claude-only continuation prose", () => {
+    const entry = claudeCompactSummaryEntry({ summary: "S", boundaryUuid: "b", ctx: CTX });
+    expect(entry.message.content).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nS`);
+  });
+
+  test("claudeCompactSummaryEntry accepts a PRE-ALLOCATED uuid (fix round 1's write-ahead need: the boundary must name the summary before the summary exists)", () => {
+    const preAllocated = randomUUID();
+    const entry = claudeCompactSummaryEntry({ summary: "S", boundaryUuid: "b", uuid: preAllocated, ctx: CTX });
+    expect(entry.uuid).toBe(preAllocated);
+  });
+
+  test("preservedSegment is NEVER written (Winter has no use for the head/tail/anchor triple; preservedMessages supersedes it) -- but preservedMessages IS, when the caller names one (fix round 1, superseding the original P10b-7 reading)", () => {
+    const goldenMeta = golden.boundary.compactMetadata as Record<string, unknown>;
+    // The committed golden was normalized to strip BOTH fields (capture.ts's own volatile-field
+    // set) -- it exists to pin field NAMES and fixed strings, not the real capture's own retained
+    // uuids, which are meaningless outside that one real session.
+    expect("preservedMessages" in goldenMeta).toBe(false);
+    expect("preservedSegment" in goldenMeta).toBe(false);
+
+    // Omitted when the caller retains nothing -- absence stays semantic, matching the reader.
+    const withoutPreserved = claudeCompactBoundaryEntry({ trigger: "auto", preTokens: 1, logicalParentUuid: "leaf", ctx: CTX });
+    const withoutMeta = withoutPreserved.compactMetadata as unknown as Record<string, unknown>;
+    expect("preservedMessages" in withoutMeta).toBe(false);
+    expect("preservedSegment" in withoutMeta).toBe(false);
+
+    // Fix round 1 (LOAD-BEARING, controller ruling): reproduced verbatim when the caller DOES name
+    // one -- `recordCompactBoundary` always does, whenever `retainedCount > 0`, so live == resumed.
+    const withPreserved = claudeCompactBoundaryEntry({ trigger: "auto", preTokens: 1, logicalParentUuid: "leaf", preservedMessages: { anchorUuid: "s1", uuids: ["a1", "a2"] }, ctx: CTX });
+    expect(withPreserved.compactMetadata.preservedMessages).toEqual({ anchorUuid: "s1", uuids: ["a1", "a2"] });
+    expect("preservedSegment" in (withPreserved.compactMetadata as unknown as Record<string, unknown>)).toBe(false);
   });
 });

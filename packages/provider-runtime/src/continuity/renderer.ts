@@ -148,7 +148,22 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // host-supplied message, and every message rebuilt by a compaction summariser (which drops the
       // annotations) is in this class. ABSENCE IS NOT A DOMAIN MISMATCH -- treating it as one would
       // strip content from histories that never had a provider identity to mismatch with.
-      const origin = message.origin ?? (message.uuid !== undefined ? chain.get(message.uuid)?.origin : undefined);
+      //
+      // Phase 10b Lane S, S5 (W18-17, G1): an OFFICIAL-written assistant entry has no sidecar record
+      // at all (the official leg's own child process never goes through Winter's `recordAssistant`),
+      // so `message.origin`/the chain lookup are BOTH always absent for one, and before this fix it
+      // fell straight into the untouched-passthrough branch below -- Claude's own reasoning never
+      // crossed a family boundary. The one thing such an entry DOES carry is claude's own
+      // `message.model` (real claude assistant entries always have one; W18-11 is why Winter's own
+      // never do) -- read structurally, since `ProviderMessageLike` itself has no `model` field and
+      // must not grow one just for this fallback. `resolveEndpoint` below does the REAL domain/
+      // readableState lookup from just `providerId`+`modelKey`, exactly as it already does for a real
+      // origin, so "same-domain -> native replay" falls out unchanged for a Claude target.
+      const structuralModel = message.role === "assistant" ? (message as { model?: unknown }).model : undefined;
+      const origin =
+        message.origin ??
+        (message.uuid !== undefined ? chain.get(message.uuid)?.origin : undefined) ??
+        (typeof structuralModel === "string" && structuralModel.length > 0 ? { providerId: "anthropic", modelKey: structuralModel, family: "anthropic" } : undefined);
       if (origin === undefined) {
         // SYMMETRY with the same-domain path: an ASSISTANT message carrying a decoration but no
         // origin has a foreign model's material on it and no provenance to justify it, so the stale
@@ -178,7 +193,11 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       report.strippedInDialectBlocks += strippedBlocks;
 
       const link = message.uuid !== undefined ? chain.get(message.uuid) : undefined;
-      const material = materialFor(link, source, allowExposed);
+      // W18-17 (R-10b-9): a message with NO sidecar summary (the official leg wrote none) falls back
+      // to its OWN visible `thinking` text -- blocks joined in order, NEVER `signature` -- as ITS
+      // summary. `source.readableState` (Claude's own catalog row: "summary") is what makes
+      // `materialFor` classify this `kind: "summary"`, exactly like a captured sidecar summary would.
+      const material = materialFor(link, source, allowExposed, visibleThinkingText(message.content));
       if (material === undefined) {
         report.withoutMaterial++;
       } else {
@@ -203,7 +222,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // A budget that cannot hold the wrapper plus a usable body buys nothing: sending a delimiter
       // around three characters spends context and carries no meaning. Dropped, counted, and the
       // whole transfer flips to lossy.
-      if (perDecoration !== undefined && perDecoration < decorationOverhead(source, door) + MIN_DECORATION_BODY_CHARS) {
+      if (perDecoration !== undefined && perDecoration < decorationOverhead(source, door, plan.material.kind) + MIN_DECORATION_BODY_CHARS) {
         report.budgetDropped++;
         report.truncated = true;
         continue;
@@ -212,6 +231,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         text: plan.material.text,
         source,
         door,
+        kind: plan.material.kind,
         ...(perDecoration !== undefined ? { maxChars: perDecoration } : {}),
       });
       if (remaining !== undefined) remaining = Math.max(0, remaining - decoration.text.length);
@@ -253,12 +273,29 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
  * second no-warning condition applies ONLY to complete exposed reasoning forwarded unmodified, so
  * mislabelling a summary as exposed reasoning would suppress a warning the transfer has earned.
  */
-function materialFor(link: ContinuationLinkLike | undefined, source: ContinuityEndpoint, allowExposed: boolean): { kind: MaterialKind; text: string } | undefined {
-  const text = link?.summary;
+function materialFor(link: ContinuationLinkLike | undefined, source: ContinuityEndpoint, allowExposed: boolean, fallbackText?: string): { kind: MaterialKind; text: string } | undefined {
+  // W18-17: the sidecar's own captured summary wins when it exists; `fallbackText` (the message's
+  // own visible thinking, G1) is what an entry with NO sidecar record at all -- every official-leg
+  // write -- has instead. Never both: a sidecar summary is always at least as complete as what a
+  // renderer could re-derive from the transcript alone.
+  const text = link?.summary ?? fallbackText;
   if (text === undefined || text.length === 0) return undefined;
   const kind: MaterialKind = source.readableState === "full-exposed" ? "exposed" : "summary";
   if (kind === "exposed" && !allowExposed) return undefined;
   return { kind, text };
+}
+
+/**
+ * W18-17 (R-10b-9): the VISIBLE portion of a message's own `thinking` blocks, joined in order --
+ * NEVER `signature` (Anthropic's own attestation, opaque state) and never `redacted_thinking.data`
+ * (fully opaque by construction). `undefined` when there is nothing to join, which is the ordinary
+ * case for every non-Claude message and for a Claude message compaction already flattened to a
+ * string.
+ */
+function visibleThinkingText(content: string | ContentBlockLike[]): string | undefined {
+  if (typeof content === "string") return undefined;
+  const texts = content.filter((b): b is Extract<ContentBlockLike, { type: "thinking" }> => b.type === "thinking").map((b) => b.thinking);
+  return texts.length > 0 ? texts.join("\n\n") : undefined;
 }
 
 /**
