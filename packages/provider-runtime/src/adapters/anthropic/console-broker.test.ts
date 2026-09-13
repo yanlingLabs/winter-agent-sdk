@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import {
+  SubmitCodeRefused,
   anthropicConsoleProfileExists,
   logoutAnthropicConsole,
   refreshAnthropicBearer,
@@ -73,6 +74,21 @@ function writeAntStub(dir: string): string {
 /** A FAILING `ant` stub: exits 2 with a stderr line, never a bare token on stdout. */
 function writeFailingAntStub(dir: string): string {
   return writeStub(dir, "ant-fail", `echo "ant: profile not found" >&2\nexit 2`);
+}
+
+/** Fix round 1, item 1: dumps every `NAME=VALUE` the child actually received, one per line, and exits 0. */
+function writeEnvDumpStub(dir: string): string {
+  return writeStub(dir, "env-dump", `env`);
+}
+
+/** Fix round 1, item 2: a login stub that NEVER prompts and exits immediately -- proves a slow/hanging `readConsoleCode` never blocks the outcome. */
+function writeInstantExitStub(dir: string, exitCode = 2): string {
+  return writeStub(dir, "claude-instant-exit", `echo "refused before any prompt" >&2\nexit ${exitCode}`);
+}
+
+/** Fix round 1, item 3: reads one line and then stays alive for a moment -- a window to prove a SECOND `submitCode` is refused while the process is still running (as opposed to already exited). */
+function writeSlowLoginStub(dir: string): string {
+  return writeStub(dir, "claude-slow", `read -r pasted\nsleep 1\nexit 0`);
 }
 
 describe("console-broker.ts (host-brokered D20, P10a-1 amendment)", () => {
@@ -150,11 +166,13 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment)", () => {
     expect(store.size()).toBe(0);
   });
 
-  test("a login binary that could not be started at all (ENOENT) settles the handle immediately, with `submitCode` a safe no-op", async () => {
+  test("a login binary that could not be started at all (ENOENT) settles the handle immediately, and `submitCode` REFUSES typed (fix round 1, item 3)", async () => {
     const { anthropicConfigDir, claudeConfigDir } = mkConfigDirs();
     const store = createMemoryCredentialStore();
     const handle = startAnthropicConsoleBrokerLogin(store, { claudeExecutable: join(anthropicConfigDir, "does-not-exist"), anthropicConfigDir, claudeConfigDir });
-    await handle.submitCode("anything"); // must not throw
+    const rejection = await handle.submitCode("anything").catch((e: unknown) => e);
+    expect(rejection).toBeInstanceOf(SubmitCodeRefused);
+    expect((rejection as SubmitCodeRefused).reason).toBe("not-running");
     const outcome = await handle.done;
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false ? outcome.reason : "").toContain("could not be started");
@@ -227,5 +245,110 @@ describe("console-broker.ts (host-brokered D20, P10a-1 amendment)", () => {
     await store.set(ref, { kind: "bearer", token: "to-be-deleted", expiresAt: 999 });
     await logoutAnthropicConsole(store, { claudeExecutable: join(anthropicConfigDir, "does-not-exist"), anthropicConfigDir, claudeConfigDir });
     expect(await store.get(ref)).toBeNull();
+  });
+
+  test("ENV SCRUB (fix round 1, item 1, CRITICAL): forbidden ambient vars never reach the child; the allowlist + the three broker vars do", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const envDumpStub = writeEnvDumpStub(binDir);
+    const store = createMemoryCredentialStore();
+    const forbidden: Record<string, string> = {
+      ANTHROPIC_API_KEY: "sk-ant-should-not-leak-9f2a",
+      ANTHROPIC_AUTH_TOKEN: "should-not-leak-either-9f2a",
+      ANTHROPIC_BASE_URL: "https://evil.example.invalid",
+      CLAUDE_CODE_SOME_FLAG: "should-not-leak-9f2a",
+      OPENAI_API_KEY: "should-not-leak-9f2a",
+      SOME_SERVICE_TOKEN: "should-not-leak-9f2a",
+      WINTER_RANDOM_AMBIENT_VAR: "should-not-leak-9f2a",
+    };
+    const saved: Record<string, string | undefined> = {};
+    for (const key of Object.keys(forbidden)) saved[key] = process.env[key];
+    Object.assign(process.env, forbidden);
+    try {
+      const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable: envDumpStub, anthropicConfigDir, claudeConfigDir });
+      expect(result.ok).toBe(true);
+      // `refreshAnthropicBearer` writes the child's stdout (here, the whole env dump) as the bearer
+      // token -- the store IS the observation point for what the child actually received.
+      const material = await store.get(anthropicCredentialRef("default"));
+      const dump = material?.kind === "bearer" ? material.token : "";
+      expect(dump.length).toBeGreaterThan(0);
+      for (const key of Object.keys(forbidden)) expect(dump).not.toContain(`${key}=`);
+      // Positive control: the mechanism is an ALLOWLIST, not a blanket wipe -- PATH and the three
+      // broker vars this login needs DO reach the child.
+      expect(dump).toContain("ANTHROPIC_PROFILE=winter");
+      expect(dump).toContain(`ANTHROPIC_CONFIG_DIR=${anthropicConfigDir}`);
+      expect(dump).toContain(`CLAUDE_CONFIG_DIR=${claudeConfigDir}`);
+      expect(dump).toContain("PATH=");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  test("submitCode REFUSES a second call while the process is still alive (fix round 1, item 3)", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const claudeExecutable = writeSlowLoginStub(binDir);
+    const store = createMemoryCredentialStore();
+    const handle = startAnthropicConsoleBrokerLogin(store, { claudeExecutable, anthropicConfigDir, claudeConfigDir });
+    await handle.submitCode("first-and-only-valid-call");
+    const rejection = await handle.submitCode("second-call-must-refuse").catch((e: unknown) => e);
+    expect(rejection).toBeInstanceOf(SubmitCodeRefused);
+    expect((rejection as SubmitCodeRefused).reason).toBe("already-submitted");
+  });
+
+  test("submitCode REFUSES a call after the process has already exited (fix round 1, item 3)", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const claudeExecutable = writeInstantExitStub(binDir);
+    const store = createMemoryCredentialStore();
+    const handle = startAnthropicConsoleBrokerLogin(store, { claudeExecutable, anthropicConfigDir, claudeConfigDir });
+    await handle.done; // the process is guaranteed gone by the time this resolves.
+    const rejection = await handle.submitCode("too-late").catch((e: unknown) => e);
+    expect(rejection).toBeInstanceOf(SubmitCodeRefused);
+    expect((rejection as SubmitCodeRefused).reason).toBe("not-running");
+  });
+
+  test("refreshAnthropicBearer: a profile file OVER the 64 KiB cap is truncated, not read whole -- expiresAt falls back rather than reading the fixture's own value past the cut (fix round 1, item 4)", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    // `padding` alone is 100 KB, well past the 64 KiB cap, and it is serialised BEFORE `expires_at`
+    // (JSON.stringify preserves insertion order) -- so a truncated read cuts off mid-string and never
+    // reaches the real value, which is exactly the case this test exists to prove.
+    const padding = "x".repeat(100_000);
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), JSON.stringify({ padding, expires_at: FIXTURE_EXPIRES_AT }));
+    const store = createMemoryCredentialStore();
+    const now = 1_700_000_000_000;
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir, now: () => now });
+    expect(result).toEqual({ ok: true, expiresAt: now + 3_600_000 });
+  });
+
+  test("refreshAnthropicBearer: a profile file that is not valid JSON at all is tolerated -- falls back to the conservative estimate (fix round 1, item 4)", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const antExecutable = writeAntStub(binDir);
+    mkdirSync(join(anthropicConfigDir, "credentials"), { recursive: true });
+    writeFileSync(join(anthropicConfigDir, "credentials", "winter.json"), "not json at all {{{");
+    const store = createMemoryCredentialStore();
+    const now = 1_700_000_000_000;
+    const result = await refreshAnthropicBearer(store, { claudeExecutable: "/bin/true", antExecutable, anthropicConfigDir, claudeConfigDir, now: () => now });
+    expect(result).toEqual({ ok: true, expiresAt: now + 3_600_000 });
+  });
+
+  test("BELT-AND-BRACES REDACTION (fix round 1, item 6): a `code=` occurrence OUTSIDE a recognised URL is still redacted, and everything after it on that line is dropped", async () => {
+    const { anthropicConfigDir, claudeConfigDir, binDir } = mkConfigDirs();
+    const claudeExecutable = writeStub(
+      binDir,
+      "claude-plain-code",
+      [`echo "plain text mentioning code=${EXPECTED_CODE} and then MORE TEXT that must also be dropped"`, `read -r pasted`, `exit 0`].join("\n"),
+    );
+    const store = createMemoryCredentialStore();
+    const lines: string[] = [];
+    const handle = startAnthropicConsoleBrokerLogin(store, { claudeExecutable, anthropicConfigDir, claudeConfigDir, onLine: (l) => lines.push(l) });
+    await handle.submitCode("whatever-code-value");
+    await handle.done;
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).not.toContain(EXPECTED_CODE);
+    expect(lines.some((l) => l.includes("code=…"))).toBe(true);
+    expect(lines.some((l) => l.includes("MORE TEXT"))).toBe(false);
   });
 });

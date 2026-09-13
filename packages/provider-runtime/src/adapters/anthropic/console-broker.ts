@@ -31,7 +31,6 @@
 //   an error message anywhere in this file -- the one place it is ever held is the one
 //   `store.set(...)` call that writes it as `CredentialMaterial`.
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { requireBunRuntime } from "../../bun-required.ts";
 import type { CredentialMaterial, CredentialStore } from "../../types.ts";
@@ -86,23 +85,61 @@ export interface AnthropicConsoleLoginHandle {
   done: Promise<{ ok: true; profile: string } | { ok: false; reason: string }>;
 }
 
-function brokerEnv(options: Pick<AnthropicConsoleBrokerOptions, "anthropicConfigDir" | "claudeConfigDir">, profile: string): Record<string, string> {
-  return {
-    ...process.env,
-    ANTHROPIC_PROFILE: profile,
-    ANTHROPIC_CONFIG_DIR: options.anthropicConfigDir,
-    CLAUDE_CONFIG_DIR: options.claudeConfigDir,
-  } as Record<string, string>;
+/**
+ * Fix round 1, item 3 (MINOR): a TYPED refusal from `submitCode`, rather than a silent no-op or an
+ * untyped throw -- a caller that raced its own timeout against a slow paste, or that mis-drives this
+ * handle from two places, gets something it can `instanceof`-check rather than a message to parse.
+ */
+export type SubmitCodeRefusalReason = "already-submitted" | "not-running";
+export class SubmitCodeRefused extends Error {
+  readonly name = "SubmitCodeRefused";
+  readonly reason: SubmitCodeRefusalReason;
+  constructor(reason: SubmitCodeRefusalReason, message: string) {
+    super(message);
+    this.reason = reason;
+  }
 }
 
 /**
- * Strips the query string off every `http(s)` URL a line contains, replacing it with a literal `…`.
- * Applied to EVERY line this file hands a host, not only ones that look like a prompt -- a one-time
- * `code=` parameter is exactly the kind of value that looks unremarkable until it is the one line
- * someone pastes into a support channel.
+ * Fix round 1, item 1 (CRITICAL): an EXPLICIT ALLOWLIST, never `...process.env`. A spread would carry
+ * whatever the host process happens to hold -- an `ANTHROPIC_API_KEY`, an `ANTHROPIC_AUTH_TOKEN`, a
+ * `CLAUDE_CODE_*` override, an unrelated `*_API_KEY`/`*_TOKEN` -- into a Console login this file's
+ * whole point is to keep separate from any key-based auth. Only what a shell needs to RUN a binary at
+ * all survives; everything else is this file's own three variables. `LC_*` is a wildcard-by-PREFIX
+ * (locale has an open-ended variable set: `LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, ...), not a loophole --
+ * none of them shapes what the binary authenticates as.
+ */
+const INHERITED_ENV_NAMES = ["PATH", "HOME", "TMPDIR", "TERM", "SHELL", "LANG"] as const;
+
+function brokerEnv(options: Pick<AnthropicConsoleBrokerOptions, "anthropicConfigDir" | "claudeConfigDir">, profile: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of INHERITED_ENV_NAMES) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  for (const [name, value] of Object.entries(process.env)) {
+    if (name.startsWith("LC_") && value !== undefined) env[name] = value;
+  }
+  // These three are stated LAST so nothing in the allowlist above could ever shadow them.
+  env["ANTHROPIC_PROFILE"] = profile;
+  env["ANTHROPIC_CONFIG_DIR"] = options.anthropicConfigDir;
+  env["CLAUDE_CONFIG_DIR"] = options.claudeConfigDir;
+  return env;
+}
+
+/**
+ * Strips the query string off every `http(s)` URL a line contains, replacing it with a literal `…`,
+ * THEN (fix round 1, item 6, belt-and-braces) drops everything from any remaining `code=` to the end
+ * of the line, case-insensitively -- not only inside a recognised URL. The first pass is the derived,
+ * measured shape of what the binary actually prints; the second is cheap insurance against a future
+ * build printing the code in a shape the URL pattern does not recognise (no scheme, a different
+ * query-string encoding, plain prose). Applied to EVERY line this file hands a host, not only ones
+ * that look like a prompt -- a one-time code is exactly the kind of value that looks unremarkable
+ * until it is the one line someone pastes into a support channel.
  */
 function redactUrlQuery(line: string): string {
-  return line.replace(/(https?:\/\/[^\s?]+)\?[^\s]*/g, "$1?…");
+  const urlRedacted = line.replace(/(https?:\/\/[^\s?]+)\?[^\s]*/g, "$1?…");
+  return urlRedacted.replace(/code=.*/i, "code=…");
 }
 
 /**
@@ -148,8 +185,9 @@ async function drainStream(stream: ReadableStream<Uint8Array> | undefined | null
  * exists: `Bun.spawn` throws SYNCHRONOUSLY on an unresolvable executable (ENOENT), and a function that
  * only surfaced that inside an async `done` would leave a caller unable to tell "the binary doesn't
  * exist" from "the login is running" until the first `await`. Here it is instead reflected into an
- * ALREADY-SETTLED handle: `done` is already resolved `{ ok: false, reason }`, and `submitCode` is a
- * no-op precisely because there is no process to write to.
+ * ALREADY-SETTLED handle: `done` is already resolved `{ ok: false, reason }`, and `submitCode` REFUSES
+ * (fix round 1, item 3) with `SubmitCodeRefused("not-running", …)` — there is no process to write to,
+ * which is the SAME condition a call after a real process exits refuses under.
  */
 export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options: AnthropicConsoleBrokerOptions): AnthropicConsoleLoginHandle {
   requireBunRuntime(
@@ -171,12 +209,27 @@ export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options
     });
   } catch (err) {
     const reason = `"claude auth login --console" could not be started: ${err instanceof Error ? err.message : String(err)}`;
-    return { submitCode: async () => {}, done: Promise.resolve({ ok: false, reason }) };
+    return {
+      submitCode: async () => {
+        throw new SubmitCodeRefused("not-running", "the console login process never started, so there is nothing to write the code to");
+      },
+      done: Promise.resolve({ ok: false, reason }),
+    };
   }
 
   const stderrLines: string[] = [];
   const stdoutPump = drainStream(child.stdout as ReadableStream<Uint8Array> | undefined, onLine);
   const stderrPump = drainStream(child.stderr as ReadableStream<Uint8Array> | undefined, onLine, stderrLines);
+
+  // Fix round 1, item 3: the two states `submitCode` refuses on. `exited` is set from `child.exited`
+  // directly (not derived from `done`, which also awaits the stdout/stderr drains and the bearer
+  // refresh) -- a caller must be refused the instant the PROCESS is gone, not once every follow-on
+  // step this file does afterward has also finished.
+  let submitted = false;
+  let exited = false;
+  void child.exited.then(() => {
+    exited = true;
+  });
 
   const done = (async (): Promise<{ ok: true; profile: string } | { ok: false; reason: string }> => {
     const [exitCode] = await Promise.all([child.exited, stdoutPump, stderrPump]);
@@ -191,6 +244,9 @@ export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options
 
   return {
     async submitCode(code: string): Promise<void> {
+      if (exited) throw new SubmitCodeRefused("not-running", "the console login process has already exited; there is nothing left to write the code to");
+      if (submitted) throw new SubmitCodeRefused("already-submitted", "submitCode was already called once for this login; a second call cannot un-write what was already sent");
+      submitted = true;
       const stdin = child.stdin;
       if (stdin === undefined || stdin === null || typeof stdin === "number") return;
       stdin.write(`${code}\n`);
@@ -258,11 +314,21 @@ export async function refreshAnthropicBearer(store: CredentialStore, options: An
   return { ok: true, expiresAt };
 }
 
+/** Fix round 1, item 4 (MINOR): the read cap. A profile file is a small JSON object; anything past this is not one this function was written to trust. */
+const MAX_PROFILE_FILE_BYTES = 64 * 1024;
+
 /**
  * Reads `expires_at` out of `<anthropicConfigDir>/credentials/<profile>.json` -- ONLY that one field
- * is ever read, and it is never logged or echoed. `undefined` for anything unreadable or malformed:
- * a file this function cannot parse is not evidence of an EXPIRED token, so `refreshAnthropicBearer`
- * falls back to a conservative estimate rather than treating "unknown" as "already expired".
+ * is ever read, and it is never logged or echoed. `undefined` for anything unreadable, oversized, or
+ * malformed: a file this function cannot parse is not evidence of an EXPIRED token, so
+ * `refreshAnthropicBearer` falls back to a conservative estimate rather than treating "unknown" as
+ * "already expired".
+ *
+ * READ AT MOST `MAX_PROFILE_FILE_BYTES` (fix round 1, item 4): this file is HOST-WRITTEN, not
+ * attacker-controlled in the usual sense, but "controlled by a process this one merely spawned"
+ * still earns a bound -- a truncated read fails `JSON.parse` exactly like a malformed one and this
+ * function already tolerates that, so the cap costs nothing on the happy path and stops an
+ * unexpectedly huge file from being read into memory whole.
  *
  * UNVERIFIED UNIT (flagged for the controller's M3): assumed epoch MILLISECONDS, matching every other
  * `expiresAt` this package carries (`CredentialMaterial`'s `oauth` variant, `OAuthTokens`). If the
@@ -272,7 +338,9 @@ export async function refreshAnthropicBearer(store: CredentialStore, options: An
  */
 async function readProfileExpiresAt(anthropicConfigDir: string, profile: string): Promise<number | undefined> {
   try {
-    const raw = await readFile(join(anthropicConfigDir, "credentials", `${profile}.json`), "utf8");
+    const raw = await Bun.file(join(anthropicConfigDir, "credentials", `${profile}.json`))
+      .slice(0, MAX_PROFILE_FILE_BYTES)
+      .text();
     const parsed = JSON.parse(raw) as { expires_at?: unknown };
     return typeof parsed.expires_at === "number" ? parsed.expires_at : undefined;
   } catch {
