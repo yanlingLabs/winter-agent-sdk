@@ -89,7 +89,9 @@ export interface AnthropicConsoleBrokerOptions {
   /**
    * Every stdout/stderr line, in the order this file observed them, REDACTED of any URL's query
    * string (and any bare `code=`) before this file ever calls it (R6-F: a progress channel, never
-   * material).
+   * material). Lines are NOT otherwise redacted: `ant`'s success line names the signed-in
+   * account's email and organization, so a host must treat every line as transient UI text and
+   * never log or persist it verbatim.
    */
   onLine?: (line: string) => void;
   /** Injectable for a fixture: a stub executable under mkdtemp, never the real `ant`. */
