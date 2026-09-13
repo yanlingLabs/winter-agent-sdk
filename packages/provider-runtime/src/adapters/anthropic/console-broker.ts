@@ -1,86 +1,119 @@
 // D20, host-brokered (P10a-1 amendment, 2026-09-13): Anthropic Console OAuth through Anthropic's OWN
-// broker binaries -- `claude auth login --console` (the official Claude Agent SDK's CLI, already
-// embedded for the official leg, P9c-1) and `ant auth print-credentials` (the Anthropic Platform CLI)
-// -- never a re-implementation of the OAuth protocol itself. `console-oauth.ts`'s banner is the
-// account of what THAT looked like and why it was retired; this file is the thing that replaced it,
-// per the user's 2026-09-13 scope amendment putting the broker in the SDK runtime (beside
-// `codex-oauth.ts`/`xai-oauth.ts`) rather than solely in Winter's daemon.
+// broker binary -- `ant auth login`/`auth logout` (the Anthropic Platform CLI) -- never a
+// re-implementation of the OAuth protocol itself. `console-oauth.ts`'s banner is the account of the
+// FIRST thing this replaced (a re-implemented PKCE client); this file's own history is the SECOND
+// correction, below.
 //
-// MEASURED ON THE REAL BINARY (2.1.250), not assumed -- every behavioural claim below is what the
-// controller's M2 measurement observed, not a guess about how such a CLI "should" behave:
+// LANE S ROUND 2 (2026-09-13): the premise this file shipped on in v0.0.6/v0.0.7 -- that
+// `claude auth login --console` writes the Anthropic profile the rest of this file reads -- was
+// FALSIFIED by a live measurement. What the controller actually observed, on `claude` 2.1.250 and
+// `ant` 1.32.0, for this org:
 //
-//   `claude auth login --console` PRINTS the authorize URL and a `Paste code here if prompted > `
-//   prompt, then BLOCKS on stdin. The URL carries a ONE-TIME `code=` query parameter -- Anthropic's
-//   own redirect target, not a URL this file constructs -- so every line handed to a host is stripped
-//   of any URL's query string before it ever reaches `onLine`: an operator who pastes a progress line
-//   to ask for help must never also paste a live one-time code. `redactUrlQuery` is the one function
-//   that does this, and it runs on every line, not just ones that look like prompts.
+//   `claude auth login --console` writes NO Anthropic profile. It mints a Console API key ("/login
+//   managed key"), stored in the LOGIN KEYCHAIN keyed to a hash of `CLAUDE_CONFIG_DIR`, plus
+//   `<CLAUDE_CONFIG_DIR>/.claude.json` -- neither of which this file, or `anthropicConsoleProfileExists`,
+//   has ever read. That held even with `ANTHROPIC_PROFILE`/`ANTHROPIC_CONFIG_DIR` set during the
+//   login. Spawning `claude` for login therefore never produced the file this module went on to check
+//   for, and left a stray Console-keyed login sitting in the OFFICIAL leg's own config dir besides.
 //
-//   The code arrives on a PASTED LINE, not a loopback callback -- unlike D20's retired PKCE client,
-//   this binary exposes no redirect URI a Winter process could intercept, because Winter is not party
-//   to the OAuth exchange at all. Anthropic's own official binary is, and only that binary ever holds
-//   a token during this step: `submitCode` writes the operator's paste to the child's stdin and closes
-//   it, exactly as a human would at that same prompt.
+//   The `claude` binary DOES authenticate from a profile `ant` writes: with `ANTHROPIC_CONFIG_DIR` set
+//   and a fresh `CLAUDE_CONFIG_DIR`, a profile `ant auth login --profile winter` plants gives
+//   `claude auth status` -> `{ loggedIn: true, authMethod: "oauth_token" }`. So `ant` is the ONE door
+//   onto BOTH legs, and this file now spawns ONLY `ant` -- never `claude`, for login, logout, or
+//   anything else.
 //
-//   `ANTHROPIC_PROFILE`/`ANTHROPIC_CONFIG_DIR` route the write to Winter's own profile+dir (P10a-2);
-//   `CLAUDE_CONFIG_DIR` is P9c-1's own variable for the official leg's config, carried on every spawn
-//   alongside it because a build of `claude` may consult either.
+//   Profile layout (read from the `claude` binary and matching what `ant` writes):
+//   `configs/<profile>.json` = `{ version: "1.0", organization_id, workspace_id, authentication:
+//   { type: "user_oauth", client_id } }`; `credentials/<profile>.json` = `{ version: "1.0", type:
+//   "oauth_token", access_token, refresh_token, expires_at }`. The writer stamps `expires_at` as
+//   `Math.floor(ms / 1000)` -- SECONDS -- which `normalizeExpiresAt` below already tolerates alongside
+//   milliseconds (M3-units, carried over from v0.0.7 unchanged by this round).
 //
-//   `ant auth print-credentials --profile <p> --access-token` reads the profile THIS login just wrote
-//   and prints a bare token to stdout, nothing else. The token is never logged and never appears in
-//   an error message anywhere in this file -- the one place it is ever held is the one
-//   `store.set(...)` call that writes it as `CredentialMaterial`.
+//   `ant`'s login flag is `ant auth login --profile <p> [--timeout <duration>]` (default 5m; this file
+//   always states one explicitly, default `"10m"`). Without `--no-browser` -- which this file never
+//   passes, matching how a host would actually drive it -- `ant` opens the browser ITSELF and ALSO
+//   prints the URL and a paste-the-code prompt, then reads a pasted code off stdin (proven with a
+//   piped stdin). Logout is `ant auth logout --profile <p>` -- `--all` (every profile at once) is
+//   never used here.
+//
+// EVERY OTHER BEHAVIOUR THIS FILE HAD IS UNCHANGED: line-by-line progress with URL query strings (and
+// any bare `code=`) redacted before `onLine` ever sees a line, `submitCode` writing the pasted code
+// plus a newline to stdin exactly once, the `SubmitCodeRefused` refusal states, and
+// `refreshAnthropicBearer`'s own contract. What moved is WHICH BINARY is spawned and WITH WHAT
+// ARGUMENTS -- and, since `ant`'s CLI carries the profile as a flag rather than reading it from the
+// environment, `ANTHROPIC_PROFILE` is no longer part of this file's child environment at all.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { requireBunRuntime } from "../../bun-required.ts";
 import type { CredentialMaterial, CredentialStore } from "../../types.ts";
 import { anthropicCredentialRef } from "./console-oauth.ts";
 
-/** `ANTHROPIC_PROFILE`'s default (P10a-2) -- one profile for the login, the official leg, and every `ant` call. */
+/** `ant`'s `--profile` value (P10a-2) -- one profile for the login and every subsequent `ant` call. */
 export const DEFAULT_ANTHROPIC_CONSOLE_PROFILE = "winter";
 
-/** Config every door in this file shares -- one process env, one profile, one pair of binaries. */
+/** `ant auth login`'s `--timeout` default (Lane S round 2) -- generous over `ant`'s own 5m default, since a human has to notice a browser tab, sign in, and paste a code back. */
+export const DEFAULT_LOGIN_TIMEOUT = "10m";
+
+/** A Go duration of the shape `ant`'s own `--timeout` flag accepts for this purpose: digits followed by a single s/m/h unit. */
+const LOGIN_TIMEOUT_PATTERN = /^\d+[smh]$/;
+
+/** Config every door in this file shares -- one process env, one profile, one binary. */
 export interface AnthropicConsoleBrokerOptions {
-  /** The resolved `claude` executable -- the SAME binary the official leg spawns (P9c-1). */
-  claudeExecutable: string;
   /**
-   * The resolved `ant` executable. Absent means "not installed/resolved" -- `refreshAnthropicBearer`
-   * answers a named, typed failure rather than throwing or leaving a login half-finished.
+   * UNUSED (Lane S round 2, measured 2026-09-13): `claude auth login --console` does not write the
+   * Anthropic profile this file reads, so this file no longer spawns `claude` for anything. Retained
+   * as an OPTIONAL field purely for SOURCE COMPATIBILITY with existing call sites that still pass
+   * it -- a host may drop it once its own callers are updated.
+   */
+  claudeExecutable?: string;
+  /**
+   * The resolved `ant` executable. Absent means "not installed/resolved" -- every door in this file
+   * that would otherwise spawn it (login, logout, `refreshAnthropicBearer`) answers a named, typed
+   * failure BEFORE spawning anything, rather than throwing or leaving a login half-finished.
    */
   antExecutable?: string;
-  /** `<home>/runtimes/anthropic-config` (P10a-2). Created by the HOST before this file is ever called; this file only reads and writes inside it, never creates it. */
+  /** `<home>/runtimes/anthropic-config` (P10a-2), passed as `ANTHROPIC_CONFIG_DIR`. Created by the HOST before this file is ever called; this file only reads and writes inside it, never creates it. */
   anthropicConfigDir: string;
-  /** P9c-1's own config dir for the official leg's OWN credentials, carried on every spawn alongside `anthropicConfigDir` because a build of `claude` may read either variable. */
-  claudeConfigDir: string;
-  /** `ANTHROPIC_PROFILE`. Defaults to `DEFAULT_ANTHROPIC_CONSOLE_PROFILE`. */
+  /**
+   * UNUSED (Lane S round 2): this file never spawns `claude`, so nothing here reads the official
+   * leg's own config dir. Retained OPTIONAL for source compatibility, exactly like `claudeExecutable`
+   * above.
+   */
+  claudeConfigDir?: string;
+  /** `ant auth login/logout --profile`. Defaults to `DEFAULT_ANTHROPIC_CONSOLE_PROFILE`. */
   profile?: string;
+  /** `ant auth login --timeout`. A Go duration (`^\d+[smh]$`); defaults to `DEFAULT_LOGIN_TIMEOUT`. An invalid value is a typed login failure, never a spawn with a malformed flag. */
+  loginTimeout?: string;
   /** The Keychain service the bearer material lands in -- `config.keychainService` from the host. */
   service?: string;
   /**
    * Every stdout/stderr line, in the order this file observed them, REDACTED of any URL's query
-   * string before this file ever calls it (R6-F: a progress channel, never material).
+   * string (and any bare `code=`) before this file ever calls it (R6-F: a progress channel, never
+   * material).
    */
   onLine?: (line: string) => void;
-  /** Injectable for a fixture: a stub executable under mkdtemp, never the real `claude`/`ant`. */
+  /** Injectable for a fixture: a stub executable under mkdtemp, never the real `ant`. */
   spawn?: typeof Bun.spawn;
   now?: () => number;
 }
 
 export interface AnthropicConsoleLoginHandle {
   /**
-   * Writes `code + "\n"` to the child's stdin and closes it -- exactly what a human types at the
-   * `Paste code here if prompted > ` prompt. Resolves once the write completes, NOT once the login
-   * finishes; await `done` for that. Calling this before the child is ready for input, or more than
-   * once, is a caller error this file does not guard against -- the same trust boundary `openUrl`
-   * callers already hold for every other login in this package.
+   * Writes `code + "\n"` to the child's stdin and closes it -- exactly what a human types at `ant`'s
+   * paste-the-code prompt. Resolves once the write completes, NOT once the login finishes; await
+   * `done` for that. Calling this before the child is ready for input, or more than once, is a caller
+   * error this file does not guard against beyond the two REFUSAL states below -- the same trust
+   * boundary `openUrl` callers already hold for every other login in this package.
    */
   submitCode(code: string): Promise<void>;
   /**
-   * Resolves on process exit. A non-zero exit is `{ ok: false, reason }`, the reason being the last
-   * non-empty stderr line this file observed (already redacted) -- never the bare exit code alone,
-   * and never a URL. A ZERO exit is only `{ ok: true, profile }` once `refreshAnthropicBearer` has
-   * ALSO succeeded: an exit-0 login that could not mint a usable bearer is not a login Winter can act
-   * on, so this file does not report success until both steps have.
+   * Resolves once this login is genuinely usable or genuinely not. A non-zero `ant` exit is
+   * `{ ok: false, reason }`, the reason being the last non-empty stderr line this file observed
+   * (already redacted) -- never the bare exit code alone, and never a URL or a code. A ZERO exit is
+   * STILL a failure if `anthropicConsoleProfileExists` reports no profile written (Lane S round 2:
+   * the exit code alone is not evidence of a written profile), and is only `{ ok: true, profile }`
+   * once `refreshAnthropicBearer` has ALSO succeeded on top of that: a login that could not mint a
+   * usable bearer is not one Winter can act on.
    */
   done: Promise<{ ok: true; profile: string } | { ok: false; reason: string }>;
 }
@@ -101,17 +134,20 @@ export class SubmitCodeRefused extends Error {
 }
 
 /**
- * Fix round 1, item 1 (CRITICAL): an EXPLICIT ALLOWLIST, never `...process.env`. A spread would carry
- * whatever the host process happens to hold -- an `ANTHROPIC_API_KEY`, an `ANTHROPIC_AUTH_TOKEN`, a
- * `CLAUDE_CODE_*` override, an unrelated `*_API_KEY`/`*_TOKEN` -- into a Console login this file's
- * whole point is to keep separate from any key-based auth. Only what a shell needs to RUN a binary at
- * all survives; everything else is this file's own three variables. `LC_*` is a wildcard-by-PREFIX
- * (locale has an open-ended variable set: `LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, ...), not a loophole --
- * none of them shapes what the binary authenticates as.
+ * An EXPLICIT ALLOWLIST, never `...process.env` (fix round 1, item 1; narrowed further in Lane S
+ * round 2 now that only `ant` is ever spawned). Only what a shell needs to RUN a binary at all
+ * survives, plus this file's one variable, `ANTHROPIC_CONFIG_DIR`. Everything else -- an
+ * `ANTHROPIC_API_KEY`, an `ANTHROPIC_AUTH_TOKEN`, any `CLAUDE_*` variable, an unrelated
+ * `*_API_KEY`/`*_TOKEN` the host process happens to hold -- is dropped. `ANTHROPIC_PROFILE` is
+ * DELIBERATELY not here either (Lane S round 2): `ant`'s `--profile` flag carries it on the argv this
+ * file already builds, so setting it in the environment too would be a second, redundant source of
+ * truth that could disagree with the flag. `LC_*` is a wildcard-by-PREFIX (locale has an open-ended
+ * variable set: `LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, ...), not a loophole -- none of them shapes what
+ * the binary authenticates as.
  */
-const INHERITED_ENV_NAMES = ["PATH", "HOME", "TMPDIR", "TERM", "SHELL", "LANG"] as const;
+const INHERITED_ENV_NAMES = ["HOME", "PATH", "TMPDIR", "LANG"] as const;
 
-function brokerEnv(options: Pick<AnthropicConsoleBrokerOptions, "anthropicConfigDir" | "claudeConfigDir">, profile: string): Record<string, string> {
+function brokerEnv(anthropicConfigDir: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of INHERITED_ENV_NAMES) {
     const value = process.env[name];
@@ -120,10 +156,7 @@ function brokerEnv(options: Pick<AnthropicConsoleBrokerOptions, "anthropicConfig
   for (const [name, value] of Object.entries(process.env)) {
     if (name.startsWith("LC_") && value !== undefined) env[name] = value;
   }
-  // These three are stated LAST so nothing in the allowlist above could ever shadow them.
-  env["ANTHROPIC_PROFILE"] = profile;
-  env["ANTHROPIC_CONFIG_DIR"] = options.anthropicConfigDir;
-  env["CLAUDE_CONFIG_DIR"] = options.claudeConfigDir;
+  env["ANTHROPIC_CONFIG_DIR"] = anthropicConfigDir;
   return env;
 }
 
@@ -176,45 +209,63 @@ async function drainStream(stream: ReadableStream<Uint8Array> | undefined | null
   }
 }
 
+/** Builds the already-settled failure handle every pre-spawn refusal returns (missing `antExecutable`, a malformed `loginTimeout`, or an ENOENT from the spawn itself). */
+function settledLoginFailure(reason: string): AnthropicConsoleLoginHandle {
+  return {
+    submitCode: async () => {
+      throw new SubmitCodeRefused("not-running", "the console login process never started, so there is nothing to write the code to");
+    },
+    done: Promise.resolve({ ok: false, reason }),
+  };
+}
+
 /**
- * Starts `claude auth login --console` and returns a handle a host drives interactively: it prints
- * the authorize URL and a prompt through `onLine`, and the host calls `submitCode` once the operator
- * has one. See the file banner for what was MEASURED about this shape rather than assumed.
+ * Starts `ant auth login --profile <p> --timeout <t>` and returns a handle a host drives
+ * interactively: it prints the URL `ant` opens itself and its paste-the-code prompt through `onLine`,
+ * and the host calls `submitCode` once the operator has one. See the file banner for what was
+ * MEASURED about this shape rather than assumed.
  *
  * SYNCHRONOUS RETURN, matching `runGit`'s own precedent for a spawn that can fail before any process
  * exists: `Bun.spawn` throws SYNCHRONOUSLY on an unresolvable executable (ENOENT), and a function that
  * only surfaced that inside an async `done` would leave a caller unable to tell "the binary doesn't
- * exist" from "the login is running" until the first `await`. Here it is instead reflected into an
- * ALREADY-SETTLED handle: `done` is already resolved `{ ok: false, reason }`, and `submitCode` REFUSES
- * (fix round 1, item 3) with `SubmitCodeRefused("not-running", …)` — there is no process to write to,
- * which is the SAME condition a call after a real process exits refuses under.
+ * exist" from "the login is running" until the first `await`. Every pre-spawn refusal in this
+ * function -- no `antExecutable`, a malformed `loginTimeout`, or a genuine ENOENT -- is reflected the
+ * same way: `done` is already resolved `{ ok: false, reason }`, and `submitCode` REFUSES (fix round 1,
+ * item 3) with `SubmitCodeRefused("not-running", …)` -- there is no process to write to, which is the
+ * SAME condition a call after a real process exits refuses under.
  */
 export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options: AnthropicConsoleBrokerOptions): AnthropicConsoleLoginHandle {
   requireBunRuntime(
     "startAnthropicConsoleBrokerLogin",
     "Bun.spawn",
-    "The Console login has to spawn the `claude` binary and pipe its stdin/stdout/stderr, which needs Bun's subprocess API. Run the login under Bun (or complete it in a Bun process and pass the resulting credential ref to your Node session).",
+    "The Console login has to spawn the `ant` binary and pipe its stdin/stdout/stderr, which needs Bun's subprocess API. Run the login under Bun (or complete it in a Bun process and pass the resulting credential ref to your Node session).",
   );
   const profile = options.profile ?? DEFAULT_ANTHROPIC_CONSOLE_PROFILE;
   const onLine = options.onLine ?? (() => {});
   const spawnFn = options.spawn ?? Bun.spawn;
 
+  // Item 2: no `antExecutable` refuses BEFORE spawning anything, mirroring `refreshAnthropicBearer`'s
+  // existing wording -- the console login cannot run at all without this broker.
+  if (options.antExecutable === undefined) {
+    return settledLoginFailure(
+      'the "ant" broker is not installed/resolved (settings.runtimes.antExecutable, or `brew install anthropics/tap/ant`) -- the console login cannot run without it',
+    );
+  }
+  const loginTimeout = options.loginTimeout ?? DEFAULT_LOGIN_TIMEOUT;
+  if (!LOGIN_TIMEOUT_PATTERN.test(loginTimeout)) {
+    return settledLoginFailure(`loginTimeout "${loginTimeout}" is not a valid duration -- expected digits followed by a single s/m/h unit, e.g. "${DEFAULT_LOGIN_TIMEOUT}"`);
+  }
+
   let child: ReturnType<typeof Bun.spawn>;
   try {
-    child = spawnFn([options.claudeExecutable, "auth", "login", "--console"], {
-      env: brokerEnv(options, profile),
+    child = spawnFn([options.antExecutable, "auth", "login", "--profile", profile, "--timeout", loginTimeout], {
+      env: brokerEnv(options.anthropicConfigDir),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
   } catch (err) {
-    const reason = `"claude auth login --console" could not be started: ${err instanceof Error ? err.message : String(err)}`;
-    return {
-      submitCode: async () => {
-        throw new SubmitCodeRefused("not-running", "the console login process never started, so there is nothing to write the code to");
-      },
-      done: Promise.resolve({ ok: false, reason }),
-    };
+    return settledLoginFailure(`"ant auth login" could not be started: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const stderrLines: string[] = [];
@@ -222,9 +273,9 @@ export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options
   const stderrPump = drainStream(child.stderr as ReadableStream<Uint8Array> | undefined, onLine, stderrLines);
 
   // Fix round 1, item 3: the two states `submitCode` refuses on. `exited` is set from `child.exited`
-  // directly (not derived from `done`, which also awaits the stdout/stderr drains and the bearer
-  // refresh) -- a caller must be refused the instant the PROCESS is gone, not once every follow-on
-  // step this file does afterward has also finished.
+  // directly (not derived from `done`, which also awaits the stdout/stderr drains, the profile-file
+  // check and the bearer refresh) -- a caller must be refused the instant the PROCESS is gone, not
+  // once every follow-on step this file does afterward has also finished.
   let submitted = false;
   let exited = false;
   void child.exited.then(() => {
@@ -234,8 +285,13 @@ export function startAnthropicConsoleBrokerLogin(store: CredentialStore, options
   const done = (async (): Promise<{ ok: true; profile: string } | { ok: false; reason: string }> => {
     const [exitCode] = await Promise.all([child.exited, stdoutPump, stderrPump]);
     if (exitCode !== 0) {
-      const reason = stderrLines.at(-1) ?? `"claude auth login --console" exited with code ${exitCode}`;
+      const reason = stderrLines.at(-1) ?? `"ant auth login" exited with code ${exitCode}`;
       return { ok: false, reason };
+    }
+    // Lane S round 2: exit 0 is NOT evidence of a written profile on its own (that was the exact
+    // premise the live measurement falsified for `claude`) -- checked explicitly rather than trusted.
+    if (!anthropicConsoleProfileExists(options.anthropicConfigDir, profile)) {
+      return { ok: false, reason: `"ant auth login" exited 0 but wrote no profile for "${profile}" -- there is nothing to authenticate with` };
     }
     const refreshed = await refreshAnthropicBearer(store, options);
     if (!refreshed.ok) return { ok: false, reason: refreshed.reason };
@@ -276,7 +332,7 @@ export async function refreshAnthropicBearer(store: CredentialStore, options: An
   let child: ReturnType<typeof Bun.spawn>;
   try {
     child = spawnFn([options.antExecutable, "auth", "print-credentials", "--profile", profile, "--access-token"], {
-      env: brokerEnv(options, profile),
+      env: brokerEnv(options.anthropicConfigDir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -342,14 +398,10 @@ const MAX_PROFILE_FILE_BYTES = 64 * 1024;
  * function already tolerates that, so the cap costs nothing on the happy path and stops an
  * unexpectedly huge file from being read into memory whole.
  *
- * UNIT NORMALISED (M3-units, whole-branch review of P10a): the field's unit was previously assumed to
- * be epoch MILLISECONDS with no measurement backing it, matching every other `expiresAt` this package
- * carries (`CredentialMaterial`'s `oauth` variant, `OAuthTokens`) -- but a SECONDS value (the shape
- * many CLI credential-store JSON files use, including the Anthropic ecosystem's `~/.claude/.credentials.json`
- * lineage) would have read as ~1970 and fired the refresh timer immediately rather than never. Now
- * normalised via {@link normalizeExpiresAt} rather than trusted as-is: a numeric value under 1e12 is
- * treated as seconds (`*1000`); at or above 1e12 as milliseconds already; a string is parsed as
- * ISO-8601; anything else is `undefined` (the existing conservative fallback in `refreshAnthropicBearer`).
+ * UNIT NORMALISED (M3-units, whole-branch review of P10a; confirmed by Lane S round 2's measurement --
+ * the writer stamps `Math.floor(ms / 1000)`, i.e. SECONDS): a numeric value under 1e12 is treated as
+ * seconds (`*1000`); at or above 1e12 as milliseconds already; a string is parsed as ISO-8601;
+ * anything else is `undefined` (the conservative fallback in `refreshAnthropicBearer`).
  */
 async function readProfileExpiresAt(anthropicConfigDir: string, profile: string): Promise<number | undefined> {
   try {
@@ -393,20 +445,32 @@ export function anthropicConsoleProfileExists(anthropicConfigDir: string, profil
 }
 
 /**
- * Runs `claude auth logout` (best-effort) and then deletes the bearer material regardless of whether
- * the binary succeeded -- a host that cannot reach the binary should still be able to forget the
- * bearer material it already holds; leaving it in the Keychain because a subprocess failed would be
- * the worse of the two failures.
+ * Runs `ant auth logout --profile <p>` (Lane S round 2: never `--all`, and never `claude auth
+ * logout`, which does not touch what this file's login writes) and then deletes the bearer material
+ * regardless of whether the binary succeeded -- a host that cannot reach the binary should still be
+ * able to forget the bearer material it already holds; leaving it in the Keychain because a
+ * subprocess failed would be the worse of the two failures.
+ *
+ * NO `antExecutable` (item 2): refuses to spawn anything and reports why on the progress channel
+ * (`onLine`) before still deleting the stored material -- this function returns `Promise<void>`, so
+ * that channel is the only way to surface the reason, and "the stray binary is unreachable" is never
+ * a reason to leave a bearer record a host explicitly asked to forget.
  */
 export async function logoutAnthropicConsole(store: CredentialStore, options: AnthropicConsoleBrokerOptions): Promise<void> {
-  requireBunRuntime("logoutAnthropicConsole", "Bun.spawn", "Signing out spawns the `claude` binary, which needs Bun's subprocess API. Run it under Bun.");
+  requireBunRuntime("logoutAnthropicConsole", "Bun.spawn", "Signing out spawns the `ant` binary, which needs Bun's subprocess API. Run it under Bun.");
   const profile = options.profile ?? DEFAULT_ANTHROPIC_CONSOLE_PROFILE;
-  const spawnFn = options.spawn ?? Bun.spawn;
-  try {
-    const child = spawnFn([options.claudeExecutable, "auth", "logout"], { env: brokerEnv(options, profile), stdout: "pipe", stderr: "pipe" });
-    await child.exited;
-  } catch {
-    // Best-effort, per the doc comment above.
+  if (options.antExecutable === undefined) {
+    options.onLine?.(
+      'the "ant" broker is not installed/resolved (settings.runtimes.antExecutable, or `brew install anthropics/tap/ant`) -- skipping "ant auth logout"; the stored bearer material is still removed',
+    );
+  } else {
+    const spawnFn = options.spawn ?? Bun.spawn;
+    try {
+      const child = spawnFn([options.antExecutable, "auth", "logout", "--profile", profile], { env: brokerEnv(options.anthropicConfigDir), stdout: "pipe", stderr: "pipe" });
+      await child.exited;
+    } catch {
+      // Best-effort, per the doc comment above.
+    }
   }
   await store.delete(anthropicCredentialRef("default", options.service));
 }
