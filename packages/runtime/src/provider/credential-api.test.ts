@@ -17,7 +17,7 @@ import { deleteProviderCredential, providerCredentialRef, startProviderLogin, st
 // BY PACKAGE NAME, as every other runtime test reaches this package (`@yanlinglabs/winter-provider-conformance`
 // is a root devDependency). A deep relative path into another workspace's `src/` is the drift its
 // barrel exists to prevent, and it is what this file did first.
-import { anthropicConsoleOauthFake, codexFake, startFake, xaiOauthFake } from "@yanlinglabs/winter-provider-conformance";
+import { codexFake, startFake, xaiOauthFake } from "@yanlinglabs/winter-provider-conformance";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "test-key-do-not-use-4d9f2a";
@@ -508,27 +508,87 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
   // offer sign-in for all four should compile against one door rather than discover a second one
   // later, and a case that throws a TYPED refusal is a far better thing to ship than a case that is
   // absent from the type and fails at the call site as `never`.
-  test("`anthropic` runs the Console PKCE login and answers with the ref the record now occupies", async () => {
-    const fake = await anthropicConsoleOauthFake.startAnthropicConsoleOauthFake();
+  test("`anthropic` answers with its TYPED refusal (P10a-1) when the broker wiring is missing -- Console OAuth is host-brokered THROUGH Anthropic's own binaries, never an OAuth exchange this SDK runs itself", async () => {
+    const store = createMemoryCredentialStore();
+    let openUrlCalls = 0;
+    const outcome: unknown = await startProviderLogin("anthropic", store, {
+      openUrl: async () => {
+        openUrlCalls += 1;
+      },
+    }).catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(CredentialResolutionError);
+    expect((outcome as CredentialResolutionError).code).toBe("console_login_is_host_brokered");
+    // Named exactly like `qoder`'s refusal below: the two commands the missing wiring stands for.
+    expect((outcome as Error).message).toContain("claude auth login --console");
+    expect((outcome as Error).message).toContain("ant auth print-credentials");
+    // No browser opened and no record written -- a refusal that had done either would be worse than
+    // one that never started.
+    expect(openUrlCalls).toBe(0);
+    expect(store.size()).toBe(0);
+  });
+
+  test("`anthropic` (P10a-1 amendment): with the broker fully wired, this door spawns the real `claude`/`ant` stubs, awaits `readConsoleCode`, and answers with the `anthropic:default` ref", async () => {
+    // Real executable stubs under mkdtemp, exactly like `console-broker.test.ts`'s own fixtures --
+    // this test proves the WIRING (this file's new fields reach `startAnthropicConsoleBrokerLogin`
+    // correctly), not the broker's own behaviour, which that file already covers exhaustively.
+    const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const expectedCode = "test-code-credential-api-9f2a";
+    const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-anthropic-"));
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-credential-api-claude-"));
+    const binDir = mkdtempSync(join(tmpdir(), "winter-credential-api-bin-"));
     try {
+      const claudeExecutable = join(binDir, "claude");
+      writeFileSync(
+        claudeExecutable,
+        [
+          "#!/bin/sh",
+          `echo "Open this URL to continue: https://platform.claude.com/oauth/authorize?client_id=abc&code=${expectedCode}"`,
+          "read -r pasted",
+          `if [ "$pasted" = "${expectedCode}" ]; then`,
+          '  mkdir -p "$ANTHROPIC_CONFIG_DIR/credentials"',
+          '  printf \'{"access_token":"stub","expires_at":1999999999999}\' > "$ANTHROPIC_CONFIG_DIR/credentials/$ANTHROPIC_PROFILE.json"',
+          "  exit 0",
+          "else",
+          '  echo "refused" >&2',
+          "  exit 2",
+          "fi",
+        ].join("\n") + "\n",
+        "utf8",
+      );
+      chmodSync(claudeExecutable, 0o755);
+      const antExecutable = join(binDir, "ant");
+      writeFileSync(antExecutable, "#!/bin/sh\necho fake-bearer-token\n", "utf8");
+      chmodSync(antExecutable, 0o755);
+
       const store = createMemoryCredentialStore();
+      const progressLines: string[] = [];
       const result = await startProviderLogin("anthropic", store, {
-        openUrl: (url) => fake.completeAuthorization(url),
-        authorizeUrl: fake.authorizeUrl,
-        tokenUrl: fake.tokenUrl,
-        profileUrl: fake.profileUrl,
-        callbackPort: 0,
+        openUrl: async () => {
+          throw new Error("this flow never opens a browser -- it prints a URL through the progress channel instead");
+        },
+        claudeExecutable,
+        antExecutable,
+        anthropicConfigDir,
+        claudeConfigDir,
+        readConsoleCode: async () => expectedCode,
+        onAuthStatus: (status) => progressLines.push(...(status.output ?? [])),
       });
-      // The SAME spelling `providerCredentialRef` produces, which is the point of routing through
-      // one door: a host that logs in and a host that looks the credential up agree by construction.
-      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID }));
-      expect(result.accountId).toBe(anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID);
-      expect(result.expiresAt).toBeGreaterThan(Date.now());
-      expect((await store.get(result.ref))?.kind).toBe("oauth");
+
+      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: "default" }));
+      expect(result.accountId).toBe("default");
+      expect(result.expiresAt).toBe(1999999999999);
+      expect(await store.get(result.ref)).toEqual({ kind: "bearer", token: "fake-bearer-token", expiresAt: 1999999999999 });
+      // The URL reached the host over the PROGRESS channel, redacted -- never through `openUrl`.
+      expect(progressLines.some((l) => l.includes("https://platform.claude.com/oauth/authorize?…"))).toBe(true);
+      expect(progressLines.join("\n")).not.toContain(expectedCode);
     } finally {
-      await fake.close();
+      rmSync(anthropicConfigDir, { recursive: true, force: true });
+      rmSync(claudeConfigDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
     }
-  }, 15_000);
+  });
 
   test("`codex-oauth` still routes to its own flow — adding a provider did not move an existing one", async () => {
     const fake = await startFake({ routes: [codexFake.codexTokenRoute({})] });

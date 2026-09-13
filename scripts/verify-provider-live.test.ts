@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { createEnvCredentialStore, createMemoryCredentialStore, CredentialResolutionError, normalizeHttpError, winterUserAgent, type CredentialStore } from "@yanlinglabs/winter-provider-runtime";
-import { anthropicConsoleOauthFake, errorResponse, startFake, xaiOauthFake } from "@yanlinglabs/winter-provider-conformance";
+import { errorResponse, startFake, xaiOauthFake } from "@yanlinglabs/winter-provider-conformance";
 import {
   ADAPTERS_MODULE_VAR,
   bearerStore,
@@ -530,27 +530,71 @@ describe("WS-13b: the `--login` door", () => {
     return { log: (line) => void lines.push(line), lines };
   }
 
-  test("`anthropic` runs the Console PKCE login against the fake and prints the exact CREDENTIAL_REF to export", async () => {
-    const fake = await anthropicConsoleOauthFake.startAnthropicConsoleOauthFake();
+  test("`anthropic` answers with its TYPED refusal (P10a-1) when the broker wiring is missing, rather than opening anything", async () => {
     const io = collect();
+    let openUrlCalls = 0;
+    const ok = await runLogin(
+      "anthropic",
+      { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.test" },
+      {
+        openUrl: async () => {
+          openUrlCalls += 1;
+        },
+        log: io.log,
+        store: createMemoryCredentialStore(),
+      },
+    );
+    expect(ok).toBe(false);
+    expect(openUrlCalls).toBe(0);
+    const printed = io.lines.join("\n");
+    // The two commands the missing wiring stands for -- named exactly like `qoder`'s refusal below.
+    expect(printed).toContain("claude auth login --console");
+    expect(printed).toContain("ant auth print-credentials");
+  });
+
+  test("`anthropic` (P10a-1 amendment): with the broker wired via `overrides`, runs against real `claude`/`ant` stubs and prints the `anthropic:default` CREDENTIAL_REF", async () => {
+    const { mkdtempSync, rmSync, writeFileSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const expectedCode = "test-code-verify-live-9f2a";
+    const anthropicConfigDir = mkdtempSync(join(tmpdir(), "winter-verify-live-anthropic-"));
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-verify-live-claude-"));
+    const binDir = mkdtempSync(join(tmpdir(), "winter-verify-live-bin-"));
     try {
+      const claudeExecutable = join(binDir, "claude");
+      writeFileSync(
+        claudeExecutable,
+        `#!/bin/sh\nread -r pasted\nif [ "$pasted" = "${expectedCode}" ]; then mkdir -p "$ANTHROPIC_CONFIG_DIR/credentials"; printf '{"expires_at":1999999999999}' > "$ANTHROPIC_CONFIG_DIR/credentials/$ANTHROPIC_PROFILE.json"; exit 0; else exit 2; fi\n`,
+        "utf8",
+      );
+      chmodSync(claudeExecutable, 0o755);
+      const antExecutable = join(binDir, "ant");
+      writeFileSync(antExecutable, "#!/bin/sh\necho fake-bearer-token\n", "utf8");
+      chmodSync(antExecutable, 0o755);
+
+      const io = collect();
       const store = createMemoryCredentialStore();
       const ok = await runLogin(
         "anthropic",
         { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.test" },
-        { openUrl: (url) => fake.completeAuthorization(url), log: io.log, store, overrides: { authorizeUrl: fake.authorizeUrl, tokenUrl: fake.tokenUrl, profileUrl: fake.profileUrl, callbackPort: 0 } },
+        {
+          openUrl: async () => {
+            throw new Error("this flow never opens a browser");
+          },
+          log: io.log,
+          store,
+          overrides: { claudeExecutable, antExecutable, anthropicConfigDir, claudeConfigDir, readConsoleCode: async () => expectedCode },
+        },
       );
       expect(ok).toBe(true);
-      const printed = io.lines.join("\n");
-      // The line an operator copies. It names the SERVICE the run stored into, which is the whole
-      // point of the door: the close-out run uses a throwaway service, not `com.winter.core`.
-      expect(printed).toContain(`export WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF='keychain:com.winter.live.test/anthropic:${anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID}'`);
-      // ...and it is not passing because nothing happened: the fake WAS reached and the record IS there.
-      expect((await store.get({ kind: "keychain", account: `anthropic:${anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID}`, service: "com.winter.live.test" }))?.kind).toBe("oauth");
+      expect(io.lines.join("\n")).toContain(`export WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF='keychain:com.winter.live.test/anthropic:default'`);
+      expect((await store.get({ kind: "keychain", account: "anthropic:default", service: "com.winter.live.test" }))?.kind).toBe("bearer");
     } finally {
-      await fake.close();
+      rmSync(anthropicConfigDir, { recursive: true, force: true });
+      rmSync(claudeConfigDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 
   test("`xai-oauth` runs the DEVICE flow: the verification URL and user code arrive on the progress channel, never through openUrl", async () => {
     const fake = await xaiOauthFake.startXaiOauthFake();
