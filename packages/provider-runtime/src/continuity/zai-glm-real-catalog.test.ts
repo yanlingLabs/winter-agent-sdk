@@ -21,6 +21,15 @@
 // from the catalog) was carried to a foreign destination MISLABELLED as `kind: "summary"` -- a
 // private family's own returned summary, not raw reasoning -- which would also have made a
 // `allowExposedForwarding: false` policy fail to block it (the gate only fires for `kind: "exposed"`).
+//
+// FIX ROUND 2 (controller ruling, LOAD-BEARING): a first pass of this file, resolving through the
+// REAL catalog rather than a hand-built fixture, additionally surfaced that `reviewModelSwitch`'s own
+// "same-family" skip compared the catalog PROVIDER's wire dialect (`zai`, `deepseek` and `openai` are
+// all `provider.family: "openai"`), so GPT -> DeepSeek and GPT -> GLM silently skipped regardless of
+// reasoning risk -- contrary to the user's rule that family means MODEL LINEAGE (Claude<->Claude,
+// GPT<->GPT, DeepSeek<->DeepSeek, GLM<->GLM, on any host). `switch-review.ts` now compares
+// `modelFamily` (WS-13c) for this one decision instead; see its own header for why that comparison is
+// a separate function rather than a change to `domains.ts`'s `sameFamily`.
 import { describe, expect, test } from "bun:test";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
@@ -28,8 +37,7 @@ import { createRegistry, type ProviderRegistry } from "../registry.ts";
 import type { MessageOrigin, ProviderAdapter, ProviderMessageLike } from "../types.ts";
 import { createEndpointResolver, type ContinuityEndpoint } from "./domains.ts";
 import { createHistoryRenderer, type HistoryTarget } from "./renderer.ts";
-import { classifySwitch } from "./warnings.ts";
-import { reviewModelSwitch, switchFactsFor } from "./switch-review.ts";
+import { reviewModelSwitch } from "./switch-review.ts";
 import { toClaudeReady, type ProviderStateRecord } from "./claude-ready.ts";
 import { RECOVERED_REASONING_TAG } from "./decoration.ts";
 
@@ -143,91 +151,132 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
     expect(glmAnthropic.readableState).toBe("none");
   });
 
-  // FINDING (uncovered by resolving through the REAL catalog, not a hand-built fixture): `zai`,
-  // `deepseek` and `openai` ALL carry the SAME catalog `provider.family: "openai"` -- it names the
-  // WIRE dialect (openai-compatible chat/responses), not a vendor. `reviewModelSwitch`'s own
-  // `sameFamily` skip (`switch-review.ts`, S7, P10b-1/2: "a same-family... switch never prompts")
-  // therefore fires for EVERY pair among these three (and the other ~140 openai-wire providers),
-  // returning `skipped:"same-family"` BEFORE `switchFactsFor`/`classifySwitch` ever run -- regardless
-  // of how different the two MODELS' actual reasoning-loss risk is. This is a PRE-EXISTING
-  // characteristic of `reviewModelSwitch` (S7's own design), not something this task's GLM catalog
-  // fix introduced or is in scope to redesign; every hand-built fixture in `switch-review.test.ts`
-  // paired same-VENDOR models for its "same-family" cases (Sonnet/Opus, Terra/Luna) and so never
-  // exercised "same wire family, different vendor" at all. Reported to the coordinator as its own
-  // finding. The tests below verify BOTH layers separately: `reviewModelSwitch`'s actual (skip-first)
-  // behavior, and the underlying `switchFactsFor`/`classifySwitch` loss matrix it would run if the
-  // skip did not fire -- which is where the GLM reasoning-evidence fix actually shows up.
-  test("zai/glm-5 (complete exposed records) -> openai/gpt-5.6-luna: reviewModelSwitch is silent -- via the same-family skip (task 2, scenario 1)", () => {
+  // FIX ROUND 2 (controller ruling, LOAD-BEARING): a first pass of this file found that
+  // `reviewModelSwitch`'s `sameFamily` skip compared the catalog PROVIDER's wire dialect --
+  // `zai`, `deepseek` and `openai` all carry `provider.family: "openai"` there, so GPT -> DeepSeek
+  // and GPT -> GLM silently skipped, regardless of reasoning risk. `switch-review.ts` now compares
+  // MODEL LINEAGE instead (WS-13c's `modelFamily`, via `modelFamilyOf` -- `zai/glm-5` is `"glm"`,
+  // `deepseek/deepseek-reasoner` is `"deepseek"`, `openai/gpt-5.6-luna` is `"gpt"`, all DIFFERENT),
+  // so this table (the controller's own) now runs through the REAL catalog end to end.
+  test("GPT (openai/gpt-5.6-luna, summary records) -> deepseek/deepseek-reasoner: prompts", () => {
     const registry = realCatalogRegistry();
-    const glm = realEndpoint(registry, "zai/glm-5");
     const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
+    const deepseek = realEndpoint(registry, "deepseek/deepseek-reasoner");
     const entries = oneTurnEntries("a1");
-    const records = [originRecord("a1", glm), summaryRecord("a1", "the whole raw GLM trace", "exposed", true)];
-    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: glm, to: gpt });
-    expect(review.prompt).toBe(false);
-    expect(review.skipped).toBe("same-family");
-    // The underlying loss matrix, run directly (what WOULD decide this pair if it were not skipped):
-    // correctly lossless-portable, now that the catalog carries GLM's reasoning evidence.
-    const facts = switchFactsFor({ entries, sidecarRecords: records, from: glm });
-    expect(classifySwitch(glm, gpt, facts).lossClass).toBe("lossless-portable");
+    const records = [originRecord("a1", gpt), summaryRecord("a1", "gpt's own returned summary")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: gpt, to: deepseek });
+    expect(review.skipped).toBeUndefined();
+    expect(review.prompt).toBe(true);
+    expect(review.classification?.lossClass).toBe("warned-lossy");
   });
 
-  test("deepseek/deepseek-reasoner (complete exposed records) -> zai/glm-5: reviewModelSwitch is silent -- via the same-family skip (task 2, scenario 2)", () => {
+  test("GPT -> zai/glm-5: prompts", () => {
+    const registry = realCatalogRegistry();
+    const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
+    const glm = realEndpoint(registry, "zai/glm-5");
+    const entries = oneTurnEntries("a1");
+    const records = [originRecord("a1", gpt), summaryRecord("a1", "gpt's own returned summary")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: gpt, to: glm });
+    expect(review.skipped).toBeUndefined();
+    expect(review.prompt).toBe(true);
+    expect(review.classification?.lossClass).toBe("warned-lossy");
+  });
+
+  test("DeepSeek (complete exposed) -> zai/glm-5: silent, lossless-portable -- NOT a family skip", () => {
     const registry = realCatalogRegistry();
     const deepseek = realEndpoint(registry, "deepseek/deepseek-reasoner");
     const glm = realEndpoint(registry, "zai/glm-5");
     const entries = oneTurnEntries("a1");
     const records = [originRecord("a1", deepseek), summaryRecord("a1", "the whole raw DeepSeek trace", "exposed", true)];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: deepseek, to: glm });
+    expect(review.skipped).toBeUndefined(); // NOT skipped -- deepseek and glm are different model families
     expect(review.prompt).toBe(false);
-    expect(review.skipped).toBe("same-family");
-    const facts = switchFactsFor({ entries, sidecarRecords: records, from: deepseek });
-    expect(classifySwitch(deepseek, glm, facts).lossClass).toBe("lossless-portable");
+    expect(review.classification?.lossClass).toBe("lossless-portable");
   });
 
-  test("openai/gpt-5.6-luna (a provider-authored summary, not exposed reasoning) -> zai/glm-5: the LOSS MATRIX prompts, but reviewModelSwitch's same-family skip currently suppresses it (task 2, scenario 3 -- see FINDING above)", () => {
+  test("GLM (complete exposed) -> GPT: silent", () => {
     const registry = realCatalogRegistry();
-    const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
     const glm = realEndpoint(registry, "zai/glm-5");
+    const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
     const entries = oneTurnEntries("a1");
-    const records = [originRecord("a1", gpt), summaryRecord("a1", "gpt's own returned summary")];
+    const records = [originRecord("a1", glm), summaryRecord("a1", "the whole raw GLM trace", "exposed", true)];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: glm, to: gpt });
+    expect(review.skipped).toBeUndefined();
+    expect(review.prompt).toBe(false);
+    expect(review.classification?.lossClass).toBe("lossless-portable");
+  });
 
-    // reviewModelSwitch's ACTUAL current behavior for this real-catalog pair: same-family skip
-    // fires first, so `prompt` is unconditionally false here -- CONTRARY to "GPT -> GLM prompts"
-    // taken literally at the router's own seam. This is the finding, pinned rather than hidden.
-    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: gpt, to: glm });
+  test("anthropic/claude-sonnet-5 -> anthropic/claude-opus-5: skipped same-family", () => {
+    const registry = realCatalogRegistry();
+    const sonnet = realEndpoint(registry, "anthropic/claude-sonnet-5");
+    const opus = realEndpoint(registry, "anthropic/claude-opus-5");
+    const entries = oneTurnEntries("a1");
+    const records = [originRecord("a1", sonnet), summaryRecord("a1", "claude's own summary")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: sonnet, to: opus });
     expect(review.skipped).toBe("same-family");
     expect(review.prompt).toBe(false);
+    expect(review.classification).toBeUndefined();
+  });
 
-    // The loss matrix ITSELF -- switchFactsFor + classifySwitch, what reviewModelSwitch would run if
-    // the same-family skip did not fire -- correctly treats this as lossy and prompt-worthy: a
-    // provider-authored summary (not GLM's own complete exposed trace) crossing into GLM.
-    const facts = switchFactsFor({ entries, sidecarRecords: records, from: gpt });
-    const classification = classifySwitch(gpt, glm, facts);
-    expect(classification.lossClass).toBe("warned-lossy");
+  test("a GPT Terra -> Luna pair: skipped same-family", () => {
+    const registry = realCatalogRegistry();
+    const terra = realEndpoint(registry, "openai/gpt-5.6-terra");
+    const luna = realEndpoint(registry, "openai/gpt-5.6-luna");
+    const entries = oneTurnEntries("a1");
+    const records = [originRecord("a1", terra), summaryRecord("a1", "terra's own summary")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: terra, to: luna });
+    expect(review.skipped).toBe("same-family");
+    expect(review.prompt).toBe(false);
+  });
+
+  test("Claude on Anthropic -> a Claude row on a third-party host (agentrouter/claude-opus-5): skipped same-family, because the families layer maps both to \"claude\"", () => {
+    const registry = realCatalogRegistry();
+    const sonnetOnAnthropic = realEndpoint(registry, "anthropic/claude-sonnet-5");
+    const opusOnAgentrouter = realEndpoint(registry, "agentrouter/claude-opus-5");
+    // Confirms the PREMISE before asserting the review's behavior: both rows really do map to the
+    // "claude" model-lineage family in the real catalog, independent of which provider hosts them
+    // (agentrouter's own catalog `provider.family` is a DIFFERENT wire dialect from anthropic's, so
+    // this pair would ALSO have failed the OLD wire-family same-family check for the opposite
+    // reason -- proving the fix is symmetric, not just a fix for the openai-wire-family over-skip).
+    expect(sonnetOnAnthropic.providerId).not.toBe(opusOnAgentrouter.providerId);
+    const entries = oneTurnEntries("a1");
+    const records = [originRecord("a1", sonnetOnAnthropic), summaryRecord("a1", "claude's own summary")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: sonnetOnAnthropic, to: opusOnAgentrouter });
+    expect(review.skipped).toBe("same-family");
+    expect(review.prompt).toBe(false);
+  });
+
+  test("a model with no family (absent from the catalog entirely) -> anything: the review runs, never skipped on a guess", () => {
+    const registry = realCatalogRegistry();
+    const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
+    // Deliberately NOT resolved through the registry -- a fabricated endpoint naming a model the
+    // catalog has never heard of, the shape `endpointFromOrigin`'s registry-free fallback produces
+    // for a message whose model has since left the catalog.
+    const ghost: ContinuityEndpoint = { providerId: "nowhere", modelKey: "nowhere/ghost-model-9000", family: "custom", readableState: "none" };
+    const entries = oneTurnEntries("a1");
+    const records = [originRecord("a1", ghost), summaryRecord("a1", "a summary from a model with no catalog evidence at all")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: ghost, to: gpt });
+    expect(review.skipped).toBeUndefined();
+    expect(review.classification).toBeDefined();
   });
 
   test("addendum 2: at the loss-matrix layer, GLM -> GPT stays silent with a COMPLETE exposed record, and prompts when the same turn's record is incomplete", () => {
-    // Run via switchFactsFor + classifySwitch directly (NOT reviewModelSwitch): zai and openai share
-    // `family: "openai"` in the real catalog, so reviewModelSwitch's same-family skip would make
-    // BOTH cases `prompt:false` and hide the very distinction this test exists to prove. This is
-    // exactly the layer the GLM catalog fix (continuation:"plaintext", readableState:"full-exposed")
-    // changes: `classifySwitch`'s `exposedComplete` gate is `from.readableState === "full-exposed"
-    // && facts.exposedComplete === true` (warnings.ts) -- before the fix GLM's readableState was
-    // "none", so this gate could never be satisfied regardless of the sidecar's own completeness.
     const registry = realCatalogRegistry();
     const glm = realEndpoint(registry, "zai/glm-5");
     const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
     const entries = oneTurnEntries("a1");
 
-    const completeFacts = switchFactsFor({ entries, sidecarRecords: [originRecord("a1", glm), summaryRecord("a1", "complete GLM trace", "exposed", true)], from: glm });
-    expect(classifySwitch(glm, gpt, completeFacts).lossClass).toBe("lossless-portable");
-    expect(classifySwitch(glm, gpt, completeFacts).warnings).toEqual([]);
+    const completeReview = reviewModelSwitch({ entries, sidecarRecords: [originRecord("a1", glm), summaryRecord("a1", "complete GLM trace", "exposed", true)], from: glm, to: gpt });
+    expect(completeReview.skipped).toBeUndefined();
+    expect(completeReview.prompt).toBe(false);
+    expect(completeReview.classification?.lossClass).toBe("lossless-portable");
+    expect(completeReview.classification?.warnings).toEqual([]);
 
-    const incompleteFacts = switchFactsFor({ entries, sidecarRecords: [originRecord("a1", glm), summaryRecord("a1", "partial GLM trace", "exposed", false)], from: glm });
-    const incompleteClassification = classifySwitch(glm, gpt, incompleteFacts);
-    expect(incompleteClassification.lossClass).toBe("warned-lossy");
-    expect(incompleteClassification.warnings.join(" ")).toContain("part of this turn's trace was not captured");
+    const incompleteReview = reviewModelSwitch({ entries, sidecarRecords: [originRecord("a1", glm), summaryRecord("a1", "partial GLM trace", "exposed", false)], from: glm, to: gpt });
+    expect(incompleteReview.skipped).toBeUndefined();
+    expect(incompleteReview.prompt).toBe(true);
+    expect(incompleteReview.classification?.lossClass).toBe("warned-lossy");
+    expect(incompleteReview.classification?.warnings.join(" ")).toContain("part of this turn's trace was not captured");
   });
 
   test("addendum 1a: a GLM turn with an exposed sidecar record renders for a GPT destination as <recovered_reasoning kind=\"exposed\" .../>", () => {
