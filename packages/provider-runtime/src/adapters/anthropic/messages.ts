@@ -51,8 +51,7 @@ import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type Iden
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
-import { refreshOauthMaterial } from "../oauth/refresh.ts";
-import { ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS } from "./console-oauth.ts";
+import { ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_BEARER } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
   CredentialMaterial,
@@ -118,13 +117,6 @@ export interface AnthropicAdapterOptions {
   /** `anthropic-beta` values, joined with commas. A PROTOCOL header (R6-L): every endpoint needs it to be spoken to, and it names no account. */
   betas?: string[];
   defaultMaxOutputTokens?: number;
-  /**
-   * The OAuth token endpoint a near-expiry `oauth` credential is renewed through (D20).
-   *
-   * Injectable for a fixture exactly as codex's is; production uses `CONSOLE_OAUTH.tokenUrl`. It has
-   * no effect on an `api-key` credential, which is every other row this adapter serves.
-   */
-  tokenUrl?: string;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -507,60 +499,29 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  */
 /**
  * Is this connection the Anthropic Console row, as opposed to a sibling third-party row sharing this
- * adapter (R6b-5)? The gate on BOTH D20 behaviours — the beta header and the refresh.
+ * adapter (R6b-5)? The gate on the beta header (D20).
  */
 function isConsoleProvider(ctx: ProviderContext): boolean {
   return ctx.connection.providerId === ANTHROPIC_CONSOLE_PROVIDER_ID;
 }
 
 /**
- * Reads the credential, RENEWING an `oauth` one that is about to expire (D20).
+ * Reads the credential.
  *
- * BEFORE THE TURN, NOT AFTER A 401. Codex refreshes reactively because a subscription token can be
- * revoked at any moment and only the vendor knows; here the record itself already says when it dies,
- * and spending a turn to be told what `expiresAt` said is a round trip that buys nothing.
- *
- * THREE CONDITIONS, all of them necessary rather than defensive:
- *   - the ref must be a KEYCHAIN one, because `refreshOauthMaterial` persists what it fetches and
- *     R6-10 puts one record per provider/account. An inline or env `oauth` material has nowhere to
- *     write a rotated refresh token back to, and renewing it in memory would drop the new refresh
- *     token on the floor — strictly worse than letting the existing token run its course.
- *   - a refresh token must exist. Without one there is nothing to exchange, and the helper's own
- *     refusal would turn a still-valid access token into a failed turn.
- *   - `expiresAt` must be known. An absent expiry is not "expired": it is the record saying it does
- *     not know, and refreshing on every turn is not what "does not know" implies.
- *
- * A FAILED REFRESH PROPAGATES. `refreshOauthMaterial` leaves the old material exactly as it was and
- * throws a typed error naming the ref (never the token), which is a far more actionable thing for a
- * host to surface than the opaque provider 401 that using a dead token produces a moment later.
+ * RETIRED (2026-09-13, P10a-1): this used to also RENEW an `oauth` credential about to expire, via
+ * `refreshOauthMaterial` against `CONSOLE_OAUTH.tokenUrl`/`clientId` -- the same PKCE client
+ * `console-oauth.ts`'s login used. Both are gone: Console OAuth is host-brokered now, and renewal is
+ * the host's `console-profile-broker` calling `ant auth print-credentials` ahead of expiry (P10a-4),
+ * never this adapter posting a refresh grant to Anthropic's token endpoint under a client id this SDK
+ * no longer holds. A stale `oauth` or `bearer` credential now surfaces as an ordinary upstream 401,
+ * exactly like any other provider whose host owns its own renewal.
  */
-async function resolveFreshMaterial(ctx: ProviderContext, opts: AnthropicAdapterOptions): Promise<CredentialMaterial | null> {
-  const material = await ctx.credentials.get(ctx.authRef);
-  if (material === null || material.kind !== "oauth") return material;
-  // THE PROVIDER GATE, before anything else. See `ANTHROPIC_CONSOLE_PROVIDER_ID`: this adapter is
-  // multi-provider (R6b-5), and refreshing a SIBLING row's credential here would post a third
-  // party's refresh token to Anthropic's token endpoint under Anthropic's client id.
-  if (!isConsoleProvider(ctx)) return material;
-  if (ctx.authRef.kind !== "keychain") return material;
-  if (material.refreshToken === undefined || material.refreshToken.length === 0) return material;
-  if (material.expiresAt === undefined) return material;
-  if (material.expiresAt - Date.now() >= OAUTH_REFRESH_WINDOW_MS) return material;
-  return await refreshOauthMaterial({
-    store: ctx.credentials,
-    ref: ctx.authRef,
-    tokenUrl: opts.tokenUrl ?? CONSOLE_OAUTH.tokenUrl,
-    clientId: CONSOLE_OAUTH.clientId,
-    // The artifact's own refresh grant carries `scope` (the capture's §2.3), and `extraFields` is
-    // the one artifact-observed field the shared helper can already match. Winter sends the scope it
-    // was granted, never the artifact's default list -- which is the inadmissible union.
-    extraFields: { scope: CONSOLE_OAUTH.scope },
-    // R-A2-1: this endpoint is only ever observed receiving JSON, on BOTH grants.
-    bodyEncoding: "json",
-  });
+async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMaterial | null> {
+  return await ctx.credentials.get(ctx.authRef);
 }
 
 async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
-  const material = await resolveFreshMaterial(ctx, opts);
+  const material = await resolveFreshMaterial(ctx);
   // D20: an OAuth bearer and the `oauth_auth` beta travel together on this family -- the pinned
   // artifact's own auth builder is a ternary between `{Authorization, anthropic-beta}` and
   // `{x-api-key}`, and all 13 of its sites that set the beta also set a bearer
@@ -573,7 +534,7 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
   // dialect ships as its own `<id>-anthropic` row on this same `adapterId`, so keying on the
   // material alone would stamp Anthropic's beta on that third party's request. Both widenings put a
   // vendor beta on a host that never asked for it.
-  const betas = [...(opts.betas ?? []), ...(material?.kind === "oauth" && isConsoleProvider(ctx) ? [CONSOLE_OAUTH.betaHeader] : [])].filter((value, index, all) => all.indexOf(value) === index);
+  const betas = [...(opts.betas ?? []), ...(material?.kind === "oauth" && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : [])].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
   // surfaces as an unexplained upstream 400 rather than as anything local.
@@ -956,14 +917,11 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     },
 
     /**
-     * NOT PURELY A READ, since D20. `buildHeaders` renews a near-expiry Console `oauth` credential
-     * and WRITES the fresh material back through the store, so validating one can rotate the record
-     * — and a host that calls this to render a settings pane will have refreshed a token by doing so.
-     *
-     * That is the right behaviour rather than an accident: "is this credential good?" answered from
-     * a token that expires in ten seconds is an answer about the past, and the refresh is exactly
-     * what makes the reply true a moment later. Stated here because a side effect a reader has to
-     * infer from a call three frames down is a side effect that surprises someone eventually.
+     * A plain read (RETIRED 2026-09-13, P10a-1): `buildHeaders` used to also RENEW a near-expiry
+     * Console `oauth` credential and write the fresh material back through the store, so validating
+     * one could rotate the record. That self-refresh is gone -- renewal is the host's
+     * `console-profile-broker` calling `ant auth print-credentials` ahead of expiry now, never this
+     * adapter posting to Anthropic's token endpoint -- so this call has no side effect on the store.
      */
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
       if (ref.kind === "none") return { ok: false, code: "missing", message: "no credential is configured for this connection" };

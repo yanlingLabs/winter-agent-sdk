@@ -16,7 +16,18 @@
 
 import type { CredentialMaterial, CredentialRef, CredentialStore } from "../types.ts";
 
-export type CredentialResolutionCode = "unsupported" | "malformed" | "io";
+export type CredentialResolutionCode =
+  | "unsupported"
+  | "malformed"
+  | "io"
+  /**
+   * P10a-1 (2026-09-13): a `startProviderLogin` refusal, not a store one — added here rather than
+   * reusing `"unsupported"` because a host needs to tell "this login is not wired" (`qoder`) apart
+   * from "this login exists, but it is not this SDK's to run" (Anthropic Console). The Console flow
+   * is host-brokered (`claude auth login --console` / `ant auth print-credentials`); this SDK must
+   * never implement it again.
+   */
+  | "console_login_is_host_brokered";
 
 /**
  * A typed credential failure. **Its message never contains credential material** — construct it from

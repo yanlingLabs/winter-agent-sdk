@@ -73,6 +73,19 @@ executed: both artifacts were read as bytes and deleted.
 
 ## 2. What the artifact contains — the whole OAuth surface, including what Winter refuses
 
+> **RETIRED — host-brokered per the 2026-09-13 ruling (P10a-1).** The derived PKCE login this section
+> justified (`startAnthropicConsoleLogin`, `CONSOLE_OAUTH`'s `clientId`/`authorizeUrl`/`tokenUrl`/
+> `profileUrl`/`callbackPort`/`callbackPath`/`extraAuthorizeParams`/`accountIdPath`/`scope`) was
+> DELETED from `console-oauth.ts` the same day: the platform refused its grant for every derivable
+> request shape, and the user ruled that Console OAuth goes only through Anthropic's own brokers
+> (`claude auth login --console` / `ant auth print-credentials`), never a re-implementation of the
+> OAuth protocol this section describes. Everything below stays as HISTORY — every value was
+> genuinely read out of the pinned artifact, and nothing here disputes that — but only `betaHeader`
+> (§2.1/§2.5) still ships, renamed `CONSOLE_BEARER.betaHeader`, kept because retiring the header is a
+> separate, unmeasured decision (M3). A SAME-DAY AMENDMENT then put the broker that replaced this
+> login (spawning the two binaries above, never speaking OAuth to Anthropic) in this SDK too
+> (`console-broker.ts`), rather than solely in Winter's daemon as the ruling first stated.
+
 Recorded in full so that the exclusions are on the record beside the admissions. The configuration
 object appears identically in both artifacts (`A@805496`, `B@74074572` and `B@153685480`), which is
 the cross-check that the wrapper's copy is the one the executable actually runs.

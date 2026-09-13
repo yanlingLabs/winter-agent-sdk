@@ -120,15 +120,31 @@ describe("the guards fire under a REAL Node process, against the built dist", ()
     ).rejects.toThrow("the Anthropic Console login timed out");
   }, 30_000);
 
-  test("provider-runtime: `startAnthropicConsoleLogin` refuses the same way -- both logins share one guard", async () => {
+  // P10a-1 (2026-09-13): `startAnthropicConsoleLogin` (the derived-PKCE re-implementation) is
+  // RETIRED -- its Bun-required guard test went with it. Its replacement, `console-broker.ts`'s
+  // `Bun.spawn`-based trio, gets its OWN guard tests right below: `Bun.serve` and `Bun.spawn` are
+  // different Bun APIs, so this is a second guard, not a re-test of the one above.
+
+  test("provider-runtime: the console-broker trio all refuse with BunRequiredError, naming Bun.spawn", async () => {
     const r = await underNode(`
       const m = await import("@yanlinglabs/winter-provider-runtime");
-      try { await m.startAnthropicConsoleLogin({}, {}); console.log("NO-THROW"); }
-      catch (e) { console.log(JSON.stringify({ name: e?.name, isTyped: e instanceof m.BunRequiredError, api: e?.bunApi, fn: e?.functionName })); }
+      const out = [];
+      const store = { get: async () => null, set: async () => {}, delete: async () => {} };
+      const opts = { claudeExecutable: "/bin/true", anthropicConfigDir: "/tmp/does-not-matter", claudeConfigDir: "/tmp/does-not-matter" };
+      try { m.startAnthropicConsoleBrokerLogin(store, opts); out.push(["startAnthropicConsoleBrokerLogin", "NO-THROW"]); }
+      catch (e) { out.push(["startAnthropicConsoleBrokerLogin", e?.name, e instanceof m.BunRequiredError, e?.functionName, e?.bunApi]); }
+      try { await m.refreshAnthropicBearer(store, opts); out.push(["refreshAnthropicBearer", "NO-THROW"]); }
+      catch (e) { out.push(["refreshAnthropicBearer", e?.name, e instanceof m.BunRequiredError, e?.functionName, e?.bunApi]); }
+      try { await m.logoutAnthropicConsole(store, opts); out.push(["logoutAnthropicConsole", "NO-THROW"]); }
+      catch (e) { out.push(["logoutAnthropicConsole", e?.name, e instanceof m.BunRequiredError, e?.functionName, e?.bunApi]); }
+      console.log(JSON.stringify(out));
     `);
     expect(r.exitCode).toBe(0);
-    const parsed = JSON.parse(r.out) as { name: string; isTyped: boolean; api: string; fn: string };
-    expect(parsed).toEqual({ name: "BunRequiredError", isTyped: true, api: "Bun.serve", fn: "startAnthropicConsoleLogin" });
+    expect(JSON.parse(r.out)).toEqual([
+      ["startAnthropicConsoleBrokerLogin", "BunRequiredError", true, "startAnthropicConsoleBrokerLogin", "Bun.spawn"],
+      ["refreshAnthropicBearer", "BunRequiredError", true, "refreshAnthropicBearer", "Bun.spawn"],
+      ["logoutAnthropicConsole", "BunRequiredError", true, "logoutAnthropicConsole", "Bun.spawn"],
+    ]);
   }, 60_000);
 
   test("provider-runtime/testing: both loopback fakes refuse", async () => {
@@ -335,6 +351,7 @@ describe("every Bun API use in a Node-declaring publishable package is accounted
     "packages/provider-runtime/src/adapters/openai/pkce.ts": "`Bun.serve` in `runLoginFlow`, which guards first; both published logins funnel through it",
     "packages/provider-runtime/src/adapters/openai/xai-oauth.testing.ts": "`Bun.serve` in the two loopback fakes, each guarded at its own entry",
     "packages/conformance/src/official/capture.ts": "`Bun.spawn` + `Bun.serve` throughout, and `runCapture` is the file's ONLY export, guarded as its first statement",
+    "packages/provider-runtime/src/adapters/anthropic/console-broker.ts": "`Bun.spawn` in the host-brokered Console login trio (P10a-1 amendment), each of the three exported entry points guarded first",
   };
 
   /** Every publishable package that declares `engines.node`, from the manifests -- never a hand list. */

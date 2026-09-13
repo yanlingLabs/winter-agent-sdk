@@ -75,18 +75,29 @@ export type { KeychainRef, OauthMaterial, RefreshOauthMaterialInput } from "./ad
 export { runDeviceCodeFlow } from "./adapters/oauth/device-code.ts";
 export type { DeviceCodeConfig } from "./adapters/oauth/device-code.ts";
 
-// WS-13b D20: the Anthropic Console OAuth login, published so `runtime`'s `startProviderLogin` can
-// reach it by package name. Exported from HERE rather than from `adapters/index.ts` — which the
-// star-export below already republishes — because the widening lanes edit that file concurrently and
-// this is the one place the two additions cannot collide.
 // P7a fix wave r2 (item 3, re-review N1): the typed refusal a Bun-only export throws off Bun.
 // `engines.node` on this package means IMPORTABLE under Node, not runnable on every path -- and the
 // compiled emit is what made that distinction reachable, since a Node consumer now gets past
 // `import`. Exported so a caller can `catch (e) { if (e instanceof BunRequiredError) ... }` rather
 // than matching a message. The Bun-only functions are listed in this package's README.
 export { BunRequiredError, hasBunRuntime, requireBunRuntime } from "./bun-required.ts";
-export { CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS, anthropicCredentialRef, startAnthropicConsoleLogin } from "./adapters/anthropic/index.ts";
-export type { AnthropicConsoleLoginOptions, AnthropicConsoleLoginResult } from "./adapters/anthropic/index.ts";
+// WS-13b D20 (RETIRED 2026-09-13, P10a-1): `startAnthropicConsoleLogin` (the derived-PKCE
+// re-implementation) and its login-only constants are gone. `CONSOLE_BEARER` (renamed from
+// `CONSOLE_OAUTH`) and `anthropicCredentialRef` are what remain; exported from HERE rather than from
+// `adapters/index.ts` — which the star-export below already republishes — for the same collision
+// reason the original comment gave.
+export { CONSOLE_BEARER, anthropicCredentialRef } from "./adapters/anthropic/index.ts";
+// D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13): the SDK-owned replacement, spawning Anthropic's
+// OWN broker binaries (`claude auth login --console` / `ant auth print-credentials`) rather than
+// re-implementing OAuth. Exported from here for the same reason as the line above.
+export {
+  DEFAULT_ANTHROPIC_CONSOLE_PROFILE,
+  anthropicConsoleProfileExists,
+  logoutAnthropicConsole,
+  refreshAnthropicBearer,
+  startAnthropicConsoleBrokerLogin,
+} from "./adapters/anthropic/index.ts";
+export type { AnthropicConsoleBrokerOptions, AnthropicConsoleLoginHandle } from "./adapters/anthropic/index.ts";
 export { parseSse } from "./sse.ts";
 export type { SseEvent, SseOptions } from "./sse.ts";
 export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";

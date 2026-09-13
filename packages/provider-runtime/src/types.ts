@@ -58,7 +58,18 @@ export interface ConnectionProfile {
  */
 export type CredentialMaterial =
   | { kind: "api-key"; key: string }
-  | { kind: "bearer"; token: string }
+  | {
+      kind: "bearer";
+      token: string;
+      /**
+       * P10a-4 (2026-09-13): when the token is host-brokered and renewable (Anthropic Console's
+       * `ant auth print-credentials`, refreshed on a timer ahead of expiry), the host stamps this so
+       * the renewer knows when to run again. OPTIONAL: most `bearer` material (a gateway or proxy
+       * token a host pastes in by hand) has no known expiry, and absence must read as "unknown", not
+       * "already expired" -- the same reasoning `oauth`'s own `expiresAt` already follows below.
+       */
+      expiresAt?: number;
+    }
   | { kind: "oauth"; accessToken: string; refreshToken?: string; expiresAt?: number; accountId?: string; idToken?: string }
   | { kind: "aws"; accessKeyId: string; secretAccessKey: string; sessionToken?: string }
   | { kind: "gcp-service-account"; clientEmail: string; privateKeyPem: string; tokenUri: string }
