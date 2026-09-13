@@ -397,8 +397,12 @@ export async function startProviderLogin(providerId: ProviderLoginId, store: Cre
       // why it is never going to need one -- a bad profile, a broker binary that refuses before any
       // prompt, anything that makes `done` settle first. Whichever settles first decides the
       // outcome; the code is submitted only when it genuinely won the race.
+      // A losing `readConsoleCode()` that later REJECTS must not surface as an unhandled rejection
+      // (re-review r1, minor): the outcome is already decided by `handle.done`.
+      const codePromise = options.readConsoleCode().then((code): { kind: "code"; code: string } => ({ kind: "code", code }));
+      codePromise.catch(() => {});
       const settled = await Promise.race([
-        options.readConsoleCode().then((code): { kind: "code"; code: string } => ({ kind: "code", code })),
+        codePromise,
         handle.done.then((outcome): { kind: "done"; outcome: Awaited<typeof handle.done> } => ({ kind: "done", outcome })),
       ]);
       if (settled.kind === "code") {
