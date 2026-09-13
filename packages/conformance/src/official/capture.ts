@@ -1900,9 +1900,12 @@ const COMPACTION_GOLDEN_VOLATILE_METADATA = new Set(["preTokens", "postTokens", 
 
 /**
  * Strips the fields that differ on every real capture (uuids, timestamps, host/session identity,
- * the numeric token/timing counters, and any preserved-message relink data — Winter's own writer
- * never reproduces `preservedMessages`/`preservedSegment`, P10b-7) while keeping `parentUuid` when
- * it is the fixed `null` the boundary always carries (that value IS the shape, not noise).
+ * the numeric token/timing counters, and any preserved-message relink data — `preservedMessages`/
+ * `preservedSegment` name capture-specific uuids, so they vary run to run even though, since fix
+ * round 1, Winter's own writer DOES reproduce `compactMetadata.preservedMessages` byte-shape-exact
+ * to this golden — see `claudeCompactBoundaryEntry`'s own header in `dialect.ts`) while keeping
+ * `parentUuid` when it is the fixed `null` the boundary always carries (that value IS the shape,
+ * not noise).
  */
 export function normalizeCompactionEntry(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
