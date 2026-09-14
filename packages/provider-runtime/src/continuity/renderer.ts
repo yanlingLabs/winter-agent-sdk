@@ -363,10 +363,14 @@ function visibleThinkingText(content: string | ContentBlockLike[]): string | und
  * but Anthropic-family `thinking.signature` and `redacted_thinking.data` ride IN THE CONTENT, as
  * in-dialect blocks, because the dialect defines them. A renderer that dropped only `nativeState`
  * would hand a target another provider's signed blocks verbatim -- which is exactly what §12.4's
- * "the target never receives the source opaque state" forbids, and which the identity renderer could
- * not do anything about because decoration (and therefore this strip) is Lane C's.
+ * "the target never receives the source opaque state" forbids.
+ *
+ * EXPORTED (micro-round Minor 2) so `winter-agent-runtime`'s much simpler T3-era identity renderer
+ * (`bridge.ts`'s `createIdentityHistoryRenderer`) can delegate to the SAME stripping logic for its
+ * own no-origin fail-closed fix, rather than reimplementing the two-carrier rule a second time and
+ * risking the two copies drifting apart on what counts as opaque.
  */
-function stripOpaque(message: ProviderMessageLike): { nativeState?: ProviderNativeState; content: string | ContentBlockLike[]; strippedBlocks: number } {
+export function stripOpaque(message: ProviderMessageLike): { nativeState?: ProviderNativeState; content: string | ContentBlockLike[]; strippedBlocks: number } {
   const nativeState = message.nativeState;
   if (typeof message.content === "string") {
     return { ...(nativeState !== undefined ? { nativeState } : {}), content: message.content, strippedBlocks: 0 };

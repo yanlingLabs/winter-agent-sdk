@@ -14,7 +14,7 @@ export type { Decoration, DecorationDoor, DecorationInput, DecorationKind, Decor
 export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
 export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.ts";
 
-export { applyDecorationToContent, createHistoryRenderer } from "./renderer.ts";
+export { applyDecorationToContent, createHistoryRenderer, stripOpaque } from "./renderer.ts";
 export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOptions, HistoryTarget, MaterialKind, RenderReport, RenderedDecoration, WinterHistoryRenderer } from "./renderer.ts";
 
 export { classifySwitch } from "./warnings.ts";
