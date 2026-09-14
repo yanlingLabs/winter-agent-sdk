@@ -115,6 +115,23 @@ export function familyOfModelKey(catalog: WinterCatalog, modelKey: string): Mode
 }
 
 /**
+ * WS-13c model-family (lineage) id of one endpoint's model -- Sonnet/Opus/Haiku/Fable are ALL
+ * `"claude"`, on any host; the analogous fact holds for GPT/Gemini/DeepSeek/GLM. This is `row.modelFamily`
+ * directly, never `WinterProviderDescriptor.family` (the wire/adapter dialect a provider speaks --
+ * `zai`, `deepseek` and `openai` are all `"openai"` there, R13c-1's own distinction).
+ *
+ * Resolved by the endpoint's model IDENTITY: `modelKey` first (the stable `<providerId>/<upstreamId>`
+ * catalog key every `ContinuityEndpoint` carries once resolved through a real registry), falling back
+ * to `${providerId}/${modelKey}` for a caller holding a bare provider-local id. `undefined` when
+ * NEITHER form resolves to a catalog row -- an honest "unknown", never a guess: a caller comparing two
+ * unknowns (or comparing against the `"other"` catch-all bucket) must never treat them as one family.
+ */
+export function modelFamilyOf(catalog: WinterCatalog, providerId: string, modelKey: string): string | undefined {
+  const row = catalog.models.find((m) => m.key === modelKey) ?? catalog.models.find((m) => m.key === `${providerId}/${modelKey}`);
+  return row?.modelFamily;
+}
+
+/**
  * Can this row serve a slot at all? (WS-13c §4 step 1.)
  *
  * ONE predicate, deliberately, and it is what fix round 1's I-3 closed: the validator's

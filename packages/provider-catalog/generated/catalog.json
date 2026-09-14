@@ -38065,6 +38065,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-4.7",
       "modelFamily": "glm"
     },
@@ -38111,6 +38143,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-4.7-flash",
       "modelFamily": "glm"
     },
@@ -38157,6 +38221,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-5",
       "modelFamily": "glm"
     },
@@ -38203,6 +38299,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-5-turbo",
       "modelFamily": "glm"
     },
@@ -38249,6 +38377,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-5.1",
       "modelFamily": "glm"
     },
@@ -38295,6 +38455,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-5.2",
       "modelFamily": "glm"
     },
@@ -38341,6 +38533,38 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”. GLM-5.3/GLM-5.3-FLASH additionally use FORCED thinking — “GLM-5.3 and GLM-5.3-FLASH no longer support disabling thinking” (same page) — so `supported` is unconditional for this row, never gated on a `thinking.type` request.",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — the non-streaming response example carries the assistant message's ordinary `content` alongside a sibling `reasoning_content` string field (both plain readable text); streaming deltas carry the same split via `delta.reasoning_content` / `delta.content`",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `ChatThinking.clear_thinking`: “`false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered historical `reasoning_content` in `messages`”",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "silent-degradation",
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
+          "confidence": "declared",
+          "observedAt": "2026-09-14T00:00:00Z"
+        }
+      },
       "canonicalModelId": "glm-5.3",
       "modelFamily": "glm"
     },

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { canonicalModelIdOf, familyIdOf, resolveSlotName, stampFamilyFields, CLAUDE_RESERVED_SLOT_NAMES, SLOT_NAME_RE } from "./families.ts";
-import type { ModelFamilyDescriptor } from "./types.ts";
+import { canonicalModelIdOf, familyIdOf, modelFamilyOf, resolveSlotName, stampFamilyFields, CLAUDE_RESERVED_SLOT_NAMES, SLOT_NAME_RE } from "./families.ts";
+import type { ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor } from "./types.ts";
 
 const FAMILIES: ModelFamilyDescriptor[] = [
   { id: "claude", displayName: "Claude", vendor: "Anthropic", vendorProviders: ["anthropic"], matchers: [{ pattern: "^claude-", note: "" }], status: "supported", citation: "spec:WS-13c §9",
@@ -91,5 +91,70 @@ describe("resolveSlotName — active set first, unique foreign names, ambiguity,
     expect(SLOT_NAME_RE.test("grok-4.6")).toBe(true);
     expect(SLOT_NAME_RE.test("Master")).toBe(false);
     expect(SLOT_NAME_RE.test("a".repeat(33))).toBe(false);
+  });
+});
+
+// --- modelFamilyOf ------------------------------------------------------------------------------
+
+function row(overrides: Partial<WinterModelDescriptor> & { key: string; providerId: string; upstreamId: string; modelFamily: string }): WinterModelDescriptor {
+  return {
+    canonicalModelId: overrides.upstreamId,
+    displayName: overrides.key,
+    aliases: [],
+    endpoints: ["chat"],
+    inputModalities: { value: ["text"], source: "winter-default", confidence: "unknown" },
+    outputModalities: { value: ["text"], source: "winter-default", confidence: "unknown" },
+    toolCalling: { value: "none", source: "winter-default", confidence: "unknown" },
+    nativeTools: { value: false, source: "winter-default", confidence: "unknown" },
+    unsupportedParameters: [],
+    status: "candidate",
+    ...overrides,
+  };
+}
+
+function catalogOf(models: WinterModelDescriptor[]): WinterCatalog {
+  return {
+    schemaVersion: 2,
+    catalogVersion: "test",
+    upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
+    providers: [],
+    models,
+    families: [],
+  };
+}
+
+describe("modelFamilyOf — MODEL lineage (Claude/GPT/Gemini/DeepSeek/GLM), never the wire-dialect provider.family", () => {
+  const catalog = catalogOf([
+    row({ key: "anthropic/claude-sonnet-5", providerId: "anthropic", upstreamId: "claude-sonnet-5", modelFamily: "claude" }),
+    row({ key: "agentrouter/claude-opus-5", providerId: "agentrouter", upstreamId: "claude-opus-5", modelFamily: "claude" }),
+    row({ key: "zai/glm-5", providerId: "zai", upstreamId: "glm-5", modelFamily: "glm" }),
+    row({ key: "deepseek/deepseek-reasoner", providerId: "deepseek", upstreamId: "deepseek-reasoner", modelFamily: "deepseek" }),
+    row({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna", modelFamily: "gpt" }),
+    row({ key: "somehost/mystery-model", providerId: "somehost", upstreamId: "mystery-model", modelFamily: "other" }),
+  ]);
+
+  test("resolves by the qualified catalog key -- the shape a real registry-resolved ContinuityEndpoint carries", () => {
+    expect(modelFamilyOf(catalog, "anthropic", "anthropic/claude-sonnet-5")).toBe("claude");
+    expect(modelFamilyOf(catalog, "zai", "zai/glm-5")).toBe("glm");
+  });
+
+  test("two different providers hosting the SAME model lineage resolve to the SAME family", () => {
+    expect(modelFamilyOf(catalog, "anthropic", "anthropic/claude-sonnet-5")).toBe(modelFamilyOf(catalog, "agentrouter", "agentrouter/claude-opus-5"));
+  });
+
+  test("zai (glm) and openai (gpt) resolve to DIFFERENT families, even though their catalog provider.family (the wire dialect) is identical (\"openai\")", () => {
+    expect(modelFamilyOf(catalog, "zai", "zai/glm-5")).not.toBe(modelFamilyOf(catalog, "openai", "openai/gpt-5.6-luna"));
+  });
+
+  test("falls back to `${providerId}/${modelKey}` for a bare provider-local id", () => {
+    expect(modelFamilyOf(catalog, "zai", "glm-5")).toBe("glm");
+  });
+
+  test("a model with no matching catalog row is undefined -- unknown, never guessed", () => {
+    expect(modelFamilyOf(catalog, "nowhere", "nowhere/ghost-model")).toBeUndefined();
+  });
+
+  test("\"other\" is still a REAL (non-undefined) family id -- callers that must never treat two unrelated models as the same family have their own additional check for it", () => {
+    expect(modelFamilyOf(catalog, "somehost", "somehost/mystery-model")).toBe("other");
   });
 });

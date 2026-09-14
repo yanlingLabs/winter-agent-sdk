@@ -11,9 +11,16 @@
 // `reviewModelSwitch` is the seam the router's `reviewSwitch` (Lane R) and the daemon's pre-flight
 // call both end up running: three skips, evaluated in order (same-profile, same-family, zero source
 // turns), and otherwise the existing loss matrix, unchanged.
+//
+// Fix round 2 (controller ruling, LOAD-BEARING): "same-family" here means MODEL LINEAGE (WS-13c's
+// `modelFamily` -- Claude/GPT/Gemini/DeepSeek/GLM), never the catalog PROVIDER's wire dialect
+// `domains.ts`'s own `sameFamily` compares (`zai`, `deepseek` and `openai` are all `"openai"` there).
+// See `sameModelFamily` below for the comparison and why it is deliberately its own function rather
+// than a change to `domains.ts`.
 import type { SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import { loadCatalog, modelFamilyOf, OTHER_FAMILY_ID, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderStateRecord } from "./claude-ready.ts";
-import { sameFamily, type ContinuityEndpoint } from "./domains.ts";
+import type { ContinuityEndpoint } from "./domains.ts";
 import { classifySwitch, type SwitchClassification, type SwitchFacts } from "./warnings.ts";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -164,17 +171,57 @@ export function switchFactsFor(args: { entries: SessionStoreEntry[]; sidecarReco
 
 export type SwitchReview = { prompt: boolean; skipped?: "same-family" | "no-source-turns" | "same-profile"; classification?: SwitchClassification };
 
+// --- same-family, by MODEL LINEAGE (controller ruling, fix round 2) --------------------------------
+//
+// `domains.ts`'s `sameFamily` compares `ContinuityEndpoint.family` -- the catalog PROVIDER's wire
+// dialect (R13c-1's own distinction: `zai`, `deepseek` and `openai` are ALL `"openai"` there). This
+// review's own "same-family never prompts" skip (P10b-1/2) is a DIFFERENT claim: the user's rule is
+// family by MODEL LINEAGE -- Claude <-> Claude (Sonnet/Opus/Haiku/Fable, on any host), GPT <-> GPT
+// (Terra/Luna/Sol/Astra...), Gemini <-> Gemini, DeepSeek <-> DeepSeek, GLM <-> GLM. Using the wire
+// dialect here made GPT -> DeepSeek and GPT -> GLM skip silently (R-10b-8 requires them to prompt).
+//
+// So this comparison is DELIBERATELY SEPARATE from `domains.ts`'s `sameFamily` -- which keeps its own
+// meaning for whatever else compares wire dialects (renderer.ts does not; nothing else in this
+// package currently calls it) -- and lives here, next to the one caller that needs model lineage.
+//
+// WS-13c's `modelFamily` (`provider-catalog/src/families.ts`) is the model-lineage layer: derived at
+// build from the model's own canonical id, independent of which provider/dialect serves it. Resolved
+// via `modelFamilyOf(catalog, providerId, modelKey)`.
+let compiledCatalog: WinterCatalog | undefined;
+function catalogFor(catalog: WinterCatalog | undefined): WinterCatalog {
+  return catalog ?? (compiledCatalog ??= loadCatalog());
+}
+
 /**
- * The ONE pre-flight review (W18-20/21). Skips apply IN ORDER -- same-profile, same-family
- * (`sameFamily`), zero source turns -- each returning BEFORE `switchFactsFor`/`classifySwitch` ever
- * run (P10b-1/2: a same-family or no-op switch never prompts, and the router decides every skip, not
- * the daemon). Otherwise the existing loss matrix classifies, unchanged: `prompt` is exactly
- * `classification.lossClass === "warned-lossy"`.
+ * TRUE only when BOTH sides resolve to the SAME NAMED model-family id. An UNKNOWN family on either
+ * side (no matching catalog row) is NEVER same-family -- the review must run and let `classifySwitch`
+ * decide, rather than silently skip on a guess. `"other"` (WS-13c's catch-all for a row no matcher
+ * claims) is treated the SAME way: two `"other"` rows share no proven lineage with each other, so
+ * comparing them equal would be exactly the kind of guess this function exists to refuse.
  */
-export function reviewModelSwitch(args: { entries: SessionStoreEntry[]; sidecarRecords: ProviderStateRecord[]; from: ContinuityEndpoint; to: ContinuityEndpoint; truncated?: boolean }): SwitchReview {
+function sameModelFamily(a: ContinuityEndpoint, b: ContinuityEndpoint, catalog: WinterCatalog): boolean {
+  const familyOfA = modelFamilyOf(catalog, a.providerId, a.modelKey);
+  const familyOfB = modelFamilyOf(catalog, b.providerId, b.modelKey);
+  if (familyOfA === undefined || familyOfB === undefined) return false;
+  if (familyOfA === OTHER_FAMILY_ID || familyOfB === OTHER_FAMILY_ID) return false;
+  return familyOfA === familyOfB;
+}
+
+/**
+ * The ONE pre-flight review (W18-20/21). Skips apply IN ORDER -- same-profile, same-family (by MODEL
+ * LINEAGE, `sameModelFamily` above -- fix round 2), zero source turns -- each returning BEFORE
+ * `switchFactsFor`/`classifySwitch` ever run (P10b-1/2: a same-family or no-op switch never prompts,
+ * and the router decides every skip, not the daemon). Otherwise the existing loss matrix classifies,
+ * unchanged: `prompt` is exactly `classification.lossClass === "warned-lossy"`.
+ *
+ * `catalog` is an injection seam for tests ONLY (mirrors `adapters/anthropic/messages.ts`'s own
+ * `opts.catalog ?? loadCatalog()` pattern) -- every production caller omits it and gets the real
+ * compiled catalog, loaded once and memoised.
+ */
+export function reviewModelSwitch(args: { entries: SessionStoreEntry[]; sidecarRecords: ProviderStateRecord[]; from: ContinuityEndpoint; to: ContinuityEndpoint; truncated?: boolean; catalog?: WinterCatalog }): SwitchReview {
   const sameProfile = args.from.providerId === args.to.providerId && args.from.modelKey === args.to.modelKey;
   if (sameProfile) return { prompt: false, skipped: "same-profile" };
-  if (sameFamily(args.from, args.to)) return { prompt: false, skipped: "same-family" };
+  if (sameModelFamily(args.from, args.to, catalogFor(args.catalog))) return { prompt: false, skipped: "same-family" };
 
   const facts = switchFactsFor({ entries: args.entries, sidecarRecords: args.sidecarRecords, from: args.from });
   if (facts.sourceTurns === 0) return { prompt: false, skipped: "no-source-turns" };

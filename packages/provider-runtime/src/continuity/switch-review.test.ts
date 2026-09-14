@@ -1,8 +1,50 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { reviewModelSwitch, switchFactsFor } from "./switch-review.ts";
 import type { ProviderStateRecord } from "./claude-ready.ts";
 import type { ContinuityEndpoint } from "./domains.ts";
+
+// Fix round 2 (controller ruling): `reviewModelSwitch`'s own "same-family" skip compares MODEL
+// LINEAGE (WS-13c's `modelFamily`), resolved through a real-or-injected catalog -- never the fake
+// endpoints' own `.family` string (that field is now read ONLY for `ContinuityEndpoint.family`'s
+// other purposes, e.g. `classifySwitch`'s prose). SONNET/OPUS/TERRA/LUNA below are fixture keys that
+// do not exist in the REAL compiled catalog, so a same-family test for them needs its own tiny
+// injected catalog naming their lineage explicitly -- every OTHER fixture key here (GPT/CLAUDE/
+// DEEPSEEK/GLM) is deliberately left OUT of it, so it resolves "unknown family" against both the
+// real catalog and this one, which is exactly the fact those tests need ("no family evidence on
+// either side never buys a same-family skip").
+function familyRow(key: string, providerId: string, modelFamily: string): WinterModelDescriptor {
+  return {
+    key,
+    providerId,
+    upstreamId: key.slice(providerId.length + 1),
+    modelFamily,
+    canonicalModelId: key.slice(providerId.length + 1),
+    displayName: key,
+    aliases: [],
+    endpoints: ["chat"],
+    inputModalities: { value: ["text"], source: "winter-default", confidence: "unknown" },
+    outputModalities: { value: ["text"], source: "winter-default", confidence: "unknown" },
+    toolCalling: { value: "none", source: "winter-default", confidence: "unknown" },
+    nativeTools: { value: false, source: "winter-default", confidence: "unknown" },
+    unsupportedParameters: [],
+    status: "candidate",
+  };
+}
+const FIXTURE_CATALOG: WinterCatalog = {
+  schemaVersion: 2,
+  catalogVersion: "test",
+  upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
+  providers: [],
+  families: [],
+  models: [
+    familyRow("anthropic/sonnet", "anthropic", "claude"),
+    familyRow("anthropic/opus", "anthropic", "claude"),
+    familyRow("openai/terra", "openai", "gpt"),
+    familyRow("openai/luna", "openai", "gpt"),
+  ],
+};
 
 function origin(anchorUuid: string, providerId: string, modelKey: string, family: string): ProviderStateRecord {
   return { type: "winter_provider_state", uuid: `${anchorUuid}-o`, timestamp: "t", sessionId: "s", anchorUuid, provider: providerId, model: modelKey, family, itemIndex: 0, kind: "origin", payload: {} };
@@ -78,21 +120,29 @@ describe("reviewModelSwitch (W18-20/21)", () => {
     expect(review.prompt).toBe(true);
   });
 
-  test("Sonnet -> Opus: skipped same-family", () => {
+  test("Sonnet -> Opus: skipped same-family (by MODEL LINEAGE, via the injected fixture catalog)", () => {
     const entries = oneTurnEntries("a1");
     const records = [origin("a1", SONNET.providerId, SONNET.modelKey, SONNET.family), summary("a1", "s")];
-    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS });
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS, catalog: FIXTURE_CATALOG });
     expect(review.prompt).toBe(false);
     expect(review.skipped).toBe("same-family");
     expect(review.classification).toBeUndefined();
   });
 
-  test("Terra -> Luna: skipped same-family", () => {
+  test("Terra -> Luna: skipped same-family (by MODEL LINEAGE, via the injected fixture catalog)", () => {
     const entries = oneTurnEntries("a1");
     const records = [origin("a1", TERRA.providerId, TERRA.modelKey, TERRA.family), summary("a1", "s")];
-    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: TERRA, to: LUNA });
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: TERRA, to: LUNA, catalog: FIXTURE_CATALOG });
     expect(review.prompt).toBe(false);
     expect(review.skipped).toBe("same-family");
+  });
+
+  test("Sonnet -> Opus WITHOUT the fixture catalog: no family evidence on either side (fake keys, absent from the real catalog) never buys a same-family skip -- the review runs", () => {
+    const entries = oneTurnEntries("a1");
+    const records = [origin("a1", SONNET.providerId, SONNET.modelKey, SONNET.family), summary("a1", "s")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS });
+    expect(review.skipped).toBeUndefined();
+    expect(review.classification).toBeDefined();
   });
 
   test("GPT with ZERO assistant turns since the last boundary -> Claude: skipped no-source-turns", () => {
