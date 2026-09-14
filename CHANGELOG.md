@@ -29,6 +29,21 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `redacted_thinking` renders, for an Anthropic-dialect destination, into a wire body (via
   `toWireMessages`, the one adapter that would otherwise pass such blocks through verbatim)
   containing neither.
+- Review micro-round on the fail-closed fix above:
+  - The fail-closed branch now sets `report.truncated = true` whenever it actually destroys real
+    reasoning content (a `thinking` block's own text, a `redacted_thinking` block, or `nativeState`)
+    -- previously it dropped the material but never flipped the ONE flag the engine's switch point
+    reads to escalate a transfer to warned-lossy (§9.6). Left `false` for the identity case and for a
+    stale-decoration-only removal. `RenderReport`'s own `truncated` doc updated to name this source.
+  - `winter-agent-runtime`'s much simpler `createIdentityHistoryRenderer` (`bridge.ts`) had the exact
+    same hole its own header used to name and accept: a no-origin message's `thinking`/
+    `redacted_thinking` blocks rode through untouched. It now delegates to `provider-runtime`'s own
+    `stripOpaque` (newly exported for this) rather than reimplementing the two-carrier rule, layered
+    on top of its existing nativeState domain check rather than replacing it. Object identity
+    preserved when nothing changes; all pre-existing tests on this function pass unmodified.
+  - Added a test pinning the origin-resolution precedence (`message.origin` > sidecar chain origin >
+    structural `message.model`) with all three sources present and naming different, contradicting
+    catalog rows.
 - No fixture family for "Winter resumes/renders an official-transcript" exists in `winter-conformance`
   today (the existing `resume-conformance.test.ts` family runs the opposite direction: a
   Winter-written transcript resumed by the real pinned binary) -- noted for a future, separately
