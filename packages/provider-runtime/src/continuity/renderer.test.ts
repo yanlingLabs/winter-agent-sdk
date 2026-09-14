@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createRegistry, type ProviderRegistry } from "../registry.ts";
 import type { ContentBlockLike, ProviderMessageLike } from "../types.ts";
+import { toWireMessages } from "../adapters/anthropic/messages.ts";
 import { RECOVERED_REASONING_TAG } from "./decoration.ts";
 import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "./fixtures.ts";
 import { applyDecorationToContent, createHistoryRenderer, type ContinuationChainLike, type ContinuationLinkLike, type HistoryTarget } from "./renderer.ts";
@@ -435,5 +436,62 @@ describe("W18-17 (G1): an official-written entry with no sidecar origin", () => 
     // still be present, because the target is claude itself.
     expect(JSON.stringify(content)).toContain("SIG-FIRST-OPAQUE");
     expect(report.replayedNatively).toBe(0); // no nativeState on this message -- the counter is for THAT carrier, not for the thinking blocks
+  });
+});
+
+// --- fix round 3 (P10b-6, controller ruling, LOAD-BEARING): FAIL CLOSED on unresolved origin ------
+describe("fail-closed: a message whose origin cannot be resolved at all never rides its opaque state onto an ANTHROPIC-dialect wire body", () => {
+  test("no message.origin, no sidecar chain record, no usable structural model -- and REAL wire serialization (toWireMessages) proves no signature, no redacted_thinking reach it", () => {
+    // This is the ONE destination family where failing to strip is not silently swallowed by an
+    // adapter's own unrecognized-block-type default: Anthropic's `toWireMessages` passes `thinking`/
+    // `redacted_thinking` through VERBATIM, signature and opaque data intact (messages.ts's own
+    // comment). So this is the test that actually proves the wire body, not just the intermediate
+    // ProviderMessage shape.
+    const unresolved: ProviderMessageLike = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "secret unattributed reasoning", signature: "SIG-SHOULD-NEVER-REACH-THE-WIRE" },
+        { type: "redacted_thinking", data: "REDACTED-SHOULD-NEVER-REACH-THE-WIRE" },
+        { type: "text", text: "the visible final answer" },
+      ],
+      // Deliberately NO origin, NO uuid (so the chain lookup finds nothing), and no `.model` --
+      // every one of the three provenance sources the renderer tries is absent.
+    };
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([unresolved], chainOf({}), CLAUDE_A);
+
+    // The intermediate shape: opaque carriers gone, decoration never invented (no honest provider/
+    // model to attribute it to), visible text untouched.
+    expect(messages[0]!.decoration).toBeUndefined();
+    const content = messages[0]!.content as ContentBlockLike[];
+    expect(content.map((b) => b.type)).toEqual(["text"]);
+    expect(content[0]).toEqual({ type: "text", text: "the visible final answer" });
+    expect(report.strippedInDialectBlocks).toBe(2);
+    expect(report.decorations).toHaveLength(0);
+    expect(report.withoutMaterial).toBe(1); // the visible thinking text existed and was deliberately dropped, not carried
+
+    // The REAL wire body an Anthropic-dialect adapter would actually send.
+    const wire = toWireMessages(messages);
+    const wireJson = JSON.stringify(wire);
+    expect(wireJson).not.toContain("signature");
+    expect(wireJson).not.toContain("redacted_thinking");
+    expect(wireJson).not.toContain("SIG-SHOULD-NEVER-REACH-THE-WIRE");
+    expect(wireJson).not.toContain("REDACTED-SHOULD-NEVER-REACH-THE-WIRE");
+    expect(wireJson).not.toContain("secret unattributed reasoning"); // dropped, never carried unlabeled either
+    expect(wireJson).toContain("the visible final answer");
+  });
+
+  test("identity is preserved when there is truly nothing opaque to strip -- zero behavior change for every pre-existing no-origin case", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const plain: ProviderMessageLike = { role: "assistant", content: "ordinary text, no opaque state at all" };
+    expect(renderer.render([plain], chainOf({}), CLAUDE_A)[0]).toBe(plain);
+  });
+
+  test("a decoration on a NON-ASSISTANT message is still a protected handoff note, even under fail-closed stripping", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const carrier: ProviderMessageLike = { role: "user", content: "carry on", decoration: { text: "<prior_model_handoff …>", door: "tag" } };
+    const { messages } = renderer.renderWithReport([carrier], chainOf({}), CLAUDE_A);
+    expect(messages[0]).toBe(carrier);
+    expect(messages[0]!.decoration?.text).toContain("prior_model_handoff");
   });
 });

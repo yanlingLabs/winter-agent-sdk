@@ -144,35 +144,76 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
     // decoration that will be dropped for budget should never have been built.
     const plans: Array<{ index: number; material: { kind: MaterialKind; text: string }; source: ContinuityEndpoint; anchorUuid?: string }> = [];
     const out: M[] = messages.map((message, index) => {
-      // A message with no origin AT ALL is passed through untouched: every pre-P6 history, every
-      // host-supplied message, and every message rebuilt by a compaction summariser (which drops the
-      // annotations) is in this class. ABSENCE IS NOT A DOMAIN MISMATCH -- treating it as one would
-      // strip content from histories that never had a provider identity to mismatch with.
-      //
       // Phase 10b Lane S, S5 (W18-17, G1): an OFFICIAL-written assistant entry has no sidecar record
       // at all (the official leg's own child process never goes through Winter's `recordAssistant`),
-      // so `message.origin`/the chain lookup are BOTH always absent for one, and before this fix it
-      // fell straight into the untouched-passthrough branch below -- Claude's own reasoning never
-      // crossed a family boundary. The one thing such an entry DOES carry is claude's own
-      // `message.model` (real claude assistant entries always have one; W18-11 is why Winter's own
-      // never do) -- read structurally, since `ProviderMessageLike` itself has no `model` field and
-      // must not grow one just for this fallback. `resolveEndpoint` below does the REAL domain/
-      // readableState lookup from just `providerId`+`modelKey`, exactly as it already does for a real
-      // origin, so "same-domain -> native replay" falls out unchanged for a Claude target.
+      // so `message.origin`/the chain lookup are BOTH always absent for one. The one thing such an
+      // entry DOES carry is claude's own `message.model` (real claude assistant entries always have
+      // one; W18-11 is why Winter's own never do) -- read structurally, since `ProviderMessageLike`
+      // itself has no `model` field and must not grow one just for this fallback (fix round 3,
+      // P10b-6: the real dialect reader that attaches it from disk is `winter-agent-runtime`'s
+      // `resume.ts`). `resolveEndpoint` below does the REAL domain/readableState lookup from just
+      // `providerId`+`modelKey`, exactly as it already does for a real origin, so "same-domain ->
+      // native replay" falls out unchanged for a Claude target.
       const structuralModel = message.role === "assistant" ? (message as { model?: unknown }).model : undefined;
       const origin =
         message.origin ??
         (message.uuid !== undefined ? chain.get(message.uuid)?.origin : undefined) ??
         (typeof structuralModel === "string" && structuralModel.length > 0 ? { providerId: "anthropic", modelKey: structuralModel, family: "anthropic" } : undefined);
       if (origin === undefined) {
-        // SYMMETRY with the same-domain path: an ASSISTANT message carrying a decoration but no
-        // origin has a foreign model's material on it and no provenance to justify it, so the stale
-        // annotation comes off. User and tool messages are left entirely alone -- a decoration there
-        // is a HANDOFF note, deliberately attached to the user message that opens the target's first
-        // turn, and stripping it would silently discard the handoff.
-        if (message.role !== "assistant" || message.decoration === undefined) return message;
-        const { decoration: _staleOrphan, ...kept } = message;
-        return kept as unknown as M;
+        // FAIL CLOSED (fix round 3, controller ruling, LOAD-BEARING). Unresolved origin used to be
+        // an untouched pass-through -- "absence is not a domain mismatch" was true of the histories
+        // this branch was built for (pre-P6 history, host-supplied messages, a compaction
+        // summariser's own rebuilt entries, none of which carry opaque provider state at all) but
+        // false as a GENERAL claim: an official-leg entry whose `message.model` the structural
+        // fallback above still fails to read (a malformed/legacy transcript, a future binary field
+        // rename) is ALSO unresolved-origin, and it very much CAN carry a real signed `thinking`
+        // block. Unknown provenance is the renderer's WORST-informed case, not its safest one to
+        // wave through -- so it is now stripped exactly like a genuine cross-domain message: opaque
+        // provider state (`nativeState`, in-dialect `thinking`/`redacted_thinking` blocks) comes off
+        // in BOTH carriers, unconditionally, before anything reaches an adapter.
+        //
+        // What is deliberately NOT touched: a decoration on a NON-ASSISTANT message. That is a
+        // HANDOFF note (`buildPortableHandoff`/`handoffDecoration`) -- a structurally different
+        // mechanism from reasoning carriage, attached to the user message that opens a target's
+        // first turn -- and stripping it would silently discard the handoff, exactly the harm this
+        // branch's ORIGINAL comment already warned against. A stale decoration on an ASSISTANT
+        // message with no origin is unattributed reasoning material with nothing to justify it, and
+        // still comes off (unchanged from before this fix).
+        //
+        // What is DROPPED, deliberately, rather than carried: an assistant message's own VISIBLE
+        // thinking TEXT. There is no honest `<recovered_reasoning provider=... model=...>` to wrap
+        // it in -- origin is unknown, and `decoration.ts`'s `wrap()` always embeds real provider/
+        // model attributes; inventing one would misattribute the material to a source it never came
+        // from. Folding the raw text into the message's OWN ordinary visible content, unlabeled,
+        // would be WORSE: foreign reasoning presented as this turn's own speech, with no wrapper
+        // marking it as quoted prior-model data, is exactly the impersonation the injection floor
+        // (WS-13 §9.3) forbids. This mirrors this file's own existing policy for "captured nothing"
+        // elsewhere (`materialFor`'s header, and this file's own opening comment): the honest
+        // outcome is carrying nothing, never forwarding a private chain of thought under a false --
+        // or absent -- label.
+        //
+        // Ordinary visible content -- text, `tool_use`, `tool_result` -- is UNTOUCHED: `stripOpaque`
+        // only ever removes `nativeState` and the two opaque content-block types, nothing else.
+        //
+        // IDENTITY PRESERVED when there is truly nothing to strip (no `nativeState`, no opaque
+        // blocks, and no decoration that needs removing): the object comes back BY REFERENCE,
+        // exactly as before this fix, so every history that never carried opaque state in the first
+        // place -- which is every case this branch was originally built for -- sees zero behavior
+        // change, provably (renderer.test.ts's own `toBe` assertions on this path are unmodified by
+        // this fix). The new stripping path only ever fires for the ONE combination that was never
+        // safe to begin with: unresolved origin AND real opaque content.
+        const { nativeState, content, strippedBlocks } = stripOpaque(message);
+        if (nativeState !== undefined) report.droppedNativeState++;
+        report.strippedInDialectBlocks += strippedBlocks;
+        const hadVisibleThinking = message.role === "assistant" && visibleThinkingText(message.content) !== undefined;
+        if (hadVisibleThinking) report.withoutMaterial++;
+
+        const dropDecoration = message.role === "assistant" && message.decoration !== undefined;
+        const nothingChanged = nativeState === undefined && strippedBlocks === 0 && !dropDecoration;
+        if (nothingChanged) return message;
+
+        const { nativeState: _dropped, decoration, ...rest } = message;
+        return { ...rest, content, ...(dropDecoration ? {} : decoration !== undefined ? { decoration } : {}) } as unknown as M;
       }
 
       const source = resolveEndpoint(origin);
