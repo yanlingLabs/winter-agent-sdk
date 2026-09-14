@@ -469,6 +469,9 @@ describe("fail-closed: a message whose origin cannot be resolved at all never ri
     expect(report.strippedInDialectBlocks).toBe(2);
     expect(report.decorations).toHaveLength(0);
     expect(report.withoutMaterial).toBe(1); // the visible thinking text existed and was deliberately dropped, not carried
+    // Micro-round Minor 1: real reasoning content was destroyed here (a thinking block's own text
+    // AND a redacted_thinking block) -- the caller must learn this transfer became lossy.
+    expect(report.truncated).toBe(true);
 
     // The REAL wire body an Anthropic-dialect adapter would actually send.
     const wire = toWireMessages(messages);
@@ -481,10 +484,35 @@ describe("fail-closed: a message whose origin cannot be resolved at all never ri
     expect(wireJson).toContain("the visible final answer");
   });
 
-  test("identity is preserved when there is truly nothing opaque to strip -- zero behavior change for every pre-existing no-origin case", () => {
+  test("identity is preserved when there is truly nothing opaque to strip -- zero behavior change for every pre-existing no-origin case, and truncated stays false", () => {
     const renderer = createHistoryRenderer(buildRegistry());
     const plain: ProviderMessageLike = { role: "assistant", content: "ordinary text, no opaque state at all" };
-    expect(renderer.render([plain], chainOf({}), CLAUDE_A)[0]).toBe(plain);
+    const { messages, report } = renderer.renderWithReport([plain], chainOf({}), CLAUDE_A);
+    expect(messages[0]).toBe(plain);
+    expect(report.truncated).toBe(false);
+  });
+
+  test("Minor 1: nativeState alone (no thinking/redacted_thinking blocks at all) is enough to set truncated -- it is one of the THREE named carriers, not just the content blocks", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const unresolved: ProviderMessageLike = {
+      role: "assistant",
+      content: [{ type: "text", text: "visible answer" }],
+      nativeState: { family: "openai", continuationDomain: "openai/o-reason", items: [{ encrypted_content: "OPAQUE-REASONING-STATE" }] },
+      // No origin, no uuid, no .model.
+    };
+    const { messages, report } = renderer.renderWithReport([unresolved], chainOf({}), CLAUDE_A);
+    expect(messages[0]!.nativeState).toBeUndefined();
+    expect(report.droppedNativeState).toBe(1);
+    expect(report.strippedInDialectBlocks).toBe(0);
+    expect(report.truncated).toBe(true);
+  });
+
+  test("a stale decoration removed on an assistant message with no origin does NOT by itself set truncated -- only real reasoning CONTENT does", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const orphan: ProviderMessageLike = { role: "assistant", content: "rebuilt by compaction", decoration: { text: "STALE foreign material", door: "tag" } };
+    const { messages, report } = renderer.renderWithReport([orphan], chainOf({}), CLAUDE_A);
+    expect(messages[0]!.decoration).toBeUndefined();
+    expect(report.truncated).toBe(false);
   });
 
   test("a decoration on a NON-ASSISTANT message is still a protected handoff note, even under fail-closed stripping", () => {

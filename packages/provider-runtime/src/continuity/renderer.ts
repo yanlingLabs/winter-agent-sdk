@@ -83,7 +83,15 @@ export interface RenderReport {
   withoutMaterial: number;
   /** Material dropped ENTIRELY because the render's total decoration budget was exhausted. */
   budgetDropped: number;
-  /** ANY truncation or budget drop. The engine's switch point reads this to flip a would-be-lossless transfer to warned-lossy. */
+  /**
+   * ANY truncation or budget drop. The engine's switch point reads this to flip a would-be-lossless
+   * transfer to warned-lossy. Set from THREE sources: a decoration trimmed or dropped entirely for
+   * budget (pass 2); and, since the micro-round fail-closed fix, the unresolved-origin branch (pass
+   * 1) whenever it actually destroys real reasoning content -- a `thinking` block's own text, a
+   * `redacted_thinking` block, or `nativeState` -- because that branch has no `classifySwitch` seam
+   * of its own to escalate through otherwise. Left `false` when that branch drops nothing (the
+   * identity case) or only removes a stale, unattributed decoration.
+   */
   truncated: boolean;
   /**
    * Decorations placed on the THINKING-CHANNEL door, which only the target family's own adapter can
@@ -207,6 +215,15 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         report.strippedInDialectBlocks += strippedBlocks;
         const hadVisibleThinking = message.role === "assistant" && visibleThinkingText(message.content) !== undefined;
         if (hadVisibleThinking) report.withoutMaterial++;
+        // Micro-round Minor 1: REAL reasoning content was just destroyed with no chance to carry it
+        // as labelled material (there is no origin to attribute it to) -- `strippedBlocks` already
+        // counts BOTH opaque-block shapes this branch can drop (a `thinking` block's own text, a
+        // `redacted_thinking` block), and `nativeState` is the third carrier §9.6 names. A caller
+        // reading this report (the engine's switch point) must be told the transfer became lossy
+        // here, exactly as it already is for a budget-exhausted decoration -- `truncated` is the ONE
+        // flag that escalation reads, and this branch has no `classifySwitch` entry point of its own
+        // to escalate through otherwise. The identity case (nothing dropped) leaves it `false`.
+        if (nativeState !== undefined || strippedBlocks > 0) report.truncated = true;
 
         const dropDecoration = message.role === "assistant" && message.decoration !== undefined;
         const nothingChanged = nativeState === undefined && strippedBlocks === 0 && !dropDecoration;
