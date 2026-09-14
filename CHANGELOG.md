@@ -4,6 +4,36 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.12
+
+- Fixed `winter-agent-runtime`: `resume.ts`'s `toDialectEntries` discarded `message.model` from every
+  loaded transcript entry -- the ONLY provenance an official-leg-written (real `claude` binary)
+  assistant turn carries, since it has no Winter-written sidecar record at all. The renderer's own
+  fallback for exactly this case (W18-17/G1) was built and tested against a hand-constructed message,
+  but the reader that was supposed to attach `message.model` off a real transcript never did, so an
+  official-leg Claude turn's `thinking` never carried to a different-family destination after a
+  same-session model switch. `DialectEntry.message` now carries an optional `model`;
+  `rebuildProviderMessages` spreads it, structurally, onto the rebuilt assistant message.
+  `ProviderMessage` stays closed (no new field of its own). New end-to-end reader-to-renderer test
+  (`resume-renderer.test.ts`) proves the whole path, through the real catalog, using
+  `openai/gpt-5.6-sol` (the model from the reported symptom).
+- Fixed `provider-runtime`'s history renderer: a message whose origin could not be resolved at all
+  used to pass through completely untouched -- safe for the histories that branch was built for
+  (none of which ever carried opaque provider state), but not a safe general default. It now fails
+  CLOSED: opaque provider state (`nativeState`, in-dialect `thinking`/`redacted_thinking` blocks) is
+  always stripped before reaching an adapter, exactly like a genuine cross-domain message. Visible
+  thinking text is dropped rather than carried unlabeled or under a fabricated `provider`/`model`
+  attribution; a handoff note on a non-assistant message is still preserved; object identity is kept
+  for every message that had nothing opaque to strip, so no pre-existing behavior changes. New test
+  proves an unresolved-origin message carrying a real-shaped `thinking` + signature +
+  `redacted_thinking` renders, for an Anthropic-dialect destination, into a wire body (via
+  `toWireMessages`, the one adapter that would otherwise pass such blocks through verbatim)
+  containing neither.
+- No fixture family for "Winter resumes/renders an official-transcript" exists in `winter-conformance`
+  today (the existing `resume-conformance.test.ts` family runs the opposite direction: a
+  Winter-written transcript resumed by the real pinned binary) -- noted for a future, separately
+  scoped addition rather than added here.
+
 ## 0.0.11
 
 - Fixed `provider-catalog`: every `zai/*` GLM row (4.7, 4.7-flash, 5, 5-turbo, 5.1, 5.2, 5.3) shipped
