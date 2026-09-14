@@ -161,7 +161,15 @@ export interface DialectEntry {
   type: string;
   uuid: string;
   parentUuid: string | null;
-  message?: { role: string; content: unknown };
+  // W18-17 fix round 3 (P10b-6): `model` mirrors the real claude binary's own `message.model` --
+  // present on EVERY entry the binary writes, absent on every entry Winter's own `assistantEntry`
+  // writes (W18-11's own reason). `rebuildProviderMessages`'s assistant branch carries it forward,
+  // structurally, onto the rebuilt message -- it is what `renderer.ts`'s `structuralModel` fallback
+  // reads for an official-leg-written entry, which has no sidecar origin record at all to fall back
+  // on otherwise. Before this field existed, the raw JSON still had `message.model` (untyped,
+  // `SessionStoreEntry` is `[key: string]: unknown`) but THIS projection discarded it silently --
+  // the renderer's own fallback was built and tested, but had nothing to read.
+  message?: { role: string; content: unknown; model?: string };
   // Phase 5 Task 3 (R5-4): carried through so `rebuildProviderMessages` can honour a compaction
   // boundary. Typed `unknown` and narrowed at the one read site -- this projection deliberately
   // mirrors only what resume READS, and a structurally-typed metadata object here would make every
@@ -194,7 +202,10 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
     if (typeof e.uuid !== "string") continue;
     const parentUuid = typeof e.parentUuid === "string" ? e.parentUuid : null;
     const rawMessage = (e as { message?: unknown }).message;
-    const message = isRecord(rawMessage) && typeof rawMessage.role === "string" ? { role: rawMessage.role, content: rawMessage.content } : undefined;
+    const message =
+      isRecord(rawMessage) && typeof rawMessage.role === "string"
+        ? { role: rawMessage.role, content: rawMessage.content, ...(typeof rawMessage.model === "string" ? { model: rawMessage.model } : {}) }
+        : undefined;
     const compactMetadata = (e as { compact_metadata?: unknown }).compact_metadata;
     const claudeCompactMetadata = (e as { compactMetadata?: unknown }).compactMetadata;
     const rawSubtype = (e as { subtype?: unknown }).subtype;
@@ -467,10 +478,17 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
       // assistant entry (`model: "<synthetic>"`, an `error`/`apiErrorStatus` pair) -- replaying it to
       // a provider as a real prior turn would feed it a call it never made. Skipped, never rebuilt.
       if (e.isApiErrorMessage === true) continue;
+      // Fix round 3 (P10b-6, W18-17): carried STRUCTURALLY -- `ProviderMessage` stays closed (no
+      // `model` field of its own; this repo's interfaces are additive-only, R6-3's own rule), exactly
+      // mirroring what `renderer.ts`'s `structuralModel` fallback already reads off the object it is
+      // handed. Built via a plain variable rather than a typed object literal so TypeScript's excess-
+      // property check (which fires only on a literal assigned directly into a typed position) never
+      // applies -- `messages.push` then only checks the STRUCTURAL fields it declares.
+      const modelField = e.message?.model !== undefined ? { model: e.message.model } : {};
       if (Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0]!.type === "text" && typeof content[0]!.text === "string") {
-        messages.push({ role: "assistant", content: content[0]!.text as string, uuid: e.uuid });
+        messages.push({ role: "assistant", content: content[0]!.text as string, uuid: e.uuid, ...modelField });
       } else if (Array.isArray(content)) {
-        messages.push({ role: "assistant", content: content as ContentBlock[], uuid: e.uuid });
+        messages.push({ role: "assistant", content: content as ContentBlock[], uuid: e.uuid, ...modelField });
       }
     }
     // Unknown entry types are skipped for provider context — never fed to a real provider.

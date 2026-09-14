@@ -27,6 +27,7 @@ import {
   findResumeTarget,
   truncateAt,
   rebuildProviderMessages,
+  toDialectEntries,
   ResumeTargetError,
   ResumeTruncationError,
   type DialectEntry,
@@ -497,6 +498,70 @@ describe("rebuildProviderMessages — compaction, both shapes (W18-13)", () => {
     expect(JSON.stringify(rebuilt)).not.toContain("OLD SUMMARY");
     expect(JSON.stringify(rebuilt)).not.toContain("turn one");
     expect(JSON.stringify(rebuilt)).not.toContain("turn two");
+  });
+});
+
+// --- message.model round trip (fix round 3, P10b-6, W18-17) --------------------------------------
+//
+// The real claude binary writes `message.model` on every assistant entry it produces (W18-11 is why
+// Winter's own `assistantEntry` never does). Before this fix, `toDialectEntries`'s message
+// projection discarded it silently, so `renderer.ts`'s `structuralModel` fallback -- built and
+// tested against a hand-constructed ProviderMessage, per its own test's comment -- had nothing to
+// read once a real transcript came back off disk. See resume.ts's own header comment on
+// `DialectEntry.message.model` for the full story.
+describe("message.model survives the reader round trip (fix round 3, W18-17)", () => {
+  test("toDialectEntries keeps a binary-shaped entry's message.model", () => {
+    const raw: SessionStoreEntry[] = [
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: null,
+        message: { id: "msg_01DUMMY", type: "message", role: "assistant", model: "claude-sonnet-5-20260101", content: [{ type: "text", text: "hi" }] },
+      },
+    ];
+    const dialectEntries = toDialectEntries(raw);
+    expect(dialectEntries[0]!.message?.model).toBe("claude-sonnet-5-20260101");
+  });
+
+  test("rebuildProviderMessages carries message.model onto the rebuilt assistant message, structurally", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", model: "claude-sonnet-5-20260101", content: [{ type: "text", text: "hello back" }] } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect((rebuilt[1] as unknown as { model?: string }).model).toBe("claude-sonnet-5-20260101");
+    // The collapsed-to-string-content shape (a single text block) carries it too.
+    expect(rebuilt[1]).toMatchObject({ role: "assistant", content: "hello back", uuid: "a1" });
+  });
+
+  test("a Winter-native entry (no message.model at all) rebuilds with no model field -- never invented", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply" }] } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect((rebuilt[1] as unknown as { model?: string }).model).toBeUndefined();
+    expect(Object.keys(rebuilt[1]!)).not.toContain("model");
+  });
+
+  test("multi-block content (thinking + text) also carries message.model onto the rebuilt message", () => {
+    const entries: DialectEntry[] = [
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: null,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-5-20260101",
+          content: [
+            { type: "thinking", thinking: "reasoning text", signature: "SIG-DUMMY-NOT-REAL" },
+            { type: "text", text: "the answer" },
+          ],
+        },
+      },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect((rebuilt[0] as unknown as { model?: string }).model).toBe("claude-sonnet-5-20260101");
   });
 });
 

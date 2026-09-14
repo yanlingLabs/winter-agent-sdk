@@ -366,8 +366,12 @@ describe("MINOR 6: stale-decoration symmetry on the no-origin path", () => {
 // An OFFICIAL-written assistant entry has NO sidecar record at all (the official leg's own child
 // never goes through Winter's `recordAssistant`), so `message.origin` and the chain lookup are BOTH
 // always absent -- the only provenance it carries is claude's own `message.model`, read here
-// structurally (never added to `ProviderMessageLike` itself; the real dialect reader in a later lane
-// is what actually attaches it).
+// structurally (never added to `ProviderMessageLike` itself). Fix round 3 (P10b-6): the real dialect
+// reader that actually attaches it is `winter-agent-runtime`'s `resume.ts` -- `toDialectEntries`
+// carries a binary-shaped entry's `message.model` through its projection, and
+// `rebuildProviderMessages` spreads it, structurally, onto the rebuilt assistant message (see that
+// package's `resume.test.ts` for the round trip and `resume-renderer.test.ts` for this exact
+// reader-to-renderer path proven end to end against the real catalog).
 describe("W18-17 (G1): an official-written entry with no sidecar origin", () => {
   // Two thinking blocks (never merged into one on the wire) to prove ORDER, not just presence.
   function officialClaudeMessage(): ProviderMessageLike & { model: string } {
