@@ -63,6 +63,58 @@ const deepseekMessage = (uuid: string): ProviderMessageLike => ({
   origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai", continuationDomain: "deepseek/r-reason" },
 });
 
+// --- Nit (micro-round): the origin-resolution PRECEDENCE, pinned with all three sources present ---
+// and CONTRADICTING each other -- `message.origin` > the sidecar chain's own origin > the
+// structural `message.model` fallback (renderer.ts's own `const origin = message.origin ?? ... ??
+// ...`). Each source names a DIFFERENT real catalog row so the winner is unambiguous from
+// `report.decorations[0].source` alone.
+describe("origin resolution precedence: message.origin > sidecar chain origin > structural message.model", () => {
+  test("all three present and contradicting: message.origin wins", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const message: ProviderMessageLike & { model: string } = {
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      uuid: "m1",
+      origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic", continuationDomain: "anthropic/claude-a" }, // #1 -- wins
+      model: "anthropic/claude-b", // #3 -- structural fallback, only ever read when #1 AND #2 are both absent
+    };
+    // #2 -- a chain link naming a THIRD, different origin (openai), which #1 must beat.
+    const chain = chainOf({ m1: { origin: { providerId: "openai", modelKey: "openai/o-reason", family: "openai" }, summary: "openai's own summary" } });
+    const { report } = renderer.renderWithReport([message], chain, DEEPSEEK);
+    expect(report.decorations[0]!.source).toEqual({ providerId: "anthropic", modelKey: "anthropic/claude-a" });
+  });
+
+  test("message.origin absent: the sidecar chain origin wins over the structural fallback", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const message: ProviderMessageLike & { model: string } = {
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      uuid: "m1",
+      model: "anthropic/claude-b", // #3 -- would win only if #2 were also absent
+    };
+    const chain = chainOf({ m1: { origin: { providerId: "openai", modelKey: "openai/o-reason", family: "openai" }, summary: "openai's own summary" } }); // #2 -- wins
+    const { report } = renderer.renderWithReport([message], chain, DEEPSEEK);
+    expect(report.decorations[0]!.source).toEqual({ providerId: "openai", modelKey: "openai/o-reason" });
+  });
+
+  test("message.origin AND the sidecar chain origin both absent: the structural message.model fallback is the last resort", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const message: ProviderMessageLike & { model: string } = {
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      uuid: "m1",
+      model: "anthropic/claude-b", // #3 -- wins, nothing else is present
+    };
+    // The chain entry carries a summary but deliberately NO `origin` field -- summary and origin are
+    // independent facts on a ContinuationLinkLike, so this still exercises "chain origin absent"
+    // while giving materialFor something to build a decoration from (otherwise there is nothing to
+    // decorate at all, and report.decorations would be empty regardless of which source resolved).
+    const chain = chainOf({ m1: { summary: "captured summary, no origin recorded for it" } });
+    const { report } = renderer.renderWithReport([message], chain, DEEPSEEK);
+    expect(report.decorations[0]!.source).toEqual({ providerId: "anthropic", modelKey: "anthropic/claude-b" });
+  });
+});
+
 describe("the matrix: same domain", () => {
   test("EXACT REPLAY -- native state, in-dialect blocks and content all ride unchanged, and NOTHING is decorated", () => {
     const renderer = createHistoryRenderer(buildRegistry());
