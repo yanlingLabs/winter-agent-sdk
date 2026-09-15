@@ -25,7 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { normalizeThrown, shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
+import { normalizeThrown, shouldRequestSummary, stripOpaque } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -74,18 +74,40 @@ export interface HistoryRenderer {
  * dropped and the message rides as plain content -- which is exactly R6-7's "degrade to
  * summary-level", applied at the point of use.
  *
- * A message with no `origin` at all (every pre-P6 history, and every message the host supplied) is
- * passed through untouched: absence is not a domain mismatch.
+ * A message WITH an `origin` is passed through untouched apart from the nativeState domain check
+ * above: absence of a domain match is not this renderer's job to carry across (that is Lane C's).
+ *
+ * A message with NO `origin` at all (every pre-P6 history, and every message the host supplied) --
+ * micro-round Minor 2, mirroring `provider-runtime`'s own renderer fix: FAIL CLOSED, LAYERED ON TOP
+ * of the nativeState domain check above rather than replacing it (a live, same-turn message can
+ * carry a stamped `nativeState.continuationDomain` with no `.origin` of its own -- `stampNativeState`
+ * stamps the former directly, per this file's own header; the two are independent facts, and the
+ * domain check must still run for a message that only has the first). Unknown provenance is this
+ * renderer's worst-informed case too, and "decoration is Lane C's" was never a reason to also skip
+ * STRIPPING what `stripOpaque` already knows how to strip -- the in-dialect `thinking`/
+ * `redacted_thinking` blocks that ride in the CONTENT (the exact gap this function's own header used
+ * to name and accept: "which the identity renderer could not do anything about"). Delegates to
+ * `stripOpaque` itself (exported for exactly this) rather than reimplementing the two-carrier rule a
+ * second time and risking the two copies drifting apart on what counts as opaque. Object identity is
+ * preserved when there is truly nothing to strip.
  */
 export function createIdentityHistoryRenderer(): HistoryRenderer {
   return {
     render(messages, _chain, target) {
       return messages.map((message) => {
-        if (message.nativeState === undefined) return message;
-        const sameDomain = target.continuationDomain !== undefined && message.nativeState.continuationDomain === target.continuationDomain;
-        if (sameDomain) return message;
-        const { nativeState: _dropped, ...rest } = message;
-        return rest;
+        let next = message;
+        if (next.nativeState !== undefined) {
+          const sameDomain = target.continuationDomain !== undefined && next.nativeState.continuationDomain === target.continuationDomain;
+          if (!sameDomain) {
+            const { nativeState: _dropped, ...rest } = next;
+            next = rest;
+          }
+        }
+        if (next.origin === undefined) {
+          const { content } = stripOpaque(next as unknown as ProviderMessageLike);
+          if (content !== next.content) next = { ...next, content } as typeof message;
+        }
+        return next;
       });
     },
   };

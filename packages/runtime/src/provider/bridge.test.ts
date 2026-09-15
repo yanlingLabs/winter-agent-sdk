@@ -426,6 +426,64 @@ describe("the T3 identity history renderer", () => {
     const messages: ProviderMessage[] = [{ role: "user", content: "hello" }];
     expect(renderer.render(messages, chain, { family: "anthropic", readableState: "none" })).toEqual(messages);
   });
+
+  // Micro-round Minor 2: FAIL CLOSED on no origin, mirroring provider-runtime's own renderer fix.
+  test("Minor 2: a no-origin message carrying thinking/redacted_thinking blocks has them stripped, even through this simpler T3 renderer", () => {
+    const renderer = createIdentityHistoryRenderer();
+    const messages: ProviderMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "secret unattributed reasoning", signature: "SIG-SHOULD-NEVER-REACH-THE-WIRE" },
+          { type: "redacted_thinking", data: "REDACTED-SHOULD-NEVER-REACH-THE-WIRE" },
+          { type: "text", text: "the visible final answer" },
+        ],
+        // No origin, no nativeState.
+      },
+    ];
+    const out = renderer.render(messages, chain, { family: "anthropic", readableState: "none" });
+    const content = out[0]!.content as Array<Record<string, unknown>>;
+    expect(content.map((b) => b.type)).toEqual(["text"]);
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain("signature");
+    expect(serialized).not.toContain("redacted_thinking");
+    expect(serialized).not.toContain("SIG-SHOULD-NEVER-REACH-THE-WIRE");
+    expect(serialized).toContain("the visible final answer");
+  });
+
+  test("Minor 2: a no-origin message ALSO carrying nativeState has both carriers stripped", () => {
+    const renderer = createIdentityHistoryRenderer();
+    const messages: ProviderMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "secret", signature: "SIG-OPAQUE" },
+          { type: "text", text: "visible" },
+        ],
+        nativeState: { family: "openai", continuationDomain: "openai:responses", items: ["NATIVE-OPAQUE"] },
+        // No origin.
+      },
+    ];
+    const out = renderer.render(messages, chain, { family: "anthropic", continuationDomain: "anthropic:messages", readableState: "none" });
+    expect(out[0]!.nativeState).toBeUndefined();
+    const content = out[0]!.content as Array<Record<string, unknown>>;
+    expect(content.map((b) => b.type)).toEqual(["text"]);
+    expect(JSON.stringify(out)).not.toContain("NATIVE-OPAQUE");
+  });
+
+  test("Minor 2: nativeState replay inside the same domain still works for a no-origin message -- the new fail-closed step is LAYERED ON, not a replacement", () => {
+    const renderer = createIdentityHistoryRenderer();
+    const messages: ProviderMessage[] = [{ role: "assistant", content: "x", nativeState: { family: "openai", continuationDomain: "openai:responses", items: [1] } }];
+    const out = renderer.render(messages, chain, { family: "openai", continuationDomain: "openai:responses", readableState: "none" });
+    expect(out[0]!.nativeState).toEqual({ family: "openai", continuationDomain: "openai:responses", items: [1] });
+  });
+
+  test("Minor 2: identity is preserved when there is truly nothing to strip", () => {
+    const renderer = createIdentityHistoryRenderer();
+    const messages: ProviderMessage[] = [{ role: "user", content: "hello" }];
+    const out = renderer.render(messages, chain, { family: "anthropic", readableState: "none" });
+    expect(out[0]).toBe(messages[0]);
+  });
 });
 
 describe("adapterAsProvider: what actually reaches the adapter", () => {

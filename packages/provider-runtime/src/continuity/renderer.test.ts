@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createRegistry, type ProviderRegistry } from "../registry.ts";
 import type { ContentBlockLike, ProviderMessageLike } from "../types.ts";
+import { toWireMessages } from "../adapters/anthropic/messages.ts";
 import { RECOVERED_REASONING_TAG } from "./decoration.ts";
 import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "./fixtures.ts";
 import { applyDecorationToContent, createHistoryRenderer, type ContinuationChainLike, type ContinuationLinkLike, type HistoryTarget } from "./renderer.ts";
@@ -60,6 +61,58 @@ const deepseekMessage = (uuid: string): ProviderMessageLike => ({
   content: [{ type: "text", text: "deepseek visible answer" }],
   uuid,
   origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai", continuationDomain: "deepseek/r-reason" },
+});
+
+// --- Nit (micro-round): the origin-resolution PRECEDENCE, pinned with all three sources present ---
+// and CONTRADICTING each other -- `message.origin` > the sidecar chain's own origin > the
+// structural `message.model` fallback (renderer.ts's own `const origin = message.origin ?? ... ??
+// ...`). Each source names a DIFFERENT real catalog row so the winner is unambiguous from
+// `report.decorations[0].source` alone.
+describe("origin resolution precedence: message.origin > sidecar chain origin > structural message.model", () => {
+  test("all three present and contradicting: message.origin wins", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const message: ProviderMessageLike & { model: string } = {
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      uuid: "m1",
+      origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic", continuationDomain: "anthropic/claude-a" }, // #1 -- wins
+      model: "anthropic/claude-b", // #3 -- structural fallback, only ever read when #1 AND #2 are both absent
+    };
+    // #2 -- a chain link naming a THIRD, different origin (openai), which #1 must beat.
+    const chain = chainOf({ m1: { origin: { providerId: "openai", modelKey: "openai/o-reason", family: "openai" }, summary: "openai's own summary" } });
+    const { report } = renderer.renderWithReport([message], chain, DEEPSEEK);
+    expect(report.decorations[0]!.source).toEqual({ providerId: "anthropic", modelKey: "anthropic/claude-a" });
+  });
+
+  test("message.origin absent: the sidecar chain origin wins over the structural fallback", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const message: ProviderMessageLike & { model: string } = {
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      uuid: "m1",
+      model: "anthropic/claude-b", // #3 -- would win only if #2 were also absent
+    };
+    const chain = chainOf({ m1: { origin: { providerId: "openai", modelKey: "openai/o-reason", family: "openai" }, summary: "openai's own summary" } }); // #2 -- wins
+    const { report } = renderer.renderWithReport([message], chain, DEEPSEEK);
+    expect(report.decorations[0]!.source).toEqual({ providerId: "openai", modelKey: "openai/o-reason" });
+  });
+
+  test("message.origin AND the sidecar chain origin both absent: the structural message.model fallback is the last resort", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const message: ProviderMessageLike & { model: string } = {
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      uuid: "m1",
+      model: "anthropic/claude-b", // #3 -- wins, nothing else is present
+    };
+    // The chain entry carries a summary but deliberately NO `origin` field -- summary and origin are
+    // independent facts on a ContinuationLinkLike, so this still exercises "chain origin absent"
+    // while giving materialFor something to build a decoration from (otherwise there is nothing to
+    // decorate at all, and report.decorations would be empty regardless of which source resolved).
+    const chain = chainOf({ m1: { summary: "captured summary, no origin recorded for it" } });
+    const { report } = renderer.renderWithReport([message], chain, DEEPSEEK);
+    expect(report.decorations[0]!.source).toEqual({ providerId: "anthropic", modelKey: "anthropic/claude-b" });
+  });
 });
 
 describe("the matrix: same domain", () => {
@@ -366,8 +419,12 @@ describe("MINOR 6: stale-decoration symmetry on the no-origin path", () => {
 // An OFFICIAL-written assistant entry has NO sidecar record at all (the official leg's own child
 // never goes through Winter's `recordAssistant`), so `message.origin` and the chain lookup are BOTH
 // always absent -- the only provenance it carries is claude's own `message.model`, read here
-// structurally (never added to `ProviderMessageLike` itself; the real dialect reader in a later lane
-// is what actually attaches it).
+// structurally (never added to `ProviderMessageLike` itself). Fix round 3 (P10b-6): the real dialect
+// reader that actually attaches it is `winter-agent-runtime`'s `resume.ts` -- `toDialectEntries`
+// carries a binary-shaped entry's `message.model` through its projection, and
+// `rebuildProviderMessages` spreads it, structurally, onto the rebuilt assistant message (see that
+// package's `resume.test.ts` for the round trip and `resume-renderer.test.ts` for this exact
+// reader-to-renderer path proven end to end against the real catalog).
 describe("W18-17 (G1): an official-written entry with no sidecar origin", () => {
   // Two thinking blocks (never merged into one on the wire) to prove ORDER, not just presence.
   function officialClaudeMessage(): ProviderMessageLike & { model: string } {
@@ -431,5 +488,90 @@ describe("W18-17 (G1): an official-written entry with no sidecar origin", () => 
     // still be present, because the target is claude itself.
     expect(JSON.stringify(content)).toContain("SIG-FIRST-OPAQUE");
     expect(report.replayedNatively).toBe(0); // no nativeState on this message -- the counter is for THAT carrier, not for the thinking blocks
+  });
+});
+
+// --- fix round 3 (P10b-6, controller ruling, LOAD-BEARING): FAIL CLOSED on unresolved origin ------
+describe("fail-closed: a message whose origin cannot be resolved at all never rides its opaque state onto an ANTHROPIC-dialect wire body", () => {
+  test("no message.origin, no sidecar chain record, no usable structural model -- and REAL wire serialization (toWireMessages) proves no signature, no redacted_thinking reach it", () => {
+    // This is the ONE destination family where failing to strip is not silently swallowed by an
+    // adapter's own unrecognized-block-type default: Anthropic's `toWireMessages` passes `thinking`/
+    // `redacted_thinking` through VERBATIM, signature and opaque data intact (messages.ts's own
+    // comment). So this is the test that actually proves the wire body, not just the intermediate
+    // ProviderMessage shape.
+    const unresolved: ProviderMessageLike = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "secret unattributed reasoning", signature: "SIG-SHOULD-NEVER-REACH-THE-WIRE" },
+        { type: "redacted_thinking", data: "REDACTED-SHOULD-NEVER-REACH-THE-WIRE" },
+        { type: "text", text: "the visible final answer" },
+      ],
+      // Deliberately NO origin, NO uuid (so the chain lookup finds nothing), and no `.model` --
+      // every one of the three provenance sources the renderer tries is absent.
+    };
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([unresolved], chainOf({}), CLAUDE_A);
+
+    // The intermediate shape: opaque carriers gone, decoration never invented (no honest provider/
+    // model to attribute it to), visible text untouched.
+    expect(messages[0]!.decoration).toBeUndefined();
+    const content = messages[0]!.content as ContentBlockLike[];
+    expect(content.map((b) => b.type)).toEqual(["text"]);
+    expect(content[0]).toEqual({ type: "text", text: "the visible final answer" });
+    expect(report.strippedInDialectBlocks).toBe(2);
+    expect(report.decorations).toHaveLength(0);
+    expect(report.withoutMaterial).toBe(1); // the visible thinking text existed and was deliberately dropped, not carried
+    // Micro-round Minor 1: real reasoning content was destroyed here (a thinking block's own text
+    // AND a redacted_thinking block) -- the caller must learn this transfer became lossy.
+    expect(report.truncated).toBe(true);
+
+    // The REAL wire body an Anthropic-dialect adapter would actually send.
+    const wire = toWireMessages(messages);
+    const wireJson = JSON.stringify(wire);
+    expect(wireJson).not.toContain("signature");
+    expect(wireJson).not.toContain("redacted_thinking");
+    expect(wireJson).not.toContain("SIG-SHOULD-NEVER-REACH-THE-WIRE");
+    expect(wireJson).not.toContain("REDACTED-SHOULD-NEVER-REACH-THE-WIRE");
+    expect(wireJson).not.toContain("secret unattributed reasoning"); // dropped, never carried unlabeled either
+    expect(wireJson).toContain("the visible final answer");
+  });
+
+  test("identity is preserved when there is truly nothing opaque to strip -- zero behavior change for every pre-existing no-origin case, and truncated stays false", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const plain: ProviderMessageLike = { role: "assistant", content: "ordinary text, no opaque state at all" };
+    const { messages, report } = renderer.renderWithReport([plain], chainOf({}), CLAUDE_A);
+    expect(messages[0]).toBe(plain);
+    expect(report.truncated).toBe(false);
+  });
+
+  test("Minor 1: nativeState alone (no thinking/redacted_thinking blocks at all) is enough to set truncated -- it is one of the THREE named carriers, not just the content blocks", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const unresolved: ProviderMessageLike = {
+      role: "assistant",
+      content: [{ type: "text", text: "visible answer" }],
+      nativeState: { family: "openai", continuationDomain: "openai/o-reason", items: [{ encrypted_content: "OPAQUE-REASONING-STATE" }] },
+      // No origin, no uuid, no .model.
+    };
+    const { messages, report } = renderer.renderWithReport([unresolved], chainOf({}), CLAUDE_A);
+    expect(messages[0]!.nativeState).toBeUndefined();
+    expect(report.droppedNativeState).toBe(1);
+    expect(report.strippedInDialectBlocks).toBe(0);
+    expect(report.truncated).toBe(true);
+  });
+
+  test("a stale decoration removed on an assistant message with no origin does NOT by itself set truncated -- only real reasoning CONTENT does", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const orphan: ProviderMessageLike = { role: "assistant", content: "rebuilt by compaction", decoration: { text: "STALE foreign material", door: "tag" } };
+    const { messages, report } = renderer.renderWithReport([orphan], chainOf({}), CLAUDE_A);
+    expect(messages[0]!.decoration).toBeUndefined();
+    expect(report.truncated).toBe(false);
+  });
+
+  test("a decoration on a NON-ASSISTANT message is still a protected handoff note, even under fail-closed stripping", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const carrier: ProviderMessageLike = { role: "user", content: "carry on", decoration: { text: "<prior_model_handoff …>", door: "tag" } };
+    const { messages } = renderer.renderWithReport([carrier], chainOf({}), CLAUDE_A);
+    expect(messages[0]).toBe(carrier);
+    expect(messages[0]!.decoration?.text).toContain("prior_model_handoff");
   });
 });

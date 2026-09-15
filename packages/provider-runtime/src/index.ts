@@ -142,6 +142,7 @@ export {
   summaryRequestOf,
   applyDecorationToContent,
   createHistoryRenderer,
+  stripOpaque,
   classifySwitch,
   INSTRUCTION_FILE_BASENAMES,
   PRIOR_MODEL_HANDOFF_TAG,
