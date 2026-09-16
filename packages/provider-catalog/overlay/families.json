@@ -9,7 +9,7 @@
         "anthropic",
         "console"
       ],
-      "$comment": "D25: the ONE family whose slot names are a compat contract. `fable`/`opus`/`sonnet`/`haiku` are the Claude Agent SDK's own enum and are reserved to this family by the validator — a Claude session advertises exactly these four whether it runs on the official SDK or inside Winter, and custom slots are ignored there. §9's ordering (strength = price) is the user's ruling; the sentences are Winter's. WS-20: vendorProviders is informational only; no code orders providers by it any more.",
+      "$comment": "D25: the ONE family whose slot names are a compat contract. `fable`/`opus`/`sonnet`/`haiku` are the Claude Agent SDK's own enum and are reserved to this family by the validator — a Claude session advertises exactly these four whether it runs on the official SDK or inside Winter, and custom slots are ignored there. §9's ordering (strength = price) is the user's ruling; the sentences are Winter's. WS-20: no HOST code (daemon/router) orders providers by vendorProviders any more — a host always names its provider in the tag. The SDK runtime's own resolveSlot (packages/runtime/src/provider/slots.ts) still uses it as a tie-break for the child's Agent-tool slot switch; SDK follow-up 0.0.14 confines that switch to the session's own provider.",
       "matchers": [
         {
           "pattern": "^claude-",

@@ -1123,6 +1123,8 @@ test("WS-20: every anthropic/<id> row has a console/<id> twin, structurally equa
     expect(strip(c!)).toEqual(strip(a));
     if (c!.reasoning?.continuationDomain) expect(c!.reasoning.continuationDomain.value).toEqual([c!.key]);
   }
+  // Both directions: no orphan console/<id> without an anthropic/<id> sibling.
+  expect(catalog.models.filter((m) => m.providerId === "console").length).toBe(anthropicRows.length);
   const claude = catalog.families!.find((f) => f.id === "claude")!;
   expect(claude.vendorProviders).toEqual(["anthropic", "console"]);
 });

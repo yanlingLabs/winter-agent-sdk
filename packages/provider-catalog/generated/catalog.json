@@ -15318,7 +15318,7 @@
           "source": "live-probe",
           "confidence": "declared",
           "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
-          "observedAt": "2026-09-11T00:00:00Z"
+          "observedAt": "2026-07-30T00:00:00Z"
         },
         "efforts": [
           "low",
@@ -15425,7 +15425,7 @@
           "source": "live-probe",
           "confidence": "declared",
           "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "observedAt": "2026-07-30T00:00:00Z"
         },
         "efforts": [
           "low",
@@ -15532,7 +15532,7 @@
           "source": "live-probe",
           "confidence": "declared",
           "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
-          "observedAt": "2026-09-11T00:00:00Z"
+          "observedAt": "2026-07-30T00:00:00Z"
         },
         "efforts": [
           "low",
