@@ -81,7 +81,28 @@ export function parseRetryAfterMs(value: string | null | undefined, now: number 
 }
 
 /** Provider codes that mean "the account cannot pay", not "you are going too fast" — the distinction is what makes a 429 unretryable. */
-const BILLING_CODES = new Set(["insufficient_quota", "billing_hard_limit_reached", "billing_not_active", "credit_balance_too_low"]);
+const BILLING_CODES = new Set([
+  "insufficient_quota", "billing_hard_limit_reached", "billing_not_active", "credit_balance_too_low",
+  // ChatGPT Codex backend (measured 2026-09-16): a subscription's usage window is exhausted and resets on a
+  // clock the body names (`resets_in_seconds`). Ten backed-off retries cannot help and cost the user ~90 s
+  // of silence before the truth surfaced; it is terminal like the billing codes above.
+  "usage_limit_reached", "usage_limit_exceeded",
+]);
+
+/** The Codex backend's usage-window fields, when the body carries them (`resets_in_seconds`, `plan_type`). */
+function parseUsageWindow(body: string): { resetsInSeconds?: number; planType?: string } {
+  try {
+    const parsed = JSON.parse(body) as { error?: { resets_in_seconds?: unknown; plan_type?: unknown } };
+    const e = parsed?.error;
+    if (!e || typeof e !== "object") return {};
+    return {
+      ...(typeof e.resets_in_seconds === "number" && Number.isFinite(e.resets_in_seconds) ? { resetsInSeconds: e.resets_in_seconds } : {}),
+      ...(typeof e.plan_type === "string" ? { planType: e.plan_type } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
 /** Provider codes (any dialect) that mean the model id does not exist. */
 const MODEL_NOT_FOUND_CODES = new Set(["model_not_found", "not_found_error", "NOT_FOUND", "model_not_supported"]);
 /** Provider codes that mean the request asked for more output than the model allows. */
@@ -161,8 +182,13 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
   // it after a redaction pass would risk losing it to a coincidental overlap.
   const providerCode = parseProviderErrorCode(body);
   const snippet = scrubbedSnippet(redactCredentialMaterial(body, secrets));
-  const message = `HTTP ${status}${snippet.length > 0 ? ` — ${snippet}` : ""}`;
-  const retryAfterMs = parseRetryAfterMs(headers.get("retry-after"));
+  const usage = status === 429 && providerCode !== undefined && providerCode.startsWith("usage_limit") ? parseUsageWindow(body) : {};
+  const resetNote = usage.resetsInSeconds !== undefined ? ` — resets in ${Math.ceil(usage.resetsInSeconds / 60)} min` : "";
+  const message = usage.resetsInSeconds !== undefined || usage.planType !== undefined
+    ? `HTTP ${status} — usage limit reached${usage.planType !== undefined ? ` (plan: ${usage.planType})` : ""}${resetNote}`
+    : `HTTP ${status}${snippet.length > 0 ? ` — ${snippet}` : ""}`;
+  // `Retry-After` stays authoritative when the provider sends it; the body's own reset clock is the fallback.
+  const retryAfterMs = parseRetryAfterMs(headers.get("retry-after")) ?? (usage.resetsInSeconds !== undefined ? usage.resetsInSeconds * 1000 : undefined);
 
   // Spread as optionals so an error with no structured code / no Retry-After keeps a minimal shape
   // (exactOptionalPropertyTypes is on: an absent key, never an explicit undefined).

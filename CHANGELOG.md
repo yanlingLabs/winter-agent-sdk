@@ -4,6 +4,15 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.14
+
+- `provider-runtime`: a ChatGPT Codex `usage_limit_reached` (and `usage_limit_exceeded`) HTTP 429 is now
+  TERMINAL -- a billing-class exhaustion like `insufficient_quota`, not a transient rate limit. It used to be
+  retried ten times with backoff (~90 s of silence before the error surfaced). The typed error now reads
+  `HTTP 429 -- usage limit reached (plan: plus) -- resets in N min`, and `resets_in_seconds` from the body
+  feeds `retryAfterMs` when no `Retry-After` header is present (the header still wins). Measured on the live
+  backend 2026-09-16.
+
 ## 0.0.13
 
 - `provider-catalog`: added the `console` provider (WS-20 Task L1.1) -- the Anthropic Console

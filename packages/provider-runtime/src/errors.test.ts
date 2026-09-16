@@ -303,3 +303,28 @@ describe("normalizeHttpError — a per-request `secrets` list (T2 carry: the hoi
     expect(err.message).not.toContain("ASIAQUITELONG");
   });
 });
+
+describe("Codex usage limit (2026-09-16 field report)", () => {
+  // Measured on the live ChatGPT Codex backend: `{"error":{"type":"usage_limit_reached","message":"The usage
+  // limit has been reached","plan_type":"plus","resets_at":1789599908,"resets_in_seconds":2849}}` with HTTP 429.
+  // It is a QUOTA exhaustion that resets in ~47 min, not "too fast": ten backed-off retries (~90 s) told the user
+  // nothing but a spinner. It must be terminal, immediately, and say when the limit resets.
+  const body = JSON.stringify({ error: { type: "usage_limit_reached", message: "The usage limit has been reached", plan_type: "plus", resets_at: 1789599908, eligible_promo: null, resets_in_seconds: 2849 } });
+  test("usage_limit_reached is a non-retryable rate_limit", () => {
+    const err = normalizeHttpError(429, h({}), body);
+    expect(err.code).toBe("rate_limit");
+    expect(err.retryable).toBe(false);
+    expect(err.providerCode).toBe("usage_limit_reached");
+  });
+  test("the message names the plan and the reset time in minutes, and retryAfterMs carries resets_in_seconds", () => {
+    const err = normalizeHttpError(429, h({}), body);
+    expect(err.message).toMatch(/usage limit reached/i);
+    expect(err.message).toMatch(/plus/);
+    expect(err.message).toMatch(/resets in 48 min/);
+    expect(err.retryAfterMs).toBe(2849_000);
+  });
+  test("a Retry-After header still wins over resets_in_seconds when both are present", () => {
+    const err = normalizeHttpError(429, h({ "retry-after": "5" }), body);
+    expect(err.retryAfterMs).toBe(5000);
+  });
+});
