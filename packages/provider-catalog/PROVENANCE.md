@@ -113,13 +113,13 @@ and wants to refresh this document by name — not a second gate.
 
 <!-- BEGIN GENERATED: admission-tier census (bun run scripts/provenance-tiers.ts) -->
 
-Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 165 provider rows). Do not edit by hand.
+Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 166 provider rows). Do not edit by hand.
 
 | Tier | Rows | What it means |
 | --- | ---: | --- |
 | **fetched-document** | 39 | a vendor page this repository retrieved and read, on a recorded date |
 | **pinned-upstream** | 101 | the vendor's own site as the pinned upstream product catalog records it, plus that id's own pinned entry — a real, dated reference, but NOT a page read here |
-| **spec-ruling** | 3 | a ruling in an approved spec (or a user ruling recorded in one) admits the PATH; the row's own details are carried from a reviewed ledger entry — `anthropic`, `azure-ai`, `oci` |
+| **spec-ruling** | 4 | a ruling in an approved spec (or a user ruling recorded in one) admits the PATH; the row's own details are carried from a reviewed ledger entry — `anthropic`, `azure-ai`, `console`, `oci` |
 | **local** | 12 | a local installation on the operator's own machine — there is no third party to be admitted by — `docker-model-runner`, `lemonade`, `llama-cpp`, `llamafile`, `lm-studio`, `mlx-gemma`, `mlx-qwen`, `ollama-local`, `oobabooga`, `triton`, `vllm`, `xinference` |
 | **audit** | 10 | the in-repo third-party-access audit's own findings, which cite the documents it read — `aihorde`, `cline`, `clinepass`, `codex-oauth`, `kilocode`, `moonshot`, `opencode`, `openference`, `uncloseai`, `xai-oauth` |
 

@@ -841,7 +841,9 @@ describe("WS-13c: the wiring's model-family surface", () => {
     // Asserted RELATIVELY rather than against a hardcoded provider id: which aggregator the
     // admission-tier tie-break picks is catalog data another task may repoint, but "a preferred
     // provider outranks whatever the tier order would have chosen" is the rule.
-    writeSettings(join(home), { providers: { anthropic: { enabled: false } } });
+    // WS-20: `console` is now a second `claude`-family vendor row (a twin of `anthropic`), so both
+    // must be disabled to reach the non-vendor tail this test is about.
+    writeSettings(join(home), { providers: { anthropic: { enabled: false }, console: { enabled: false } } });
     const unpreferred = await buildProductionWiring({ config: localSession("s-slots-unpreferred"), env: {}, winterHome: home, provider: hermetic });
     let byTier: string | undefined;
     try {
@@ -849,13 +851,14 @@ describe("WS-13c: the wiring's model-family surface", () => {
       byTier = r.ok ? r.providerId : undefined;
       expect(byTier).toBeDefined();
       expect(byTier).not.toBe("anthropic"); // the vendor row is disabled
+      expect(byTier).not.toBe("console"); // the vendor row's WS-20 twin is disabled too
     } finally {
       unpreferred.dispose();
     }
     // Any OTHER provider that serves the same canonical model, promoted by preference alone.
     const other = "tabitoken";
     expect(other).not.toBe(byTier);
-    writeSettings(join(home), { providers: { anthropic: { enabled: false } }, preferredProviders: [other] });
+    writeSettings(join(home), { providers: { anthropic: { enabled: false }, console: { enabled: false } }, preferredProviders: [other] });
     const preferred = await buildProductionWiring({ config: localSession("s-slots-preferred"), env: {}, winterHome: home, provider: hermetic });
     try {
       expect(preferred.engineOptions.resolveSlot!("opus", undefined)).toMatchObject({ ok: true, providerId: other });
