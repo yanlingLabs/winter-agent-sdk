@@ -92,6 +92,13 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-haiku-4-5-20251001",
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-5",
+      // WS-20: console/<id> twins of the four priced anthropic rows -- the Console arm is billed
+      // per-token exactly like the API-key arm (same admission ruling, same pricingBasis), so the
+      // same list-priced rates apply.
+      "console/claude-fable-5-1",
+      "console/claude-haiku-4-5-20251001",
+      "console/claude-opus-5",
+      "console/claude-sonnet-5",
       "google/gemini-2.5-pro",
       // P7a (Lane D): the two Gemini rows P6.6 Task 1b authored but could not price -- its allowed
       // page set named the MODELS index, which links out to per-model pages and states no rates.
@@ -1101,4 +1108,21 @@ describe("WS-20: the console provider", () => {
     expect(console_!.risk.class).toBe(anthropic.risk.class);
     expect(console_!.family).toBe(anthropic.family);
   });
+});
+
+test("WS-20: every anthropic/<id> row has a console/<id> twin, structurally equal bar identity fields", () => {
+  const DIFFERING = new Set(["key", "providerId", "$comment", "observedAt", "continuationDomain"]);
+  const strip = (m: WinterModelDescriptor): unknown => JSON.parse(JSON.stringify(m, (k, v: unknown) => (DIFFERING.has(k) ? undefined : v)));
+  const anthropicRows = catalog.models.filter((m) => m.providerId === "anthropic");
+  expect(anthropicRows.length).toBeGreaterThan(0);
+  for (const a of anthropicRows) {
+    const id = a.key.slice("anthropic/".length);
+    const c = catalog.models.find((m) => m.key === `console/${id}`);
+    expect([a.key, c !== undefined]).toEqual([a.key, true]);
+    expect(c!.providerId).toBe("console");
+    expect(strip(c!)).toEqual(strip(a));
+    if (c!.reasoning?.continuationDomain) expect(c!.reasoning.continuationDomain.value).toEqual([c!.key]);
+  }
+  const claude = catalog.families!.find((f) => f.id === "claude")!;
+  expect(claude.vendorProviders).toEqual(["anthropic", "console"]);
 });
