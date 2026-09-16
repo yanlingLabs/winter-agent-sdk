@@ -1126,3 +1126,18 @@ test("WS-20: every anthropic/<id> row has a console/<id> twin, structurally equa
   const claude = catalog.families!.find((f) => f.id === "claude")!;
   expect(claude.vendorProviders).toEqual(["anthropic", "console"]);
 });
+
+test("WS-20: no reasoning-capable openai/codex/anthropic/console row has an empty effort vocabulary", () => {
+  const providers = new Set(["openai", "codex-oauth", "anthropic", "console"]);
+  const offenders = catalog.models
+    .filter((m) => providers.has(m.providerId) && m.reasoning?.supported?.value === true && (m.reasoning.efforts ?? []).length === 0)
+    .map((m) => m.key);
+  expect(offenders).toEqual([]);
+});
+test("WS-20: the seven gpt-5.6 rows carry the five verified tiers with medium as default", () => {
+  for (const key of ["openai/gpt-5.6", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "codex-oauth/gpt-5.6-sol", "codex-oauth/gpt-5.6-terra", "codex-oauth/gpt-5.6-luna"]) {
+    const row = catalog.models.find((m) => m.key === key)!;
+    expect([key, row.reasoning!.efforts]).toEqual([key, ["low", "medium", "high", "xhigh", "max"]]);
+    expect([key, row.reasoning!.defaultEffort]).toEqual([key, "medium"]);
+  }
+});

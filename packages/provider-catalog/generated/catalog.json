@@ -15316,13 +15316,16 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "confidence": "inferred",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-11T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -15420,13 +15423,16 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "confidence": "inferred",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-05T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -15524,13 +15530,16 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "confidence": "inferred",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-11T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -30582,19 +30591,26 @@
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "inferred"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "reasoning": {
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "canonicalModelId": "gpt-5.6",
       "modelFamily": "gpt"
     },
@@ -30665,11 +30681,18 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -30755,11 +30778,18 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -30845,11 +30875,18 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {

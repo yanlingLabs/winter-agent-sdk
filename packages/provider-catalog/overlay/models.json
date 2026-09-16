@@ -901,13 +901,16 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "confidence": "inferred",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-05T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -1004,13 +1007,16 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "confidence": "inferred",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-11T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -1107,13 +1113,16 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "confidence": "inferred",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-11T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -4918,11 +4927,18 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -5007,11 +5023,18 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -5096,11 +5119,18 @@
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
           "observedAt": "2026-09-05T00:00:00Z",
           "confidence": "inferred"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -6054,6 +6084,91 @@
       "status": "candidate",
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
+    },
+    {
+      "key": "openai/gpt-5.6",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.6",
+      "displayName": "GPT-5.6",
+      "aliases": [],
+      "$comment": "WS-20 (2026-09-16, Task L1.3): overlay-shadows the upstream-extracted `openai/gpt-5.6` row WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key) so `reasoning.efforts`/`defaultEffort` can be set -- every non-reasoning field is copied verbatim from the upstream row this entry shadows (`generated/upstream-layer.json`, key `openai/gpt-5.6`); `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them.",
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "Winter packages/core/src/settings.ts header: measured 2026-07-30 against the Codex OAuth Responses endpoint on the same three models; inferred for api.openai.com pending WS-20 probe",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state"
+      }
     }
   ]
 }
