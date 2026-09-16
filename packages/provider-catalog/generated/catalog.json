@@ -15315,7 +15315,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "confidence": "declared",
           "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-11T00:00:00Z"
@@ -15422,7 +15422,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "confidence": "declared",
           "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-05T00:00:00Z"
@@ -15529,7 +15529,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "confidence": "declared",
           "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
           "observedAt": "2026-09-11T00:00:00Z"
@@ -30596,7 +30596,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
           "observedAt": "2026-09-16T00:00:00Z",
           "confidence": "declared"
@@ -30680,7 +30680,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-luna, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
           "observedAt": "2026-09-16T00:00:00Z",
           "confidence": "declared"
@@ -30777,7 +30777,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-sol, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
           "observedAt": "2026-09-16T00:00:00Z",
           "confidence": "declared"
@@ -30874,7 +30874,7 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
+          "source": "live-probe",
           "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-terra, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
           "observedAt": "2026-09-16T00:00:00Z",
           "confidence": "declared"
