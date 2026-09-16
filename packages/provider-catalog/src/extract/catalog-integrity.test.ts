@@ -858,7 +858,7 @@ describe("WS-13b §2: the widened catalog", () => {
     }
   });
 
-  test("`anthropic` is the ONLY `authoritative` row on its adapter — A2's closure does not reach the siblings", async () => {
+  test("only `anthropic` and its `console` twin are `authoritative` on their adapter — A2's closure does not reach the vendor-distinct siblings", async () => {
     // A CROSS-LANE INTERACTION, pinned because neither lane's own tests would look for it.
     //
     // Lane A2 re-stamped `anthropic` `liveCatalogAuthority: "authoritative"` (fix-wave ruling F-4):
@@ -874,13 +874,19 @@ describe("WS-13b §2: the widened catalog", () => {
     // direction for `allowUnlisted` and the conservative one for claims (the mapper's own rule: an
     // unstated authority is never upstream's `true` default).
     //
+    // WS-20 (2026-09-16) added `console`: NOT a vendor-distinct sibling like z.ai -- it is Anthropic
+    // itself under the Console-profile auth arm, served by the identical live Models endpoint, so it
+    // legitimately inherits `authoritative` too (Task L1.1: every field but identity mirrors
+    // `anthropic`). It is exempted from the "every sibling is unknown" loop below by name, same as
+    // `anthropic` is.
+    //
     // The failure this catches is a future edit that stamps `authoritative` adapter-wide, or a
-    // sibling row copy-pasted from `anthropic` with the flag left on.
+    // vendor-distinct sibling row copy-pasted from `anthropic` with the flag left on.
     const onAdapter = catalog.providers.filter((p) => p.adapterId === "winter.anthropic-messages");
     expect(onAdapter.length).toBeGreaterThan(1);
-    expect(onAdapter.filter((p) => p.liveCatalogAuthority === "authoritative").map((p) => p.id)).toEqual(["anthropic"]);
+    expect(onAdapter.filter((p) => p.liveCatalogAuthority === "authoritative").map((p) => p.id).sort()).toEqual(["anthropic", "console"]);
     for (const p of onAdapter) {
-      if (p.id === "anthropic") continue;
+      if (p.id === "anthropic" || p.id === "console") continue;
       expect([p.id, p.liveCatalogAuthority]).toEqual([p.id, "unknown"]);
     }
   });
@@ -1081,5 +1087,18 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       expect(row.providerId).toBe("openai");
       expect(row.pricing?.value.inputPerMTokUsd).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("WS-20: the console provider", () => {
+  test("`console` exists, is console-profile-only, and mirrors anthropic's adapter/endpoints/risk", () => {
+    const anthropic = catalog.providers.find((p) => p.id === "anthropic")!;
+    const console_ = catalog.providers.find((p) => p.id === "console");
+    expect(console_).toBeDefined();
+    expect(console_!.authKinds).toEqual(["console-profile"]);
+    expect(console_!.adapterId).toBe(anthropic.adapterId);
+    expect(console_!.defaultEndpoints).toEqual(anthropic.defaultEndpoints);
+    expect(console_!.risk.class).toBe(anthropic.risk.class);
+    expect(console_!.family).toBe(anthropic.family);
   });
 });
