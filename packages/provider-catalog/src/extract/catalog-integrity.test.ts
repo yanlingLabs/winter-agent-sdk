@@ -92,6 +92,13 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-haiku-4-5-20251001",
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-5",
+      // WS-20: console/<id> twins of the four priced anthropic rows -- the Console arm is billed
+      // per-token exactly like the API-key arm (same admission ruling, same pricingBasis), so the
+      // same list-priced rates apply.
+      "console/claude-fable-5-1",
+      "console/claude-haiku-4-5-20251001",
+      "console/claude-opus-5",
+      "console/claude-sonnet-5",
       "google/gemini-2.5-pro",
       // P7a (Lane D): the two Gemini rows P6.6 Task 1b authored but could not price -- its allowed
       // page set named the MODELS index, which links out to per-model pages and states no rates.
@@ -858,7 +865,7 @@ describe("WS-13b §2: the widened catalog", () => {
     }
   });
 
-  test("`anthropic` is the ONLY `authoritative` row on its adapter — A2's closure does not reach the siblings", async () => {
+  test("only `anthropic` and its `console` twin are `authoritative` on their adapter — A2's closure does not reach the vendor-distinct siblings", async () => {
     // A CROSS-LANE INTERACTION, pinned because neither lane's own tests would look for it.
     //
     // Lane A2 re-stamped `anthropic` `liveCatalogAuthority: "authoritative"` (fix-wave ruling F-4):
@@ -874,13 +881,19 @@ describe("WS-13b §2: the widened catalog", () => {
     // direction for `allowUnlisted` and the conservative one for claims (the mapper's own rule: an
     // unstated authority is never upstream's `true` default).
     //
+    // WS-20 (2026-09-16) added `console`: NOT a vendor-distinct sibling like z.ai -- it is Anthropic
+    // itself under the Console-profile auth arm, served by the identical live Models endpoint, so it
+    // legitimately inherits `authoritative` too (Task L1.1: every field but identity mirrors
+    // `anthropic`). It is exempted from the "every sibling is unknown" loop below by name, same as
+    // `anthropic` is.
+    //
     // The failure this catches is a future edit that stamps `authoritative` adapter-wide, or a
-    // sibling row copy-pasted from `anthropic` with the flag left on.
+    // vendor-distinct sibling row copy-pasted from `anthropic` with the flag left on.
     const onAdapter = catalog.providers.filter((p) => p.adapterId === "winter.anthropic-messages");
     expect(onAdapter.length).toBeGreaterThan(1);
-    expect(onAdapter.filter((p) => p.liveCatalogAuthority === "authoritative").map((p) => p.id)).toEqual(["anthropic"]);
+    expect(onAdapter.filter((p) => p.liveCatalogAuthority === "authoritative").map((p) => p.id).sort()).toEqual(["anthropic", "console"]);
     for (const p of onAdapter) {
-      if (p.id === "anthropic") continue;
+      if (p.id === "anthropic" || p.id === "console") continue;
       expect([p.id, p.liveCatalogAuthority]).toEqual([p.id, "unknown"]);
     }
   });
@@ -1082,4 +1095,51 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       expect(row.pricing?.value.inputPerMTokUsd).toBeGreaterThan(0);
     }
   });
+});
+
+describe("WS-20: the console provider", () => {
+  test("`console` exists, is console-profile-only, and mirrors anthropic's adapter/endpoints/risk", () => {
+    const anthropic = catalog.providers.find((p) => p.id === "anthropic")!;
+    const console_ = catalog.providers.find((p) => p.id === "console");
+    expect(console_).toBeDefined();
+    expect(console_!.authKinds).toEqual(["console-profile"]);
+    expect(console_!.adapterId).toBe(anthropic.adapterId);
+    expect(console_!.defaultEndpoints).toEqual(anthropic.defaultEndpoints);
+    expect(console_!.risk.class).toBe(anthropic.risk.class);
+    expect(console_!.family).toBe(anthropic.family);
+  });
+});
+
+test("WS-20: every anthropic/<id> row has a console/<id> twin, structurally equal bar identity fields", () => {
+  const DIFFERING = new Set(["key", "providerId", "$comment", "observedAt", "continuationDomain"]);
+  const strip = (m: WinterModelDescriptor): unknown => JSON.parse(JSON.stringify(m, (k, v: unknown) => (DIFFERING.has(k) ? undefined : v)));
+  const anthropicRows = catalog.models.filter((m) => m.providerId === "anthropic");
+  expect(anthropicRows.length).toBeGreaterThan(0);
+  for (const a of anthropicRows) {
+    const id = a.key.slice("anthropic/".length);
+    const c = catalog.models.find((m) => m.key === `console/${id}`);
+    expect([a.key, c !== undefined]).toEqual([a.key, true]);
+    expect(c!.providerId).toBe("console");
+    expect(strip(c!)).toEqual(strip(a));
+    if (c!.reasoning?.continuationDomain) expect(c!.reasoning.continuationDomain.value).toEqual([c!.key]);
+  }
+  // Both directions: no orphan console/<id> without an anthropic/<id> sibling.
+  expect(catalog.models.filter((m) => m.providerId === "console").length).toBe(anthropicRows.length);
+  const claude = catalog.families!.find((f) => f.id === "claude")!;
+  expect(claude.vendorProviders).toEqual(["anthropic", "console"]);
+});
+
+test("WS-20: no reasoning-capable openai/codex/anthropic/console row has an empty effort vocabulary", () => {
+  const providers = new Set(["openai", "codex-oauth", "anthropic", "console"]);
+  const offenders = catalog.models
+    .filter((m) => providers.has(m.providerId) && m.reasoning?.supported?.value === true && (m.reasoning.efforts ?? []).length === 0)
+    .map((m) => m.key);
+  expect(offenders).toEqual([]);
+});
+test("WS-20: the seven gpt-5.6 rows carry the five verified tiers with medium as default", () => {
+  for (const key of ["openai/gpt-5.6", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "codex-oauth/gpt-5.6-sol", "codex-oauth/gpt-5.6-terra", "codex-oauth/gpt-5.6-luna"]) {
+    const row = catalog.models.find((m) => m.key === key)!;
+    expect([key, row.reasoning!.efforts]).toEqual([key, ["low", "medium", "high", "xhigh", "max"]]);
+    expect([key, row.reasoning!.defaultEffort]).toEqual([key, "medium"]);
+  }
 });

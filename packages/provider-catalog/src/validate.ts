@@ -48,7 +48,7 @@ const PROTOCOLS: readonly ProviderProtocol[] = [
   "azure-openai",
   "custom",
 ];
-const AUTH_KINDS: readonly ProviderAuthKind[] = ["api-key", "oauth-approved", "cloud-credential-chain", "local-none", "custom"];
+const AUTH_KINDS: readonly ProviderAuthKind[] = ["api-key", "oauth-approved", "cloud-credential-chain", "local-none", "custom", "console-profile"];
 const EVIDENCE_SOURCES: readonly EvidenceSource[] = ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override", "local-override", "winter-default"];
 const EVIDENCE_CONFIDENCES: readonly EvidenceConfidence[] = ["verified", "declared", "inferred", "unknown"];
 const TOOL_CALLING: readonly ToolCalling[] = ["native", "emulated", "none"];

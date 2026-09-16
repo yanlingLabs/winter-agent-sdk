@@ -674,7 +674,7 @@ const WIDENING_ROWS: ConformanceRow[] = [
     status: "new",
     citations: [
       { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "every dialect sibling states its dialect in its display name, and never shares an endpoint with its twin" },
-      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "`anthropic` is the ONLY `authoritative` row on its adapter — A2's closure does not reach the siblings" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "only `anthropic` and its `console` twin are `authoritative` on their adapter — A2's closure does not reach the vendor-distinct siblings" },
       { file: `${RUNTIME}/provider/catalog-endpoint-shape.test.ts`, testName: "R6b-5: `winter.anthropic-messages` is multi-provider IN FACT -- each sibling reaches its OWN endpoint" },
       { file: `${RUNTIME}/provider/catalog-endpoint-shape.test.ts`, testName: "...and the COPY costs `anthropic` no header: every protocol header and Winter's own user-agent still arrive" },
       { file: `${CORPUS}/anthropic.test.ts`, testName: "oauth material on a SIBLING provider row rides as a plain Bearer with NO Anthropic beta -- the row gate, not the material, decides" },

@@ -4,6 +4,22 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.13
+
+- `provider-catalog`: added the `console` provider (WS-20 Task L1.1) -- the Anthropic Console
+  login arm as its own provider row, `authKinds: ["console-profile"]`, mirroring `anthropic`'s
+  adapter, endpoints, risk class and pricing basis. `console-profile` is a new `authKinds` schema
+  enum member.
+- `provider-catalog`: every `anthropic/<id>` Claude row now has a structural `console/<id>` twin
+  (WS-20 Task L1.2), so a model served on the Console profile is a distinct catalog tag from its
+  API-key twin. `claude` family `vendorProviders` gains `console` (informational only).
+- `provider-catalog`: the seven `gpt-5.6` rows (`openai/gpt-5.6`, `-sol`, `-terra`, `-luna` and
+  their `codex-oauth/*` siblings) now carry the five-tier effort vocabulary
+  `["low","medium","high","xhigh","max"]` with `medium` as default (WS-20 Task L1.3). The
+  `codex-oauth` rows were already measured live 2026-07-30; the `openai/*` rows were promoted to
+  `declared` from a live WS-20 probe against `api.openai.com /v1/responses` on 2026-09-16, which
+  accepted every tier on every model.
+
 ## 0.0.12
 
 - Fixed `winter-agent-runtime`: `resume.ts`'s `toDialectEntries` discarded `message.model` from every

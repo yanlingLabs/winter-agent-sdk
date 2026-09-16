@@ -86,7 +86,7 @@
           "minItems": 1,
           "items": { "enum": ["openai-responses", "openai-chat-completions", "anthropic-messages", "google-generate-content", "bedrock-converse", "azure-openai", "custom"] }
         },
-        "authKinds": { "type": "array", "minItems": 1, "items": { "enum": ["api-key", "oauth-approved", "cloud-credential-chain", "local-none", "custom"] } },
+        "authKinds": { "type": "array", "minItems": 1, "items": { "enum": ["api-key", "oauth-approved", "cloud-credential-chain", "local-none", "custom", "console-profile"] } },
         "defaultEndpoints": {
           "type": "object",
           "description": "Generated endpoints are IMMUTABLE (R6-11). An EMPTY object is legal and meaningful: Azure/Bedrock/Vertex endpoints are region-, deployment- or project-templated and have no reviewable default. No userinfo, no query string.",

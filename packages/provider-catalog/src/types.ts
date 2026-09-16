@@ -23,7 +23,7 @@ export type ProviderProtocol =
   | "custom";
 
 /** How a provider is authenticated. `local-none` is a real, first-class kind — a local endpoint with no key is not a degenerate api-key case (WS-13 §6). */
-export type ProviderAuthKind = "api-key" | "oauth-approved" | "cloud-credential-chain" | "local-none" | "custom";
+export type ProviderAuthKind = "api-key" | "oauth-approved" | "cloud-credential-chain" | "local-none" | "custom" | "console-profile";
 
 /**
  * Where a capability claim came from. Ordered loosely from most to least durable.

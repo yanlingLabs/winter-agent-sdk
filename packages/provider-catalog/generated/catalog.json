@@ -1294,6 +1294,42 @@
       }
     },
     {
+      "id": "console",
+      "displayName": "Anthropic Console",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "console-profile"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.anthropic.com"
+      },
+      "modelDiscovery": "provider-native",
+      "liveCatalogAuthority": "authoritative",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/anthropic/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "oauth-documented",
+        "citation": "spec:WS-13b §0 D20",
+        "tier": "spec-ruling"
+      },
+      "scope": "llm"
+    },
+    {
       "id": "coze",
       "displayName": "Coze",
       "protocols": [
@@ -15279,14 +15315,17 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "confidence": "inferred",
-          "observedAt": "2026-09-11T00:00:00Z"
+          "source": "live-probe",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
+          "observedAt": "2026-07-30T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -15383,14 +15422,17 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "confidence": "inferred",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "source": "live-probe",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
+          "observedAt": "2026-07-30T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -15487,14 +15529,17 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "confidence": "inferred",
-          "observedAt": "2026-09-11T00:00:00Z"
+          "source": "live-probe",
+          "confidence": "declared",
+          "sourceRef": "Norma packages/core/src/settings.ts: measured live 2026-07-30 against the Codex OAuth endpoint, one model at a time (none/low/medium/high/xhigh/max accepted; `none` is Winter's unset and is not a catalog tier)",
+          "observedAt": "2026-07-30T00:00:00Z"
         },
         "efforts": [
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
@@ -15925,6 +15970,932 @@
       "status": "candidate",
       "canonicalModelId": "command-r7b-12-2024",
       "modelFamily": "other"
+    },
+    {
+      "key": "console/claude-fable-5",
+      "providerId": "console",
+      "upstreamId": "claude-fable-5",
+      "displayName": "Claude Fable 5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-fable-5-1",
+      "providerId": "console",
+      "upstreamId": "claude-fable-5-1",
+      "displayName": "Claude Fable 5.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table, \"Context window\": \"1M tokens\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table, \"Max output\": \"128K tokens\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"All current models support text and image input, text output, multilingual capabilities, vision, and tool use\" (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — same sentence as inputModalities (\"...text output...\"), retrieved 2026-09-07",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"...and tool use\" listed among the capabilities every current model supports (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "same basis as toolCalling",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07)",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"Thinking\": \"Adaptive (always on)\", \"Default effort\": \"high\" for Claude Fable 5.1 (retrieved 2026-09-07)",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1, applied per anthropic/claude-opus-5's own evidence — the Messages API returns a readable thinking summary, never the raw chain, for every current Claude model",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "derived-shapes-p6.md item (c), applied per anthropic/claude-opus-5's own evidence — ThinkingAdaptive/ThinkingEnabled `display`; a Messages API mechanic shared by every current Claude model, not specific to this page",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary, applied per anthropic/claude-opus-5's own evidence — a thinking block's signature arrives across signature_delta events, so the complete replayable block exists only at content_block_stop",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "console/claude-fable-5-1"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves, applied per anthropic/claude-opus-5's own evidence. Own-state acceptance: a Claude model's own thinking blocks are replayed to it unchanged, in order, with signatures intact. Why the domain is NARROW: prior thinking/redacted_thinking blocks are tied to the model that produced them, so \"same provider\" is not automatically \"same continuation domain\" — the domain is this model alone.",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 10,
+          "outputPerMTokUsd": 50,
+          "cacheReadPerMTokUsd": 0.25,
+          "cacheWritePerMTokUsd": 12.5
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.anthropic.com/en/docs/about-claude/pricing (301 → https://platform.claude.com/docs/en/about-claude/pricing; both retrieved 2026-09-08) — the vendor's own Model pricing table, row \"Claude Fable 5.1\": \"Base input tokens $10 / MTok | 5m cache writes $12.50 / MTok | 1h cache writes $20 / MTok | Cache hits and refreshes $0.25 / MTok | Output tokens $50 / MTok\", with the page's own footnote \"Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at 0.025x the base input price. All other models use the standard 0.1x multiplier.\" P7a upgrade: this row previously cited the MODELS page, which states input/output and the cache-read multiplier but no cache-write rate (P6.6 could not reach the pricing page). `cacheWritePerMTokUsd` records the 5-MINUTE write ($12.50), matching every other Anthropic row here; the 1-hour write ($20) has no field of its own and is under-reported, exactly as `ModelPricing`'s one-rate-per-direction shape requires — a disclosed schema gap, not a claim the 1h rate does not exist. Batch (-50%), fast-mode and `inference_geo: \"us\"` (1.1x) modifiers are likewise unrepresentable and are NOT folded into these numbers.",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-fable-5.1",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-haiku-4-5-20251001",
+      "providerId": "console",
+      "upstreamId": "claude-haiku-4-5-20251001",
+      "displayName": "Claude Haiku 4.5",
+      "aliases": [
+        "haiku"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://claude.com/pricing — Haiku 4.5 publishes distinct prompt-cache write and read rates",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1,
+          "outputPerMTokUsd": 5,
+          "cacheReadPerMTokUsd": 0.1,
+          "cacheWritePerMTokUsd": 1.25
+        },
+        "source": "official-doc",
+        "sourceRef": "https://claude.com/pricing — Haiku 4.5: input $1, output $5, prompt cache read $0.10, prompt cache write $1.25 per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5-20251001",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-haiku-4.5",
+      "providerId": "console",
+      "upstreamId": "claude-haiku-4.5",
+      "displayName": "Claude Haiku 4.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-opus-4.5",
+      "providerId": "console",
+      "upstreamId": "claude-opus-4.5",
+      "displayName": "Claude Opus 4.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.5",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-opus-4.6",
+      "providerId": "console",
+      "upstreamId": "claude-opus-4.6",
+      "displayName": "Claude Opus 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.6",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-opus-4.7",
+      "providerId": "console",
+      "upstreamId": "claude-opus-4.7",
+      "displayName": "Claude Opus 4.7",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.7",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-opus-4.8",
+      "providerId": "console",
+      "upstreamId": "claude-opus-4.8",
+      "displayName": "Claude Opus 4.8",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-4.8",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-opus-5",
+      "providerId": "console",
+      "upstreamId": "claude-opus-5",
+      "displayName": "Claude Opus 5",
+      "aliases": [
+        "opus"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 at v3.8.50 (5458026c) — `contextLength: 1000000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — `maxOutputTokens: 128000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://claude.com/pricing — the row publishes distinct prompt-cache write and read rates, which a model without prompt caching would not have",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — `supportsXHighEffort: true`, and the row rejects non-default sampling because reasoning rides `output_config.effort`",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "live-probe",
+          "sourceRef": "packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6.md capture (F) — the runtime normalises an unsigned thinking block to signature: \"\" and replays it",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "live-probe",
+          "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`; an earlier partial copy would replay an unsigned block",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "console/claude-opus-5"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact (§4.4's replay rules and its worked request). Why the domain is NARROW: \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is this model alone, never the Anthropic provider.",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 5,
+          "outputPerMTokUsd": 25,
+          "cacheReadPerMTokUsd": 0.5,
+          "cacheWritePerMTokUsd": 6.25
+        },
+        "source": "official-doc",
+        "sourceRef": "https://claude.com/pricing — Opus 5: input $5, output $25, prompt cache read $0.50, prompt cache write $6.25 per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "claude-opus-5",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-sonnet-4.5",
+      "providerId": "console",
+      "upstreamId": "claude-sonnet-4.5",
+      "displayName": "Claude Sonnet 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.5",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-sonnet-4.6",
+      "providerId": "console",
+      "upstreamId": "claude-sonnet-4.6",
+      "displayName": "Claude Sonnet 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-16T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-4.6",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-sonnet-5",
+      "providerId": "console",
+      "upstreamId": "claude-sonnet-5",
+      "displayName": "Claude Sonnet 5",
+      "aliases": [
+        "sonnet"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5 at v3.8.50 (5458026c) — `contextLength: 1048576`",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://claude.com/pricing — Sonnet 5 publishes distinct prompt-cache write and read rates",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "live-probe",
+          "sourceRef": "packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6.md — capture (J), the `sonnet` row's supportsEffort/supportsAdaptiveThinking",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "live-probe",
+          "sourceRef": "derived-shapes-p6.md capture (F) — the runtime normalises an unsigned thinking block to signature: \"\" and replays it",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "live-probe",
+          "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "console/claude-sonnet-5"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: §4.4 requires the model's own assistant blocks — `thinking` with its signature, `redacted_thinking` — replayed unchanged and in order across a tool loop. Why the domain is NARROW: Anthropic documents model switching as a boundary at which those blocks are STRIPPED, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone.",
+          "confidence": "declared",
+          "observedAt": "2026-09-16T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2,
+          "outputPerMTokUsd": 10,
+          "cacheReadPerMTokUsd": 0.2,
+          "cacheWritePerMTokUsd": 2.5
+        },
+        "source": "official-doc",
+        "sourceRef": "https://claude.com/pricing — Sonnet 5: input $2, output $10, prompt cache read $0.20, prompt cache write $2.50 per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-16T00:00:00Z"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "claude-sonnet-5",
+      "modelFamily": "claude"
     },
     {
       "key": "coze/claude-3-7-sonnet-20250514",
@@ -29620,19 +30591,26 @@
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "inferred"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "live-probe",
+          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
+          "observedAt": "2026-09-16T00:00:00Z",
+          "confidence": "declared"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "canonicalModelId": "gpt-5.6",
       "modelFamily": "gpt"
     },
@@ -29702,12 +30680,19 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "live-probe",
+          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-luna, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
+          "observedAt": "2026-09-16T00:00:00Z",
+          "confidence": "declared"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -29792,12 +30777,19 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "live-probe",
+          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-sol, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
+          "observedAt": "2026-09-16T00:00:00Z",
+          "confidence": "declared"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -29882,12 +30874,19 @@
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "live-probe",
+          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-terra, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
+          "observedAt": "2026-09-16T00:00:00Z",
+          "confidence": "declared"
         },
-        "efforts": [],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -39125,7 +40124,8 @@
       "displayName": "Claude",
       "vendor": "Anthropic",
       "vendorProviders": [
-        "anthropic"
+        "anthropic",
+        "console"
       ],
       "matchers": [
         {
