@@ -232,6 +232,16 @@ describe("gitStatus and omitProjectContext (Explore/Plan)", () => {
     expect(req.system).toContain("# Environment");
   });
 
+  test("excludeDynamicSections: the snapshot becomes the FIRST index-0 entry, ahead of claudeMd, and leaves the system prompt", async () => {
+    const requests = await run({ prompts: ["one"], config: { cwd: fx.main, systemPrompt: { type: "preset", preset: "claude_code", excludeDynamicSections: true } } });
+    const req = requests[0]!;
+    expect(req.system).not.toContain("gitStatus");
+    expect(req.system).not.toContain(fx.main);
+    const ctx = allTexts(req).find((t) => t.includes("As you answer the user's questions"))!;
+    expect([...ctx.matchAll(/^# (.+)$/gm)].map((m) => m[1])).toEqual(["gitStatus", "claudeMd", "currentDate", "Environment", "auto memory"]);
+    expect(ctx).toContain("# gitStatus\nThis git status was captured when the session began");
+  });
+
   test("the kill switch drops gitStatus", async () => {
     const requests = await run({ prompts: ["one"], config: { cwd: fx.main }, engine: { env: { ...process.env, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" } } });
     expect(requests[0]!.system).not.toContain("gitStatus:");
