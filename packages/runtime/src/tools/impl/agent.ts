@@ -20,11 +20,17 @@ import { AGENT_TOOL_CANONICAL_NAME } from "../../provider/slots.ts";
 import "../descriptors/agent.ts"; // self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
 import { createBackgroundTask } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared background-task runtime TaskStop/TaskOutput are built on.
-import { startTracking, setTaskStatus, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+// Task-frames parity (2026-09-17 contract §4): `backgroundAgentTasks`/`currentBackgroundTasksChanged`
+// (this file's own header used to explain why a SECOND map existed alongside the shared registry) are
+// GONE -- now that the registry's own `toBackgroundTasksChangedEntry` maps kind "agent" to the pinned
+// wire spelling itself (background-tasks.ts's WIRE_TASK_TYPES), the second map carried nothing the
+// registry did not already have; the two were kept in lockstep by hand, which is exactly the
+// "per-tool literal" duplication the update/notify doors below exist to remove.
+import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 import { loadAgentDefinitions } from "../../subagents/definitions.ts";
 import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
-import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
+import type { ChildHandle, ChildResult, ChildSessionRecord, ChildTaskProgress, SpawnChildRequest } from "../../subagents/child-handle.ts";
 
 // ONE PRODUCER for the name (P6.6): `provider/slots.ts` declares it, `descriptors/agent.ts`
 // registers under it, engine.ts recognises the descriptor by it, and this executor replaces the
@@ -45,20 +51,83 @@ export const AGENT_TOOL_NAME = AGENT_TOOL_CANONICAL_NAME;
 // Bash command. A child has no OS process (RULING R4-4: it is an in-process runEngine loop), so it
 // registers with no `pid` and a generic `stop` callback instead: `handle.stop()`, which is
 // idempotent and settles the child's own result.
-//
-// The small map below still exists for a DIFFERENT reason, unchanged: `background_tasks_changed`
-// carries a `task_type` per row, and the shared registry's own entry shape does not preserve the
-// per-row description/type pairing this frame needs -- so agent rows are merged in alongside
-// whatever the registry reports for bash/monitor.
-interface AgentBackgroundTaskEntry {
-  task_id: string;
-  task_type: "agent";
-  description: string;
-}
-const backgroundAgentTasks = new Map<string, AgentBackgroundTaskEntry>();
 
-function currentBackgroundTasksChanged(): Array<{ task_id: string; task_type: string; description: string }> {
-  return [...listRunningTasks().map(toBackgroundTasksChangedEntry), ...backgroundAgentTasks.values()];
+// Task-frames parity (contract §4): usage on the WIRE (snake_case, the pinned SDKTaskProgressMessage/
+// SDKTaskNotificationMessage shape) from ChildResult.usage's own camelCase counters -- ONE converter
+// so the two spellings never drift apart at two separate call sites (the terminal notification and,
+// via child-engine.ts's own onProgress, every task_progress frame).
+function toWireUsage(usage: ChildResult["usage"]): { total_tokens: number; tool_uses: number; duration_ms: number } | undefined {
+  return usage === undefined ? undefined : { total_tokens: usage.totalTokens, tool_uses: usage.toolUses, duration_ms: usage.durationMs };
+}
+
+// Task-frames parity (contract §4): registration -- BOTH foreground and background -- emits this
+// SAME frame shape; only `is_backgrounded` (and whether a background_tasks_changed follows) differs.
+// `spawn_depth` is omitted only for a hand-built ChildHandle whose record never went through the
+// real spawn path (every impl/*.test.ts fixture that constructs one directly).
+function emitAgentTaskStarted(ctx: ToolExecutionContext, taskId: string, parentToolUseId: string, description: string, subagentType: string | undefined, isBackgrounded: boolean, spawnDepth: number | undefined, prompt: string): void {
+  ctx.emitFrame({
+    type: "system",
+    subtype: "task_started",
+    task_id: taskId,
+    tool_use_id: parentToolUseId,
+    description,
+    ...(subagentType !== undefined ? { subagent_type: subagentType } : {}),
+    is_backgrounded: isBackgrounded,
+    ...(spawnDepth !== undefined ? { spawn_depth: spawnDepth } : {}),
+    task_type: "local_agent",
+    prompt,
+    uuid: randomUUID(),
+    session_id: ctx.sessionId,
+  });
+}
+
+// Task-frames parity (contract §4): one `task_progress` per qualifying child assistant message,
+// foreground and background alike -- `child-engine.ts`'s own `SpawnChildRequest.onProgress` is what
+// calls this, through the closure built in `execute()` below.
+function emitAgentTaskProgress(ctx: ToolExecutionContext, taskId: string, parentToolUseId: string, description: string, subagentType: string | undefined, progress: ChildTaskProgress): void {
+  ctx.emitFrame({
+    type: "system",
+    subtype: "task_progress",
+    task_id: taskId,
+    tool_use_id: parentToolUseId,
+    description,
+    ...(subagentType !== undefined ? { subagent_type: subagentType } : {}),
+    usage: { total_tokens: progress.totalTokens, tool_uses: progress.toolUses, duration_ms: progress.durationMs },
+    last_tool_name: progress.lastToolName,
+    uuid: randomUUID(),
+    session_id: ctx.sessionId,
+  });
+}
+
+// Task-frames parity (contract §4's own termination table -- CORRECTED 2026-09-17 from a live run of
+// the pinned binary: the earlier "foreground success removes the row" reading was wrong for agents;
+// the remove-without-task_updated path exists for foreground BASH only, bash.ts's own runForeground).
+// Foreground and background agents terminate THROUGH THE SAME DOOR -- the registry's own `updateTask`:
+// `task_updated {status, end_time[, error]}` then, synchronously, the once-per-id `task_notification`.
+// They differ ONLY in `task_started.is_backgrounded` and whether `background_tasks_changed` follows
+// (both decided by the CALLER, not here) -- so a foreground task needs a real `.output` file exactly
+// like a background one, never `output_file:""`.
+//
+// `summary` is the child's own `result.content` on every branch, uniformly -- observed directly on
+// the pin for the success case (`summary: "<the child's final report text>"`); the failed/stopped
+// cases have no pinned wording of their own, and `result.content` is already the descriptive text
+// for those (the error message / "stopped by request") that `foregroundResultToPayload` below reads
+// for the model-facing result too, so this is the same text on both surfaces rather than a second,
+// invented phrasing. `usage` rides every branch, per the contract's own "usage on every agent
+// task_notification".
+function finalizeAgentTask(taskId: string, parentToolUseId: string, outputPath: string, result: ChildResult): void {
+  const usage = toWireUsage(result.usage);
+  updateTask(taskId, {
+    status: result.status,
+    endTime: Date.now(),
+    ...(result.status === "failed" ? { error: result.content } : {}),
+    notification: {
+      summary: result.content,
+      outputFile: outputPath,
+      toolUseId: parentToolUseId,
+      ...(usage !== undefined ? { usage } : {}),
+    },
+  });
 }
 
 function toRecordShape(input: unknown): Record<string, unknown> {
@@ -108,7 +177,57 @@ function writeAgentTaskStub(outputPath: string, handle: ChildHandle): void {
   );
 }
 
-function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext, description: string, prompt: string, subagentType: string | undefined): ToolResultPayload {
+// Task-frames parity: the ONE registration door for an agent task, foreground and background alike
+// (they differ only in `isBackgrounded`, per finalizeAgentTask's own header) -- allocates the task
+// id/output path, registers it in the shared registry with a stop callback, writes the initial stub
+// (so a real `.output` file exists at the SAME path the eventual notification names -- "a foreground
+// agent needs an output file like a background one"), and emits `task_started`.
+function registerAgentTask(
+  ctx: ToolExecutionContext,
+  handle: ChildHandle,
+  description: string,
+  prompt: string,
+  subagentType: string | undefined,
+  parentToolUseId: string,
+  isBackgrounded: boolean,
+): { taskId: string; outputPath: string } {
+  // Phase 4 Task 8 (rider 24): register the task in the SHARED background-task runtime, so
+  // TaskStop and TaskOutput -- both of which are implemented entirely against that registry --
+  // reach an agent task exactly as they reach a backgrounded Bash command. `pid` is deliberately
+  // ABSENT: a child is an in-process `runEngine` loop (RULING R4-4), never an OS process, so there
+  // is no process group to signal. The generic `stop` callback is the whole point of that field's
+  // existence (it was added for Monitor's socket half, which likewise has no pid) -- `handle.stop()`
+  // is idempotent and settles the child's result, so a TaskStop against an agent task aborts the
+  // real child rather than merely marking a row.
+  const { taskId, outputPath } = createBackgroundTask("agent");
+  startTracking({
+    taskId,
+    kind: "agent",
+    outputPath,
+    description,
+    isBackgrounded,
+    toolUseId: parentToolUseId,
+    emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
+    stop: () => {
+      void handle.stop();
+    },
+  });
+  writeAgentTaskStub(outputPath, handle);
+  emitAgentTaskStarted(ctx, taskId, parentToolUseId, description, subagentType, isBackgrounded, handle.record.spawnDepth, prompt);
+  return { taskId, outputPath };
+}
+
+function startBackgroundAgentTask(
+  handle: ChildHandle,
+  ctx: ToolExecutionContext,
+  description: string,
+  prompt: string,
+  subagentType: string | undefined,
+  parentToolUseId: string,
+  // Task-frames parity: the `onProgress` closure baked into `req` (execute()'s own SpawnChildRequest,
+  // BEFORE spawnChild is called) needs the real taskId the moment it exists -- this is that channel.
+  setTaskId: (taskId: string) => void,
+): ToolResultPayload {
   // `handle` is ALREADY a real, running child by the time this function is called (spawnChild has
   // already succeeded, in the caller). Everything below is bookkeeping ON TOP of that live child --
   // if ANY of it throws (createBackgroundTask before configureBackgroundTaskRoot, a filesystem
@@ -120,48 +239,12 @@ function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext
   let taskId: string;
   let outputPath: string;
   try {
-    ({ taskId, outputPath } = createBackgroundTask("agent"));
-    backgroundAgentTasks.set(taskId, { task_id: taskId, task_type: "agent", description });
-    // Phase 4 Task 8 (rider 24): register the task in the SHARED background-task runtime, so
-    // TaskStop and TaskOutput -- both of which are implemented entirely against that registry --
-    // reach a background agent task exactly as they reach a backgrounded Bash command. Lane C's own
-    // report flagged the asymmetry ("TaskStop/TaskOutput do not reach background agent tasks");
-    // closing it needed the registry's own `BackgroundTaskKind` union widened first (done, this
-    // task), because an agent task has no OS process at all.
-    //
-    // `pid` is deliberately ABSENT: a child is an in-process `runEngine` loop (RULING R4-4), never
-    // an OS process, so there is no process group to signal. The generic `stop` callback is the
-    // whole point of that field's existence (it was added for Monitor's socket half, which likewise
-    // has no pid) -- `handle.stop()` is idempotent and settles the child's result, so a TaskStop
-    // against a background agent aborts the real child rather than merely marking a row.
-    startTracking({
-      taskId,
-      kind: "agent",
-      outputPath,
-      description,
-      stop: () => {
-        void handle.stop();
-      },
-    });
-    writeAgentTaskStub(outputPath, handle);
-
-    ctx.emitFrame({
-      type: "system",
-      subtype: "task_started",
-      task_id: taskId,
-      tool_use_id: handle.record.parentToolUseId,
-      description,
-      ...(subagentType !== undefined ? { subagent_type: subagentType } : {}),
-      is_backgrounded: true,
-      task_type: "agent",
-      prompt,
-      uuid: randomUUID(),
-      session_id: ctx.sessionId,
-    });
+    ({ taskId, outputPath } = registerAgentTask(ctx, handle, description, prompt, subagentType, parentToolUseId, true));
+    setTaskId(taskId);
     ctx.emitFrame({
       type: "system",
       subtype: "background_tasks_changed",
-      tasks: currentBackgroundTasksChanged(),
+      tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
       uuid: randomUUID(),
       session_id: ctx.sessionId,
     });
@@ -179,35 +262,23 @@ function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext
   // never rejects -- the onRejected branch is defense-in-depth only, never expected to fire.
   handle.result().then(
     (result) => {
-      backgroundAgentTasks.delete(taskId);
-      // Rider 24: reflect the child's own terminal status into the shared registry, so
-      // `listRunningTasks()` (and therefore TaskStop's own "already finished" answer) is accurate.
-      setTaskStatus(taskId, result.status === "completed" ? "completed" : result.status === "stopped" ? "stopped" : "failed");
-      // ChildResult.status (child-handle.ts, T3-frozen) is ALREADY the identical 3-member
-      // "completed"|"stopped"|"failed" union SDKTaskNotificationMessage.status expects -- no
-      // narrowing/fallback needed, unlike ChildSessionRecord.status's own wider 4-member ChildStatus.
-      const status = result.status;
+      // A TaskStop that already finalized this row (its own `updateTask` call, moving status out of
+      // "running") gets here first when `handle.stop()`'s own `settle("stopped", ...)` resolves
+      // `result()` -- `finalizeAgentTask` is idempotent either way (updateTask's own empty-diff/
+      // already-terminal guards), but the guard avoids a redundant stub-append and
+      // background_tasks_changed for the common case, matching workflow.ts's own identical guard.
+      if (getTask(taskId)?.status !== "running") return;
       try {
-        appendFileSync(outputPath, `\n[${new Date().toISOString()}] subagent ${handle.record.id} ${status}.\n`);
+        appendFileSync(outputPath, `\n[${new Date().toISOString()}] subagent ${handle.record.id} ${result.status}.\n`);
       } catch {
         /* the stub file is a best-effort convenience; its own write failure must never crash this callback */
       }
+      finalizeAgentTask(taskId, parentToolUseId, outputPath, result);
       try {
         ctx.emitFrame({
           type: "system",
-          subtype: "task_notification",
-          task_id: taskId,
-          tool_use_id: handle.record.parentToolUseId,
-          status,
-          output_file: outputPath,
-          summary: `${description} (${status})`,
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-        ctx.emitFrame({
-          type: "system",
           subtype: "background_tasks_changed",
-          tasks: currentBackgroundTasksChanged(),
+          tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
           uuid: randomUUID(),
           session_id: ctx.sessionId,
         });
@@ -216,8 +287,8 @@ function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext
       }
     },
     () => {
-      backgroundAgentTasks.delete(taskId);
-      setTaskStatus(taskId, "failed");
+      if (getTask(taskId)?.status !== "running") return;
+      finalizeAgentTask(taskId, parentToolUseId, outputPath, { status: "failed", content: `subagent ${handle.record.id}: result() rejected unexpectedly` });
     },
   );
 
@@ -349,6 +420,14 @@ export const agentExecutor: ToolExecutor = {
     // be the model's id.
     const parentToolUseId = ctx.toolUseId ?? randomUUID();
 
+    // Task-frames parity (contract §4): `onProgress` is wired into the request BEFORE spawnChild
+    // even runs, but the real task id does not exist until AFTER it resolves (background allocates
+    // one via createBackgroundTask; foreground, a few lines below, allocates one the same way) -- so
+    // the closure reads a variable this same scope assigns once the id is known, rather than the id
+    // being a field of the request itself. A progress frame that somehow arrived before the id was
+    // set (not reachable in practice -- see child-engine.ts's own header on why the pump cannot run
+    // ahead of spawnChild's own return) would simply be dropped rather than throw.
+    let taskId: string | undefined;
     const req: SpawnChildRequest = {
       parentToolUseId,
       prompt,
@@ -357,6 +436,10 @@ export const agentExecutor: ToolExecutor = {
       ...(model !== undefined ? { model } : {}),
       ...(resolvedIsolation !== undefined ? { isolation: resolvedIsolation } : {}),
       ...(name !== undefined ? { name } : {}),
+      onProgress: (progress) => {
+        if (taskId === undefined) return;
+        emitAgentTaskProgress(ctx, taskId, parentToolUseId, description, subagentType, progress);
+      },
     };
 
     let handle: ChildHandle;
@@ -382,34 +465,48 @@ export const agentExecutor: ToolExecutor = {
     if (!fgbg.background) {
       // Phase 4 fix wave (I5): a FOREGROUND child is tracked in the same unified task namespace a
       // background one is, so `TaskStop` can reach it -- before this, a foreground child had no
-      // task id at all and `stop()` was reachable through no tool. Deliberately SILENT: no
-      // `task_started`/`background_tasks_changed` frame is emitted (those describe a BACKGROUNDED
-      // task to the model, and emitting them here would both mislead and churn every committed
-      // spawn golden), and the row is moved to a terminal status the moment the child settles, so a
-      // later `background_tasks_changed` can never advertise a finished foreground child.
+      // task id at all and `stop()` was reachable through no tool.
+      //
+      // Task-frames parity (contract §4): the pin registers a FOREGROUND agent too (`task_started
+      // {..., is_backgrounded: false}`) and terminates it through the SAME `updateTask` door a
+      // background agent uses -- the older "deliberately SILENT, remove on success" posture this
+      // file's own history carried was measured wrong against a live run of the pin (that
+      // remove-without-task_updated path is bash.ts's own foreground convention, never an agent's).
+      // `background_tasks_changed` still never follows registration or termination here (§1's own
+      // listing rule already excludes `isBackgrounded:false` rows, so emitting one would announce a
+      // row nothing lists anyway) -- that is the ONE structural difference from the background path
+      // below, per `finalizeAgentTask`'s own header.
       //
       // Best-effort by construction: the tracking row is a convenience on top of a child this call
       // is ALREADY awaiting, so a failure to create it (a hand-built ToolExecutionContext whose run
       // never called configureBackgroundTaskRoot) must degrade to "no task id", never fail the call.
-      let foregroundTaskId: string | undefined;
+      let outputPath: string | undefined;
       try {
-        const { taskId, outputPath } = createBackgroundTask("agent");
-        startTracking({ taskId, kind: "agent", outputPath, description, stop: () => void handle.stop() });
-        foregroundTaskId = taskId;
+        const registered = registerAgentTask(ctx, handle, description, prompt, subagentType, parentToolUseId, false);
+        taskId = registered.taskId;
+        outputPath = registered.outputPath;
       } catch {
         /* see above -- tracking is auxiliary to a child this call already owns */
       }
       try {
         const result = await handle.result();
+        if (taskId !== undefined && outputPath !== undefined) finalizeAgentTask(taskId, parentToolUseId, outputPath, result);
         return foregroundResultToPayload(handle.record, result, prompt, subagentType);
-      } finally {
-        if (foregroundTaskId !== undefined) {
-          setTaskStatus(foregroundTaskId, handle.record.status === "completed" ? "completed" : handle.record.status === "stopped" ? "stopped" : "failed");
+      } catch (err) {
+        // `handle.result()` per seam-contracts-p4.test.ts's own pinned behavior never actually
+        // rejects -- this mirrors the background path's own defense-in-depth-only onRejected branch,
+        // never expected to fire, but a terminal update here (rather than an orphaned "running" row)
+        // is cheap insurance if it ever does.
+        if (taskId !== undefined && outputPath !== undefined) {
+          finalizeAgentTask(taskId, parentToolUseId, outputPath, { status: "failed", content: err instanceof Error ? err.message : String(err) });
         }
+        throw err;
       }
     }
 
-    return startBackgroundAgentTask(handle, ctx, description, prompt, subagentType);
+    return startBackgroundAgentTask(handle, ctx, description, prompt, subagentType, parentToolUseId, (id) => {
+      taskId = id;
+    });
   },
 };
 

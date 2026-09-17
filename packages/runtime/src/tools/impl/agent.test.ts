@@ -13,12 +13,12 @@ import { AGENT_TOOL_NAME, agentExecutor } from "./agent.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared registry TaskStop/TaskOutput are implemented against, and
 // those two REAL executors -- driven by task id here, never by calling their internals.
-import { getTask } from "./background-task-runtime.ts";
+import { getTask, listRunningTasks, toBackgroundTasksChangedEntry, startTracking } from "./background-task-runtime.ts";
 import { taskStopExecutor } from "./task-stop.ts";
 import { taskOutputExecutor } from "./task-output.ts";
 import { resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
-import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
+import type { ChildHandle, ChildResult, ChildSessionRecord, ChildTaskProgress, SpawnChildRequest } from "../../subagents/child-handle.ts";
 import { resolveBrand, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 function fakeRecord(overrides: Partial<ChildSessionRecord> = {}): ChildSessionRecord {
@@ -368,6 +368,153 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
   });
 });
 
+// ================================================================================================
+// Task-frames parity (2026-09-17 contract §4): foreground registration/termination, progress, and
+// the corrected "foreground terminates through the SAME updateTask door as background" rule.
+// ================================================================================================
+describe("Agent tool: task-frames parity -- foreground registration and termination", () => {
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-fg-frames-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+
+  test("registers task_started with is_backgrounded:false, task_type:local_agent, spawn_depth, tool_use_id -- and NO background_tasks_changed", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "done" }), { spawnDepth: 1 }),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    expect(frames.some((f) => (f as { subtype: string }).subtype === "background_tasks_changed")).toBe(false);
+    const started = frames.find((f) => (f as { subtype: string }).subtype === "task_started") as {
+      is_backgrounded: boolean;
+      task_type: string;
+      spawn_depth?: number;
+      tool_use_id?: string;
+      description: string;
+    };
+    expect(started).toBeDefined();
+    expect(started.is_backgrounded).toBe(false);
+    expect(started.task_type).toBe("local_agent");
+    expect(started.spawn_depth).toBe(1);
+    expect(typeof started.tool_use_id).toBe("string");
+    expect(started.description).toBe("d");
+  });
+
+  test("CORRECTED: foreground success terminates through updateTask (task_updated then task_notification), never a remove -- output_file is the REAL path, summary is the child's final text", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "the child's final report", usage: { totalTokens: 42, toolUses: 2, durationMs: 500 } })),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+
+    const started = frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { task_id: string };
+    const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { task_id: string; patch: { status?: string; end_time?: number } };
+    const notif = frames.find((f) => (f as { subtype: string }).subtype === "task_notification") as {
+      task_id: string;
+      status: string;
+      output_file: string;
+      summary: string;
+      usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+    };
+    expect(updated).toBeDefined();
+    expect(updated.task_id).toBe(started.task_id);
+    expect(updated.patch.status).toBe("completed");
+    expect(typeof updated.patch.end_time).toBe("number");
+    expect(notif).toBeDefined();
+    expect(notif.task_id).toBe(started.task_id);
+    expect(notif.status).toBe("completed");
+    expect(notif.output_file).not.toBe(""); // the REAL output path, not bash's foreground "" convention
+    expect(notif.output_file.length).toBeGreaterThan(0);
+    expect(notif.summary).toBe("the child's final report");
+    expect(notif.usage).toEqual({ total_tokens: 42, tool_uses: 2, duration_ms: 500 });
+    // Ordering: task_started, task_updated, task_notification -- never a second background_tasks_changed.
+    expect(frames.filter((f) => (f as { subtype: string }).subtype === "background_tasks_changed")).toHaveLength(0);
+  });
+
+  test("foreground failure: task_updated {status:failed, error} then task_notification {status:failed, usage}", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "failed", content: "boom: model returned an error", usage: { totalTokens: 5, toolUses: 0, durationMs: 10 } })),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+
+    const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { patch: { status?: string; error?: string } };
+    expect(updated.patch.status).toBe("failed");
+    expect(updated.patch.error).toBe("boom: model returned an error");
+    const notif = frames.find((f) => (f as { subtype: string }).subtype === "task_notification") as { status: string; summary: string; usage?: unknown };
+    expect(notif.status).toBe("failed");
+    expect(notif.summary).toBe("boom: model returned an error");
+    expect(notif.usage).toEqual({ total_tokens: 5, tool_uses: 0, duration_ms: 10 });
+  });
+
+  test("foreground stopped: task_updated {status:killed} then task_notification {status:stopped}", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "stopped", content: "stopped by request" })),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+
+    const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { patch: { status?: string } };
+    expect(updated.patch.status).toBe("killed"); // §1: Winter's internal "stopped" patches as "killed"
+    const notif = frames.find((f) => (f as { subtype: string }).subtype === "task_notification") as { status: string };
+    expect(notif.status).toBe("stopped"); // ...and notifies as "stopped"
+  });
+
+  test("task_progress: onProgress fires the pinned shape, correlated on the parent's own tool_use id", async () => {
+    let resolveResult!: (r: ChildResult) => void;
+    const resultPromise = new Promise<ChildResult>((resolve) => {
+      resolveResult = resolve;
+    });
+    let capturedOnProgress: ((p: ChildTaskProgress) => void) | undefined;
+    const { ctx, frames } = makeCtx({
+      spawnChild: async (req) => {
+        capturedOnProgress = req.onProgress;
+        return fakeHandle(resultPromise);
+      },
+    });
+    const execPromise = agentExecutor.execute({ description: "explore the repo", prompt: "p", subagent_type: undefined }, ctx);
+    await new Promise((r) => setTimeout(r, 10)); // let registration (and thus taskId assignment) land before onProgress fires
+    expect(capturedOnProgress).toBeDefined();
+    capturedOnProgress!({ toolUses: 3, totalTokens: 111, durationMs: 250, lastToolName: "Grep" });
+
+    const progress = frames.find((f) => (f as { subtype: string }).subtype === "task_progress") as {
+      description: string;
+      usage: { total_tokens: number; tool_uses: number; duration_ms: number };
+      last_tool_name: string;
+      tool_use_id?: string;
+    };
+    expect(progress).toBeDefined();
+    expect(progress.description).toBe("explore the repo");
+    expect(progress.usage).toEqual({ total_tokens: 111, tool_uses: 3, duration_ms: 250 });
+    expect(progress.last_tool_name).toBe("Grep");
+    expect(typeof progress.tool_use_id).toBe("string");
+
+    resolveResult({ status: "completed", content: "done" });
+    await execPromise;
+  });
+
+  test("background_tasks_changed never lists a running FOREGROUND agent row, even while a background task is announced", async () => {
+    // The bug §7 names directly: "today a running foreground agent is listed whenever anything else
+    // triggers the frame." A foreground agent held open (never resolving) plus a SEPARATE background
+    // agent starting is exactly the scenario that would leak it.
+    const { ctx: fgCtx } = makeCtx({ spawnChild: async () => fakeHandle(new Promise(() => {})) }); // never resolves
+    void agentExecutor.execute({ description: "hanging foreground", prompt: "p" }, fgCtx);
+    await new Promise((r) => setTimeout(r, 10)); // let the foreground registration land
+
+    const { ctx: bgCtx, frames: bgFrames } = makeCtx({ spawnChild: async () => fakeHandle(new Promise(() => {})) });
+    await agentExecutor.execute({ description: "background sibling", prompt: "p", run_in_background: true }, bgCtx);
+
+    const changed = bgFrames.find((f) => (f as { subtype: string }).subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string; description: string }> };
+    expect(changed).toBeDefined();
+    expect(changed.tasks.some((t) => t.description === "hanging foreground")).toBe(false);
+    expect(changed.tasks.filter((t) => t.description === "background sibling")).toHaveLength(1); // listed exactly once
+  });
+});
+
 describe("Agent tool: background setup failure never orphans an already-spawned child", () => {
   test("createBackgroundTask throwing (root never configured) stops the already-running child and returns a legible error", async () => {
     resetBackgroundTaskRootForTest(); // deliberately NOT configureBackgroundTaskRoot -- createBackgroundTask("agent") throws
@@ -419,7 +566,7 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
     await new Promise((r) => setTimeout(r, 20));
   });
 
-  test("emits task_started + background_tasks_changed synchronously, then task_notification + background_tasks_changed once the child settles", async () => {
+  test("emits task_started + background_tasks_changed synchronously, then task_updated + task_notification + background_tasks_changed once the child settles", async () => {
     let resolveResult!: (r: ChildResult) => void;
     const resultPromise = new Promise<ChildResult>((resolve) => {
       resolveResult = resolve;
@@ -433,23 +580,31 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
     expect((frames[0] as { subtype: string }).subtype).toBe("task_started");
     expect((frames[0] as { task_id: string }).task_id).toBe(taskId);
     expect((frames[0] as { is_backgrounded: boolean }).is_backgrounded).toBe(true);
+    // Task-frames parity: the pinned wire spelling is `local_agent`, never the internal kind "agent".
+    expect((frames[0] as { task_type: string }).task_type).toBe("local_agent");
     expect((frames[1] as { subtype: string; tasks: unknown[] }).subtype).toBe("background_tasks_changed");
     expect((frames[1] as { tasks: Array<{ task_id: string; task_type: string; description: string }> }).tasks).toContainEqual({
       task_id: taskId,
-      task_type: "agent",
+      task_type: "local_agent",
       description: "long task",
     });
 
     resolveResult({ status: "completed", content: "done later" });
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(frames.length).toBe(4);
-    expect((frames[2] as { subtype: string; status: string }).subtype).toBe("task_notification");
-    expect((frames[2] as { status: string }).status).toBe("completed");
-    expect((frames[2] as { output_file: string }).output_file).toContain(taskId);
-    expect((frames[3] as { subtype: string; tasks: unknown[] }).subtype).toBe("background_tasks_changed");
-    // The agent task is no longer reported once settled -- backgroundAgentTasks cleans itself up.
-    expect((frames[3] as { tasks: Array<{ task_id: string }> }).tasks.find((t) => t.task_id === taskId)).toBeUndefined();
+    // Task-frames parity (contract §1/§4): the terminal transition now goes through the registry's
+    // ONE update door -- task_updated {status, end_time} lands BEFORE task_notification, same
+    // synchronous call.
+    expect(frames.length).toBe(5);
+    expect((frames[2] as { subtype: string; patch: { status?: string } }).subtype).toBe("task_updated");
+    expect((frames[2] as { patch: { status?: string } }).patch.status).toBe("completed");
+    expect((frames[3] as { subtype: string; status: string }).subtype).toBe("task_notification");
+    expect((frames[3] as { status: string }).status).toBe("completed");
+    expect((frames[3] as { output_file: string }).output_file).toContain(taskId);
+    expect((frames[3] as { usage?: { total_tokens: number; tool_uses: number; duration_ms: number } }).usage).toBeUndefined(); // fakeHandle's ChildResult carries no usage
+    expect((frames[4] as { subtype: string; tasks: unknown[] }).subtype).toBe("background_tasks_changed");
+    // The agent task is no longer reported once settled -- listRunningTasks excludes a terminal row.
+    expect((frames[4] as { tasks: Array<{ task_id: string }> }).tasks.find((t) => t.task_id === taskId)).toBeUndefined();
   });
 
   test("writes a stub .output file naming the durable transcript, never a growing copy (WS-12 §7.2)", async () => {
