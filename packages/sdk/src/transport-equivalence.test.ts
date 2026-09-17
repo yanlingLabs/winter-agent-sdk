@@ -2529,15 +2529,19 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
 
     const text = ((a.trace.find((e) => e.kind === "assistant")!.payload as { message: { content: Array<{ text: string }> } }).message.content[0]!).text;
     // The auto-memory block is default-on (P5-G's companion: `autoMemoryEnabled` unset means
-    // enabled), so a default session's live request carries exactly one user-context block ahead of
-    // the prompt -- and the prompt is still last.
+    // enabled) and the Agent tool is advertised by default (so `agentListingInput()` contributes its
+    // own block too, review r2 finding 11) -- a default session's live request carries exactly TWO
+    // user-context blocks ahead of the prompt, both now wrapped in `<system-reminder>` (finding 11
+    // wraps the listing the same way memory.ts's own block always was) -- and the prompt is still
+    // last.
     expect(text).toContain("<system-reminder>");
     expect(text).toContain("Auto-memory (injected by the runtime, not typed by the user):");
+    expect(text).toContain("Agent-tool listing (injected by the runtime, not typed by the user):");
     expect(text.endsWith("\n\nassembled")).toBe(true);
-    // AND IT IS NOT PERSISTED OR REPEATED: the block is re-attached per request, never pushed into
-    // the engine's own history, so it appears exactly once even though the assembler ran once per
-    // envelope.
-    expect(text.split("<system-reminder>").length - 1).toBe(1);
+    // AND NEITHER IS PERSISTED OR REPEATED: both blocks are re-attached per request, never pushed
+    // into the engine's own history, so each appears exactly once even though the assembler ran once
+    // per envelope.
+    expect(text.split("<system-reminder>").length - 1).toBe(2);
   }, 30_000);
 
   test("P5 compaction round (auto): a threshold crossing produces ONE compact_boundary on both legs", async () => {
@@ -2694,6 +2698,39 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
   }, 60_000);
 
 
+  // Review r2 finding 9 (whole-branch): companion to main.ts's new SIGTERM handler. Before that fix,
+  // main.ts installed NO signal handler at all, so a bare `.kill()` here always hit the kernel's own
+  // unconditional default disposition -- fast, and never dependent on the child's own JS ever
+  // running again. Now that main.ts installs a real handler (needed to sweep background shell
+  // process groups before exit), a `.kill()` (SIGTERM) here is instead mediated by the runtime's
+  // signal-to-callback bridge, which two SEPARATE, MEASURED issues can defeat:
+  //   1. A narrow Bun race: killing a real child within the same tick it finishes writing a
+  //      response can leave its custom SIGTERM handler never invoked at all -- no exception, no
+  //      partial effect. query.ts's own `onAbort` already has an established answer for exactly this
+  //      class of problem (`KILL_GRACE_MS`'s SIGTERM-then-SIGKILL escalation): SIGKILL cannot be
+  //      intercepted or raced by ANY handler, custom or default, so escalating to it after a short
+  //      grace period is unconditionally reliable for actually ending the process.
+  //   2. A SEPARATE Bun bug, reproduced directly against this exact test: even once SIGKILL has
+  //      genuinely ended the process (confirmed -- the OS process is gone), `proc.exited` (backed by
+  //      Node's own `"close"` event, which additionally waits on every stdio stream reporting done)
+  //      can still never resolve. This is a `node:child_process`-compat gap in Bun itself, not
+  //      something either this test or main.ts's own handler can fix from userspace -- the race
+  //      below is the bounded backstop: the process is ALREADY dead by the time SIGKILL has had a
+  //      moment to land, so a caller that gives up waiting on `exited` and moves on is not racing
+  //      anything real, only working around Bun's own unreliable notification of a fact that has
+  //      already happened.
+  const CHECKPOINT_KILL_GRACE_MS = 100;
+  const CHECKPOINT_REAP_TIMEOUT_MS = 5_000;
+  async function killAndReap(proc: SpawnedRuntimeProcess): Promise<void> {
+    proc.kill();
+    const killTimer = setTimeout(() => proc.kill("SIGKILL"), CHECKPOINT_KILL_GRACE_MS);
+    try {
+      await Promise.race([proc.exited, new Promise((resolve) => setTimeout(resolve, CHECKPOINT_REAP_TIMEOUT_MS))]);
+    } finally {
+      clearTimeout(killTimer);
+    }
+  }
+
   test("P5 checkpoint-rewind round: a real Write is undone, a Bash-created file is not, on both legs", async () => {
     // RAW-DRIVEN, not through query(): `rewind_files` is a protocol-level control_request the
     // wrapper has no API for (the same reason `traceInterrupt` is raw), and the request has to be
@@ -2731,8 +2768,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
           }
           d1.send({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
         } finally {
-          first.kill();
-          await first.exited;
+          await killAndReap(first);
         }
         expect(userMessageUuid, `${leg}: the terminal result must disclose user_message_uuid`).not.toBe("");
         expect(readFileSync(target, "utf8")).toBe("AFTER\n"); // the Write really happened
@@ -2758,8 +2794,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
           }
           d2.send({ type: "control_request", requestId: "end-2", subtype: "end_input", payload: undefined });
         } finally {
-          second.kill();
-          await second.exited;
+          await killAndReap(second);
         }
         // READ BEFORE THE `finally` REMOVES THE TREE. An `existsSync` at the call site would be
         // testing this fixture's own cleanup, not the rewind -- it read `false` for exactly that

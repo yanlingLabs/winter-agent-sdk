@@ -141,16 +141,42 @@ const stdoutFrameSink: FrameSink = {
 // outer-wrapper fix for a THROWN runEngine -- never gets a chance to run either, for the identical
 // reason: the process is simply gone.)
 //
-// Installing ANY listener for a signal OVERRIDES Node's own default "terminate" disposition, so this
-// handler must both do the cleanup AND still actually end the process -- otherwise a SIGTERM/SIGINT
-// silently becomes a no-op, which is worse than doing nothing (the daemon's own "kill this child"
-// door would hang forever instead of failing fast). The chosen exit path is "remove this listener,
-// then re-raise the SAME signal at ourselves" rather than a bare `process.exit(code)`: re-raising
-// restores Node's own default disposition for that signal and lets the OS terminate the process
-// through its ordinary machinery, so a parent process's `wait()` observes a genuine
-// signal-terminated exit rather than an ordinary exit code that merely resembles one.
-// `process.exit(...)` with the POSIX signal-exit convention (128 + signal number) is only the
-// fallback for the -- should be impossible -- case where re-raising somehow leaves the process alive.
+// Installing ANY listener for a signal OVERRIDES the runtime's own default "terminate" disposition,
+// so this handler must both do the cleanup AND still actually end the process -- otherwise a
+// SIGTERM/SIGINT silently becomes a no-op, which is worse than doing nothing (the daemon's own "kill
+// this child" door would hang forever instead of failing fast).
+//
+// EXIT PATH: "remove this listener, then re-raise the SAME signal at ourselves", not a bare
+// `process.exit(code)`. `process.exit()` is a NORMAL, code-based exit at the OS level
+// (`{code, signal: null}` reported to a parent's `child_process`), never a signal-terminated one
+// (`{code: null, signal: "SIGTERM"}`) -- the two are genuinely different exit PATHS, not just
+// different ways of describing the same event, and downstream code (query.ts's own `ProcessError`
+// classification; this SDK's own transport-equivalence fixtures, which pin the exact shape) tells
+// them apart. Removing every listener for this signal restores the runtime's own default SIG_DFL
+// disposition for it, so the re-raised signal terminates the process through the kernel's ordinary
+// machinery -- a genuine signal-terminated exit. `process.exit(...)` with the POSIX signal-exit
+// convention (128 + signal number) is kept only as the last-resort fallback for the case where
+// re-raising somehow still leaves the process alive.
+//
+// MEASURED, not assumed (see this lane's own report for the full trace): signal delivery to a
+// CUSTOM JS handler -- for EITHER exit path above, since both start by entering this same callback
+// -- is mediated by the runtime's own native signal-to-callback bridge, unlike the kernel's
+// unconditional default disposition, and under Bun that bridge has a narrow, real race (reproduced
+// directly against `transport-equivalence.test.ts`'s own real-child-process round: killing a child
+// within the same tick as it finishes writing a control_response can leave the JS handler never
+// invoked at all, with no exception, no partial effect, nothing -- the process is simply left
+// running). This is NOT something a handler body can defend against by construction: the handler
+// never runs at all in that window, so no amount of code inside it helps -- the mitigation lives on
+// the CALLER side, matching this codebase's own established precedent for exactly this class of
+// problem (`query.ts`'s own `onAbort`, `KILL_GRACE_MS`'s SIGTERM-then-SIGKILL escalation, where
+// SIGKILL cannot be intercepted or raced by ANY handler, custom or default);
+// `transport-equivalence.test.ts`'s own `runLeg`/`killAndReap` helper now does the same. A SEPARATE,
+// also-measured Bun `node:child_process` gap (the "close" event not firing even once SIGKILL has
+// genuinely ended the process) is the reason that helper also bounds its own wait with a timeout --
+// see its own header for the full trace; neither gap is specific to which exit path this handler
+// takes, which is exactly why re-raising (needed for the correct exit SHAPE) is safe to use now:
+// the caller-side escalation already covers the case this handler's own first, abandoned draft was
+// avoiding when it reached for a bare `process.exit()` instead.
 const SIGNAL_EXIT_CODE: Record<"SIGTERM" | "SIGINT", number> = { SIGTERM: 143, SIGINT: 130 };
 
 function installShutdownSignalHandlers(): void {
