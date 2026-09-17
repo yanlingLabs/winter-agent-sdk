@@ -66,36 +66,49 @@ const FORK_BOILERPLATE = [
 ].join("\n");
 
 /**
- * A worktree fork's own extra note (claude's `_Fn`): the inherited transcript above still names the
- * PARENT's own working directory in every path it mentions, but this fork is running in an isolated
- * worktree of its own. Appended to the SAME directive text block, right before `DIRECTIVE_PREFIX`
- * (Winter's engine starts a generation from exactly one live user turn -- see this file's own header
- * on why the directive rides the SAME merged wire message as the placeholder tool_result rather than
- * a byte-separate one; a disclosed simplification, not a byte-exactness claim for this one piece).
+ * A worktree fork's own extra note (claude's `_Fn(e,t)`, `e` the parent's own cwd, `t` the
+ * worktree root): the inherited transcript still names the PARENT's own working directory in every
+ * path it mentions, but this fork is running in an isolated worktree of its own.
+ *
+ * VERIFIED against the pinned 0.3.250 binary's own decompiled source (`_Fn`'s call site,
+ * `if(We&&wn)vr.push(Pe({content:_Fn(te(),wn.worktreePath)}))`): claude pushes this as its OWN,
+ * SEPARATE transcript entry, AFTER `yFn`'s own `[clone, tool_result+directive]` pair -- never folded
+ * into the directive text block itself. `buildForkDirectiveText` below appends it AFTER
+ * `"Your directive: "` for the same reason (`child-engine.ts`'s `startGeneration` delivers exactly
+ * ONE live user turn to seed a generation -- see this file's own header for why that single turn
+ * still reproduces claude's OWN wire-level merge of `tool_result` + directive text; a genuinely
+ * separate THIRD transcript entry, positioned after a turn the live-frame mechanism hasn't sent yet,
+ * has no channel to ride on without deeper engine surgery this lane does not own). DISCLOSED:
+ * Winter's own transcript therefore holds ONE fewer entry here than claude's for a worktree fork,
+ * and the note's ORDER (now after the directive) is verified, while its EXACT WIRE placement
+ * (a byte-separate message vs. a folded paragraph) is not -- claude's own message-merge algorithm
+ * (the same one `context/request-layout.ts` ports) may or may not also collapse `p` and this note
+ * into one wire message the way Winter's does; unverified either way.
  */
-function worktreeNote(worktreeRoot: string): string {
-  return `You are running in an isolated worktree at ${worktreeRoot}. Any path from the inherited transcript above refers to the PARENT session's own directory -- translate it onto this worktree's root before you use it, and re-read a file here before editing it: it may already differ from what the transcript shows.`;
+function worktreeNote(parentRoot: string, worktreeRoot: string): string {
+  return `You've inherited the conversation above from the parent session, which was working in ${parentRoot}. You are now running in an isolated git worktree at ${worktreeRoot} -- the same repository, a separate working copy. Any path the inherited transcript names is relative to the PARENT's own directory; translate it onto this worktree's root before you use it, and re-read a file here before editing it, since it may already differ from what the transcript shows. Your own changes stay in this worktree and never touch the parent's files.`;
 }
 
 export interface ForkDirectiveInput {
   /** The Agent tool call's own `prompt` input -- this fork's actual task. */
   prompt: string;
-  /** Set only for `isolation: "worktree"` forks -- the child's own worktree root (`workspace.root`). */
-  worktreeRoot?: string;
+  /** Set only for `isolation: "worktree"` forks -- the parent's own cwd and the child's own worktree root (`workspace.root`). */
+  worktree?: { parentRoot: string; worktreeRoot: string };
 }
 
 /**
- * The fork's own first live turn: the Winter-authored boilerplate (+ the worktree note, when this
- * fork is isolated), then claude's own `"Your directive: "` prefix immediately followed by the
- * prompt verbatim -- nothing trails it. Delivered by `child-engine.ts` as the generation's live user
- * frame, which `context/request-layout.ts`'s own message-merge logic folds into the SAME wire message
- * as the placeholder `tool_result` this file also builds (see `buildForkInitialMessages`) -- so the
- * two together reproduce claude's own single "tool_result + directive text" wire message without this
- * file needing to construct that merge itself.
+ * The fork's own first live turn: the Winter-authored boilerplate, then claude's own
+ * `"Your directive: "` prefix immediately followed by the prompt verbatim, then -- for an isolated
+ * fork only -- the worktree note (verified ordering, see `worktreeNote`'s own header). Delivered by
+ * `child-engine.ts` as the generation's live user frame, which `context/request-layout.ts`'s own
+ * message-merge logic folds into the SAME wire message as the placeholder `tool_result` this file
+ * also builds (see `buildForkInitialMessages`) -- so the two together reproduce claude's own single
+ * "tool_result + directive text" wire message without this file needing to construct that merge
+ * itself.
  */
 export function buildForkDirectiveText(input: ForkDirectiveInput): string {
-  const parts = [FORK_BOILERPLATE, ...(input.worktreeRoot !== undefined ? [worktreeNote(input.worktreeRoot)] : [])];
-  return `${parts.join("\n\n")}\n\n${DIRECTIVE_PREFIX}${input.prompt}`;
+  const directive = `${FORK_BOILERPLATE}\n\n${DIRECTIVE_PREFIX}${input.prompt}`;
+  return input.worktree !== undefined ? `${directive}\n\n${worktreeNote(input.worktree.parentRoot, input.worktree.worktreeRoot)}` : directive;
 }
 
 function isToolUseBlock(block: ContentBlock): block is Extract<ContentBlock, { type: "tool_use" }> {

@@ -147,16 +147,27 @@ describe("buildForkDirectiveText (Winter-authored boilerplate + claude's own 'Yo
     expect(aPrefix.length).toBeGreaterThan(0);
   });
 
-  test("a worktree fork's text names the worktree root and still ends with the directive", () => {
-    const text = buildForkDirectiveText({ prompt: "task", worktreeRoot: "/tmp/winter-worktree-abc" });
+  // VERIFIED against the pinned 0.3.250 binary's own decompiled source (`_Fn`'s call site: claude
+  // pushes the worktree note as its OWN transcript entry AFTER `yFn`'s own [clone, tool_result+
+  // directive] pair -- never before the directive). `buildForkDirectiveText` places it after
+  // "Your directive: <prompt>" for the same reason -- see `worktreeNote`'s own header for the
+  // disclosed gap (a genuinely separate wire message vs. this folded paragraph).
+  test("a worktree fork's text names both the parent's root and the worktree root, AFTER the directive (verified ordering, not before it)", () => {
+    const text = buildForkDirectiveText({ prompt: "task", worktree: { parentRoot: "/tmp/winter-parent-cwd", worktreeRoot: "/tmp/winter-worktree-abc" } });
+    expect(text).toContain("/tmp/winter-parent-cwd");
     expect(text).toContain("/tmp/winter-worktree-abc");
-    expect(text.endsWith("Your directive: task")).toBe(true);
+    const directiveIdx = text.indexOf("Your directive: task");
+    expect(directiveIdx).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("/tmp/winter-worktree-abc")).toBeGreaterThan(directiveIdx); // the note trails the directive
   });
 
-  test("a worktree note changes the shared prefix -- two DIFFERENT worktree roots do NOT share a byte-identical prefix (disclosed, not a claim this design makes)", () => {
-    const a = buildForkDirectiveText({ prompt: "x", worktreeRoot: "/tmp/wt-a" });
-    const b = buildForkDirectiveText({ prompt: "y", worktreeRoot: "/tmp/wt-b" });
-    expect(a.slice(0, a.indexOf("Your directive:"))).not.toBe(b.slice(0, b.indexOf("Your directive:")));
+  test("the shared boilerplate PREFIX (before 'Your directive:') is IDENTICAL regardless of worktree -- the note trails the directive, so it never touches the cache-shareable prefix", () => {
+    const bare = buildForkDirectiveText({ prompt: "x" });
+    const worktreeA = buildForkDirectiveText({ prompt: "x", worktree: { parentRoot: "/tmp/p", worktreeRoot: "/tmp/wt-a" } });
+    const worktreeB = buildForkDirectiveText({ prompt: "y", worktree: { parentRoot: "/tmp/p", worktreeRoot: "/tmp/wt-b" } });
+    const prefixOf = (t: string) => t.slice(0, t.indexOf("Your directive:"));
+    expect(prefixOf(worktreeA)).toBe(prefixOf(bare));
+    expect(prefixOf(worktreeB)).toBe(prefixOf(bare));
   });
 
   test("Winter-authored: never contains an Anthropic/claude product name (R-S3)", () => {

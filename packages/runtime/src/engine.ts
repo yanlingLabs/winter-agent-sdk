@@ -2874,9 +2874,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // either be refused outright or run on a different bill. WS-13c §3 is explicit that
     // `AgentInput.model` is slot names only -- everything else keeps the semantics it had.
     //
-    // (a) inheriting the PARENT's own model is not a slot request, whatever that string looks like
-    //     (this also covers `req.fork`, whose model is `config.model` by contract);
-    if (requested === config.model) return { model: requested };
+    // (a) inheriting the PARENT's own model is not a slot request, whatever that string looks like.
+    //     `req.fork === true` is checked EXPLICITLY, never folded into the `requested === config.model`
+    //     comparison alone: SDK 0.0.16 (P16-7) made `resolveChildModel` return the LIVE `currentModel`
+    //     for a fork (WS-10 §3.5's "inherits... model" means the parent's CURRENT model, not its
+    //     startup one -- see that function's own comment), so a fork spawned after a `set_model` has
+    //     `requested === currentModel`, which can legitimately differ from `config.model`. Without
+    //     this disjunct such a fork would fall PAST this guard into `resolveSlot`, the exact "a model
+    //     override" WS-10 §3.5 says a fork ignores by contract -- inheriting the parent's own live
+    //     model is definitionally not a slot request, by construction, regardless of what `config.model`
+    //     happens to be.
+    if (requested === config.model || req.fork === true) return { model: requested };
     const resolution = resolveSlot?.(requested, currentProviderIdentity?.modelKey ?? currentModel);
     if (resolution === undefined) return { model: requested };
     // (b) a BARE id that the resolver did not recognise as a slot name (a canonical id, an alias, a

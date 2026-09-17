@@ -1280,7 +1280,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // own single "tool_result + directive text" wire message without a bespoke merge here.
     const firstTurnText =
       req.fork === true
-        ? buildForkDirectiveText({ prompt: req.prompt, ...(req.isolation === "worktree" ? { worktreeRoot: workspace.root } : {}) })
+        ? buildForkDirectiveText({ prompt: req.prompt, ...(req.isolation === "worktree" ? { worktree: { parentRoot: inherit.sessionRoot, worktreeRoot: workspace.root } } : {}) })
         : [req.definition?.initialPrompt, req.prompt, definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined]
             .filter((s): s is string => s !== undefined && s.length > 0)
             .join("\n\n");
