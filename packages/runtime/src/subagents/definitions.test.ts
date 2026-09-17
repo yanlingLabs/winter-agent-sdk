@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createAgentDefinitionRejectionReporter,
   parseFrontmatter,
   parseAgentDefinitionFile,
   loadAgentDefinitions,
@@ -260,6 +261,50 @@ describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence, built
       pluginAgents: { "general-purpose": { description: "plugin's own", prompt: "p", plugin: "acme" } },
     });
     expect(pluginOnly.get("general-purpose")?._source).toBe("plugin");
+  });
+});
+
+// Review r2 finding 2 (whole-branch): `onReject` used to have no production caller at all -- this is
+// the reporter every production call site now shares.
+describe("createAgentDefinitionRejectionReporter (review r2 finding 2)", () => {
+  function capturingWriter(): { write: (line: string) => void; lines: string[] } {
+    const lines: string[] = [];
+    return { write: (line) => lines.push(line), lines };
+  }
+
+  test("writes one line naming the file and the reason, with the fix suggestion", () => {
+    const { write, lines } = capturingWriter();
+    const report = createAgentDefinitionRejectionReporter(write);
+    report({ source: "user", filePath: "/home/.winter/agents/broken.md", reason: 'missing required frontmatter field "name"' });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("/home/.winter/agents/broken.md");
+    expect(lines[0]).toContain('missing required frontmatter field "name"');
+    expect(lines[0]).toContain('add "name:" and "description:" frontmatter');
+  });
+
+  test("a repeated rejection of the SAME file path is reported only ONCE", () => {
+    const { write, lines } = capturingWriter();
+    const report = createAgentDefinitionRejectionReporter(write);
+    const rejection: AgentDefinitionRejection = { source: "project", filePath: "/proj/.winter/agents/x.md", reason: 'missing required frontmatter field "description"' };
+    report(rejection);
+    report(rejection);
+    report(rejection);
+    expect(lines).toHaveLength(1);
+  });
+
+  test("DIFFERENT file paths each get their own line", () => {
+    const { write, lines } = capturingWriter();
+    const report = createAgentDefinitionRejectionReporter(write);
+    report({ source: "user", filePath: "/a.md", reason: "r1" });
+    report({ source: "user", filePath: "/b.md", reason: "r2" });
+    expect(lines).toHaveLength(2);
+  });
+
+  test("a throwing writer never propagates -- a closed stderr must not crash agent-definition loading", () => {
+    const report = createAgentDefinitionRejectionReporter(() => {
+      throw new Error("EPIPE");
+    });
+    expect(() => report({ source: "plugin", filePath: "/p.md", reason: "r" })).not.toThrow();
   });
 });
 

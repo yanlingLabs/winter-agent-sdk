@@ -383,6 +383,11 @@ export const agentExecutor: ToolExecutor = {
       trustedWorkspace,
       env,
       forkSubagentEnabled: forkEnabled,
+      // Review r2 finding 2: wires `loadAgentDefinitions`' own `onReject` to the session's ONE
+      // reporter (`ctx.onAgentDefinitionRejected`, threaded from `engine.ts`'s own
+      // `reportAgentDefinitionRejection`) -- previously this call site passed nothing at all, so a
+      // rejected agent file the Agent tool itself resolved against vanished with no report anywhere.
+      ...(ctx.onAgentDefinitionRejected !== undefined ? { onReject: ctx.onAgentDefinitionRejected } : {}),
       ...(ctx.agents !== undefined ? { programmatic: ctx.agents as Record<string, RuntimeAgentDefinition> } : {}),
       ...(pluginAgents !== undefined ? { pluginAgents } : {}),
     });

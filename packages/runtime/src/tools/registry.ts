@@ -345,6 +345,14 @@ export interface ToolExecutionContext {
   /** Spawn-surface parity (R-S5): this engine is itself a forked worker (RuntimeConfig.insideFork) -- a fork may not fork again. */
   insideFork?: boolean;
   /**
+   * Review r2 finding 2 (whole-branch): the session's ONE rejection reporter for a filesystem
+   * `agents/*.md` file `loadAgentDefinitions` could not parse (`tools/impl/agent.ts`'s own call
+   * passes it straight through as `onReject`). Typed structurally (the same discipline `agents?`
+   * above documents) rather than importing `subagents/definitions.ts`'s own `AgentDefinitionRejection`
+   * here. Absent = silent-skip, the pre-existing behavior for every hand-built test context.
+   */
+  onAgentDefinitionRejected?: (rejection: { source: "user" | "project" | "plugin"; filePath: string; reason: string }) => void;
+  /**
    * Spawn-surface parity (research §A8): the names this session currently ADVERTISES to its model
    * (canonical). The Agent tool's background launch result reads it to decide whether the model can
    * read the task's output file at all (`Read`/`Bash` present). A getter: the set can move mid-run.
@@ -1451,6 +1459,8 @@ export interface RegistryToolExecutorDeps {
   forkSubagentEnabled?: boolean;
   insideFork?: boolean;
   advertisedToolNames?: () => readonly string[];
+  // Review r2 finding 2: mirrors ToolExecutionContext.onAgentDefinitionRejected exactly.
+  onAgentDefinitionRejected?: (rejection: { source: "user" | "project" | "plugin"; filePath: string; reason: string }) => void;
   // Phase 4 Task 8 (rider 27): the session's own availability inputs, so this adapter can enforce
   // `isAvailable` AT DISPATCH rather than only at advertisement. Rationale, from Lane C's own I3
   // finding: `AskUserQuestion`'s `availability: { insideSubagent: false }` excluded it from a child's
@@ -1530,6 +1540,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.forkSubagentEnabled !== undefined ? { forkSubagentEnabled: deps.forkSubagentEnabled } : {}),
         ...(deps.insideFork !== undefined ? { insideFork: deps.insideFork } : {}),
         ...(deps.advertisedToolNames !== undefined ? { advertisedToolNames: deps.advertisedToolNames } : {}),
+        ...(deps.onAgentDefinitionRejected !== undefined ? { onAgentDefinitionRejected: deps.onAgentDefinitionRejected } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);

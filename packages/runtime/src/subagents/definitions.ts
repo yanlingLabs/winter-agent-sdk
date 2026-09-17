@@ -176,6 +176,35 @@ export interface AgentDefinitionRejection {
   reason: string;
 }
 
+/**
+ * Review r2 finding 2 (whole-branch): `onReject` had NO production caller -- every rejected file
+ * (a hand-authored `agents/*.md` with no `name:`/`description:`, or one with a `name:` that fails
+ * `isValidAgentName`) still vanished from the session with nothing telling the operator it existed,
+ * let alone why. This is the ONE reporter every production caller shares: ONE stderr line per
+ * rejected file, DEDUPED by `filePath` for the lifetime of the closure it returns -- production
+ * threads a single instance through a whole session/child (`engine.ts`'s own
+ * `reportAgentDefinitionRejection`, shared by `sessionAgentDefinitions` and the Agent tool
+ * executor's own call, both of which call `loadAgentDefinitions` on nearly every turn), so an
+ * undeduped write would spam one line per rejected file per turn for the rest of the session.
+ *
+ * `write` is injectable (defaults to `process.stderr.write`, bound so `this` stays correct) so a
+ * test can assert against a captured sink rather than scraping the real stream. STDERR ONLY, never
+ * stdout -- stdout is the SDK's own frame stream (WS-04 §2/§6), and this is diagnostic, not a wire
+ * frame. Never throws: a closed/broken stderr must not take agent-definition loading down with it.
+ */
+export function createAgentDefinitionRejectionReporter(write: (line: string) => void = (line) => process.stderr.write(line)): (rejection: AgentDefinitionRejection) => void {
+  const warnedPaths = new Set<string>();
+  return (rejection: AgentDefinitionRejection): void => {
+    if (warnedPaths.has(rejection.filePath)) return;
+    warnedPaths.add(rejection.filePath);
+    try {
+      write(`winter: agent definition rejected -- ${rejection.filePath} (${rejection.reason}); fix: add "name:" and "description:" frontmatter.\n`);
+    } catch {
+      /* a closed/broken stderr must never take agent-definition loading down with it */
+    }
+  };
+}
+
 function loadAgentDirectory(dir: string, source: "user" | "project", onReject?: (rejection: AgentDefinitionRejection) => void): Record<string, RuntimeAgentDefinition> {
   const out: Record<string, RuntimeAgentDefinition> = {};
   let entries: string[];

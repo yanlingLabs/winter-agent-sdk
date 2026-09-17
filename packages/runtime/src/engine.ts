@@ -174,7 +174,7 @@ const SKILL_TOOL_ADVERTISED_NAME = "Skill";
 // it lives inside this closure rather than in production-wiring.ts.
 import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-registry.ts";
 import { resolveProjectDirName } from "./paths/project-dir-name.ts";
-import { loadAgentDefinitions, toAgentInfoList, type PluginAgentDefinition, type SourcedAgentDefinition } from "./subagents/definitions.ts";
+import { createAgentDefinitionRejectionReporter, loadAgentDefinitions, toAgentInfoList, type PluginAgentDefinition, type SourcedAgentDefinition } from "./subagents/definitions.ts";
 import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
 import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
@@ -2855,6 +2855,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     };
   }
 
+  // Review r2 finding 2 (whole-branch): ONE reporter for the whole run -- shared by
+  // `sessionAgentDefinitions` (below) and by every `tools/impl/agent.ts` call (threaded through
+  // `RegistryToolExecutorDeps.onAgentDefinitionRejected`, a few lines down in
+  // `buildDefaultToolExecutor`), so a file rejected on turn 1 is not reported again on turn 2 just
+  // because both call sites re-run `loadAgentDefinitions` on nearly every turn. `onReject` had no
+  // production caller before this fix; a rejected agent file used to vanish with nothing on stderr
+  // naming it. Declared here (before `buildDefaultToolExecutor()` is actually CALLED, a few hundred
+  // lines down) rather than beside `sessionAgentDefinitions` itself, which appears later in this
+  // function but is defined and consumed after `buildDefaultToolExecutor()`'s own call site.
+  const reportAgentDefinitionRejection = createAgentDefinitionRejectionReporter();
+
   function buildDefaultToolExecutor(): ToolExecutor {
     // Whole-branch M3(a), partially resolved by the fix wave's I1 and recorded here rather than
     // left implicit: this process-global re-point used to hand the PARENT's background-task root to
@@ -3144,6 +3155,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       forkSubagentEnabled: forkSubagentEnabled,
       ...(config.insideFork === true ? { insideFork: true } : {}),
       advertisedToolNames: () => currentAdvertisedCanonicalNames,
+      // Review r2 finding 2: `tools/impl/agent.ts`'s own `loadAgentDefinitions` call reads this off
+      // `ctx.onAgentDefinitionRejected` and passes it straight through as `onReject`.
+      onAgentDefinitionRejected: reportAgentDefinitionRejection,
       // Phase 4 Task 8 (rider 27): dispatch-time availability enforcement. A FUNCTION, not a
       // snapshot, for two independent reasons: (1) `advertisedCfg` (below) is assigned AFTER this
       // one runs -- the same "declared later, read at call time" closure binding `emitToolReference`
@@ -3484,6 +3498,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       trustedWorkspace: at.trustedWorkspace ?? trustedWorkspace,
       env: engineEnv ?? process.env,
       forkSubagentEnabled,
+      onReject: reportAgentDefinitionRejection,
       ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
       ...(pluginAgents !== undefined ? { pluginAgents: pluginAgents as Record<string, PluginAgentDefinition> } : {}),
     });

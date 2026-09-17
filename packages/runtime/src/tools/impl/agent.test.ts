@@ -203,6 +203,31 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     expect(capturedReq?.definition?.prompt).toBe("You are a careful reviewer.");
   });
 
+  // Review r2 finding 2: `ctx.onAgentDefinitionRejected` (threaded from engine.ts's shared reporter
+  // in production) reaches `loadAgentDefinitions`' own `onReject` from THIS call site -- before this
+  // fix, the Agent tool executor passed no `onReject` at all, so a rejected sibling file in the same
+  // directory as a valid one vanished with no report anywhere.
+  test("a rejected sibling agent file is reported through ctx.onAgentDefinitionRejected, and the valid one still resolves", async () => {
+    const home = mkTempDir("winter-agent-test-home-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: reviews code\n---\nYou are a careful reviewer.");
+    writeFileSync(join(home, ".winter", "agents", "broken.md"), "---\ndescription: has no name\n---\nBody.");
+
+    const rejections: Array<{ source: string; filePath: string; reason: string }> = [];
+    const { ctx } = makeCtx({
+      home,
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "reviewed" })),
+    });
+    const result = await agentExecutor.execute(
+      { description: "review", prompt: "review this diff", subagent_type: "reviewer" },
+      { ...ctx, onAgentDefinitionRejected: (r) => rejections.push(r) },
+    );
+    expect(result.isError).toBeUndefined();
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]?.filePath).toEndWith(join("agents", "broken.md"));
+    expect(rejections[0]?.reason).toContain('"name"');
+  });
+
   // --- P7a fix wave (item 10, N-1): the BRANDED directory read ------------------------------------
   //
   // `agent.ts:305` threads `ctx.brand` into `loadAgentDefinitions`, and until now nothing drove the

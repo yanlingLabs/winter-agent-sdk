@@ -16,7 +16,7 @@ import type { BrandProfile, SdkPluginConfig } from "@yanlinglabs/winter-agent-sd
 import { parseSkillFile } from "../skills/frontmatter.ts";
 import { pluginNameError } from "../skills/frontmatter.ts";
 import { parseAgentDefinitionFile } from "../subagents/definitions.ts";
-import type { PluginAgentDefinition } from "../subagents/definitions.ts";
+import type { AgentDefinitionRejection, PluginAgentDefinition } from "../subagents/definitions.ts";
 import { manifestAuthor, readPluginManifest, type PluginManifest } from "./manifest.ts";
 import type { PluginBundle, PluginCommandEntry, PluginMetadata, PluginSkillEntry } from "./bundle.ts";
 
@@ -32,6 +32,16 @@ export interface RejectedPlugin {
 export interface LoadPluginsResult {
   bundles: PluginBundle[];
   rejected: RejectedPlugin[];
+  /**
+   * Review r2 finding 2 (whole-branch): rejected `<plugin>/agents/*.md` files -- a broken file
+   * inside an OTHERWISE-loaded plugin (missing/invalid `name:`, missing `description:`) used to
+   * vanish with no channel at all (`scanPluginAgents`'s own former header: "no rejection channel
+   * exists at THIS call site the way `loadAgentDefinitions`'s own `onReject` does"). Distinct from
+   * `rejected` above, which is per-PLUGIN (a whole directory that never became a bundle); this is
+   * per-FILE within a plugin that DID load. `production-wiring.ts` folds these into its own
+   * `warnings` (main.ts's stderr, once per session -- plugin loading runs once).
+   */
+  agentFileRejections: AgentDefinitionRejection[];
 }
 
 /**
@@ -179,19 +189,20 @@ function frontmatterAttrs(raw: string): Record<string, string> {
  * Spawn-surface parity: `parseAgentDefinitionFile` now sources the agent's NAME from the file's own
  * frontmatter `name:` field (required, same as every other filesystem tier -- see that function's
  * own header) rather than the file's basename; a plugin agent file with no `name:` is skipped exactly
- * like an unreadable one, silently, matching this scanner's own pre-existing "a broken plugin file
- * never fails the load" posture (no rejection channel exists at THIS call site the way
- * `loadAgentDefinitions`'s own `onReject` does -- disclosed in this lane's report).
+ * like an unreadable one -- but, as of review r2 finding 2, no longer SILENTLY: `rejected` (parallel
+ * to `loadAgentDefinitions`'s own `onReject`) carries one `AgentDefinitionRejection` per bad file,
+ * for `loadPlugins` to fold into `LoadPluginsResult.agentFileRejections`.
  */
-function scanPluginAgents(root: string, pluginName: string): Record<string, PluginAgentDefinition> {
+function scanPluginAgents(root: string, pluginName: string): { agents: Record<string, PluginAgentDefinition>; rejected: AgentDefinitionRejection[] } {
   const agentsRoot = join(root, "agents");
   let files: string[];
   try {
     files = readdirSync(agentsRoot).sort();
   } catch {
-    return {};
+    return { agents: {}, rejected: [] };
   }
   const out: Record<string, PluginAgentDefinition> = {};
+  const rejected: AgentDefinitionRejection[] = [];
   for (const file of files) {
     if (!file.toLowerCase().endsWith(".md")) continue;
     const full = join(agentsRoot, file);
@@ -199,11 +210,12 @@ function scanPluginAgents(root: string, pluginName: string): Record<string, Plug
       if (!statSync(full).isFile()) continue;
       const parsed = parseAgentDefinitionFile(readFileSync(full, "utf8"), full);
       if (parsed.ok) out[parsed.name] = { ...parsed.definition, plugin: pluginName };
+      else rejected.push({ source: "plugin", filePath: parsed.filePath, reason: parsed.reason });
     } catch {
       continue;
     }
   }
-  return out;
+  return { agents: out, rejected };
 }
 
 /** Manifest `mcpServers` merged over any root MCP config file. The MANIFEST wins a name collision. */
@@ -254,6 +266,7 @@ function metadataOf(manifest: PluginManifest | undefined): PluginMetadata {
 export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opts?: { cwd?: string; brand?: Pick<BrandProfile, "pluginManifestDir"> }): LoadPluginsResult {
   const bundles: PluginBundle[] = [];
   const rejected: RejectedPlugin[] = [];
+  const agentFileRejections: AgentDefinitionRejection[] = [];
   const seenRoots = new Set<string>();
   const seenNames = new Set<string>();
 
@@ -309,6 +322,8 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     const skipMcpDiscovery = config.skipMcpDiscovery === true;
     const mcp = skipMcpDiscovery ? { servers: {} } : collectMcpServers(root, manifest);
     const hooks = manifest?.hooks;
+    const scannedAgents = scanPluginAgents(root, name);
+    agentFileRejections.push(...scannedAgents.rejected);
 
     seenRoots.add(identity);
     seenNames.add(name);
@@ -320,7 +335,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       metadata: metadataOf(manifest),
       skills: scanPluginSkills(root, name),
       commands: scanPluginCommands(root, name),
-      agents: scanPluginAgents(root, name),
+      agents: scannedAgents.agents,
       ...(hooks !== undefined ? { hooks } : {}),
       mcpServers: mcp.servers,
       ...(mcp.configPath !== undefined ? { mcpConfigPath: mcp.configPath } : {}),
@@ -328,5 +343,5 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     });
   }
 
-  return { bundles, rejected };
+  return { bundles, rejected, agentFileRejections };
 }

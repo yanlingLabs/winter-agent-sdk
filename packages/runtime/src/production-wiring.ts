@@ -568,6 +568,15 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   for (const rejection of plugins.rejected) {
     warnings.push(`plugin "${rejection.path}" was not loaded (${rejection.kind}): ${rejection.reason}`);
   }
+  // Review r2 finding 2 (whole-branch): a rejected `<plugin>/agents/*.md` file (missing/invalid
+  // `name:`, missing `description:`) used to vanish with no report at all -- the plugin itself
+  // still loads (`rejected` above is per-PLUGIN, this is per-FILE within one that loaded), so this
+  // is the one channel that ever names it. Folded into the SAME `warnings` list, which main.ts's
+  // startup already prints one line per entry on stderr, once per session (plugin loading runs
+  // exactly once, so no further dedupe is needed here the way a per-turn reload would require).
+  for (const rejection of plugins.agentFileRejections) {
+    warnings.push(`plugin agent file "${rejection.filePath}" was rejected: ${rejection.reason} -- add "name:" and "description:" frontmatter to fix.`);
+  }
 
   // (3) SKILL INDEX. Addressed by the RESOLVED winter root -- never `permissionHome`.
   const skillIndex = SkillIndex.build({
