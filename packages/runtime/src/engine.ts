@@ -5319,7 +5319,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // R5-16: the built-in attachments are AUTHORED text (context/*), so they ride only when an
     // assembler is registered -- with none, the engine authors nothing, exactly as before (0.0.15's
     // listing lived in the assembler for the same reason). Host/lane producers run regardless.
-    if (systemPromptAssembler !== undefined) {
+    //
+    // SDK 0.0.16 (P16-7): NEVER for a fork in exact mode, even though `systemPromptAssembler` is
+    // still set on a fork child's own config (child-engine.ts passes it through unconditionally, for
+    // the non-exact fallback path other child types use). A fork's OWN advertised agent listing
+    // genuinely differs from what its inherited history last announced -- `insideFork` withholds
+    // `fork` itself, so `computeAgentListingDelta` sees a real removal and would announce it -- but
+    // claude's own fork never re-announces one on its first turn (the differential oracle's own
+    // "official" capture: the fork's directive tail carries no such notice); the fork's whole point
+    // is the parent's frozen state, not this run's own fresh negotiation of it. Left uncaught, that
+    // delta attachment BUBBLES UP (`reorderAttachments`, claude's own `SJn`) to land immediately
+    // after the placeholder tool_result and FOLDS INTO its string content
+    // (`joinAttachmentBlocks`/`foldTextIntoToolResult`) -- silently corrupting
+    // `FORK_PLACEHOLDER_TOOL_RESULT` into "Fork started — processing in background\n\n<system-
+    // reminder>...", exactly the class of leak this lane's own report was told to watch for.
+    if (systemPromptAssembler !== undefined && exactRequestLayout === undefined) {
       const entries = agentListingEntries();
       if (entries !== undefined) {
         const delta = computeAgentListingDelta(entries, messages);
