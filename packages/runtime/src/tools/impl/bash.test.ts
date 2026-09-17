@@ -488,7 +488,10 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(res.output).toContain("output_file:");
     });
 
-    t("a background override call reports override-requested in BOTH the started message and the task_notification summary (WS-12 §4 MUST)", async () => {
+    // Task-frames parity (2026-09-17 contract §4 "Summary wording"): the sandbox annotation lives
+    // ONLY in the tool_result "started" text now -- the pin's own task_notification.summary wording
+    // (measured directly on the binary) carries no sandbox note at all, on either surface.
+    t("a background override call reports override-requested in the started message; the notification summary follows the pinned wording instead", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
       const res = await bash()({ command: "echo hi", run_in_background: true, dangerouslyDisableSandbox: true }, ctx);
@@ -497,10 +500,11 @@ describe("Bash executor (real sandboxed spawn)", () => {
         await new Promise((r) => setTimeout(r, 50));
       }
       const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
-      expect(notif.summary).toContain("[sandbox: override-requested]");
+      expect(notif.summary).not.toContain("[sandbox:");
+      expect(notif.summary).toBe('Background command "echo hi" completed (exit code 0)');
     });
 
-    t("an ordinary sandboxed background call reports [sandbox: sandboxed] in both surfaces too (not just the override case)", async () => {
+    t("an ordinary sandboxed background call reports [sandbox: sandboxed] in the started message; the notification summary is the pinned wording", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
       const res = await bash()({ command: "echo hi", run_in_background: true }, ctx);
@@ -509,7 +513,8 @@ describe("Bash executor (real sandboxed spawn)", () => {
         await new Promise((r) => setTimeout(r, 50));
       }
       const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
-      expect(notif.summary).toContain("[sandbox: sandboxed]");
+      expect(notif.summary).not.toContain("[sandbox:");
+      expect(notif.summary).toBe('Background command "echo hi" completed (exit code 0)');
     });
 
     t("emits task_started and background_tasks_changed synchronously before returning", async () => {
@@ -530,8 +535,41 @@ describe("Bash executor (real sandboxed spawn)", () => {
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
       await bash()({ command: "echo hi", run_in_background: true }, ctx);
       const started = frames.find((f) => f.subtype === "task_started") as { task_id: string };
-      const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string }> };
+      const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string; task_type: string }> };
       expect(changed.tasks.map((t) => t.task_id)).toContain(started.task_id);
+      expect(changed.tasks.find((t) => t.task_id === started.task_id)?.task_type).toBe("local_bash");
+    });
+
+    // Task-frames parity (2026-09-17 contract §3): task_started carries task_type AND tool_use_id;
+    // task_notification carries tool_use_id too -- both were measured absent on main's own
+    // differential run.
+    t("task_started carries task_type:local_bash and tool_use_id; task_notification carries tool_use_id too", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), toolUseId: "call-42" });
+      await bash()({ command: "echo hi", run_in_background: true }, ctx);
+      const started = frames.find((f) => f.subtype === "task_started") as { task_type?: string; tool_use_id?: string };
+      expect(started.task_type).toBe("local_bash");
+      expect(started.tool_use_id).toBe("call-42");
+      for (let i = 0; i < 50 && !frames.some((f) => f.subtype === "task_notification"); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const notif = frames.find((f) => f.subtype === "task_notification") as { tool_use_id?: string };
+      expect(notif.tool_use_id).toBe("call-42");
+    });
+
+    // Task-frames parity: the exact pinned strings, verbatim (pin `CMe`).
+    t("the pinned notification summary wording: completed and failed", async () => {
+      const okFrames: BackgroundTaskMessage[] = [];
+      const okCtx = fakeCtx({ emitFrame: (f) => okFrames.push(f) });
+      await bash()({ command: "echo hi", run_in_background: true }, okCtx);
+      for (let i = 0; i < 50 && !okFrames.some((f) => f.subtype === "task_notification"); i++) await new Promise((r) => setTimeout(r, 50));
+      expect((okFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Background command "echo hi" completed (exit code 0)');
+
+      const failFrames: BackgroundTaskMessage[] = [];
+      const failCtx = fakeCtx({ emitFrame: (f) => failFrames.push(f) });
+      await bash()({ command: "exit 3", run_in_background: true }, failCtx);
+      for (let i = 0; i < 50 && !failFrames.some((f) => f.subtype === "task_notification"); i++) await new Promise((r) => setTimeout(r, 50));
+      expect((failFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Background command "exit 3" failed with exit code 3');
     });
 
     t("appends stdout to the task's own output file, and emits task_notification on completion", async () => {

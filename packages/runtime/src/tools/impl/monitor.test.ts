@@ -580,25 +580,57 @@ describe("Monitor executor: command half", () => {
     expect(completionChanged.tasks.map((t) => t.task_id)).not.toContain(started.task_id);
   });
 
-  // M2 (fix wave, P3 close-out): WS-12 §8 requires every surface to record sandbox posture; the
-  // command half's task_notification.summary never carried it (Lane C's own fix added the
-  // annotation to Bash's three background surfaces only).
-  t("task_notification summary carries [sandbox: config-disabled] when enabled:false", async () => {
+  // Task-frames parity (2026-09-17 contract §4 "Summary wording"): the sandbox posture no longer
+  // rides task_notification.summary at all -- the pin's own wording (measured on the binary) has no
+  // sandbox note on either the completed-with-output or the exit-code branch, regardless of
+  // enabled:false / sandboxed. M2 (fix wave, P3 close-out)'s own annotation lived here briefly; the
+  // pin never had it.
+  t("task_notification summary follows the pinned wording, with no sandbox note, when enabled:false", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), sandboxSettings: { enabled: false } });
     await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
     await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
     const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
-    expect(notif.summary).toContain("[sandbox: config-disabled]");
+    expect(notif.summary).not.toContain("[sandbox:");
+    expect(notif.summary).toBe('Monitor "quick" stream ended');
   });
 
-  t("a sandboxed command's task_notification summary carries [sandbox: sandboxed]", async () => {
+  t("a sandboxed command's task_notification summary follows the pinned wording too, with no sandbox note", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
     await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
     await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
     const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
-    expect(notif.summary).toContain("[sandbox: sandboxed]");
+    expect(notif.summary).not.toContain("[sandbox:");
+    expect(notif.summary).toBe('Monitor "quick" stream ended');
+  });
+
+  // Task-frames parity: the pinned wording's own completed-with/without-output distinction, and the
+  // failed-with-exit-code wording.
+  t("the pinned wording distinguishes completed-with-output from completed-without-output, and covers failed", async () => {
+    const silentFrames: BackgroundTaskMessage[] = [];
+    await monitor()({ description: "silent", timeout_ms: 5000, persistent: false, command: "true" }, fakeCtx({ emitFrame: (f) => silentFrames.push(f) }));
+    await waitFor(() => silentFrames.some((f) => f.subtype === "task_notification"));
+    expect((silentFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Monitor "silent" ended without producing output (exit 0)');
+
+    const failFrames: BackgroundTaskMessage[] = [];
+    await monitor()({ description: "boom", timeout_ms: 5000, persistent: false, command: "exit 2" }, fakeCtx({ emitFrame: (f) => failFrames.push(f) }));
+    await waitFor(() => failFrames.some((f) => f.subtype === "task_notification"));
+    expect((failFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Monitor "boom" script failed (exit 2)');
+  });
+
+  // Task-frames parity (contract §3's own note applied here too): task_started carries task_type and
+  // tool_use_id; task_notification carries tool_use_id.
+  t("task_started carries task_type:local_bash and tool_use_id; task_notification carries tool_use_id", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), toolUseId: "call-7" });
+    await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
+    const started = frames.find((f) => f.subtype === "task_started") as { task_type?: string; tool_use_id?: string };
+    expect(started.task_type).toBe("local_bash");
+    expect(started.tool_use_id).toBe("call-7");
+    await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
+    const notif = frames.find((f) => f.subtype === "task_notification") as { tool_use_id?: string };
+    expect(notif.tool_use_id).toBe("call-7");
   });
 
   // Task 8 (the SAME ordering bug bash.ts's own equivalent test found): runCommand's spawn is

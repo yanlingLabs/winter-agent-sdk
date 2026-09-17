@@ -313,15 +313,31 @@ function capOutput(ctx: ToolExecutionContext, stream: "stdout" | "stderr", raw: 
 }
 
 // WS-12 §4: "the result MUST record the sandbox-override state." Shared by the foreground result
-// text AND the two background surfaces (the "started" message and the task_notification summary,
-// see runBackground below) so all three render identically. When the posture itself is already
-// "override-requested" that word already carries the fact; the extra annotation only adds
-// information for the (rarer, but real) case where the flag was set yet a DIFFERENT row of the
-// §4.1 table won first (e.g. `enabled: false` beats a same-call override request) -- avoids the
-// redundant "override-requested, override-requested" this would otherwise read as.
+// text and the background "started" message (the model-facing tool_result text, both surfaces
+// this executor itself renders) -- see runBackground below. Task-frames parity (2026-09-17
+// contract §4 "Summary wording"): the task_notification.summary is NO LONGER one of this
+// annotation's consumers -- the pin's own wording (bashBackgroundSummary below) carries no sandbox
+// note at all, so a call site that used to interpolate this into a notification summary now calls
+// bashBackgroundSummary instead. When the posture itself is already "override-requested" that word
+// already carries the fact; the extra annotation only adds information for the (rarer, but real)
+// case where the flag was set yet a DIFFERENT row of the §4.1 table won first (e.g. `enabled:
+// false` beats a same-call override request) -- avoids the redundant "override-requested,
+// override-requested" this would otherwise read as.
 function formatSandboxAnnotation(posture: string, sandboxOverrideRequested: boolean): string {
   const overrideNote = sandboxOverrideRequested && posture !== "override-requested" ? ", override-requested" : "";
   return `[sandbox: ${posture}${overrideNote}]`;
+}
+
+// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
+// strings for a background bash task's own task_notification.summary -- measured directly on the
+// pinned binary, not paraphrased. `exitCode` is `null` only for a timeout/abort, neither of which
+// reaches the "completed"/"failed" branches below (the natural-exit handler's own status derivation
+// already routes those through "failed"; TaskStop's own "was stopped" wording, task-stop.ts, is what
+// a genuine interrupt gets) -- coerced to 1 rather than left `null` in that structurally-unreachable
+// case, so the string is never literally "exit code null".
+function bashBackgroundSummary(description: string, status: "completed" | "failed", exitCode: number | null): string {
+  const code = exitCode ?? 1;
+  return status === "completed" ? `Background command "${description}" completed (exit code ${code})` : `Background command "${description}" failed with exit code ${code}`;
 }
 
 function formatForegroundResult(parts: {
@@ -591,7 +607,7 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
       updateTask(taskId, {
         status,
         endTime: Date.now(),
-        notification: { summary: `${description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}` },
+        notification: { summary: bashBackgroundSummary(description, status, result.exitCode) },
       });
       ctx.emitFrame({
         type: "system",
@@ -607,9 +623,12 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
       updateTask(taskId, {
         status: "failed",
         endTime: Date.now(),
-        // No RunCommandResult exists on this branch (runCommand itself rejected, pre-spawn) -- the
-        // pre-flight `decision` computed at the top of this function is what was actually attempted.
-        notification: { summary: `${description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}` },
+        // No RunCommandResult exists on this branch (runCommand itself rejected, pre-spawn -- e.g. a
+        // config/availability problem this run's own pre-flight check at the top of runBackground
+        // did not already catch) -- there is no exit code to cite, so this is a disclosed departure
+        // from bashBackgroundSummary's own pinned "failed with exit code <N>" wording for the one
+        // case that structurally cannot have one.
+        notification: { summary: `Background command "${description}" failed to start: ${(err as Error).message}` },
       });
     },
   );

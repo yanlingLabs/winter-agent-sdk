@@ -99,16 +99,22 @@ const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 // keeping the mechanism duplicated-but-identical here is lower-risk than introducing a Monitor ->
 // Bash source dependency for two three-line helpers). See bash.ts's own comments for the full
 // rationale on each piece.
-// M2 (fix wave, P3 close-out): mirrors bash.ts's own `formatSandboxAnnotation` verbatim -- same
-// deliberate duplication precedent as every other small sandbox-mechanism helper in this file (see
-// this function's own sibling comments). WS-12 §8 requires the result to record the sandbox-override
-// state on every surface; Lane C's own fix (bash.ts) added this annotation to Bash's three
-// background surfaces only -- Monitor's `task_notification.summary` (both the natural-completion and
-// pre-spawn-failure branches, below) never got it, leaving a `config-disabled`/`excluded` Monitor
-// command with no trace it ran unfenced.
-function formatSandboxAnnotation(posture: string, sandboxOverrideRequested: boolean): string {
-  const overrideNote = sandboxOverrideRequested && posture !== "override-requested" ? ", override-requested" : "";
-  return `[sandbox: ${posture}${overrideNote}]`;
+// Task-frames parity (2026-09-17 contract §4 "Summary wording"): `formatSandboxAnnotation` (M2, fix
+// wave, P3 close-out -- mirrored bash.ts's own helper so WS-12 §8's sandbox-override state reached
+// Monitor's `task_notification.summary` too) is GONE. The pinned wording below carries no sandbox
+// note on either the completed/failed surface Monitor ever had one on, and `formatMonitorResult`
+// (this file's own tool_result text) never carried one to begin with -- unlike bash.ts, Monitor has
+// no foreground result text for the annotation to survive on, so nothing calls it any more.
+//
+// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
+// strings for Monitor's COMMAND half -- measured directly on the pinned binary. The pre-spawn
+// rejection branch below (no RunCommandResult, `runMonitorCommand`'s own reject callback) has no
+// exit code and produced no output by construction, so it is a disclosed departure from this
+// wording, same posture as bash.ts's own identical pre-spawn-failure case.
+function monitorCommandSummary(description: string, status: "completed" | "failed", exitCode: number | null, producedOutput: boolean): string {
+  const code = exitCode ?? 1;
+  if (status === "failed") return `Monitor "${description}" script failed (exit ${code})`;
+  return producedOutput ? `Monitor "${description}" stream ended` : `Monitor "${description}" ended without producing output (exit ${code})`;
 }
 
 function computeMonitorWritableRoots(ctx: ToolExecutionContext): string[] {
@@ -196,6 +202,11 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
   const { taskId, outputPath } = createBackgroundTask("monitor");
   const outStream = createWriteStream(outputPath, { flags: "a" });
   const effectiveTimeout = input.persistent ? PERSISTENT_STAND_IN_TIMEOUT_MS : input.timeout_ms;
+  // Task-frames parity (contract §4 "Summary wording"): the pin's own completed-with/without-output
+  // distinction needs to know whether the process ever wrote anything, tracked as the run happens
+  // (never re-derived from the .output file's own size after the fact -- this executor never reads
+  // it back, and doing so only to answer a boolean would be a needless extra I/O on every run).
+  let producedOutput = false;
 
   // Task 8 (the SAME ordering bug bash.ts's own runBackground had, found via a real
   // differential-scenario repro): register the task BEFORE spawning, not only inside onSpawned
@@ -226,8 +237,14 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       onSpawned: ({ pid }) => {
         startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
       },
-      onStdout: (c) => outStream.write(c),
-      onStderr: (c) => outStream.write(c),
+      onStdout: (c) => {
+        if (c.length > 0) producedOutput = true;
+        outStream.write(c);
+      },
+      onStderr: (c) => {
+        if (c.length > 0) producedOutput = true;
+        outStream.write(c);
+      },
     });
   } catch (err) {
     outStream.end();
@@ -264,9 +281,7 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       updateTask(taskId, {
         status,
         endTime: Date.now(),
-        // M2 (fix wave, P3 close-out): WS-12 §8's own annotation, previously only on Bash's three
-        // background surfaces.
-        notification: { summary: `${input.description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}` },
+        notification: { summary: monitorCommandSummary(input.description, status, result.exitCode, producedOutput) },
       });
       ctx.emitFrame({
         type: "system",
@@ -284,8 +299,10 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
         endTime: Date.now(),
         // M2 (fix wave, P3 close-out): no RunCommandResult exists on this branch (runCommand
         // itself rejected, pre-spawn) -- `decision`, computed at the top of this function, is what
-        // was actually attempted (mirrors bash.ts's own runBackground failure-branch precedent).
-        notification: { summary: `${input.description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}` },
+        // was actually attempted (mirrors bash.ts's own runBackground failure-branch precedent). No
+        // exit code exists here either, so this departs from monitorCommandSummary's own pinned
+        // wording for the one case that structurally cannot have one (see that function's header).
+        notification: { summary: `Monitor "${input.description}" failed to start: ${(err as Error).message}` },
       });
     },
   );
