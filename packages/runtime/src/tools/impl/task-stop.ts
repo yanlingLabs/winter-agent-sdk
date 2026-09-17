@@ -50,6 +50,16 @@ function formatResult(message: string, taskId: string, taskKind: BackgroundTaskK
   return JSON.stringify({ message, task_id: taskId, task_type: wireTaskType(taskKind), ...(command !== undefined ? { command } : {}) });
 }
 
+// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
+// "killed" strings for the two kinds the wording table pins one for -- `bash` and Monitor's command
+// half (`monitor`; the ws half and workflow/agent kinds have no pinned kill wording, so they keep
+// this file's own established generic phrasing).
+function taskStopSummary(kind: BackgroundTaskKind, description: string): string {
+  if (kind === "bash") return `Background command "${description}" was stopped`;
+  if (kind === "monitor") return `Monitor "${description}" stopped`;
+  return `${description} (stopped)`;
+}
+
 const taskStopExecutor: ToolExecutor = {
   async execute(input, ctx) {
     const parsed = parseTaskStopInput(input);
@@ -74,7 +84,7 @@ const taskStopExecutor: ToolExecutor = {
     // §6: a registry update to {status: "killed" (the patch spelling), end_time} -> task_updated
     // then, synchronously, the once-per-id task_notification {status: "stopped"} -- ONE call through
     // the ONE update door, rather than a status write followed by a hand-built emitFrame literal.
-    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: `${task.description} (stopped)` } });
+    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: taskStopSummary(task.kind, task.description) } });
     stopTask(id); // process-group kill (WS-12 §5.2) for bash/Monitor-command, or the task's own stop() for Monitor-ws
 
     try {

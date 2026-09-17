@@ -131,6 +131,29 @@ describe("TaskStop executor", () => {
     expect(changed!.tasks.map((t) => t.task_id)).not.toContain("t1");
   });
 
+  // Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the pinned "killed"
+  // strings for bash and Monitor's command half; a kind with no pinned kill wording (agent) keeps
+  // this file's own established generic phrasing.
+  test("the pinned kill-notification summary wording, per kind", async () => {
+    const bashFrames: BackgroundTaskMessage[] = [];
+    const bashCtx = fakeCtx({ emitFrame: (f) => bashFrames.push(f) });
+    startTracking({ taskId: "b1", kind: "bash", outputPath: "/x/b1.output", description: "sleep 100", emitter: { emitFrame: bashCtx.emitFrame, sessionId: bashCtx.sessionId } });
+    await taskStop()({ task_id: "b1" }, bashCtx);
+    expect((bashFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Background command "sleep 100" was stopped');
+
+    const monitorFrames: BackgroundTaskMessage[] = [];
+    const monitorCtx = fakeCtx({ emitFrame: (f) => monitorFrames.push(f) });
+    startTracking({ taskId: "m1", kind: "monitor", outputPath: "/x/m1.output", description: "watch logs", emitter: { emitFrame: monitorCtx.emitFrame, sessionId: monitorCtx.sessionId } });
+    await taskStop()({ task_id: "m1" }, monitorCtx);
+    expect((monitorFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Monitor "watch logs" stopped');
+
+    const agentFrames: BackgroundTaskMessage[] = [];
+    const agentCtx = fakeCtx({ emitFrame: (f) => agentFrames.push(f) });
+    startTracking({ taskId: "a1", kind: "agent", outputPath: "/x/a1.output", description: "review the diff", emitter: { emitFrame: agentCtx.emitFrame, sessionId: agentCtx.sessionId } });
+    await taskStop()({ task_id: "a1" }, agentCtx);
+    expect((agentFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe("review the diff (stopped)");
+  });
+
   test("shell_id is an alias for the same task-id namespace, never a second registry", async () => {
     startTracking({ taskId: "shell-1", kind: "bash", outputPath: "/x/shell-1.output", description: "d" });
     const res = await taskStop()({ shell_id: "shell-1" }, fakeCtx());
