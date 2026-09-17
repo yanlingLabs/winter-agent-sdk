@@ -352,7 +352,12 @@ export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<str
 // "general"/"explorer" do NOT match (they normalize to a DIFFERENT string, not a prefix or a substring
 // of one). An EXACT match (before normalization) always wins outright and can never be "ambiguous" --
 // normalization only matters once no exact key exists.
-function normalizeAgentTypeName(raw: string): string {
+// Exported (fix wave, M2): `permissions/evaluator.ts`'s own `findAgentDenyRule` matches an
+// `Agent(<type>)` deny rule's comma-separated content against a RESOLVED type name -- that name
+// already went through this exact normalization (`findAgentByType` below), so the rule-content
+// comparison must use the SAME fold or a differently-cased rule (`Agent(explore)`) silently fails to
+// deny the canonically-cased type (`Explore`) `tools/impl/agent.ts` actually resolves.
+export function normalizeAgentTypeName(raw: string): string {
   return raw.normalize("NFKC").toLowerCase().replace(/[\s\-_]/g, "");
 }
 

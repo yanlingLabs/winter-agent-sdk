@@ -67,6 +67,11 @@ import { isAutoSuspendedAllowRule, AUTO_MODE_DEFAULT_USE_AUTO_MODE_DURING_PLAN }
 // re-derived -- `skills/permission-rules.ts` is where the alias/argument split is decided, and a
 // second copy here is exactly the producer/consumer drift R4-2 exists to catch.
 import { matchesSkillRule } from "../skills/permission-rules.ts";
+// M2 (fix wave): the ONE type-name fold `findAgentByType` (`subagents/definitions.ts`) resolves a
+// `subagent_type` through -- see `findAgentDenyRule`'s own comment below for why the deny-rule
+// comparison must use the identical fold. No cycle: `definitions.ts` imports only `builtin-agents.ts`
+// (-> `permissions/policy-state.ts`, a sibling of this file, never this file itself).
+import { normalizeAgentTypeName } from "../subagents/definitions.ts";
 const SKILL_RULE_TOOL = "Skill";
 
 export type { AutoModeConfig };
@@ -663,7 +668,16 @@ export function findMatchingRuleEntry(
 // generic ruleDenialMessage() never produces. (2) Even if the wire shapes matched, `Agent(<type>)`
 // is a single argument-scoped rule, not a whole-call block -- exactly like Bash's own pattern
 // family -- but unlike Bash, claude matches it on EXACT STRING EQUALITY against the subagent_type,
-// never a glob (R3b §4, verbatim). Both are satisfied by making the Agent tool's OWN resolution
+// never a glob (R3b §4, verbatim). DISCLOSED DEVIATION (M2, fix wave): "exact string equality" is
+// read here as exact AFTER `findAgentByType`'s own case/whitespace/separator fold
+// (`normalizeAgentTypeName`), not byte-for-byte -- type RESOLUTION is already case-insensitive
+// (`Explore`/`explore`/`explore_agent` all resolve to the one built-in), so a deny rule compared
+// byte-for-byte against the RESOLVED, canonically-cased name would let `Agent(explore)` (a
+// differently-cased but unambiguous rule) silently fail to deny the type the model actually
+// reaches. Matching normalization on both sides is what keeps "the rule that removes a type from
+// the listing is the SAME rule that refuses a spawn naming it" (the sentence two paragraphs down)
+// true regardless of which casing either side happens to use.
+// Both are satisfied by making the Agent tool's OWN resolution
 // code (tools/impl/agent.ts) the sole caller of this lookup, answering a denial the way it answers
 // every other thrown error, never through the generic six-stage pipeline.
 //
@@ -686,8 +700,8 @@ export function findAgentDenyRule(rules: SourcedRuleSet, type: string, opts?: { 
     if (entry.rule.toolName !== "Agent") continue;
     const content = entry.ruleValue.ruleContent;
     if (content === undefined) continue; // bare `Agent` deny -- schema removal, not this function's scope
-    const names = content.split(",").map((s) => s.trim());
-    if (names.includes(type)) return entry;
+    const names = content.split(",").map((s) => normalizeAgentTypeName(s.trim()));
+    if (names.includes(normalizeAgentTypeName(type))) return entry;
   }
   return undefined;
 }

@@ -14,7 +14,6 @@ import {
   renderTaskStopNotification,
   renderWorkflowNotification,
   withNotificationPreamble,
-  isTaskNotificationText,
   xmlEscape,
   taskNotificationAttachment,
   notificationQueueFor,
@@ -43,12 +42,6 @@ describe("the <task-notification> document (claude's `cu`)", () => {
 
   test("xmlEscape is claude's `Ut`: &, < and > only", () => {
     expect(xmlEscape(`a & b <c> "d"`)).toBe(`a &amp; b &lt;c&gt; "d"`);
-  });
-
-  test("isTaskNotificationText recognises the engine's own synthetic turn input", () => {
-    expect(isTaskNotificationText(`${NOTIFICATION_PREAMBLE}<task-notification>\n</task-notification>`)).toBe(false);
-    expect(isTaskNotificationText("  <task-notification>\n</task-notification>")).toBe(true);
-    expect(isTaskNotificationText("hello")).toBe(false);
   });
 });
 

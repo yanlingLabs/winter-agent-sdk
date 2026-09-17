@@ -16,7 +16,7 @@
 // this file's own `driveParent` uses (no `tools:` override on `runEngine`'s own `EngineOptions`).
 import { describe, test, expect, afterEach } from "bun:test";
 import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine, type Provider, type EngineProviderIdentity } from "../engine.ts";
+import { runEngine, type Provider, type EngineProviderIdentity, type ResolveModelSwitch } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
@@ -287,6 +287,54 @@ describe("SDK 0.0.16 Lane P (R3b §5): the Explore model cap, end to end", () =>
       { providerIdentity: { providerId: "anthropic", modelKey: FABLE_KEY, family: "claude" }, resolveSlot: fakeAnthropicResolveSlot(TIER_KEYS) },
     );
     expect(resolvedModelFrom(frames)).toBe(FABLE_KEY);
+  });
+
+  // M3 (fix wave, whole-branch review): `resolveChildModel`'s Explore branch used to cap against
+  // `config.model` -- the session's STARTUP model, frozen for the run's whole life -- rather than
+  // `currentModel`/`currentProviderIdentity`, the LIVE binding a `set_model` reassigns. A session
+  // that started at (or below) the Opus tier and was later switched UP to Fable kept advertising "no
+  // cap needed" forever, because the stale startup model never left the Opus tier even after the live
+  // model did. Two turns: the first is idle text (nothing to spawn yet); a `set_model` is then parked
+  // and applies immediately (idle is its own quiescent boundary, Ruling E-2); the second turn spawns
+  // Explore and must be capped against the model the session is ACTUALLY running on by then.
+  test("the cap tracks a live set_model switch, not the session's startup model", async () => {
+    // Starts at Sonnet (at-or-below-opus: no cap needed YET) and switches UP to Fable before the
+    // Explore spawn. The pre-fix code re-checked the STARTUP model (Sonnet) forever, so it would
+    // still see "no cap needed" and inherit the stale value uncapped (SONNET_KEY); the fix reads the
+    // LIVE model (Fable, past the fix's own tier check) and caps down to Opus. The two disagree,
+    // which is what makes this scenario -- not the startup model equalling the cap's own target --
+    // the thing that actually proves the fix, not a coincidence of shared constants.
+    const config = baseConfig({ model: SONNET_KEY });
+    const provider = scriptedProvider([
+      { kind: "text", text: "turn one done" },
+      { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { subagent_type: "Explore", description: "d", prompt: "p", run_in_background: false } }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    const resolveModelSwitch: ResolveModelSwitch = (model) => ({
+      provider,
+      identity: { providerId: "anthropic", modelKey: model, family: "claude" },
+      to: { providerId: "anthropic", modelKey: model, family: "claude", readableState: "none" },
+    });
+    registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider }));
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config,
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+      providerIdentity: { providerId: "anthropic", modelKey: SONNET_KEY, family: "claude" },
+      resolveSlot: fakeAnthropicResolveSlot(TIER_KEYS),
+      resolveModelSwitch,
+    });
+    host.output.write({ type: "user", text: "hello" });
+    host.output.write({ type: "control_request", requestId: "sm", subtype: "set_model", payload: { model: FABLE_KEY } });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    // Capped down from the LIVE Fable tier -- the pre-fix code read the startup Sonnet tier
+    // instead, saw "already at-or-below Opus", and would have left this at the uncapped SONNET_KEY.
+    expect(resolvedModelFrom(frames)).toBe(OPUS_KEY);
   });
 });
 

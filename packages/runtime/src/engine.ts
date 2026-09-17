@@ -2969,9 +2969,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // same-named user/project/plugin/programmatic "Explore" that merely shadows the built-in never
     // reaches this branch (see that field's own header on `SpawnChildRequest`).
     if (req.builtinAgentType === "Explore") {
-      const capped = exploreModelCap(config.model);
+      // M3 (fix wave): the LIVE model, not the session's startup one -- `config.model` never moves
+      // once a `set_model` lands, so an Explore spawned afterward was capped (or not) against a tier
+      // the parent stopped running on turns ago. Same expression `sessionLeanModel`'s own caller
+      // uses (line ~5822) to read "what is this session actually generating with right now".
+      const capped = exploreModelCap(currentProviderIdentity?.modelKey ?? currentModel);
       if (capped !== undefined) return capped;
     }
+    // Disclosed, deliberately UNCHANGED (M3, fix wave): this plain "inherit" fallback stays keyed on
+    // `config.model`, not `currentModel` -- the SAME question the fork-only fix immediately above
+    // (P16-7, this function's own header comment) already answered differently for a fork vs. every
+    // other spawn, and widening it here is a separate, non-fork-specific question this fix wave does
+    // not decide.
     return config.model;
   }
 
@@ -5838,7 +5847,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // `inHumanTurn` is what picks between claude's two anti-injection preambles: inside a turn the
       // HOST started, the user's own message is real input and the preamble says so; inside a turn a
       // notification itself started, it is not.
-      const attachment = taskNotificationAttachment(notifications.drainFor(config.agentId, { maxPriority: "next" }), { inHumanTurn: !turnStartedByNotification });
+      //
+      // M3 (fix wave, whole-branch review): `!turnStartedByNotification` alone is TRUE for every one
+      // of a CHILD's own turns that a notification did not start -- its initial spawn prompt, and
+      // every SendMessage resume -- neither of which is the end user's own message. Only the
+      // TOP-LEVEL engine's own turn (`config.agentId === undefined`) can genuinely have been started
+      // by the host/user; a child's turn is always parent- or spawn-driven, so its mid-turn
+      // notification must never claim "the user's own message in this turn is real input".
+      const attachment = taskNotificationAttachment(notifications.drainFor(config.agentId, { maxPriority: "next" }), {
+        inHumanTurn: config.agentId === undefined && !turnStartedByNotification,
+      });
       if (attachment !== undefined) produced.push(attachment);
     }
     for (const producer of attachmentProducers ?? []) {

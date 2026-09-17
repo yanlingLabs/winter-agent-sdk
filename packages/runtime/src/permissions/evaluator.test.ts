@@ -3399,6 +3399,22 @@ describe("findAgentDenyRule / agentTypeDeniedMessage (SDK 0.0.16 Lane P, R3b §4
     expect(findAgentDenyRule(rules, "general-purpose")).toBeUndefined();
   });
 
+  // M2 (fix wave, whole-branch review): type RESOLUTION (`findAgentByType`) is case/whitespace/
+  // separator-insensitive, so the deny-rule comparison must fold the same way, or a differently-
+  // cased-but-unambiguous rule silently denies nothing.
+  test("a lowercase Agent(explore) deny still denies the canonically-cased 'Explore' type", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "explore" }, "deny", "sdk")] };
+    expect(findAgentDenyRule(rules, "Explore")).toBeDefined();
+    expect(findAgentDenyRule(rules, "Plan")).toBeUndefined();
+  });
+
+  test("an uppercase-typed resolved type is denied by the rule's own lowercase spelling, in a comma list", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "explore, plan" }, "deny", "user")] };
+    expect(findAgentDenyRule(rules, "Explore")).toBeDefined();
+    expect(findAgentDenyRule(rules, "Plan")).toBeDefined();
+    expect(findAgentDenyRule(rules, "general-purpose")).toBeUndefined();
+  });
+
   test("Agent(fork) is deniable exactly like any other type", () => {
     const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "fork" }, "deny", "sdk")] };
     expect(findAgentDenyRule(rules, "fork")).toBeDefined();

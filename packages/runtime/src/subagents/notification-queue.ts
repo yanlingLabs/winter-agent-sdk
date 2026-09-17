@@ -80,10 +80,14 @@ export function renderTaskNotification(fields: TaskNotificationFields): string {
   return `${out}${fields.body ?? ""}\n</${TAG_ROOT}>${fields.trailing ?? ""}`;
 }
 
-/** True for a text whose first tag is a `<task-notification>` -- what the engine's turn loop uses to recognise its own synthetic turn input. */
-export function isTaskNotificationText(text: string): boolean {
-  return text.trimStart().startsWith(`<${TAG_ROOT}`);
-}
+// M3 (fix wave, whole-branch review): `isTaskNotificationText` (a text-sniff for "does this string
+// open with <task-notification>") is REMOVED, dead code -- its own doc comment claimed it was "what
+// the engine's turn loop uses to recognise its own synthetic turn input", but engine.ts's turn loop
+// actually keys `turnStartedByNotification` off the envelope's own `taskNotification === true` meta
+// flag (a boolean the engine itself stamps), never off sniffing the text. That flag is strictly more
+// reliable than a text prefix check -- a real user message that happens to start with the literal
+// string "<task-notification>" would have been misclassified by this function, a false positive a
+// boolean flag cannot produce.
 
 // --- the anti-injection preamble (claude's `rbe` / `PFt`) ------------------------------------------
 

@@ -40,13 +40,24 @@ async function drive(opts: {
   /** Extra settling time after `afterTurns`, for unsolicited turns to run (they need no host input at all). */
   settleMs?: number;
   engine?: Partial<EngineOptions>;
+  /** M3 (fix wave): stamps `config.agentId`, so a test can drive this engine AS A CHILD -- the one
+   * fact `inHumanTurn` must key on in addition to `turnStartedByNotification` (a child's own turn is
+   * never the end user's own message, whether or not a notification started it). */
+  agentId?: string;
 }): Promise<Recorded> {
   const recorded: Recorded = { requests: [], frames: [], userEntries: [] };
   const { host, runtime } = createInMemoryChannel();
   const done = runEngine({
     // `bypassPermissions` because a scripted tool round must not stop on a permission control_request
     // this harness has no host to answer (the mid-turn scenarios are about PLACEMENT, not the gate).
-    config: { sessionId: opts.sessionId, cwd, model: "winter-test/notify", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+    config: {
+      sessionId: opts.sessionId,
+      cwd,
+      model: "winter-test/notify",
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
+    },
     input: runtime.input,
     output: runtime.output,
     provider: {
@@ -127,6 +138,33 @@ describe("mid-turn delivery (after a tool round)", () => {
     expect(texts).toContain("Read:");
     // No unsolicited turn happened: it was already delivered.
     expect(recorded.requests).toHaveLength(2);
+    clearNotificationQueue(sessionId);
+  });
+
+  // M3 (fix wave, whole-branch review): a CHILD's own turn is never the end user's own message --
+  // its first turn is spawn-driven, and a resume is parent-driven -- so its mid-turn notification
+  // must get the PLAIN preamble even though (exactly like the top-level test above) a notification
+  // did not start ITS turn either. `!turnStartedByNotification` alone cannot tell these two apart;
+  // only `config.agentId === undefined` can.
+  test("a CHILD's mid-turn notification carries the PLAIN preamble, never the in-human-turn one", async () => {
+    const sessionId = "notify-midturn-child";
+    clearNotificationQueue(sessionId);
+    const recorded = await drive({
+      sessionId,
+      agentId: "child-1",
+      prompts: ["do the thing"],
+      script: (_req, i) => {
+        if (i === 0) {
+          enqueueTaskNotification({ sessionId, value: agentXml("task-1", "bg probe"), agentId: "child-1", taskId: "task-1" });
+          return { kind: "tool_use", calls: [{ id: "call-1", name: "Read", input: { file_path: "/nonexistent" } }] };
+        }
+        return { kind: "text", text: "done" };
+      },
+    });
+    const texts = textsOf(lastMessage(recorded.requests[1]!)).join("\n");
+    expect(texts).toContain("<task-notification>");
+    expect(texts).toContain(NOTIFICATION_PREAMBLE.trimEnd());
+    expect(texts).not.toContain(NOTIFICATION_PREAMBLE_IN_HUMAN_TURN.trimEnd());
     clearNotificationQueue(sessionId);
   });
 
