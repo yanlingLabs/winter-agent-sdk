@@ -311,7 +311,7 @@ export interface RuntimeAgentDefinition {
    * drops gitStatus"). WINTER-NAMED rather than mirroring the pinned field's own product-specific
    * spelling (WS-01 §5's own "rebrand, don't borrow the vendor's literal name" posture) -- but the
    * BEHAVIOR is identical: when true, this agent's own context assembly omits the discovered
-   * project-instructions file (Winter's `WINTER.md` equivalent) and the git-status dynamic section
+   * project-instructions file (the brand's own instructions-file convention, `brand.instructionsFile`) and the git-status dynamic section
    * from its system/user-context, the same two things claude's `omitClaudeMd` drops. Absent/false =
    * every pre-existing definition's context, unchanged.
    */
