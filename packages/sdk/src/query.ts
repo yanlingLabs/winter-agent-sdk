@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { AccountInfo, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
+import type { AccountInfo, AgentInfo, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
 import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
@@ -160,6 +160,20 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    * so the answer is a table lookup rather than a network round trip.
    */
   supportedModels(): Promise<ModelInfo[]>;
+  /**
+   * Spawn-surface parity (0.3.250 `sdk.d.ts:2572`, pinned): "Get the list of available subagents for
+   * the current session" — the SAME per-session agent-type list `system/init.agents` carries (research
+   * §A3: "Same list feeds `system/init.agents?: string[]` and `Query.supportedAgents(): AgentInfo[]`"),
+   * here as the richer `{name, description, model?}` triple rather than bare names. A BARE ARRAY, same
+   * shape as `supportedModels` above — served from the runtime's own resolved built-in/filesystem/
+   * programmatic agent set, a table lookup rather than a network round trip.
+   *
+   * The control-subtype producer (the runtime's `list_agents` handler) is a separate lane's wiring;
+   * this wrapper degrades a malformed/absent payload to `[]`, matching `supportedModels`'/
+   * `listModelFamilies`' own "answers with data, never leaves a rejection standing in for absence"
+   * posture.
+   */
+  supportedAgents(): Promise<AgentInfo[]>;
   /**
    * WS-13c §7 (P6.6 Lane C) — WINTER-ONLY, no pinned counterpart: the active slot set this session is
    * currently offering, plus every model family behind "more options". A model switcher shows
@@ -1153,6 +1167,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   gen.supportedModels = async (): Promise<ModelInfo[]> => {
     const payload = await sendControlRequest("list_models", undefined);
     return Array.isArray(payload) ? (payload as ModelInfo[]) : [];
+  };
+  // Spawn-surface parity: same wrapper shape as `supportedModels` immediately above -- a bare-array
+  // control response, degrading to `[]` on anything else so a malformed payload cannot be mistaken
+  // for "the runtime has no agents" vs. "the transport handed back garbage".
+  gen.supportedAgents = async (): Promise<AgentInfo[]> => {
+    const payload = await sendControlRequest("list_agents", undefined);
+    return Array.isArray(payload) ? (payload as AgentInfo[]) : [];
   };
   // WS-13c §7 (P6.6 Lane C): Winter-only, no pinned counterpart. The engine's own control handler
   // (`engine.ts`'s `list_model_families` subtype) already answers with the runtime's
