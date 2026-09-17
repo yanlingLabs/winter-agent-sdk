@@ -142,7 +142,7 @@ describe("transcriptProjectKey — exact CC project-key algorithm", () => {
       "/a/café/😀b",
       longRaw927,
     ];
-    for (const p of [...existingFixtures, "/x", "/Users/u/Xcode progects/Norma v2/.worktrees/some-long-branch-name/packages/core", "/" + "é".repeat(300)]) {
+    for (const p of [...existingFixtures, "/x", "/Users/dev/My Projects/example-app/.worktrees/some-long-branch-name/packages/core", "/" + "é".repeat(300)]) {
       const key = transcriptProjectKey(p);
       expect(VENDOR.test(key)).toBe(true);
       expect(isVendorCompliantProjectKey(key)).toBe(true);

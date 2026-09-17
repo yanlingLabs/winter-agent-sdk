@@ -1,10 +1,10 @@
 // Phase (2026-09-17 sdk-taskframes-parity): the ONE script both runtimes are driven through, and
 // the ONE normalization/reduction pipeline both captured traces are run through before comparison.
 //
-// Contract: docs/superpowers/plans/2026-09-17-sdk-taskframes-parity/contract.md (Norma v2 repo,
-// outside this checkout). The five `system/*` task frames -- task_started, task_progress,
-// task_updated, task_notification, background_tasks_changed -- for Bash (foreground + background)
-// and Agent (foreground, with a child that itself calls Bash).
+// Contract: the five `system/*` task frames -- task_started, task_progress, task_updated,
+// task_notification, background_tasks_changed -- must match the pinned `claude` binary's field
+// shapes and wire spellings for Bash (foreground + background) and Agent (foreground, with a
+// child that itself calls Bash).
 //
 // Everything in this file is DRIVER-AGNOSTIC: `decideStep` takes a generic {role, content}[]
 // history (both the pinned binary's Anthropic-wire JSON and Winter's own ProviderMessage[] satisfy

@@ -211,9 +211,10 @@ export function stdioFixtureCommand(): { command: string; args: string[] } {
   // running under (bun today; nothing here assumes a literal "bun" name is on any PATH, allowlisted
   // or otherwise).
   //
-  // fileURLToPath, NOT `new URL(...).pathname`: this repository's own working-copy path contains a
-  // literal space ("Xcode progects") -- `URL.pathname` percent-encodes it to a literal "%20"
-  // substring, which is not a valid filesystem path and made the spawned child fail to find its own
+  // fileURLToPath, NOT `new URL(...).pathname`: a working-copy checked out under a directory name
+  // that contains a literal space (e.g. "My Projects") -- `URL.pathname` percent-encodes it to a
+  // literal "%20" substring, which is not a valid filesystem path and made the spawned child fail
+  // to find its own
   // script (found empirically: this exact bug, once, while writing this file's own test).
   return { command: process.execPath, args: [fileURLToPath(new URL("./transports/__fixtures__/stdio-server.ts", import.meta.url))] };
 }

@@ -6,8 +6,7 @@
 // `tools.execute(executedCall)` (engine.ts, the round loop) -- so **if this executor runs, the exit
 // was approved**; this file re-implements NONE of that gating.
 //
-// P2 ruling 6 (docs/superpowers/plans/2026-09-02-winter-phase-02-permissions-hooks.md line 31/113,
-// carried forward by docs/superpowers/plans/2026-09-03-winter-phase-02-completion-report.md line 55):
+// P2 ruling 6:
 // "Plan mode in P2 = evaluation semantics only (write-withholding, ...); the ExitPlanMode tool +
 // approval-transition lifecycle land in P3 with the tool catalog." The evaluator's own plan-mode
 // write-withholding (permissions/evaluator.ts) is UNTOUCHED by this file -- this executor owns only

@@ -2,8 +2,8 @@
 
 Winter's SDK compatibility corpus: a trace normalizer, a set of committed golden traces, and the
 pinned-upstream ("official SDK") mechanics that back Winter's compatibility claim against
-`@anthropic-ai/claude-agent-sdk@0.3.250` (see [WS-02](../../../docs/superpowers/specs/winter/WS-02-repo-and-packaging.md)
-in the `winter-agent-sdk` repository for the full spec, if you have it checked out).
+`@anthropic-ai/claude-agent-sdk@0.3.250`. See this package's own `src/` layout and the
+`winter-agent-sdk` repository's packaging conventions for how the corpus is versioned and published.
 
 This package is published to GitHub Packages under restricted access (`@yanlinglabs` scope). The
 registry is chosen by the release workflow, not by a committed pin — see

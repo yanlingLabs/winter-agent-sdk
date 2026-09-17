@@ -1,5 +1,7 @@
-// 2026-09-17 sdk-taskframes-parity: the ACCEPTANCE PROOF for
-// docs/superpowers/plans/2026-09-17-sdk-taskframes-parity/contract.md (Norma v2 repo).
+// 2026-09-17 sdk-taskframes-parity: the ACCEPTANCE PROOF for the task-frame parity contract --
+// Winter must emit the same `system/task_*`/`background_tasks_changed` frames, with the same
+// field shapes and wire spellings, that the pinned `claude` binary emits for Bash, Agent, Monitor
+// and Workflow tasks (see task-frames-script.ts's own header for the exact scope).
 //
 // Drives the pinned `claude` 0.3.250 binary and Winter's own in-process engine through the SAME
 // scripted conversation (packages/conformance/src/official/task-frames-script.ts owns the routing
