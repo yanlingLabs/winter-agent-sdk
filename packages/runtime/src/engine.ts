@@ -250,7 +250,7 @@ import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
 // task's own notification apart from a background one -- see the `emitFrame` closure below for why.
-import { getTask, stopSessionShellTasks } from "./tools/impl/background-task-runtime.ts";
+import { getTask, stopSessionShellTasks, listRunningTasks, toBackgroundTasksChangedEntry } from "./tools/impl/background-task-runtime.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
@@ -6319,7 +6319,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // survived `runEngine` returning and even `process.exit`. A top-level engine stops every background
   // shell of its session; a subagent engine stops the ones IT started (the pin's
   // `killShellTasksForAgent` on agent exit). BEFORE `output.end()`, so the kill frames can still land.
-  stopSessionShellTasks({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
+  const sweptShellTasks = stopSessionShellTasks({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
+  // The listed set just shrank -- `background_tasks_changed` is a level signal, so it follows the
+  // sweep exactly as it follows a TaskStop (task-stop.ts). Nothing swept, nothing to announce.
+  if (sweptShellTasks.length > 0) {
+    try {
+      output.write({ type: "data", message: { type: "system", subtype: "background_tasks_changed", tasks: listRunningTasks().map(toBackgroundTasksChangedEntry), uuid: randomUUID(), session_id: config.sessionId } });
+    } catch {
+      /* a closed sink at teardown is not an error */
+    }
+  }
   removeChildRosterSource();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
   // the roster contribution above -- the messaging runtime is PROCESS-level and outlives the run, so

@@ -4437,6 +4437,10 @@ describe("engine teardown stops this session's background shells (review r1 find
       expect((own[0]!.m as unknown as { patch: { status?: string } }).patch.status).toBe("killed");
       expect(own[1]!.m).toMatchObject({ status: "stopped", summary: 'Background command "teardown probe" was stopped' });
       expect(getTrackedTask(started!.task_id as string)?.status).toBe("stopped");
+      // ...and the level signal follows the sweep: the last frame announces the emptied set.
+      const changed = messages.map((m, i) => ({ m, i })).filter(({ m }) => m.subtype === "background_tasks_changed");
+      expect(changed.at(-1)!.i).toBeGreaterThan(own[1]!.i);
+      expect((changed.at(-1)!.m as unknown as { tasks: Array<{ task_id: string }> }).tasks.map((t) => t.task_id)).not.toContain(started!.task_id);
     } finally {
       resetBackgroundTaskRuntimeForTest();
     }
