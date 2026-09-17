@@ -2868,23 +2868,44 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return resolution.ok && resolution.modelKey === modelKey;
   }
 
+  /** Shared by `sessionLeanModel` and `exploreModelCap`: is `modelKey` at or below the Opus tier (haiku/sonnet/opus), as opposed to Fable, the one tier above it? */
+  function isAtOrBelowOpusTier(modelKey: string): boolean {
+    return claudeTierMatches(modelKey, "haiku") || claudeTierMatches(modelKey, "sonnet") || claudeTierMatches(modelKey, "opus");
+  }
+
   /**
    * claude's `whenToUseLean` gate (`Iu(mz(model))`, traced): `Iu(e){return d().leanPrompt(e)}` calls
-   * a memoized `B(e)`, whose FULLY DETERMINISTIC branch is a hardcoded list of small/older model
-   * names (`o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")||` five specific
-   * dated Opus 4.x builds) that always takes the lean prose; every OTHER model falls through to a
-   * REMOTE, statsig-gated experiment (`L("simple_system_prompt", Ye(e))`) this repo has no way to
-   * evaluate from a static binary (it is resolved against Anthropic's own experiment service, not
-   * anything in the compiled artifact). DISCLOSED SIMPLIFICATION: Winter reproduces only the
-   * deterministic subset, mapped onto its own four-tier Claude family -- lean for haiku/sonnet on
-   * the "anthropic" provider; normal (the fuller, safer text) for opus/fable, any non-Claude-family
-   * model, or when the tier can't be determined -- rather than guessing at an unreproducible
-   * experiment's outcome. `claude-3-x`/specific dated Opus builds have no Winter analogue (this
-   * catalog's Claude family rows are current models only, not multiple dated generations).
+   * a memoized `B(e)`:
+   *   function B(e){ if(!e)return false; if(env-force-on)return true; if(env-force-off)return false;
+   *     if(!w(e))return true; if(flag)return true; return L("simple_system_prompt",Ye(e)) }
+   *   function w(e){ if(xee(e))return false; let o=Ye(e);
+   *     if(hg(o,"lean_prompt")||o==="claude-mythos-5")return false;
+   *     if(o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")||`five dated Opus 4.x
+   *     builds`)return true; return !qs() }
+   *
+   * READ CAREFULLY -- `leanPrompt = !w(e)` for the deterministic branch, which INVERTS the naive
+   * reading: `w(e)` is TRUE (ordinary/small-and-known tiers -- haiku, sonnet, claude-3-x, five
+   * dated Opus 4.x builds) means `!w(e)` is FALSE, so THOSE models are NOT unconditionally lean --
+   * they fall through to a default-off feature flag and then a REMOTE, statsig-gated experiment
+   * (`L("simple_system_prompt", ...)`) this repo cannot reproduce from a static binary. `w(e)` is
+   * FALSE only for a model tagged `hg(o,"lean_prompt")` (a per-model catalog attribute Winter's own
+   * catalog does not carry) OR the LITERAL id `"claude-mythos-5"` -- one tier ABOVE the five listed
+   * Opus 4.x builds, i.e. the same "beyond Opus" boundary `_Ut` (the Explore cap, immediately below)
+   * already draws as "Fable." For THOSE, `!w(e)` is TRUE and `B` returns lean UNCONDITIONALLY, no
+   * fallback needed. Confirmed against ground truth: D2's own differential captures ran
+   * `OFFICIAL_MODEL = "claude-haiku-4-5"`, and the official side's captured listing renders
+   * Explore's FULL (non-lean) `whenToUse` -- haiku is not lean.
+   *
+   * DISCLOSED SIMPLIFICATION: Winter reproduces only the deterministic Fable-tier branch, mapped
+   * onto its own four-tier Claude family -- lean for Fable on the "anthropic" provider; normal (the
+   * fuller, safer text) for haiku/sonnet/opus, any non-Claude-family model, or when the tier can't
+   * be determined -- rather than guessing at an unreproducible remote experiment's outcome for
+   * every other model. `hg(o,"lean_prompt")`'s own per-model catalog flag has no Winter analogue
+   * either (disclosed, same reason).
    */
   function sessionLeanModel(modelKey: string): boolean {
     if (currentProviderIdentity?.providerId !== "anthropic") return false;
-    return claudeTierMatches(modelKey, "haiku") || claudeTierMatches(modelKey, "sonnet");
+    return !isAtOrBelowOpusTier(modelKey);
   }
 
   /**
@@ -2897,8 +2918,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const env = engineEnv ?? process.env;
     if (isTruthyEnvValue(env[envName(sessionBrand, "DISABLE_EXPLORE_INHERIT_CAP")])) return undefined;
     if (currentProviderIdentity?.providerId !== "anthropic") return undefined;
-    const atOrBelowOpus = claudeTierMatches(parentModel, "haiku") || claudeTierMatches(parentModel, "sonnet") || claudeTierMatches(parentModel, "opus");
-    if (atOrBelowOpus) return undefined;
+    if (isAtOrBelowOpusTier(parentModel)) return undefined;
     return "opus"; // resolveChildSlot (the caller's caller) resolves this slot name on the SAME provider
   }
 
@@ -3459,13 +3479,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // call (never cached), exactly like `getAvailabilityInputs` below.
       agentAvailability: () => {
         const defs = sessionAgentDefinitions();
-        const rules = makeEvalCtx().policy.rules;
+        const evalCtx = makeEvalCtx();
+        const denyOpts = evalCtx.allowManagedPermissionRulesOnly !== undefined ? { allowManagedPermissionRulesOnly: evalCtx.allowManagedPermissionRulesOnly } : undefined;
         return {
           availableNames: sessionAgentAvailableNames(defs),
           unavailableMessage: (agentType: string): string | undefined => {
             const def = defs.get(agentType);
             if (def === undefined) return undefined;
-            const denyEntry = findAgentDenyRule(rules, agentType);
+            const denyEntry = findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts);
             if (denyEntry !== undefined) return agentTypeDeniedMessage(agentType, denyEntry);
             if (isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames)) {
               return `Agent type '${agentType}' is unavailable because every tool it may use is denied by the current permission settings.`;
@@ -3824,9 +3845,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // snapshot -- `makeEvalCtx()` (declared earlier in this closure) is called fresh here, never
   // cached, so a live rule/settings change is reflected without a restart.
   function sessionAgentAvailableNames(defs: Map<string, SourcedAgentDefinition>): string[] {
-    const rules = makeEvalCtx().policy.rules;
+    const evalCtx = makeEvalCtx();
+    const denyOpts = evalCtx.allowManagedPermissionRulesOnly !== undefined ? { allowManagedPermissionRulesOnly: evalCtx.allowManagedPermissionRulesOnly } : undefined;
     return availableAgentNames(defs, {
-      isDenied: (agentType) => findAgentDenyRule(rules, agentType) !== undefined,
+      isDenied: (agentType) => findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts) !== undefined,
       ...(config.allowedAgentTypes !== undefined ? { allowedAgentTypes: config.allowedAgentTypes } : {}),
       isAllToolsDenied: (def) => isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames),
     });

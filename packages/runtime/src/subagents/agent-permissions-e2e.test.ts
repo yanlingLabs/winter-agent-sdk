@@ -346,12 +346,23 @@ describe("SDK 0.0.16 Lane P (R3b §5): lean vs normal Agent-listing text, end to
     }
   }
 
-  test("a first-party Anthropic session at haiku/sonnet tier renders Explore's LEAN whenToUse", async () => {
-    const text = await firstRequestTextFor({ providerId: "anthropic", modelKey: SONNET_KEY, family: "claude" });
+  // Traced rule (engine.ts's own `sessionLeanModel`): lean is for Fable (the tier ABOVE Opus), never
+  // haiku/sonnet/opus -- confirmed against D2's own ground truth (OFFICIAL_MODEL = a haiku model;
+  // its captured listing carries Explore's FULL, non-lean whenToUse).
+  test("a first-party Anthropic session at Fable tier renders Explore's LEAN whenToUse", async () => {
+    const text = await firstRequestTextFor({ providerId: "anthropic", modelKey: FABLE_KEY, family: "claude" });
     expect(text).toContain(AGENTS_HEADER);
     expect(text).toContain("- Explore:");
     expect(text).toContain("broad fan-out searches");
     expect(text).not.toContain("Fast read-only search agent for locating code.");
+  });
+
+  test("a sonnet-tier session renders the NORMAL whenToUse", async () => {
+    const text = await firstRequestTextFor({ providerId: "anthropic", modelKey: SONNET_KEY, family: "claude" });
+    expect(text).toContain(AGENTS_HEADER);
+    expect(text).toContain("- Explore:");
+    expect(text).toContain("Fast read-only search agent for locating code.");
+    expect(text).not.toContain("broad fan-out searches");
   });
 
   test("an opus-tier session renders the NORMAL whenToUse", async () => {
