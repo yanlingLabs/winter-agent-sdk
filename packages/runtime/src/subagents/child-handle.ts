@@ -144,6 +144,19 @@ export interface SpawnChildRequest {
   runInBackground: boolean;
   isolation?: "worktree";
   name?: string;
+  /**
+   * SDK 0.0.16 Lane P (R3b §5): the RESOLVED `subagent_type`, set ONLY when the definition
+   * `tools/impl/agent.ts` resolved came from `_source === "builtin"` -- i.e. Winter's own shipped
+   * definition, never a same-named user/project/plugin/programmatic override that merely shadows
+   * one. `SourcedAgentDefinition._source` (subagents/definitions.ts) does not survive onto
+   * `ResolvedAgentDefinition`/`RuntimeAgentDefinition` (a wire shape with no such field), so this is
+   * the one channel by which engine.ts's own `resolveChildModel` -- which sees only this request,
+   * never the definitions map -- can tell "this child IS the built-in Explore" from "this child is
+   * merely named 'Explore'" for the Explore model cap (R3b §5). Absent for every fork, every
+   * non-built-in definition, and every hand-built request in a test fixture that predates this
+   * field -- byte-identical to before it existed.
+   */
+  builtinAgentType?: string;
   // Phase 5 Task 3 (R5-10): the child's own structured-output contract. Set by Lane W's `agent({schema})`
   // so a workflow-spawned agent rides the IDENTICAL StructuredOutput path the top-level session uses
   // -- registration, validation, the retry counter and the exhaustion result are all the engine's,
