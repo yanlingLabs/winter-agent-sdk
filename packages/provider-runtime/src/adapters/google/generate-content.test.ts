@@ -112,3 +112,14 @@ describe("toContents: ordering within an assembled entry", () => {
     expect(() => toContents([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "never-called", content: "out" }] }])).toThrow(/no matching tool_use/);
   });
 });
+
+// R-S4: Gemini's functionResponse has no error flag -- an is_error result keeps its text.
+describe("toContents: an is_error tool result keeps its text", () => {
+  test("the response output is the error text, unchanged", () => {
+    const { contents } = toContents([
+      { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Agent", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "Agent type 'x' not found.", is_error: true }] },
+    ]);
+    expect(contents[1]!.parts).toEqual([{ functionResponse: { name: "Agent", response: { output: "Agent type 'x' not found." } } }]);
+  });
+});

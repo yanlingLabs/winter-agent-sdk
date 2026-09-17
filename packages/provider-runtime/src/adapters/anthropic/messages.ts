@@ -156,7 +156,9 @@ function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
       // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING,
       // not wire fields: the result's own content already carries what the model needs to read. Only
       // `error` has a wire counterpart, and dropping it would tell the model a failed call succeeded.
-      const isError = (block as { error?: unknown }).error === true;
+      // Spawn-surface parity (R-S4): a REAL executor error arrives as the block's own `is_error`
+      // (engine.ts) -- the same wire field, so either spelling maps to it.
+      const isError = (block as { error?: unknown }).error === true || (block as { is_error?: unknown }).is_error === true;
       return { type: "tool_result", tool_use_id: block.tool_use_id, content, ...(isError ? { is_error: true } : {}) };
     }
     case "tool_reference":

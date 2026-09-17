@@ -612,6 +612,9 @@ export const DEFAULT_MAX_PROVIDER_MESSAGE_BYTES = 4 * 1024 * 1024;
  * Per-generation token accounting (R5-3). `inputTokens`/`outputTokens` are required because a
  * provider that reports usage at all always knows both; the cache counters are optional because not
  * every provider family exposes them.
+ *
+ * Review r1 finding 5: ONE convention for every family (provider-runtime's `usage` event):
+ * `inputTokens` is the NON-cached prompt; `cacheReadTokens`/`cacheWriteTokens` are disjoint from it.
  */
 export interface ProviderUsage {
   inputTokens: number;
@@ -765,6 +768,11 @@ export interface ContextAccountantOptions {
   limit?: number;
 }
 
+/** The whole prompt of one generation, counted once: non-cached input + cache write + cache read. */
+function promptTokens(usage: ProviderUsage): number {
+  return usage.inputTokens + (usage.cacheWriteTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+}
+
 export function createContextAccountant(opts: ContextAccountantOptions = {}): ContextAccountant {
   const limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
   let last = 0;
@@ -775,12 +783,17 @@ export function createContextAccountant(opts: ContextAccountantOptions = {}): Co
     contextTokens: () => last,
     limit: () => limit,
     spentTokens: () => spent,
+    // Review r1 finding 5: provider usage now has ONE convention (provider-runtime types.ts) --
+    // `inputTokens` is the NON-cached prompt, with the cache read/write counts disjoint from it -- so
+    // the whole prompt is their sum. Counting only `inputTokens` here would (after the OpenAI-family
+    // normalization) make a cached OpenAI prompt read as a tiny context and never compact; it had
+    // already under-read every cached Anthropic prompt the same way.
     record(usage: ProviderUsage) {
-      last = usage.inputTokens + usage.outputTokens;
-      spent += usage.inputTokens + usage.outputTokens;
+      last = promptTokens(usage) + usage.outputTokens;
+      spent += promptTokens(usage) + usage.outputTokens;
     },
     recordDescendantUsage(usage: ProviderUsage) {
-      spent += usage.inputTokens + usage.outputTokens;
+      spent += promptTokens(usage) + usage.outputTokens;
     },
   };
 }

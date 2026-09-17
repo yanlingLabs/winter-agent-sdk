@@ -48,6 +48,7 @@ import {
   type OpenAiAdapterOptions,
   type ReasoningPlan,
   type ResolvedEndpoint,
+  normalizedPromptUsage,
 } from "./shared.ts";
 
 export const OPENAI_CHAT_BASE_URL = "https://api.openai.com/v1";
@@ -265,11 +266,12 @@ export class ChatStreamMapper {
       const details = u.prompt_tokens_details !== null && typeof u.prompt_tokens_details === "object" ? (u.prompt_tokens_details as { cached_tokens?: unknown }).cached_tokens : undefined;
       // DeepSeek reports its cache hits under its own name; both are the same accounting fact.
       const cached = typeof details === "number" ? details : typeof u.prompt_cache_hit_tokens === "number" ? u.prompt_cache_hit_tokens : undefined;
+      // Review r1 finding 5: `prompt_tokens` is the TOTAL prompt (DeepSeek's hit + miss included), and
+      // the cached count a subset of it -- normalized to the seam's non-cached `inputTokens`.
       events.push({
         type: "usage",
-        inputTokens: typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0,
+        ...normalizedPromptUsage(typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0, cached),
         outputTokens: typeof u.completion_tokens === "number" ? u.completion_tokens : 0,
-        ...(cached !== undefined ? { cacheReadTokens: cached } : {}),
       });
     }
 

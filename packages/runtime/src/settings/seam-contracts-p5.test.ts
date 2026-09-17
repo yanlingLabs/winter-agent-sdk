@@ -116,10 +116,19 @@ describe("(i) provider seam: system prompt in, usage out, and the accountant tha
     expect(accountant.contextTokens()).toBe(505); // replaced, never 625
   });
 
-  test("ContextAccountant: cache counters are informational and never enter contextTokens()", () => {
+  // CHANGED by the task-frames parity fix wave (review r1 finding 5). This used to pin "cache counters
+  // never enter contextTokens()", which was only ever right for a family whose `inputTokens` already
+  // CONTAINED its cached tokens (the OpenAI family) and silently under-read every cached Anthropic
+  // prompt. Provider usage now has one convention -- `inputTokens` is the NON-cached prompt, the cache
+  // counters disjoint from it -- so the context reading is the whole prompt, counted once, plus output.
+  test("ContextAccountant: the context reading is the WHOLE prompt (non-cached input + cache write + cache read) plus output", () => {
     const accountant = createContextAccountant();
-    accountant.record({ inputTokens: 10, outputTokens: 1, cacheReadTokens: 9000, cacheWriteTokens: 9000 });
-    expect(accountant.contextTokens()).toBe(11);
+    accountant.record({ inputTokens: 10, outputTokens: 1, cacheReadTokens: 9000, cacheWriteTokens: 500 });
+    expect(accountant.contextTokens()).toBe(9511);
+    expect(accountant.spentTokens()).toBe(9511);
+    accountant.recordDescendantUsage({ inputTokens: 1, outputTokens: 1, cacheReadTokens: 8 });
+    expect(accountant.contextTokens()).toBe(9511); // a descendant never moves the context reading
+    expect(accountant.spentTokens()).toBe(9521);
   });
 
   test("ContextAccountant: limit() defaults to the disclosed 200000 and is configurable per session", () => {

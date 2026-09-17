@@ -173,3 +173,25 @@ describe("the endpoint policy", () => {
     expect(events[0]).toMatchObject({ type: "error", error: { code: "capability" } });
   });
 });
+
+// R-S4 (task-frames parity fix wave): a REAL executor error rides the engine's block as `is_error`,
+// the engine's synthetic markers as `error` -- both are the same wire field.
+describe("toWireMessages: tool_result error spellings", () => {
+  test("is_error and the synthetic error marker both become is_error:true; a success carries none", () => {
+    const wire = toWireMessages([
+      {
+        role: "tool",
+        content: [
+          { type: "tool_result", tool_use_id: "a", content: "real failure", is_error: true },
+          { type: "tool_result", tool_use_id: "b", content: "[error: threw]", error: true },
+          { type: "tool_result", tool_use_id: "c", content: "fine" },
+        ],
+      },
+    ]);
+    expect(wire[0]!.content).toEqual([
+      { type: "tool_result", tool_use_id: "a", content: "real failure", is_error: true },
+      { type: "tool_result", tool_use_id: "b", content: "[error: threw]", is_error: true },
+      { type: "tool_result", tool_use_id: "c", content: "fine" },
+    ]);
+  });
+});

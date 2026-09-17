@@ -276,7 +276,9 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
   await quota.acquire();
   try {
     for await (const event of streamResponsesTurn(plan, req.signal)) {
-      if (event.type === "usage") quota.accumulate(event.inputTokens, event.outputTokens);
+      // Review r1 finding 5: the seam's `inputTokens` is now the NON-cached part only, so the whole
+      // prompt -- what this quota ledger always counted -- is the sum of the three.
+      if (event.type === "usage") quota.accumulate(event.inputTokens + (event.cacheReadTokens ?? 0) + (event.cacheWriteTokens ?? 0), event.outputTokens);
       yield event;
     }
   } finally {

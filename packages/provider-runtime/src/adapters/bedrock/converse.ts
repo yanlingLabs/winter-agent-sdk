@@ -375,7 +375,9 @@ function mapContent(message: ProviderMessageLike): BedrockBlock[] {
           out.push({ toolUse: { toolUseId: block.id, name: block.name, input: block.input ?? {} } });
           break;
         case "tool_result": {
-          const isError = (block as { is_error?: unknown }).is_error === true;
+          // Both spellings are an error on the wire: `is_error` (a real executor error, R-S4) and the
+          // engine's synthetic `error` marker (a thrown/abandoned call), which this mapper used to drop.
+          const isError = (block as { is_error?: unknown }).is_error === true || (block as { error?: unknown }).error === true;
           out.push({ toolResult: { toolUseId: block.tool_use_id, content: toolResultContent(block.content), status: isError ? "error" : "success" } });
           break;
         }
