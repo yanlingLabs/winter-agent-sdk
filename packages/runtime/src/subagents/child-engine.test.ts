@@ -3336,6 +3336,45 @@ describe("child-engine.ts: spawn-surface parity -- the child's tool pool, and pr
     expect(progressCalls[1]).toMatchObject({ toolUses: 3, lastToolName: "StructuredOutput" });
   });
 
+  test("research §A5: worktree isolation outside git is refused -- unless the session configures a WorktreeCreate hook", async () => {
+    const outsideGit = mkdtempSync(join(tmpdir(), "winter-l2b-nogit-"));
+    try {
+      const spawnResult = async (deps: Partial<ChildEngineFactoryDeps>): Promise<string> => {
+        const WT = "t_l2b_worktree_probe";
+        let out = "unset";
+        registerTool({
+          descriptor: { canonicalName: WT, advertisedName: WT, source: "builtin", inputSchema: { type: "object" }, description: "spawns with isolation", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+          executor: {
+            async execute(_input: unknown, ctx: ToolExecutionContext) {
+              try {
+                const handle = await ctx.session.spawnChild!({ parentToolUseId: "wt-1", prompt: "go", runInBackground: false, isolation: "worktree" });
+                out = `spawned:${(await handle.result()).status}`;
+              } catch (err) {
+                out = `refused:${(err as Error).message}`;
+              }
+              return { output: out };
+            },
+          },
+        });
+        try {
+          await driveParent({ provider: echoProvider, ...deps }, baseConfig({ cwd: outsideGit }), [
+            { kind: "tool_use", calls: [{ id: "wt-call", name: WT, input: {} }] },
+            { kind: "text", text: "parent done" },
+          ]);
+        } finally {
+          unregisterToolForTest(WT);
+        }
+        return out;
+      };
+      const refused = await spawnResult({});
+      expect(refused).toStartWith("refused:Cannot create agent worktree: not in a git repository and no WorktreeCreate hooks are configured.");
+      expect(refused).not.toContain("winter: Agent spawn failed"); // R-S4: claude's text, no product prefix
+      expect(await spawnResult({ parentHooks: { WorktreeCreate: [{ hookCount: 1, source: "sdk" }] } })).toBe("spawned:completed");
+    } finally {
+      rmSync(outsideGit, { recursive: true, force: true });
+    }
+  });
+
   test("finding 8: a GRANDCHILD's forwarded tool_use frames count toward nothing in the child's own progress", async () => {
     const progressCalls: ChildTaskProgress[] = [];
     registerPoolProbe(progressCalls);
