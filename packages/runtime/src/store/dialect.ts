@@ -258,7 +258,7 @@ export interface SidechainStamp {
 // blocks") — blocks are never a plain string. Read as a deliberate union: userEntry accepts EITHER
 // a plain `text` string OR pre-built `content` blocks, both producing the same `string | Block[]`
 // message.content the brief's own return type already declares.
-export type UserEntryOpts = { chain: Chain; ctx: SessionCtx; sidechain?: SidechainStamp } & ({ text: string } | { content: Block[] });
+export type UserEntryOpts = { chain: Chain; ctx: SessionCtx; sidechain?: SidechainStamp; meta?: { isMeta?: boolean; origin?: { kind: string; [k: string]: unknown } } } & ({ text: string } | { content: Block[] });
 
 export function userEntry(
   opts: UserEntryOpts,
@@ -271,6 +271,11 @@ export function userEntry(
     // header for why this is a POST-baseFields spread rather than a baseFields parameter (it keeps
     // baseFields/BaseFields completely untouched for every existing caller).
     ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    // SDK 0.0.16 Lane N: claude's own marks for a turn the RUNTIME started (a task notification) --
+    // `isMeta` and the `origin` naming why. Spread conditionally so every entry written without them
+    // stays byte-identical (the goldens compare whole entries).
+    ...(opts.meta?.isMeta === true ? { isMeta: true as const } : {}),
+    ...(opts.meta?.origin !== undefined ? { origin: opts.meta.origin } : {}),
     message: { role: "user", content },
   };
 }
@@ -738,10 +743,11 @@ export class TranscriptWriter implements SessionPersistence {
     this.providerStateSink = opts.providerStateSink;
   }
 
-  async recordUserEntry(content: string | Block[]): Promise<void> {
+  async recordUserEntry(content: string | Block[], opts?: { isMeta?: boolean; origin?: { kind: string; [k: string]: unknown } }): Promise<void> {
     const chain: Chain = { parentUuid: this.parentUuid };
     const sidechainOpt = this.sidechain !== undefined ? { sidechain: this.sidechain } : {};
-    const entry = typeof content === "string" ? userEntry({ text: content, chain, ctx: this.ctx, ...sidechainOpt }) : userEntry({ content, chain, ctx: this.ctx, ...sidechainOpt });
+    const metaOpt = opts !== undefined ? { meta: opts } : {};
+    const entry = typeof content === "string" ? userEntry({ text: content, chain, ctx: this.ctx, ...sidechainOpt, ...metaOpt }) : userEntry({ content, chain, ctx: this.ctx, ...sidechainOpt, ...metaOpt });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
     this.trackConversational(entry.uuid);
@@ -1105,7 +1111,9 @@ export interface ResolvedEngineSession {
 // (nor needs one) unless it goes through buildWriter/resolveEngineSession.
 function withPermissionJournal(writer: TranscriptWriter, location: { winterHome: string; projectKey: string; sessionId: string }): SessionPersistence {
   return {
-    recordUserEntry: (content) => writer.recordUserEntry(content),
+    // Lane N: FORWARDS `opts` -- a missing forward here would silently drop the meta/origin marks off
+    // every notification turn (the same seam-drop class the assistant forward below warns about).
+    recordUserEntry: (content, opts) => writer.recordUserEntry(content, opts),
     // Phase 6 Task 3 (R6-7): FORWARDS `opts`, and the second argument is the whole point. A
     // single-argument forward here would silently discard the engine's PRE-ALLOCATED uuid, the
     // writer would mint its own, and every sidecar anchor would point at an entry that does not

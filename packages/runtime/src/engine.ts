@@ -180,6 +180,7 @@ import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
 import type { AgentListingEntry } from "./context/agent-listing.ts";
 import { attachmentMessage, dateChangeAnnounced, localDateString, skillListingResumeSeed, type AttachmentPayload, type DateChangeAttachment, type SkillListingAttachment } from "./context/attachments.ts";
+import { notificationQueueFor, clearNotificationQueue, taskNotificationAttachment, withNotificationPreamble, type SessionNotificationQueue } from "./subagents/notification-queue.ts";
 import { computeAgentListingDelta } from "./context/agent-listing.ts";
 import {
   buildRequestMessages,
@@ -866,8 +867,19 @@ export type AttachmentProducer = (ctx: {
   agentId?: string;
 }) => AttachmentPayload[] | Promise<AttachmentPayload[]>;
 
+/**
+ * SDK 0.0.16 Lane N: what marks a user entry as one the RUNTIME wrote rather than the human. claude's
+ * own transcript shape: `isMeta: true` plus an `origin` naming why the turn exists (today only
+ * `{kind: "task-notification"}`). Optional on both sides -- a store that ignores it records exactly
+ * what it recorded before.
+ */
+export interface UserEntryMeta {
+  isMeta?: boolean;
+  origin?: { kind: string; [k: string]: unknown };
+}
+
 export interface SessionPersistence {
-  recordUserEntry(content: string | ContentBlock[]): void | Promise<void>;
+  recordUserEntry(content: string | ContentBlock[], opts?: UserEntryMeta): void | Promise<void>;
   /**
    * SDK 0.0.16 (P16-5/P16-6): one persisted attachment -- claude's `{type: "attachment", attachment}`
    * transcript entry, chained like any other. Optional: a store without it keeps the attachment in
@@ -2637,10 +2649,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // this just swallows; a future WS-03 §11/WS-16 mirror-layer task is expected to route the catch
   // body to that event (T8 fix-wave: this comment previously, and now stale-ly, said "Task 8 is
   // expected to" — Task 8 shipped without adding it; re-pointed at its real future owner).
-  const recordUser = async (content: string | ContentBlock[]): Promise<void> => {
+  const recordUser = async (content: string | ContentBlock[], opts?: UserEntryMeta): Promise<void> => {
     if (!store) return;
     try {
-      await store.recordUserEntry(content);
+      await store.recordUserEntry(content, opts);
     } catch {
       /* auxiliary — see comment above */
     }
@@ -3966,8 +3978,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     skills: initSkills !== undefined ? [...initSkills] : ([] as string[]),
     plugins: initPlugins !== undefined ? [...initPlugins] : ([] as InitPluginInfo[]),
   };
-  output.write({
-    type: "data",
+  // SDK 0.0.16 Lane N: built once and KEPT, because claude emits it a SECOND time -- captured from
+  // the pinned binary 2026-09-17, an unsolicited (task-notification) turn opens with its own
+  // `system/init` frame, then its assistant stream, then its own `result`. Re-emitted verbatim: every
+  // field on it is either session-constant or the bare string the caller passed (`model` is never the
+  // resolved identity -- see the `winter_provider` note below).
+  const sdkInitMessage = {
     message: {
       type: "system",
       subtype: "init",
@@ -4001,9 +4017,73 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
       ...(initAgentNames !== undefined ? { agents: initAgentNames } : {}),
     },
-  });
+  } as const;
+  const writeSdkInit = (): void => {
+    output.write({ type: "data", ...sdkInitMessage } as Parameters<typeof output.write>[0]);
+  };
+  writeSdkInit();
 
   const userFrames = new Queue<UserFrame>();
+
+  // --- SDK 0.0.16 Lane N: background completions reaching the MODEL ------------------------------
+  //
+  // `subagents/notification-queue.ts` holds this session's queue; every background producer enqueues
+  // into it and this engine is its consumer. Two delivery shapes, and they are the pin's:
+  //
+  //   * MID-TURN -- `scanAttachments("tool-round")` drains the commands addressed to THIS engine's
+  //     own agent id and appends them to the tool results (Lane C's attachment machinery).
+  //   * BETWEEN TURNS -- `pumpNotifications` takes ONE command and writes it into `userFrames` as a
+  //     synthetic envelope, so the turn loop below runs it exactly like a host turn: its own
+  //     `system/init`, its own assistant stream, its own `result`.
+  //
+  // ONLY THE TOP-LEVEL ENGINE starts unsolicited turns (`config.agentId === undefined`). A child
+  // engine is torn down by `child-engine.ts`'s own `settle()` the moment it produces a result -- a
+  // second turn there would run inside an engine its wrapper has already finished with. A child still
+  // gets its notifications MID-TURN, and anything left over when its endpoint is withdrawn is
+  // re-addressed to the main thread (the queue's own `Loe` behaviour). Recorded deviation: claude can
+  // re-wake a completed agent, Winter routes to the parent instead.
+  const notifications: SessionNotificationQueue = notificationQueueFor(config.sessionId);
+  /** True from the moment a turn's envelope is claimed until its terminal result has been written. */
+  let turnActive = false;
+  /** True while the RUNNING turn is one a task notification started (no host input produced it). */
+  let turnStartedByNotification = false;
+  /** Set at the one place `userFrames.end()` is called -- nothing may be written after it. */
+  let userFramesEnded = false;
+  const endUserFrames = (): void => {
+    if (userFramesEnded) return;
+    userFramesEnded = true;
+    userFrames.end();
+  };
+  function pumpNotifications(): void {
+    if (turnActive || userFramesEnded || config.agentId !== undefined) return;
+    const [next] = notifications.drainFor(undefined, { limit: 1 });
+    if (next === undefined) return;
+    // PRE-CLAIMED: a second enqueue landing before the loop picks this frame up must not write a
+    // second envelope. The loop sets it again at the top of the turn; the terminal result clears it.
+    turnActive = true;
+    userFrames.write({
+      type: "user",
+      text: withNotificationPreamble(next.value),
+      // Winter-defined envelope marks, read by the turn loop below (and by nothing on the wire).
+      taskNotification: true,
+      ...(next.taskId !== undefined ? { taskNotificationTaskId: next.taskId } : {}),
+    });
+  }
+  const disposeNotificationEndpoint = notifications.registerEndpoint(config.agentId, () => pumpNotifications());
+  /** True once the host has closed its input (`end_input`, or the pump reaching EOF). */
+  let inputClosed = false;
+  /**
+   * The ONE door "no more host envelopes" goes through. It exists because ending `userFrames`
+   * IMMEDIATELY is the wrong answer for a `-p`-style session with background work still running: the
+   * turn loop would exit, teardown would sweep the children, and their notifications would never
+   * reach the model. See `runBackgroundWait` for what the deferral does instead.
+   */
+  function requestInputEnd(): void {
+    if (inputClosed) return;
+    inputClosed = true;
+    endUserFrames();
+  }
+
   // Non-null exactly while a turn is turn_active; the pump calls it (a no-op while idle) when an
   // `interrupt` control request arrives. Kept as a plain callback rather than an AbortController
   // because Provider/ToolExecutor take no signal at P1 (see raceInterrupt above). A ref OBJECT
@@ -4155,7 +4235,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // Ruling P2-B: "no more USER envelopes," NOT "stop reading frames" — see this const's
             // own header. `continue`, never `break`: the pump keeps pumping past this point.
             facetInputEnded = true; // M6: a write past this point is silently dropped -- the self-peer must stop reporting "idle"
-            userFrames.end();
+            requestInputEnd();
             continue;
           }
           if (cf.subtype === "interrupt") {
@@ -4557,7 +4637,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       }
     } finally {
       facetInputEnded = true; // M6, the pump's own teardown -- see the `end_input` site
-      userFrames.end();
+      requestInputEnd();
       // Deliberately NOT calling iterator.return() here: at the moment the pump is cancelled via
       // stopSignal, the LOSING `iterator.next()` call is typically still pending, with the
       // underlying generator (a real stdin read, or the in-memory Queue's own generator) suspended
@@ -5241,6 +5321,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const date = dateChangeAttachment();
       if (date !== undefined) produced.push(date);
     }
+    // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
+    // `next`-priority notifications addressed to ITS OWN agent id and appends them to the tool
+    // results -- `buildRequestMessages` then folds a text-only attachment INTO the last `tool_result`,
+    // which is where the pin puts its own `queued_command` attachments. Turn-start and compaction
+    // scans deliberately do NOT drain: a notification that arrives while the engine is idle starts
+    // its own turn (`pumpNotifications`), and draining it at turn start instead would silently
+    // attach it to whatever the host asked next.
+    if (phase === "tool-round") {
+      // `inHumanTurn` is what picks between claude's two anti-injection preambles: inside a turn the
+      // HOST started, the user's own message is real input and the preamble says so; inside a turn a
+      // notification itself started, it is not.
+      const attachment = taskNotificationAttachment(notifications.drainFor(config.agentId, { maxPriority: "next" }), { inHumanTurn: !turnStartedByNotification });
+      if (attachment !== undefined) produced.push(attachment);
+    }
     for (const producer of attachmentProducers ?? []) {
       produced.push(...(await producer({ phase, messages, sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) })));
     }
@@ -5628,6 +5722,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   for await (const userFrame of userFrames) {
+    // SDK 0.0.16 Lane N. `turnActive` gates `pumpNotifications` (one notification turn at a time, and
+    // never one that would race a host turn); `turnStartedByNotification` is what makes this an
+    // UNSOLICITED turn rather than a host one -- it decides the second `system/init` frame below, the
+    // meta flag on the persisted envelope, and which anti-injection preamble a MID-turn notification
+    // gets (`scanAttachments`).
+    turnActive = true;
+    turnStartedByNotification = (userFrame as { taskNotification?: unknown }).taskNotification === true;
+    if (turnStartedByNotification) {
+      // Captured from the pinned binary: an unsolicited turn opens with its own `system/init`, then
+      // the assistant stream, then its own `result`. A host that renders turns off this stream needs
+      // that frame -- it is the only thing announcing a turn nothing asked for.
+      writeSdkInit();
+    }
     // Set BEFORE any await this turn (including recordUser below) so the entire turn — from the
     // moment its envelope is accepted — is interruptible (WS-04 §5).
     let interruptResolve!: () => void;
@@ -5722,7 +5829,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // Carried for a capture.
     const userText = resolvedPromptText;
     messages.push({ role: "user", content: userText });
-    await recordUser(userText);
+    // Lane N: a notification envelope is persisted META-FLAGGED with its origin, exactly as claude
+    // writes one (`isMeta: true`, `origin: {kind: "task-notification"}`) -- so a transcript reader, a
+    // resumed session and the daemon's projector can all tell a turn the runtime started from one the
+    // human typed. The provider history is identical either way: the text IS the turn's input.
+    await recordUser(userText, turnStartedByNotification ? { isMeta: true, origin: { kind: "task-notification" } } : undefined);
 
     // Phase 5 Task 3: assembled AFTER the envelope is recorded (so a store failure never leaves an
     // assembled-but-unrecorded turn) and BEFORE the first provider call of the turn.
@@ -6578,6 +6689,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // interrupted turn otherwise waited for the next completed turn, or for the 12-hour expiry.
     fireFacetIdle();
     await flushStore();
+    // Lane N: the turn is over. Releasing the claim here (rather than at the top of the next
+    // iteration) is what lets a notification that arrived DURING this turn start its own turn now --
+    // one per turn, in queue order.
+    turnActive = false;
+    turnStartedByNotification = false;
+    pumpNotifications();
   }
 
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "teardown" — fired HERE, after the turn loop has
@@ -6651,6 +6768,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       /* a closed sink at teardown is not an error */
     }
   }
+  // Lane N: withdraw this engine as the queue's endpoint BEFORE the roster/session teardown below --
+  // for a SUBAGENT engine that withdrawal re-addresses whatever it never drained to the main thread
+  // (and wakes it), which is the only way a child's leftover completion still reaches the model.
+  disposeNotificationEndpoint();
+  // The top-level engine owns the session's queue; a child engine shares its parent's and must not
+  // drop it. Singleton hygiene, matching `clearSessionRequestLayout`.
+  if (config.agentId === undefined) clearNotificationQueue(config.sessionId);
   removeChildRosterSource();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
   // the roster contribution above -- the messaging runtime is PROCESS-level and outlives the run, so
