@@ -1209,7 +1209,19 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     //
     // Pinned ordering (RED test): definition.prompt -> definition.initialPrompt -> req.prompt ->
     // definition-validation warnings.
-    const resolvedSystemPrompt = [inherit.systemPrompt, req.definition?.prompt]
+    //
+    // Review r2 finding 1 (whole-branch): a fork's OWN `req.definition` is the `fork` built-in's
+    // placeholder (`builtin-agents.ts`'s own `forkPrompt` -- text whose entire point is that it is
+    // "never actually sent"), never the real child persona WS-10 §3.5 describes ("a fork inherits
+    // the parent's own rendered system prompt... verbatim"). Before this fix `resolvedSystemPrompt`
+    // concatenated it anyway (`inherit.systemPrompt` is `""` for a fork -- engine.ts's own
+    // `buildChildInheritance` never populates it for one), so the placeholder WAS the fork's whole
+    // system prompt, reaching the provider on `agentSystemPrompt` below. `req.fork === true` skips
+    // it entirely: `resolvedSystemPrompt` collapses to `""`, and `agentSystemPrompt` is omitted from
+    // the child's own runEngine() call a few lines down (its own `agentSystemPrompt.length > 0`
+    // guard) -- an honest "no system prompt was set for this fork" until a later release wires the
+    // parent's actual rendered one through (r3a §2's own byte-exact design, not this minimal fix).
+    const resolvedSystemPrompt = [inherit.systemPrompt, req.fork === true ? undefined : req.definition?.prompt]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
     // Phase 5 Task 3 (R5-3): P4-J IS RETIRED HERE. The `[Agent system prompt] ... [End system prompt]`

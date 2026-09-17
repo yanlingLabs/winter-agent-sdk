@@ -172,6 +172,12 @@ function forkPrompt(brand: BuiltinAgentBrand): string {
   // complete, well-formed `RuntimeAgentDefinition` for the LISTING (`renderAgentListing`) and for any
   // caller that reads `.prompt` off the definition before checking `isFork` -- it documents the
   // behavior rather than ever being delivered to a model.
+  //
+  // Review r2 finding 1 (whole-branch): this WAS false -- `child-engine.ts` concatenated
+  // `req.definition?.prompt` into `resolvedSystemPrompt` unconditionally, so a fork's whole "system
+  // prompt" used to BE this placeholder sentence. `child-engine.ts` now skips `req.definition?.prompt`
+  // whenever `req.fork === true`, so the text really is inert now -- kept exactly as it reads, no
+  // longer aspirational.
   return `A forked ${brand.productName} agent runs with the spawning session's own conversation, system prompt and tool pool inherited verbatim -- this text is never actually sent; see subagents/fork.ts.`;
 }
 
