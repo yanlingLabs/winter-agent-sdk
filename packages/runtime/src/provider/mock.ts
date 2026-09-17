@@ -363,8 +363,8 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     // without touching disk makes the whole scenario vacuous (Lane K's own words). One `Write` to
     // the path the prompt names, plus one `Bash` round that creates a SECOND file, so the scenario
     // can prove the honest scope boundary: the Bash-created file is untouched by a rewind and absent
-    // from `filesChanged`. Same last-line convention `laneb` uses -- the live request's user message
-    // carries this session's user-context blocks ahead of the prompt.
+    // from `filesChanged`. Same last-line convention `laneb` uses -- the live request's first user
+    // message carries the persisted attachments and the index-0 context ahead of the prompt.
     case "p5checkpoint": {
       let step = 0;
       return instrumentMockProvider({
@@ -502,8 +502,8 @@ function rawTestProviderByName(name: TestProviderName): Provider {
             step++;
             const lastUser = [...messages].reverse().find((m) => m.role === "user");
             // Phase 5 Task 8: the LAST LINE, not the whole content. With Lane C's assembler wired in
-            // production, the live request's last user message is `<user-context blocks>\n\n<the
-            // prompt>` (R5-9's "always injected as user-context"), so reading the whole content here
+            // production, the live request's first user message is `<attachments>, <index-0 context>,
+            // <the prompt>` (SDK 0.0.16, claude's layout), so reading the whole content here
             // handed `Write` a multi-kilobyte "path" -- observed as a real `ENAMETOOLONG` on both
             // legs, identically. The scenario's own prompt is a single-line absolute path, and the
             // blocks are always separated from it by a blank line, so the last line IS the prompt.

@@ -6,11 +6,18 @@
 //
 // The instructions file is INJECTED CONTEXT, never system text. The distinction is the whole point of §6.4:
 // system text is the cacheable, session-stable prefix, while a project's instructions are file
-// content that changes with the repository and must sit where the conversation can see it, be
-// compacted like conversation, and be re-attached rather than baked in. So everything here
-// produces `AssembledPrompt.userContextBlocks` entries and nothing here can reach `system` --
-// which is also why the seam's own doc names the instructions file and the memory index as what "always
-// injected as user-context" means operationally.
+// content that changes with the repository. SDK 0.0.16 (P16-5): everything here feeds ONE value --
+// claude's `claudeMd` userContext entry (`renderInstructionsContext`), sent as the index-0 message of
+// every request and nothing here can reach `system`.
+//
+// DELIBERATE BEHAVIOUR CHANGE (0.0.16). The files used to be RE-READ ON EVERY TURN and re-attached
+// to that turn's user message. The engine now builds the userContext once per session context and
+// rebuilds it only after a compaction (or an explicit `reloadSessionContext`), exactly as claude
+// does: an edit to an instructions file is seen after the next compaction or in a new session.
+//
+// THE LOCAL TIER IS NEW IN 0.0.16. Each directory of the walk also contributes its private
+// `<name>.local.md` (claude's `CLAUDE.local.md`), gated on the `local` setting source. This widens
+// WS-01 §2.4's "one project instructions file" reading, at the 0.0.16 brief's direction.
 //
 // TWO GIT ROOTS, AND THEY ARE NOT THE SAME ROOT. memory-key.ts scopes memory by
 // `--git-common-dir`, deliberately, so linked worktrees SHARE one memory directory. The
@@ -40,9 +47,9 @@ import { neutralizeReminderTags, readCapped } from "./injection.ts";
 export const WINTER_MD_BASENAME = WINTER_BRAND.instructionsFile;
 
 /**
- * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): a block
- * re-attached to every turn needs a ceiling or one large checked-in file costs the session its
- * window on every request. 32 KB is Norma's shipped instructions cap, carried over.
+ * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): content that
+ * rides every request of a session needs a ceiling or one large checked-in file costs the session
+ * its window on every request. 32 KB is Norma's shipped instructions cap, carried over.
  */
 export const WINTER_MD_MAX_BYTES = 32 * 1024;
 

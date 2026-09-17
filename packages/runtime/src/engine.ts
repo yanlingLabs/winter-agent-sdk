@@ -4872,12 +4872,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // --- Phase 5 Task 3 (R5-9/R5-16): system-prompt assembly, ONE producer -----------------------------
   //
-  // Called once per USER ENVELOPE (never once per run, never once per provider call): R5-9's dynamic
-  // sections include the date and a git summary, which a long-lived streaming session must not freeze
-  // at connect time, and `planMode` can change mid-session through set_permission_mode. Called once
-  // per envelope rather than per provider call because the result must be STABLE across a turn's tool
-  // rounds -- a system prompt that changed between rounds of the same turn would invalidate provider
-  // prompt caching and make the turn's own history internally inconsistent.
+  // Called once per USER ENVELOPE (never once per run, never once per provider call): `planMode` can
+  // change mid-session through set_permission_mode and settings stay live. Called once per envelope
+  // rather than per provider call because the result must be STABLE across a turn's tool rounds -- a
+  // system prompt that changed between rounds of the same turn would invalidate provider prompt
+  // caching and make the turn's own history internally inconsistent. SDK 0.0.16: the date and the
+  // git snapshot are no longer part of it -- they are the session context, memoized below
+  // (`ensureSessionContext`), exactly as claude 0.3.250 keeps them.
   //
   // R5-16: with no assembler registered this returns the caller's `agentSystemPrompt` (a child's
   // persona, R5-3) or an EMPTY prompt. No authored text lives here, deliberately -- the only authored

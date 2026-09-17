@@ -11,10 +11,10 @@
 //  - The result must be STABLE ACROSS THE TURN'S TOOL ROUNDS. Nothing here reads a clock or a
 //    counter; every input arrives on `SystemPromptInput`, so the same envelope cannot produce two
 //    different prompts and break provider prompt caching mid-turn.
-//  - `userContextBlocks` are LIVE-REQUEST-ONLY. They never enter the engine's history and are
-//    never persisted -- see the seam's own doc, and Ruling P5-F for how they re-anchor across a
-//    compaction. Nothing in this file assumes anything about where they land beyond "the turn's
-//    user message".
+//  - The userContext (`userContext()`) is LIVE-REQUEST-ONLY: the engine memoizes it per session and
+//    renders it as the index-0 message of every request, never into its history or the transcript.
+//    SDK 0.0.16 retired 0.0.15's `userContextBlocks` (prepended to the turn's user message and
+//    re-read every turn) together with Ruling P5-F's re-anchoring of them across a compaction.
 //
 // WHAT GOES WHERE (SDK 0.0.16, P16-5 -- claude 0.3.250's request layout):
 //

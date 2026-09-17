@@ -1,12 +1,12 @@
 // Phase 5 Lane C (task 6) -- the injection-safety primitives every file-sourced block shares.
 //
 // WINTER.md, the MEMORY.md index and an output-style body are all FILE CONTENT that ends up in a
-// prompt position: a user-context block prepended to the turn's user message, or the system prompt
-// itself. Three properties have to hold for every one of them, and holding them in three separate
-// places is how one of them silently stops holding:
+// prompt position: the index-0 userContext message (SDK 0.0.16), or the system prompt itself. Three
+// properties have to hold for every one of them, and holding them in three separate places is how
+// one of them silently stops holding:
 //
-//  1. BOUNDED. A block that is re-attached to every single turn (Ruling R5-9's "always injected as
-//     user-context") must have a byte ceiling, or one large checked-in file quietly costs the
+//  1. BOUNDED. A block that rides EVERY request of a session (the index-0 context is re-sent, byte
+//     for byte, on each one) must have a byte ceiling, or one large checked-in file quietly costs the
 //     session its context window. Every reader here takes a cap and reports when it hit it, so the
 //     model can tell "this is the whole file" from "this is the start of the file".
 //  2. UNABLE TO ESCAPE ITS WRAPPER. A block is labelled so the model can tell harness-injected

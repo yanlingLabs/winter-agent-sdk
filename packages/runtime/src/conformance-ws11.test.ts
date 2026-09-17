@@ -666,7 +666,7 @@ const WS11_10: ConformanceRow[] = [
     status: "deferred",
     owningPhase: "T3 + Lane C (the declaration is the contract Winter builds to; `memory_paths` is the one with a P5 consumer)",
     note:
-      "`analytics_disabled`, `product_feedback_disabled`, `memory_paths`, `messaging_socket_path`. A declaration-driven Winter init frame omits all four SILENTLY. `memory_paths` is directly load-bearing for §3/§6.3 -- Winter does surface the memory directory, but in the DYNAMIC SECTIONS and the auto-memory user-context block rather than on a wire field, which is a different contract for a host that reads init.",
+      "`analytics_disabled`, `product_feedback_disabled`, `memory_paths`, `messaging_socket_path`. A declaration-driven Winter init frame omits all four SILENTLY. `memory_paths` is directly load-bearing for §3/§6.3 -- Winter does surface the memory directory, but in the system prompt's `# auto memory` section (SDK 0.0.16) rather than on a wire field, which is a different contract for a host that reads init.",
   },
   {
     id: "WS11-R2f",
