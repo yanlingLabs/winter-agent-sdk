@@ -924,6 +924,57 @@ test("review r2 finding 12: an isError:true tool result fires PostToolUseFailure
   }
 });
 
+// Review r2 finding 9 (whole-branch): the background-shell sweep (`stopSessionShellTasks`, review
+// r1 finding 2's own "the session going away" kill door) used to sit sequentially near the very end
+// of runEngineBody -- reached on an ordinary return, but skipped entirely by a throw anywhere above
+// it. `runEngine`'s own outer wrapper now registers the sweep the instant `config`/`output` are
+// known (before anything else in the function body can throw) and calls it unconditionally from its
+// own `finally`, so it fires on this path too.
+test("review r2 finding 9: runEngine's outer wrapper sweeps this session's background shells even when runEngineBody throws mid-session", async () => {
+  resetBackgroundTaskRuntimeForTest();
+  try {
+    const sessionId = "finding9-throw-sweep";
+    // A background shell "already running" for this session, exactly as bash.ts's own
+    // pre-spawn-then-onSpawned startTracking calls leave one -- registered directly rather than
+    // through a real spawned process, since the property under test is the REGISTRY sweep, not
+    // process spawning itself (background-task-runtime.test.ts and bash.test.ts already cover the
+    // real spawn+kill path end to end).
+    trackTaskFrame({
+      taskId: "bg-1",
+      kind: "bash",
+      outputPath: "/tmp/x",
+      description: "long-running",
+      isBackgrounded: true,
+      emitter: { emitFrame: () => {}, sessionId },
+    });
+    expect(getTrackedTask("bg-1")?.status).toBe("running");
+
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([{ kind: "text", text: "never reached" }]);
+    const donePromise = runEngine({
+      config: baseConfig({ sessionId }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+      tools: stubExecutor,
+      // `assemblePrompt()` calls this UNGUARDED, inside the turn loop and well after the
+      // registration above -- a throw here propagates straight out of runEngineBody's own async
+      // function body as a genuine promise rejection, exactly the "truly unexpected error escaping
+      // the round loop" case the finding names, not one of the per-call try/catches already inside
+      // the loop that would otherwise turn a throw into a typed result instead.
+      systemPromptAssembler: { assemble: (): never => { throw new Error("boom: assembler exploded mid-session"); } },
+    });
+
+    host.output.write({ type: "user", text: "go" });
+    await expect(donePromise).rejects.toThrow("boom: assembler exploded mid-session");
+
+    // The sweep ran despite the throw: the row is no longer "running".
+    expect(getTrackedTask("bg-1")?.status).not.toBe("running");
+  } finally {
+    resetBackgroundTaskRuntimeForTest();
+  }
+});
+
 test("Task 10: includeHookEvents gates the public hook_started/hook_response messages; the audit trail (store.recordHookAudit) fires either way", async () => {
   const auditEntries: Array<{ hookEvent: string; outcome: string }> = [];
   const store = {

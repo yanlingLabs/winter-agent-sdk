@@ -239,6 +239,31 @@ export function killOrphanedSpawn(pid: number): boolean {
   return killProcessGroup(pid);
 }
 
+/**
+ * Review r2 finding 9 (whole-branch): main.ts's own SIGTERM/SIGINT handler calls this directly --
+ * unlike `stopSessionShellTasks` (the ORDINARY "session going away" door, engine.ts's teardown),
+ * this is a raw, synchronous, FRAME-FREE sweep over EVERY row in the process with a live pid,
+ * regardless of session or kind (`bash`, `monitor`'s command half, and any future pid-bearing kind
+ * alike -- `monitor_ws`'s own socket half has no pid, `agent`/`workflow` rows have no pid either and
+ * are the child engine's own responsibility, unaffected by this sweep either way).
+ *
+ * NO `updateTask`/`emitFrame` call here, deliberately: a signal handler must return fast and must
+ * never depend on the event loop still turning normally or on a frame sink that may itself be
+ * mid-teardown -- `stopSessionShellTasks`' own `task_updated`/`task_notification` bookkeeping is a
+ * normal-exit courtesy, not a safety property. The property this function alone guarantees is
+ * process cleanup: no `detached: true` process group this `winter` child process ever spawned
+ * survives the process being asked to exit. Never throws; each row is attempted independently so
+ * one failure (already exited, ESRCH) never strands the rest of the sweep.
+ */
+export function killAllTaskProcessGroups(): string[] {
+  const killed: string[] = [];
+  for (const task of tasks.values()) {
+    if (task.status !== "running" || task.pid === undefined) continue;
+    if (killProcessGroup(task.pid)) killed.push(task.taskId);
+  }
+  return killed;
+}
+
 // The one call TaskStop actually makes: tries the process-group kill first (bash / Monitor's
 // `command` half both have a pid), then falls back to the task's own `stop` callback (Monitor's
 // `ws` half). Returns true iff at least one mechanism was attempted without throwing AND the task

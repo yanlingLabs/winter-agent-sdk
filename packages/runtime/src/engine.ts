@@ -1583,9 +1583,33 @@ function providerStateDenyPatterns(projectsRoot: string): string[] {
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const facetDisposers: Array<() => void> = [];
+  // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
+  // (`stopSessionShellTasks`, review r1 finding 2's own "the session going away" kill door) sits
+  // sequentially near the very END of that function's body -- reached on every ORDINARY return, but
+  // skipped entirely if anything above it throws and the exception propagates out unhandled (a
+  // truly unexpected error escaping the round loop, not one of the per-call `try`/`catch`es already
+  // inside it). `sessionRoot`/`output` are `runEngineBody`'s own closure-local bindings, unreachable
+  // from here directly, so `runEngineBody` populates this cell with a callback THE MOMENT they are
+  // both known (right after its own destructuring, before anything else in the function body can
+  // throw) rather than this wrapper rebuilding a second, parallel resolution of "this run's session
+  // id/agentId" from `opts.config` alone.
+  let sweepBackgroundShellTasksOnExit: (() => void) | undefined;
   try {
-    return await runEngineBody(opts, facetDisposers);
+    return await runEngineBody(opts, facetDisposers, (fn) => {
+      sweepBackgroundShellTasksOnExit = fn;
+    });
   } finally {
+    // Idempotent either way: on the ORDINARY return path `runEngineBody`'s own sweep already ran
+    // (this finds nothing left to stop, since `stopSessionShellTasks` filters to `status ===
+    // "running"` rows), so calling it again here is a harmless no-op. On a THROW, this is the only
+    // place the sweep ever runs -- closing the exact gap the review flags: a `detached: true`
+    // process group this run started would otherwise survive `runEngine` returning (and even
+    // `process.exit`, until this fix's `main.ts` half) with no live turn left to ever clean it up.
+    try {
+      sweepBackgroundShellTasksOnExit?.();
+    } catch {
+      /* a teardown failure must never replace the run's own outcome */
+    }
     // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
     // failure must never replace the run's own outcome.
     for (const dispose of facetDisposers.splice(0)) {
@@ -1598,7 +1622,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   }
 }
 
-async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => void>): Promise<number> {
+async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => void>, registerBackgroundShellSweep: (fn: () => void) => void): Promise<number> {
   // Task 1 (P3): `tools` renamed to `providedTools` at the destructuring site ONLY -- every existing
   // reference to the bare name `tools` further down this function (both `tools.execute(...)` call
   // sites) is deliberately left untouched; `const tools: ToolExecutor = providedTools ?? ...` is
@@ -1656,6 +1680,23 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // P7a LANE B (D29/D30): the advisor's reviewer route -- see EngineOptions.resolveReviewer.
     resolveReviewer: resolveReviewerRoute,
   } = opts;
+
+  // Review r2 finding 9 (whole-branch): registered BEFORE anything else in this function body can
+  // throw (even the permission startup validation two lines down) -- `config.sessionId`/`agentId`
+  // and `output` are all this closure needs, and both are already available the instant the
+  // destructuring above completes. `runEngine`'s own outer `finally` calls this on ANY exit,
+  // ordinary or thrown; see that wrapper's own header for why a second call here (the ordinary
+  // path's own sweep, further down this function) is a harmless no-op rather than a double-fire.
+  registerBackgroundShellSweep(() => {
+    const swept = stopSessionShellTasks({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
+    if (swept.length > 0) {
+      try {
+        output.write({ type: "data", message: { type: "system", subtype: "background_tasks_changed", tasks: listRunningTasks().map(toBackgroundTasksChangedEntry), uuid: randomUUID(), session_id: config.sessionId } });
+      } catch {
+        /* a torn-down or already-ended sink at teardown is not an error */
+      }
+    }
+  });
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
   // thing runEngine does, before any `await` and before the `init` frame is written. A throw here

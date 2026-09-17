@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
 import {
   startTracking,
@@ -10,6 +10,7 @@ import {
   listRunningTasks,
   killTaskProcessGroup,
   killOrphanedSpawn,
+  killAllTaskProcessGroups,
   stopTask,
   stopSessionShellTasks,
   killedTaskSummary,
@@ -79,6 +80,52 @@ describe("background-task-runtime", () => {
   test("killOrphanedSpawn signals the negative pid directly, with no registry row required, and never throws", () => {
     expect(killOrphanedSpawn(999999)).toBe(false); // not a real, owned process group -- reports honestly
     expect(() => killOrphanedSpawn(999999)).not.toThrow();
+  });
+
+  // Review r2 finding 9's own in-process-testable half: main.ts's SIGTERM/SIGINT handler calls this
+  // synchronously, with no session/kind filter -- every running, pid-bearing row in the process.
+  describe("killAllTaskProcessGroups (review r2 finding 9: main.ts's SIGTERM/SIGINT sweep)", () => {
+    test("signals every RUNNING row that has a pid, regardless of session or kind, and returns the ids it succeeded on", () => {
+      startTracking({ taskId: "a", kind: "bash", outputPath: "/a", description: "a", pid: 999991, emitter: { emitFrame: () => {}, sessionId: "s1" } });
+      startTracking({ taskId: "b", kind: "monitor", outputPath: "/b", description: "b", pid: 999992, emitter: { emitFrame: () => {}, sessionId: "s2-a-totally-different-session" } });
+      const killSpy = spyOn(process, "kill").mockImplementation(() => true);
+      try {
+        const killed = killAllTaskProcessGroups();
+        // Negative pid -- the whole process GROUP, WS-12 §5.2's own rule, same as killTaskProcessGroup.
+        expect(killSpy.mock.calls.map((c) => c[0]).sort((a, b) => (a as number) - (b as number))).toEqual([-999992, -999991]);
+        expect(killed.sort()).toEqual(["a", "b"]);
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    test("skips a row with no pid (agent/workflow kinds, or a bash row not yet past onSpawned) -- process.kill is never called for it", () => {
+      startTracking({ taskId: "no-pid", kind: "agent", outputPath: "/x", description: "d" });
+      const killSpy = spyOn(process, "kill").mockImplementation(() => true);
+      try {
+        expect(killAllTaskProcessGroups()).toEqual([]);
+        expect(killSpy).not.toHaveBeenCalled();
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    test("skips a row that is already terminal -- process.kill is never called for it", () => {
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", pid: 999993 });
+      updateTask("t1", { status: "completed", endTime: 1 });
+      const killSpy = spyOn(process, "kill").mockImplementation(() => true);
+      try {
+        expect(killAllTaskProcessGroups()).toEqual([]);
+        expect(killSpy).not.toHaveBeenCalled();
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    test("never throws, even against a pid nothing owns (a genuinely failed signal)", () => {
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", pid: 999994 });
+      expect(() => killAllTaskProcessGroups()).not.toThrow();
+    });
   });
 
   test("stopTask returns false for an unknown task", () => {

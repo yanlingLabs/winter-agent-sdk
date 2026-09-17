@@ -40,6 +40,10 @@ import { restoreChildRoster } from "./subagents/restore.ts";
 // and start an engine as an import side effect. subprocess-entry.ts is declaration-only and is the
 // safe home for it.
 import { workflowWorkerMain, WORKFLOW_WORKER_ARGV_FLAG } from "./workflows/subprocess-entry.ts";
+// Review r2 finding 9 (whole-branch): the SIGTERM/SIGINT handler's own process-group sweep -- see
+// installShutdownSignalHandlers's own header below for why this needs its OWN synchronous, frame-free
+// door rather than reusing engine.ts's ordinary teardown sweep.
+import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -126,6 +130,50 @@ const stdoutFrameSink: FrameSink = {
   },
 };
 
+// --- Review r2 finding 9 (whole-branch): SIGTERM/SIGINT handling -----------------------------------
+//
+// Before this fix, main.ts installed NO signal handler at all. Node/Bun's DEFAULT disposition for
+// both SIGTERM and SIGINT is to terminate the process immediately -- which means a `detached: true`
+// background shell this run started (bash.ts's own `run_in_background: true`, or Monitor's command
+// half) was never given a chance to be killed: the process just stopped existing mid-write,
+// mid-await, mid-anything, orphaning that process group under its own reparent. (engine.ts's own
+// `stopSessionShellTasks` sweep -- review r1 finding 2, and now also review r2 finding 9's own
+// outer-wrapper fix for a THROWN runEngine -- never gets a chance to run either, for the identical
+// reason: the process is simply gone.)
+//
+// Installing ANY listener for a signal OVERRIDES Node's own default "terminate" disposition, so this
+// handler must both do the cleanup AND still actually end the process -- otherwise a SIGTERM/SIGINT
+// silently becomes a no-op, which is worse than doing nothing (the daemon's own "kill this child"
+// door would hang forever instead of failing fast). The chosen exit path is "remove this listener,
+// then re-raise the SAME signal at ourselves" rather than a bare `process.exit(code)`: re-raising
+// restores Node's own default disposition for that signal and lets the OS terminate the process
+// through its ordinary machinery, so a parent process's `wait()` observes a genuine
+// signal-terminated exit rather than an ordinary exit code that merely resembles one.
+// `process.exit(...)` with the POSIX signal-exit convention (128 + signal number) is only the
+// fallback for the -- should be impossible -- case where re-raising somehow leaves the process alive.
+const SIGNAL_EXIT_CODE: Record<"SIGTERM" | "SIGINT", number> = { SIGTERM: 143, SIGINT: 130 };
+
+function installShutdownSignalHandlers(): void {
+  for (const signal of Object.keys(SIGNAL_EXIT_CODE) as Array<keyof typeof SIGNAL_EXIT_CODE>) {
+    process.on(signal, () => {
+      // Synchronously safe, as the review requires: killAllTaskProcessGroups is a plain loop of
+      // process.kill(-pid, "SIGKILL") calls -- no await, no I/O, nothing that depends on the event
+      // loop still turning, and (deliberately, unlike the ordinary teardown sweep) no frame write.
+      try {
+        killAllTaskProcessGroups();
+      } catch {
+        /* a signal handler must never itself throw */
+      }
+      process.removeAllListeners(signal);
+      try {
+        process.kill(process.pid, signal);
+      } catch {
+        process.exit(SIGNAL_EXIT_CODE[signal]);
+      }
+    });
+  }
+}
+
 // --- P9a-6: the `--version` door -------------------------------------------------------------------
 //
 // Checked FIRST -- before the `__workflow-worker` dispatch below and before `parseConfigFromArgv` --
@@ -160,6 +208,10 @@ if (process.argv.includes(WORKFLOW_WORKER_ARGV_FLAG)) {
 }
 
 try {
+  // Review r2 finding 9: installed BEFORE anything else this process does -- a SIGTERM/SIGINT can
+  // arrive at any point in this process's lifetime, including before `runEngine` itself even starts
+  // (session resolution, provider wiring), so the handler must be live from the very first line.
+  installShutdownSignalHandlers();
   const config = parseConfigFromArgv(process.argv);
   assertRecognizedTestProviderEnv(process.env);
   // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
