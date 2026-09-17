@@ -373,6 +373,26 @@ describe("connectMonitorWs (real local server)", () => {
     expect(notif.output_file).toBe(outputPath);
   });
 
+  // Task-frames parity (2026-09-17 contract §2/§5): the ws half is a DIFFERENT wire task_type than
+  // the command half (`monitor_ws`, never `local_bash`) and, per §1's own register() field list,
+  // never carries `is_backgrounded` at all -- the flag exists only for `local_agent`/`local_bash`
+  // rows. `background_tasks_changed`'s own entry shape has no `is_backgrounded` field to begin with
+  // (frames.ts), so this is specifically about `task_started`.
+  test("task_started carries task_type:monitor_ws and NO is_backgrounded key; background_tasks_changed's entry also says monitor_ws", async () => {
+    const port = startServer({ open: () => {} }); // never sends/closes -- the row stays running for this test's own purposes
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), toolUseId: "call-ws-1" });
+    await connectMonitorWs(`ws://127.0.0.1:${port}`, undefined, "watch a socket", 5000, false, ctx);
+
+    const started = frames.find((f) => f.subtype === "task_started") as unknown as Record<string, unknown>;
+    expect(started["task_type"]).toBe("monitor_ws");
+    expect("is_backgrounded" in started).toBe(false);
+    expect(started["tool_use_id"]).toBe("call-ws-1");
+
+    const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_type: string }> };
+    expect(changed.tasks.some((t) => t.task_type === "monitor_ws")).toBe(true);
+  });
+
   test("appends text messages to the output file, in order", async () => {
     const port = startServer({
       open: (ws) => {
