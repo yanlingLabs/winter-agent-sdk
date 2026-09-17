@@ -275,12 +275,18 @@ export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "
 // adapter sends. Disclosed deviation: Winter does not negotiate that beta.
 //
 // OPT-IN BY SHAPE: only a request carrying `systemBlocks` (the engine's 0.0.16 layout) is marked,
-// and a model whose row records `promptCaching: false` is never marked.
-
-/** `true` when this request should carry claude's cache markers. */
-function promptCachingLayout(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): boolean {
+// AND only for a model whose row DECLARES `promptCaching: true`.
+//
+// Fix wave (I3, whole-branch review): this used to read `descriptor?.promptCaching?.value !== false`,
+// which treats an UNDECLARED row (`descriptor` absent entirely, or present with no `promptCaching`
+// evidence at all) the same as an explicit `true` -- opt-OUT by shape, not opt-in. That is wrong for
+// every one of the Anthropic-DIALECT sibling providers (a proxy/reseller that never ran the evidence
+// capture this catalog field requires) and for `allowUnlisted` passthrough, both of which reach this
+// adapter with `descriptor` undefined or promptCaching-silent and got array-shaped, `cache_control`-
+// marked `system` blocks they never declared support for. `=== true` requires the row to say so.
+export function promptCachingLayout(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): boolean {
   if (req.systemBlocks === undefined) return false;
-  return descriptor?.promptCaching?.value !== false;
+  return descriptor?.promptCaching?.value === true;
 }
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" } as const;

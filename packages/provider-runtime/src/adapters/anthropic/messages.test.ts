@@ -7,6 +7,7 @@
 // vocabulary, the capability read, and the endpoint-policy refusals that happen before a URL exists.
 import { describe, expect, test } from "bun:test";
 import { createAnthropicMessagesAdapter, mapAnthropicEffort, toWireMessages } from "./index.ts";
+import { promptCachingLayout } from "./messages.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext } from "../../types.ts";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
@@ -136,6 +137,37 @@ describe("mapEffort", () => {
     const model = descriptor({ reasoning: { supported: evidence(true), efforts: ["medium"], continuation: "none" } });
     expect(adapter.mapEffort("medium", model)).toEqual(mapAnthropicEffort("medium", model) as { ok: true; value: unknown });
     expect(adapter.mapEffort("max", model)).toMatchObject({ ok: false });
+  });
+});
+
+describe("promptCachingLayout (I3, fix wave)", () => {
+  // A request that never carries the 0.0.16 block layout is never marked, regardless of the
+  // descriptor -- `systemBlocks === undefined` short-circuits before the descriptor is even read.
+  const req = { model: "anthropic/claude-sonnet-5", messages: [], systemBlocks: [{ text: "s", cacheScope: "org" as const }] };
+
+  test("declared true -> marked (array system blocks with cache_control)", () => {
+    const model = descriptor({ promptCaching: evidence(true) });
+    expect(promptCachingLayout(req, model)).toBe(true);
+  });
+
+  test("declared false -> not marked (plain string system)", () => {
+    const model = descriptor({ promptCaching: evidence(false) });
+    expect(promptCachingLayout(req, model)).toBe(false);
+  });
+
+  test("no promptCaching evidence on an otherwise-real descriptor -> not marked", () => {
+    const model = descriptor();
+    expect(model.promptCaching).toBeUndefined();
+    expect(promptCachingLayout(req, model)).toBe(false);
+  });
+
+  test("no descriptor at all (an allowUnlisted passthrough) -> not marked", () => {
+    expect(promptCachingLayout(req, undefined)).toBe(false);
+  });
+
+  test("systemBlocks absent -> never marked even when the row declares true", () => {
+    const model = descriptor({ promptCaching: evidence(true) });
+    expect(promptCachingLayout({ model: "m", messages: [] }, model)).toBe(false);
   });
 });
 
