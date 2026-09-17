@@ -2521,26 +2521,24 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     // the assertion that would catch it if it did.
     //
     // Read through `echoProvider`, which echoes the live request's LAST USER MESSAGE -- so the
-    // user-context half (R5-9's "always injected as user-context") is directly observable on the
-    // wire. The `system` half is not, by design: it never appears in a host-facing frame.
+    // index-0 context and the persisted attachments (SDK 0.0.16's layout) are directly observable on
+    // the wire. The `system` half is not, by design: it never appears in a host-facing frame.
     const a = await traceViaQuery(legA, { prompt: "assembled" });
     const b = await traceViaQuery(legB, { prompt: "assembled" });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
 
     const text = ((a.trace.find((e) => e.kind === "assistant")!.payload as { message: { content: Array<{ text: string }> } }).message.content[0]!).text;
-    // The auto-memory block is default-on (P5-G's companion: `autoMemoryEnabled` unset means
-    // enabled) and the Agent tool is advertised by default (so `agentListingInput()` contributes its
-    // own block too, review r2 finding 11) -- a default session's live request carries exactly TWO
-    // user-context blocks ahead of the prompt, both now wrapped in `<system-reminder>` (finding 11
-    // wraps the listing the same way memory.ts's own block always was) -- and the prompt is still
-    // last.
-    expect(text).toContain("<system-reminder>");
-    expect(text).toContain("Auto-memory (injected by the runtime, not typed by the user):");
-    expect(text).toContain("Agent-tool listing (injected by the runtime, not typed by the user):");
+    // SDK 0.0.16 (P16-5/P16-6): a default session's first request is ONE user message carrying the
+    // persisted agent-listing attachment (the Agent tool is advertised by default), then the index-0
+    // userContext (`# currentDate`; no instructions file and no memory index exist in this fixture's
+    // home), then the prompt LAST. The auto-memory guidance moved to the system prompt's
+    // `# auto memory` section, which no host-facing frame carries.
+    expect(text).toContain("<system-reminder>\nAvailable agent types for the Agent tool:");
+    expect(text).toContain("<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# currentDate\n");
+    expect(text).not.toContain("Auto-memory (injected by the runtime, not typed by the user):");
     expect(text.endsWith("\n\nassembled")).toBe(true);
-    // AND NEITHER IS PERSISTED OR REPEATED: both blocks are re-attached per request, never pushed
-    // into the engine's own history, so each appears exactly once even though the assembler ran once
-    // per envelope.
+    // EXACTLY TWO, and neither is duplicated: the listing is persisted once and the context is one
+    // memoized message per request.
     expect(text.split("<system-reminder>").length - 1).toBe(2);
   }, 30_000);
 
@@ -2867,14 +2865,20 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     // never equality against a fixed string.
     for (const result of [a, b]) {
       const reflected = JSON.parse(result.secondAssistantText) as Array<{ role: string; content: unknown }>;
-      expect(reflected).toContainEqual({ role: "user", content: "first" });
+      // SDK 0.0.16: the rebuilt first turn is ONE user message -- the PERSISTED agent-listing
+      // attachment read back out of the transcript, the memoized index-0 context, then the first
+      // run's own prompt LAST. The listing is NOT re-announced on resume, which is why there is
+      // exactly one of it.
+      const firstUser = reflected.find((m) => m.role === "user")!;
+      const firstBlocks = firstUser.content as Array<{ type: string; text: string }>;
+      expect(firstBlocks.at(-1)).toEqual({ type: "text", text: "first" });
+      expect(firstBlocks.filter((b) => b.text.includes("Available agent types for the Agent tool:"))).toHaveLength(1);
+      expect(firstBlocks.some((b) => b.text.includes("As you answer the user's questions"))).toBe(true);
       expect(reflected.some((m) => m.role === "assistant")).toBe(true); // the first run's OWN reply is present too
-      // Phase 5 Task 8: the LIVE request's last user message carries this session's user-context
-      // blocks ahead of the prompt (R5-9), so this asserts the composition rather than a byte-exact
-      // string -- the prompt is still last, which is what "the second run's own envelope" means.
+      // The second run's own envelope is still LAST, and carries nothing extra (nothing changed).
       const last = reflected.at(-1) as { role: string; content: string };
       expect(last.role).toBe("user");
-      expect(last.content === "second" || last.content.endsWith("\n\nsecond")).toBe(true);
+      expect(last.content).toBe("second");
     }
 
     // Chain continuity: one continuous parentUuid graph, first entry's parent null, every later
@@ -2884,7 +2888,9 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       const projectKey = compatibilityKeys(FIXTURE_CWD).transcriptProjectKey;
       const loaded = await store.load({ projectKey, sessionId: result.sessionId });
       expect(loaded, `${scenarioLeg}: expected a persisted transcript for the resumed session`).not.toBeNull();
-      expect(loaded!.length).toBe(4); // user(first) + assistant(reflect) + user(second) + assistant(reflect)
+      // SDK 0.0.16: + the first run's persisted agent-listing attachment (the resumed run folds it
+      // back and does not re-announce it).
+      expect(loaded!.length).toBe(5); // user(first) + attachment(listing) + assistant(reflect) + user(second) + assistant(reflect)
       expect(loaded![0]!.parentUuid).toBeNull();
       for (let i = 1; i < loaded!.length; i++) {
         expect(loaded![i]!.parentUuid).toBe(loaded![i - 1]!.uuid);

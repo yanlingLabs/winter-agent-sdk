@@ -743,6 +743,7 @@ test("setPermissionMode(): sends a real control request mid-iteration; an invali
 
   let validPromise: Promise<void> | undefined;
   let invalidPromise: Promise<void> | undefined;
+  let invalidError: unknown;
   for await (const msg of gen) {
     // Fired, NOT awaited, here: the ack is processed by THIS SAME read loop, so awaiting inline
     // would suspend the very loop that has to keep running to deliver it — a deadlock. Both
@@ -753,18 +754,21 @@ test("setPermissionMode(): sends a real control request mid-iteration; an invali
       // a caller who bypasses the type system (a plain-JS consumer, or a stale/foreign client) so the
       // test can still exercise the RUNTIME's own invalid_mode rejection, which is unaffected by the
       // wrapper's compile-time type.
-      invalidPromise = gen.setPermissionMode("not_a_real_mode" as PermissionMode);
+      //
+      // THE REJECTION HANDLER IS ATTACHED AT CALL TIME, not after the loop. The refusal ack can land
+      // while this loop is still running (how long the first turn takes before its result is not this
+      // test's business — SDK 0.0.16's session context does real work there), and a rejected promise
+      // with no handler yet is an UNHANDLED REJECTION the test runner fails on, for a refusal the
+      // runtime delivered exactly as asked. Capturing it here makes the assertion below timing-free.
+      invalidPromise = gen.setPermissionMode("not_a_real_mode" as PermissionMode).catch((e: unknown) => {
+        invalidError = e;
+      });
     }
     if (msg.type === "result") releasePrompt();
   }
 
   await validPromise; // throws (failing the test) if the ack path is broken
-  let invalidError: unknown;
-  try {
-    await invalidPromise;
-  } catch (e) {
-    invalidError = e;
-  }
+  await invalidPromise;
   expect(invalidError).toBeInstanceOf(WinterRpcError);
   expect((invalidError as WinterRpcError).code).toBe("invalid_mode");
 });

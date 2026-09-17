@@ -351,6 +351,7 @@ describe("every Bun API use in a Node-declaring publishable package is accounted
     "packages/provider-runtime/src/adapters/openai/pkce.ts": "`Bun.serve` in `runLoginFlow`, which guards first; both published logins funnel through it",
     "packages/provider-runtime/src/adapters/openai/xai-oauth.testing.ts": "`Bun.serve` in the two loopback fakes, each guarded at its own entry",
     "packages/conformance/src/official/capture.ts": "`Bun.spawn` + `Bun.serve` throughout, and `runCapture` is the file's ONLY export, guarded as its first statement",
+    "packages/conformance/src/official/differential-harness.ts": "`Bun.spawn` + `Bun.serve` in the pinned-binary differential plumbing; every scenario enters through `resolvePinnedClaudeBinary`, which gates on `hasBunRuntime()` and answers `{reason}` off Bun",
     "packages/provider-runtime/src/adapters/anthropic/console-broker.ts": "`Bun.spawn` in the host-brokered Console login trio (P10a-1 amendment), each of the three exported entry points guarded first",
   };
 
