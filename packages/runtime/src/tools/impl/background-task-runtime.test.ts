@@ -1,8 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import type { BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
 import {
   startTracking,
   getTask,
   setTaskStatus,
+  updateTask,
+  removeTask,
+  emitTaskNotification,
   listTasks,
   listRunningTasks,
   killTaskProcessGroup,
@@ -10,6 +14,11 @@ import {
   toBackgroundTasksChangedEntry,
   resetBackgroundTaskRuntimeForTest,
 } from "./background-task-runtime.ts";
+
+function fakeEmitter(): { emitFrame: (f: BackgroundTaskMessage) => void; sessionId: string; frames: BackgroundTaskMessage[] } {
+  const frames: BackgroundTaskMessage[] = [];
+  return { emitFrame: (f) => frames.push(f), sessionId: "s1", frames };
+}
 
 beforeEach(() => resetBackgroundTaskRuntimeForTest());
 afterEach(() => resetBackgroundTaskRuntimeForTest());
@@ -96,9 +105,11 @@ describe("background-task-runtime", () => {
     expect(stopped).toBe(true);
   });
 
+  // Task-frames parity (2026-09-17 contract §2): the wire spelling, never the internal kind --
+  // Monitor's command half ("monitor") is registered as a plain background shell task on the wire.
   test("toBackgroundTasksChangedEntry maps to the SDKBackgroundTasksChangedMessage.tasks[] element shape", () => {
     const h = startTracking({ taskId: "t1", kind: "monitor", outputPath: "/x", description: "watching" });
-    expect(toBackgroundTasksChangedEntry(h)).toEqual({ task_id: "t1", task_type: "monitor", description: "watching" });
+    expect(toBackgroundTasksChangedEntry(h)).toEqual({ task_id: "t1", task_type: "local_bash", description: "watching" });
   });
 
   test("resetBackgroundTaskRuntimeForTest clears all tracked tasks", () => {
@@ -106,5 +117,194 @@ describe("background-task-runtime", () => {
     resetBackgroundTaskRuntimeForTest();
     expect(listTasks()).toHaveLength(0);
     expect(getTask("t1")).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Task-frames parity (2026-09-17 contract §1): startTracking's own re-register merge.
+  // ---------------------------------------------------------------------------------------------
+  describe("startTracking: merges into an existing non-terminal row (the pre-spawn -> onSpawned pid update)", () => {
+    test("a second call for the same, still-running id merges rather than replacing -- startedAt survives, pid arrives", () => {
+      const h1 = startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", command: "echo hi" });
+      const h2 = startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", command: "echo hi", pid: 4242 });
+      expect(h2).toBe(h1); // the SAME object, mutated in place
+      expect(h2.startedAt).toBe(h1.startedAt);
+      expect(h2.pid).toBe(4242);
+    });
+
+    test("re-registering a still-running id clears any (impossible here, but structurally checked) prior notification claim", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      // No terminal transition has happened yet, so nothing has claimed the id -- re-registering is
+      // a plain merge and the row is still tracked, still running.
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", pid: 1 });
+      expect(getTask("t1")?.status).toBe("running");
+    });
+
+    test("re-registering a TERMINAL id replaces the row (a resume/replacement), not a merge", () => {
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d" });
+      updateTask("t1", { status: "completed", endTime: 1000 });
+      const before = getTask("t1")!;
+      const after = startTracking({ taskId: "t1", kind: "bash", outputPath: "/y", description: "d2" });
+      expect(after).not.toBe(before);
+      expect(after.status).toBe("running");
+      expect(after.outputPath).toBe("/y");
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Task-frames parity (2026-09-17 contract §1): the update/notify/remove doors.
+  // ---------------------------------------------------------------------------------------------
+  describe("updateTask: diffs the six pinned fields, emits task_updated, then the once-per-id terminal notification", () => {
+    test("a status change alone patches {status, end_time} and, crossing into terminal, notifies", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "completed", endTime: 1234, notification: { summary: "done" } });
+
+      expect(emitter.frames).toHaveLength(2);
+      const updated = emitter.frames[0] as { subtype: string; task_id: string; patch: Record<string, unknown> };
+      expect(updated.subtype).toBe("task_updated");
+      expect(updated.task_id).toBe("t1");
+      expect(updated.patch).toEqual({ status: "completed", end_time: 1234 });
+
+      const notification = emitter.frames[1] as { subtype: string; status: string; summary: string; output_file: string };
+      expect(notification.subtype).toBe("task_notification");
+      expect(notification.status).toBe("completed");
+      expect(notification.summary).toBe("done");
+      expect(notification.output_file).toBe("/x"); // defaults to the task's own outputPath
+    });
+
+    // §1's patch status vocabulary: Winter's internal "stopped" is "killed" on the PATCH and
+    // "stopped" on the NOTIFICATION -- two different wire words from the ONE internal value.
+    test("internal status 'stopped' patches as 'killed' but notifies as 'stopped'", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "stopped", endTime: 1, notification: { summary: "stopped by request" } });
+
+      const updated = emitter.frames[0] as { patch: { status?: string } };
+      expect(updated.patch.status).toBe("killed");
+      const notification = emitter.frames[1] as { status: string };
+      expect(notification.status).toBe("stopped");
+    });
+
+    test("error is patched only when the new value is defined", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "agent", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "failed", endTime: 1, error: "boom", notification: { summary: "boom" } });
+      const updated = emitter.frames[0] as { patch: Record<string, unknown> };
+      expect(updated.patch).toEqual({ status: "failed", end_time: 1, error: "boom" });
+    });
+
+    test("isBackgrounded is patched only when the new value is defined and differs", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "agent", outputPath: "/x", description: "d", isBackgrounded: false, emitter });
+      updateTask("t1", { isBackgrounded: true });
+      const updated = emitter.frames[0] as { patch: Record<string, unknown> };
+      expect(updated.patch).toEqual({ is_backgrounded: true });
+    });
+
+    test("an empty diff (no field actually changed) emits nothing", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { description: "d" }); // identical value -- not a real change
+      expect(emitter.frames).toHaveLength(0);
+    });
+
+    test("a second terminal attempt (status already terminal) emits no second notification, and no stray task_updated for an unchanged status", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "completed", endTime: 1, notification: { summary: "first" } });
+      expect(emitter.frames).toHaveLength(2);
+      updateTask("t1", { status: "completed", endTime: 1, notification: { summary: "second" } });
+      expect(emitter.frames).toHaveLength(2); // no new frames -- nothing changed, nothing to notify
+    });
+
+    test("updateTask on an unknown id returns undefined and never throws", () => {
+      expect(updateTask("nope", { status: "completed" })).toBeUndefined();
+    });
+
+    test("a row with no emitter still mutates state; frame emission is a silent no-op", () => {
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d" });
+      const result = updateTask("t1", { status: "completed", endTime: 1, notification: { summary: "d" } });
+      expect(result?.status).toBe("completed");
+    });
+  });
+
+  describe("emitTaskNotification: the once-per-id claim, shared by updateTask and a foreground remove-then-notify caller", () => {
+    test("a second direct call for the same id is a silent no-op even with a fresh emitter", () => {
+      const emitter = fakeEmitter();
+      emitTaskNotification({ taskId: "t1", emitter }, { status: "completed", outputFile: "", summary: "a" });
+      emitTaskNotification({ taskId: "t1", emitter }, { status: "completed", outputFile: "", summary: "b" });
+      expect(emitter.frames).toHaveLength(1);
+      expect((emitter.frames[0] as { summary: string }).summary).toBe("a");
+    });
+
+    test("a background natural-exit handler racing a TaskStop that already removed+notified the SAME row never gets a second attempt through to the wire, because it never sees status:'running' at all", () => {
+      // The real shape this guards: bash.ts's own completion.then() checks `getTask(taskId)?.status
+      // !== "running"` and returns WITHOUT calling updateTask at all once a status is already
+      // terminal -- so the claim set is a second, structural line of defense (§1's own "Ik"), not the
+      // only one. This proves the claim itself holds even if a caller skipped that guard.
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "stopped", endTime: 1, notification: { summary: "stopped by TaskStop" } }); // TaskStop's own door
+      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
+      // The natural-exit handler runs anyway (it did not check status first) and tries its own
+      // terminal update -- wasTerminal is already true, so no second notification, though the status
+      // field itself DOES flip (a disclosed, pre-existing quirk of updateTask not refusing a status
+      // change once terminal -- see this file's own header on notifyTerminal for the exact rule).
+      updateTask("t1", { status: "completed", endTime: 2, notification: { summary: "completed naturally" } });
+      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
+    });
+
+    test("§1: registering (startTracking) clears a PRIOR id's notification claim -- a resumed/replaced task can notify again on its own new terminal transition", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "completed", endTime: 1, notification: { summary: "first run" } });
+      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
+      // A genuinely NEW registration under the same id (§1: "unless the id is already registered and
+      // non-terminal" -- this one IS terminal, so startTracking replaces rather than merges) is a
+      // fresh task, entitled to its own notification.
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+      updateTask("t1", { status: "completed", endTime: 2, notification: { summary: "second run" } });
+      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(2);
+    });
+
+    test("defaults tool_use_id from the task itself when the call does not supply one", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "agent", outputPath: "/x", description: "d", toolUseId: "call-1", emitter });
+      emitTaskNotification(getTask("t1")!, { status: "completed", outputFile: "", summary: "d" });
+      expect((emitter.frames[0] as { tool_use_id?: string }).tool_use_id).toBe("call-1");
+    });
+  });
+
+  describe("removeTask: deletes the row, emits nothing itself (§3/§4's foreground finish)", () => {
+    test("returns the removed handle and the id is no longer tracked", () => {
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d" });
+      const removed = removeTask("t1");
+      expect(removed?.taskId).toBe("t1");
+      expect(getTask("t1")).toBeUndefined();
+    });
+
+    test("returns undefined for an unknown id, never throws", () => {
+      expect(removeTask("nope")).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Task-frames parity (2026-09-17 contract §1/§7): background_tasks_changed excludes foreground rows.
+  // ---------------------------------------------------------------------------------------------
+  describe("listRunningTasks excludes a foreground (isBackgrounded:false) row", () => {
+    test("a running foreground row is not listed; the identical row with isBackgrounded:true (or unset) is", () => {
+      startTracking({ taskId: "fg", kind: "agent", outputPath: "/x", description: "fg", isBackgrounded: false });
+      startTracking({ taskId: "bg", kind: "agent", outputPath: "/x", description: "bg", isBackgrounded: true });
+      startTracking({ taskId: "unset", kind: "bash", outputPath: "/x", description: "unset" });
+      expect(listRunningTasks().map((t) => t.taskId).sort()).toEqual(["bg", "unset"]);
+    });
+
+    test("a foreground row that finishes never appears even once another task triggers the frame", () => {
+      startTracking({ taskId: "fg", kind: "agent", outputPath: "/x", description: "fg", isBackgrounded: false });
+      startTracking({ taskId: "bg", kind: "bash", outputPath: "/x", description: "bg", isBackgrounded: true });
+      const entries = listRunningTasks().map(toBackgroundTasksChangedEntry);
+      expect(entries.map((e) => e.task_id)).toEqual(["bg"]);
+    });
   });
 });

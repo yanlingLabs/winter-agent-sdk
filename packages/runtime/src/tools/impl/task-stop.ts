@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import "../descriptors/task-stop.ts";
 import { replaceExecutor, type ToolExecutor } from "../registry.ts";
-import { getTask, setTaskStatus, stopTask, listRunningTasks, toBackgroundTasksChangedEntry, type BackgroundTaskKind } from "./background-task-runtime.ts";
+import { getTask, updateTask, stopTask, listRunningTasks, toBackgroundTasksChangedEntry, type BackgroundTaskKind } from "./background-task-runtime.ts";
 // Fix round 1 (M4): the internal-kind -> wire-`task_type` mapping. TaskStop is the THIRD producer of
 // that pinned field (after task_started and background_tasks_changed) and was missing from the
 // inventory the mapping's own header lists.
@@ -71,20 +71,13 @@ const taskStopExecutor: ToolExecutor = {
     // and bash.ts's completion-handler comment on this exact race): setting status BEFORE killing
     // means the process's own natural-completion handler, whenever it eventually runs, sees a
     // non-"running" status and skips emitting its own (redundant, differently-worded) notification.
-    setTaskStatus(id, "stopped");
+    // §6: a registry update to {status: "killed" (the patch spelling), end_time} -> task_updated
+    // then, synchronously, the once-per-id task_notification {status: "stopped"} -- ONE call through
+    // the ONE update door, rather than a status write followed by a hand-built emitFrame literal.
+    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: `${task.description} (stopped)` } });
     stopTask(id); // process-group kill (WS-12 §5.2) for bash/Monitor-command, or the task's own stop() for Monitor-ws
 
     try {
-      ctx.emitFrame({
-        type: "system",
-        subtype: "task_notification",
-        task_id: id,
-        status: "stopped",
-        output_file: task.outputPath,
-        summary: `${task.description} (stopped)`,
-        uuid: randomUUID(),
-        session_id: ctx.sessionId,
-      });
       ctx.emitFrame({
         type: "system",
         subtype: "background_tasks_changed",
