@@ -88,15 +88,28 @@ function stringArray(value: unknown): string[] {
 /** A renderer returns the UNWRAPPED body, or `undefined` when the attachment has nothing to say. */
 export type AttachmentRenderer = (attachment: AttachmentPayload) => string | undefined;
 
-const renderers = new Map<string, AttachmentRenderer>();
+/**
+ * SDK 0.0.16 Lane N: `wrap: false` for the ONE attachment family claude does not wrap. Its
+ * `queued_command` attachments (a task notification delivered mid-turn) are rendered as a BARE user
+ * text block carrying their own `[SYSTEM NOTIFICATION - NOT USER INPUT]` preamble instead of the
+ * `<system-reminder>` envelope every other attachment type gets (traced in the pinned binary: the
+ * queued-command branch of its request builder calls its origin-aware renderer directly, never the
+ * reminder wrapper). Defaults to `true`, so every type registered before this option existed is
+ * unchanged.
+ */
+export interface AttachmentRendererOptions {
+  wrap?: boolean;
+}
+
+const renderers = new Map<string, { render: AttachmentRenderer; wrap: boolean }>();
 
 /**
  * Registers (or replaces) the renderer for one attachment type. Another lane's types (task
  * notifications, plan-mode reminders) plug in here; the engine and the resume path then carry them
  * with no further change.
  */
-export function registerAttachmentRenderer(type: string, renderer: AttachmentRenderer): void {
-  renderers.set(type, renderer);
+export function registerAttachmentRenderer(type: string, renderer: AttachmentRenderer, options?: AttachmentRendererOptions): void {
+  renderers.set(type, { render: renderer, wrap: options?.wrap !== false });
 }
 
 registerAttachmentRenderer("agent_listing_delta", (a) => {
@@ -127,8 +140,11 @@ registerAttachmentRenderer("date_change", (a) => (typeof a["newDate"] === "strin
 
 /** The wrapped model-facing text for an attachment, or `undefined` when there is none (an unknown type included). */
 export function renderAttachment(attachment: AttachmentPayload): string | undefined {
-  const body = renderers.get(attachment.type)?.(attachment);
-  return body === undefined ? undefined : wrapSystemReminder(body);
+  const renderer = renderers.get(attachment.type);
+  if (renderer === undefined) return undefined;
+  const body = renderer.render(attachment);
+  if (body === undefined) return undefined;
+  return renderer.wrap ? wrapSystemReminder(body) : body;
 }
 
 /** The history message for an attachment, or `undefined` when it renders to nothing (it is then not appended at all). */
