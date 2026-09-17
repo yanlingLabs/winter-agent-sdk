@@ -6127,16 +6127,38 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // assumed" posture as every other ad hoc call site in this function. Fires ONLY after a
           // genuinely successful execution — never for a denied call (never executed at all) or an
           // interrupted one (abandoned mid-flight, not completed).
-          const postToolUseComposite = await fireObservationalHook("PostToolUse", {
-            toolUseID: call.id,
-            toolName: call.name,
-            input: executedCall.input as Record<string, unknown>,
-            payload: { tool_response: raced.value.output },
-          });
+          //
+          // Review r2 finding 12 (whole-branch): a result with `isError: true` is a FAILURE in
+          // claude's own model -- it is how a well-behaved executor reports "the tool ran and the
+          // operation itself did not succeed" without throwing (a thrown error hits the `catch`
+          // below and already fires PostToolUseFailure). Firing plain PostToolUse for both used to
+          // make PostToolUseFailure fire only for the throw path, so a hook that exists specifically
+          // to react to tool FAILURES (an auto-retry, an alerting hook) silently never saw the far
+          // more common "ran cleanly, reported isError" shape. `payload.error` is the pinned
+          // `PostToolUseFailureHookInput.error: string` field (packages/sdk/src/permissions/types.ts)
+          // -- `raced.value.output` is a real message string on this path (the failed tool's own
+          // text), never a fabricated one.
+          const postToolUseHookOutcome =
+            raced.value.isError === true
+              ? await fireObservationalHook("PostToolUseFailure", {
+                  toolUseID: call.id,
+                  toolName: call.name,
+                  input: executedCall.input as Record<string, unknown>,
+                  payload: { error: raced.value.output },
+                })
+              : await fireObservationalHook("PostToolUse", {
+                  toolUseID: call.id,
+                  toolName: call.name,
+                  input: executedCall.input as Record<string, unknown>,
+                  payload: { tool_response: raced.value.output },
+                });
           // Task 12: T9's own accumulation contract (reducer.ts's Rule 4) is "unconditional, never
           // override-discard" — mirrored here at the one place this composite is actually consumed.
-          if (postToolUseComposite.classifierContext !== undefined) {
-            accumulatedClassifierContext.push(...postToolUseComposite.classifierContext);
+          // PostToolUseFailureHookSpecificOutput carries no `classifierContext` field at all (its
+          // own pinned shape is just `{hookEventName, additionalContext?}`), so this branch is a
+          // no-op on that arm -- nothing to accumulate, not a dropped contribution.
+          if (postToolUseHookOutcome.classifierContext !== undefined) {
+            accumulatedClassifierContext.push(...postToolUseHookOutcome.classifierContext);
           }
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);

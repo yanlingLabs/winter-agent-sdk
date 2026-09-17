@@ -859,6 +859,71 @@ test("Task 10: SessionStart/UserPromptSubmit/PostToolUse/PermissionDenied/Stop/S
   expect(permissionDenied.toolUseID).toBe("call2");
 });
 
+// Review r2 finding 12 (whole-branch): a tool result with `isError: true` -- the executor RAN and
+// reported its own failure, never threw -- must fire PostToolUseFailure, matching claude's own
+// posture that isError and a thrown tool error are the SAME failure shape from a hook's point of
+// view. Before this fix, only the thrown-error `catch` arm fired PostToolUseFailure; an isError
+// result (by far the more common failure shape a well-behaved executor produces) fired plain
+// PostToolUse, so a hook installed specifically to react to tool failures never saw it.
+test("review r2 finding 12: an isError:true tool result fires PostToolUseFailure, not PostToolUse -- a clean success still fires PostToolUse", async () => {
+  const PROBE = "t_posttoolusefailure_probe";
+  registerTool({
+    descriptor: { canonicalName: PROBE, advertisedName: PROBE, source: "builtin", inputSchema: { type: "object" }, description: "fails on request", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+    executor: { async execute(input: unknown) { return (input as { fail?: boolean }).fail === true ? { output: "it broke", isError: true } : { output: "fine" }; } },
+  });
+  try {
+    const { host, runtime } = createInMemoryChannel();
+    const scripted = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "bad", name: PROBE, input: { fail: true } }, { id: "good", name: PROBE, input: {} }] },
+      { kind: "text", text: "done" },
+    ]);
+    const config = baseConfig({
+      allowedTools: [PROBE], // pre-approve, same as the Task 10 test above -- no permission RPC to drive
+      hooks: {
+        PostToolUse: [{ hookCount: 1, source: "sdk" }],
+        PostToolUseFailure: [{ hookCount: 1, source: "sdk" }],
+      },
+    });
+    // NO `tools:` override -- PROBE's own custom executor is only reachable through the real
+    // registry-backed default `runEngine` builds when `tools` is omitted (`buildDefaultToolExecutor`);
+    // `stubExecutor` (used elsewhere in this file) never consults the registry at all.
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted });
+
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+    // `HookInvocationRequest` (runner.ts) nests the event-specific fields under its OWN `payload`
+    // key -- `bridge.request("hook", request, ...)` sends the whole request object as the RPC's
+    // payload, so the wire shape is `{event, toolUseID, ..., payload: {error} | {tool_response}}`.
+    const seenHookRequests: Array<{ event: string; toolUseID?: string; hookPayload: Record<string, unknown> }> = [];
+    for await (const f of host.input) {
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+        const cf = f as ControlRequestFrame;
+        const req = cf.payload as { event: string; toolUseID?: string; payload?: Record<string, unknown> };
+        seenHookRequests.push({ event: req.event, ...(req.toolUseID !== undefined ? { toolUseID: req.toolUseID } : {}), hookPayload: req.payload ?? {} });
+        host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+      }
+    }
+    await done;
+
+    const bad = seenHookRequests.find((r) => r.toolUseID === "bad")!;
+    expect(bad.event).toBe("PostToolUseFailure");
+    // PostToolUseFailureHookInput's pinned `error: string` field carries the failed result's own text.
+    expect(bad.hookPayload["error"]).toBe("it broke");
+    expect(bad.hookPayload).not.toHaveProperty("tool_response");
+
+    const good = seenHookRequests.find((r) => r.toolUseID === "good")!;
+    expect(good.event).toBe("PostToolUse");
+    expect(good.hookPayload["tool_response"]).toBe("fine");
+
+    // Exactly one firing per call -- neither event double-fires for the other's call.
+    expect(seenHookRequests.filter((r) => r.toolUseID === "bad")).toHaveLength(1);
+    expect(seenHookRequests.filter((r) => r.toolUseID === "good")).toHaveLength(1);
+  } finally {
+    unregisterToolForTest(PROBE);
+  }
+});
+
 test("Task 10: includeHookEvents gates the public hook_started/hook_response messages; the audit trail (store.recordHookAudit) fires either way", async () => {
   const auditEntries: Array<{ hookEvent: string; outcome: string }> = [];
   const store = {
