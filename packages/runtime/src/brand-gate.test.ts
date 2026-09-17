@@ -834,7 +834,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/subagents/watchdog.ts:12": "a DEFAULT PARAMETER; the call site passes the session brand",
   "packages/runtime/src/context/memory.ts:75": "renderAutoMemorySection's `instructionsFile` DEFAULT; the assembler passes `brand.instructionsFile` (M-1's fix)",
   "packages/runtime/src/context/memory.ts:82": "renderAutoMemoryContextValue's `instructionsFile` DEFAULT; the assembler passes `brand.instructionsFile` (M-1's fix)",
-  "packages/runtime/src/context/winter-md.ts:40": "WINTER_MD_BASENAME -- Winter's own value; a session's comes from `brand.instructionsFile`",
+  "packages/runtime/src/context/winter-md.ts:47": "WINTER_MD_BASENAME -- Winter's own value; a session's comes from `brand.instructionsFile`",
   "packages/runtime/src/plugins/manifest.ts:23": "WINTER_PLUGIN_MANIFEST_DIR -- Winter's own value; `pluginManifestDirs(brand)` derives a session's",
   "packages/runtime/src/provider/classifier/prompt.ts:265": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix)",
   "packages/runtime/src/permissions/protected.ts:85": "the SEED of the protected set; `isProtectedWrite` adds the session brand's own file per call",
