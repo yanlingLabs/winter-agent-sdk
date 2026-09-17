@@ -24,7 +24,7 @@ import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type Too
 import { createBackgroundTask } from "../background-tasks.ts";
 import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailableError } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
-import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -111,10 +111,13 @@ const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 // rejection branch below (no RunCommandResult, `runMonitorCommand`'s own reject callback) has no
 // exit code and produced no output by construction, so it is a disclosed departure from this
 // wording, same posture as bash.ts's own identical pre-spawn-failure case.
+//
+// Review r1 finding 2: no exit code is ever invented -- a timed-out / output-capped / externally
+// killed script (no real exit code) reports the pinned "failed" wording without the "(exit <N>)"
+// suffix; a script THIS runtime killed reports the kill wording (`killedTaskSummary`).
 function monitorCommandSummary(description: string, status: "completed" | "failed", exitCode: number | null, producedOutput: boolean): string {
-  const code = exitCode ?? 1;
-  if (status === "failed") return `Monitor "${description}" script failed (exit ${code})`;
-  return producedOutput ? `Monitor "${description}" stream ended` : `Monitor "${description}" ended without producing output (exit ${code})`;
+  if (status === "failed") return exitCode === null ? `Monitor "${description}" script failed` : `Monitor "${description}" script failed (exit ${exitCode})`;
+  return producedOutput ? `Monitor "${description}" stream ended` : `Monitor "${description}" ended without producing output (exit ${exitCode ?? 0})`;
 }
 
 function computeMonitorWritableRoots(ctx: ToolExecutionContext): string[] {
@@ -164,6 +167,12 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
    * already-existing process-group kill. Monitor's command half shares Bash's spawn mechanism, so it
    * shares this obligation -- "a stopped child starts nothing new AND its in-flight command is
    * killed" is not satisfied by covering only one of the two tools that spawn one.
+   *
+   * NOT PASSED TO `runCommand` (review r1 finding 2, controller ruling): a Monitor is a background
+   * task, and the pin's backgrounded shell drops its abort listeners -- a turn interrupt must not end
+   * it. `runMonitorCommand` strips this field; the session teardown (`stopSessionShellTasks`) and
+   * TaskStop are its kill doors. Kept on the options shape so the one builder stays comparable with
+   * bash.ts's own.
    */
   signal?: AbortSignal;
 } {
@@ -226,16 +235,19 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
   // call. The internal kind stays `"monitor"` (wireTaskType maps it); see background-tasks.ts's own
   // WIRE_TASK_TYPES table for the ws half's DIFFERENT internal kind and wire spelling.
   const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
-  startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
+  const ownership = { ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}) };
+  startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, isBackgrounded: true, ...ownership, emitter });
 
+  // Review r1 finding 2: the per-turn signal is dropped (see the options builder's own note).
+  const { signal: _turnSignal, ...monitorRunOptions } = buildMonitorRunCommandOptions(ctx);
   let completion: ReturnType<typeof runCommand>;
   try {
     completion = runCommand({
-      ...buildMonitorRunCommandOptions(ctx),
+      ...monitorRunOptions,
       command: input.command,
       timeoutMs: effectiveTimeout,
       onSpawned: ({ pid }) => {
-        startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
+        startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
       },
       onStdout: (c) => {
         if (c.length > 0) producedOutput = true;
@@ -276,20 +288,27 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
   completion.then(
     (result) => {
       outStream.end();
-      if (getTask(taskId)?.status !== "running") return; // TaskStop already recorded a terminal status
-      const status = result.exitCode === 0 && !result.timedOut ? "completed" : "failed";
+      if (getTask(taskId)?.status !== "running") return; // TaskStop / teardown already recorded a terminal status
+      const outcome = resolveBackgroundOutcome(result);
       updateTask(taskId, {
-        status,
+        status: outcome.status,
         endTime: Date.now(),
-        notification: { summary: monitorCommandSummary(input.description, status, result.exitCode, producedOutput) },
+        notification: {
+          summary: outcome.status === "stopped" ? killedTaskSummary("monitor", input.description) : monitorCommandSummary(input.description, outcome.status, outcome.exitCode, producedOutput),
+        },
       });
-      ctx.emitFrame({
-        type: "system",
-        subtype: "background_tasks_changed",
-        tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
-        uuid: randomUUID(),
-        session_id: ctx.sessionId,
-      });
+      // Review r1 finding 7: never an unhandled rejection over a torn-down session's emitFrame.
+      try {
+        ctx.emitFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
+          uuid: randomUUID(),
+          session_id: ctx.sessionId,
+        });
+      } catch {
+        /* the registry's status and .output file are still correct */
+      }
     },
     (err) => {
       outStream.end();
@@ -511,7 +530,16 @@ export async function connectMonitorWs(
     }
   }
 
-  startTracking({ taskId, kind: "monitor_ws", outputPath, description, stop: () => socket.close(), ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
+  startTracking({
+    taskId,
+    kind: "monitor_ws",
+    outputPath,
+    description,
+    stop: () => socket.close(),
+    ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
+    ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}),
+    emitter,
+  });
 
   // ORDERING TRAP (found via a real repro, not assumed): Bun's WebSocket.close() fires the socket's
   // OWN onclose handler SYNCHRONOUSLY, before control returns to whatever called .close(). Every

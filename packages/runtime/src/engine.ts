@@ -246,7 +246,7 @@ import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
 // task's own notification apart from a background one -- see the `emitFrame` closure below for why.
-import { getTask } from "./tools/impl/background-task-runtime.ts";
+import { getTask, stopSessionShellTasks } from "./tools/impl/background-task-runtime.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
@@ -2854,14 +2854,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         //
         // Task-frames parity (contract §7): the pin fires NOTHING extra for a foreground task's own
         // notification -- this hook is background-only. `getTask` (the shared registry) is the one
-        // place that knows: a foreground bash row is already REMOVED by the time its own notification
-        // reaches here (bash.ts's own remove-then-notify, §3), so `t === undefined` reads as
-        // foreground; a foreground agent's row survives (it terminates through `updateTask`, §4) but
-        // carries `isBackgrounded === false`. Both are excluded by the one check below; a background
-        // row (isBackgrounded true or absent) still fires exactly as before.
+        // place that knows: every foreground row -- bash (which notifies BEFORE removing, review r1
+        // finding 10) and agent alike -- still exists here and carries `isBackgrounded === false`.
+        // A notification with NO row at all (a scripted fixture task, a plugin's own
+        // `ctx.emitFrame`) is not a foreground task, so it fires, exactly as before parity.
         if (frame.subtype === "task_notification") {
           const task = getTask(frame.task_id);
-          if (task !== undefined && task.isBackgrounded !== false) {
+          if (task?.isBackgrounded !== false) {
             const status = typeof frame.status === "string" ? frame.status : "completed";
             emitNotification(`task_${status}`, `Background task ${frame.task_id} ${status}.`, "Task finished");
           }
@@ -6216,6 +6215,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // exactly that, deliberately, to interact with a child past its parent's turn) keeps its
   // pre-existing lifetime.
   await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+  // Review r1 finding 2 (controller ruling): a BACKGROUND shell outlives the turn that started it
+  // (its runCommand no longer carries the per-turn signal -- the pin's ShellCommand.background()
+  // drops its abort listeners), so the session going away is one of its three kill doors, beside its
+  // own exit and TaskStop. Before this, NOTHING killed one at teardown: `detached: true` groups
+  // survived `runEngine` returning and even `process.exit`. A top-level engine stops every background
+  // shell of its session; a subagent engine stops the ones IT started (the pin's
+  // `killShellTasksForAgent` on agent exit). BEFORE `output.end()`, so the kill frames can still land.
+  stopSessionShellTasks({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
   removeChildRosterSource();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
   // the roster contribution above -- the messaging runtime is PROCESS-level and outlives the run, so

@@ -51,7 +51,7 @@ import { MAX_DOUBLE_STARS } from "./permissions/paths.ts";
 // Task-frames parity (2026-09-17 contract §7): drives the fixture tool below, which registers a row
 // directly in the shared task registry so its own task_notification's `isBackgrounded` is fully
 // controlled by the test.
-import { startTracking as trackTaskFrame, resetBackgroundTaskRuntimeForTest } from "./tools/impl/background-task-runtime.ts";
+import { startTracking as trackTaskFrame, getTask as getTrackedTask, resetBackgroundTaskRuntimeForTest } from "./tools/impl/background-task-runtime.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -4338,8 +4338,8 @@ describe("Task-frames parity §7: the Notification hook fires only for a backgro
       },
       executor: {
         async execute(input: unknown, ctx) {
-          const { taskId, isBackgrounded } = input as { taskId: string; isBackgrounded?: boolean };
-          trackTaskFrame({ taskId, kind: "bash", outputPath: "", description: "d", ...(isBackgrounded !== undefined ? { isBackgrounded } : {}) });
+          const { taskId, isBackgrounded, noRow } = input as { taskId: string; isBackgrounded?: boolean; noRow?: boolean };
+          if (noRow !== true) trackTaskFrame({ taskId, kind: "bash", outputPath: "", description: "d", ...(isBackgrounded !== undefined ? { isBackgrounded } : {}) });
           ctx.emitFrame({
             type: "system",
             subtype: "task_notification",
@@ -4367,6 +4367,9 @@ describe("Task-frames parity §7: the Notification hook fires only for a backgro
           calls: [
             { id: "bg-1", name: NOTIFY_PROBE_TOOL_NAME, input: { taskId: "bg-task", isBackgrounded: true } },
             { id: "fg-1", name: NOTIFY_PROBE_TOOL_NAME, input: { taskId: "fg-task", isBackgrounded: false } },
+            // Review r1 finding 10: a notification with NO registry row at all (a scripted fixture
+            // task, a plugin's own ctx.emitFrame) is not a foreground task -- it fires.
+            { id: "norow-1", name: NOTIFY_PROBE_TOOL_NAME, input: { taskId: "no-row-task", noRow: true } },
           ],
         },
         { kind: "text", text: "done" },
@@ -4399,13 +4402,45 @@ describe("Task-frames parity §7: the Notification hook fires only for a backgro
       // turn settles and the session waits for the next input (R5-13's own idle point), which this
       // guard neither touches nor is meant to.
       const taskNotifications = notificationHookCalls.filter((c) => c.notification_type?.startsWith("task_"));
-      expect(taskNotifications).toHaveLength(1);
-      expect(taskNotifications[0]?.notification_type).toBe("task_completed");
+      expect(taskNotifications).toHaveLength(2); // bg-task + no-row-task; never fg-task
+      expect(taskNotifications.every((c) => c.notification_type === "task_completed")).toBe(true);
     } finally {
       unregisterToolForTest(NOTIFY_PROBE_TOOL_NAME);
       resetBackgroundTaskRuntimeForTest();
     }
   });
+});
+
+// Review r1 finding 2 (controller ruling): a background shell survives the turn but not the session.
+describe("engine teardown stops this session's background shells (review r1 finding 2)", () => {
+  test.skipIf(process.platform !== "darwin")("a still-running run_in_background command is killed at teardown: task_updated {killed} + the kill-worded notification, before the stream ends", async () => {
+    resetBackgroundTaskRuntimeForTest();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "bg-bash-1", name: "Bash", input: { command: "sleep 30", description: "teardown probe", run_in_background: true } }] },
+        { kind: "text", text: "started" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const messages = frames.filter((f) => f.type === "data").map((f) => (f as { message: { type: string; subtype?: string; task_id?: string; [k: string]: unknown } }).message);
+      const started = messages.find((m) => m.subtype === "task_started");
+      expect(started).toBeDefined();
+      const resultIndex = messages.findIndex((m) => m.type === "result");
+      const own = messages.map((m, i) => ({ m, i })).filter(({ m }) => m.task_id === started!.task_id && m.subtype !== "task_started");
+      expect(own.map(({ m }) => m.subtype)).toEqual(["task_updated", "task_notification"]);
+      expect(own[0]!.i).toBeGreaterThan(resultIndex); // the turn ended first; the SESSION ending killed it
+      expect((own[0]!.m as { patch: { status?: string } }).patch.status).toBe("killed");
+      expect(own[1]!.m).toMatchObject({ status: "stopped", summary: 'Background command "teardown probe" was stopped' });
+      expect(getTrackedTask(started!.task_id as string)?.status).toBe("stopped");
+    } finally {
+      resetBackgroundTaskRuntimeForTest();
+    }
+  }, 20_000);
 });
 
 // --- Spawn-surface parity (research §A3, scope item 4): system/init.agents ------------------------

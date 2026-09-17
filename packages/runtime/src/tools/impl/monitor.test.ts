@@ -639,6 +639,24 @@ describe("Monitor executor: command half", () => {
     expect((failFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Monitor "boom" script failed (exit 2)');
   });
 
+  // Review r1 finding 2: a monitor script is a background task -- a turn abort does not end it, and a
+  // timed-out script reports no invented exit code.
+  t("a turn abort does NOT kill a monitor command; it ends by its own exit", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    const controller = new AbortController();
+    await monitor()({ description: "survivor", timeout_ms: 5000, persistent: false, command: "sleep 0.5; echo tick" }, fakeCtx({ emitFrame: (f) => frames.push(f), signal: controller.signal }));
+    controller.abort();
+    await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
+    expect(frames.find((f) => f.subtype === "task_notification")).toMatchObject({ status: "completed", summary: 'Monitor "survivor" stream ended' });
+  });
+
+  t("a timed-out monitor script reports 'script failed' with no fabricated exit code", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    await monitor()({ description: "slowpoke", timeout_ms: 1000, persistent: false, command: "sleep 5" }, fakeCtx({ emitFrame: (f) => frames.push(f) }));
+    await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
+    expect(frames.find((f) => f.subtype === "task_notification")).toMatchObject({ status: "failed", summary: 'Monitor "slowpoke" script failed' });
+  });
+
   // Task-frames parity (contract §3's own note applied here too): task_started carries task_type and
   // tool_use_id; task_notification carries tool_use_id.
   t("task_started carries task_type:local_bash and tool_use_id; task_notification carries tool_use_id", async () => {

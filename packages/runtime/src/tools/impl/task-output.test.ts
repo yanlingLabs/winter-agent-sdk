@@ -6,7 +6,7 @@ import "./task-output.ts";
 import { getRegisteredTool } from "../registry.ts";
 import type { ToolExecutionContext } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
-import { startTracking, setTaskStatus, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
+import { startTracking, updateTask, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import { parseTaskOutputInput, resolveClampedTimeout } from "./task-output.ts";
 import { CEILING_TIMEOUT_MS } from "./bash.ts";
 
@@ -115,7 +115,7 @@ describe("TaskOutput executor", () => {
     const outputPath = join(ctx.tempDir, "done.output");
     writeFileSync(outputPath, "all done");
     startTracking({ taskId: "done", kind: "bash", outputPath, description: "d" });
-    setTaskStatus("done", "completed");
+    updateTask("done", { status: "completed" });
     const started = Date.now();
     const res = await taskOutput()({ task_id: "done", block: true, timeout: 5000 }, ctx);
     expect(Date.now() - started).toBeLessThan(200);
@@ -129,7 +129,7 @@ describe("TaskOutput executor", () => {
     startTracking({ taskId: "async", kind: "bash", outputPath, description: "d" });
     setTimeout(() => {
       writeFileSync(outputPath, "finished!");
-      setTaskStatus("async", "completed");
+      updateTask("async", { status: "completed" });
     }, 150);
     const started = Date.now();
     const res = await taskOutput()({ task_id: "async", block: true, timeout: 5000 }, ctx);
@@ -221,7 +221,7 @@ describe("TaskOutput -- M8 clamp note on the result (fix wave)", () => {
     const outputPath = join(ctx.tempDir, "already-done.output");
     writeFileSync(outputPath, "already done");
     startTracking({ taskId: "already-done", kind: "bash", outputPath, description: "d" });
-    setTaskStatus("already-done", "completed");
+    updateTask("already-done", { status: "completed" });
     const res = await taskOutput()({ task_id: "already-done", block: true, timeout: 999_999_999 }, ctx);
     expect(res.output).toContain(`[timeout clamped from 999999999ms to the ${CEILING_TIMEOUT_MS}ms ceiling]`);
   });
@@ -231,7 +231,7 @@ describe("TaskOutput -- M8 clamp note on the result (fix wave)", () => {
     const outputPath = join(ctx.tempDir, "already-done2.output");
     writeFileSync(outputPath, "already done");
     startTracking({ taskId: "already-done2", kind: "bash", outputPath, description: "d" });
-    setTaskStatus("already-done2", "completed");
+    updateTask("already-done2", { status: "completed" });
     const res = await taskOutput()({ task_id: "already-done2", block: true, timeout: CEILING_TIMEOUT_MS }, ctx);
     expect(res.output).not.toContain("clamped");
   });

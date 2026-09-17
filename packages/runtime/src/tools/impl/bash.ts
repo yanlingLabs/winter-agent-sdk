@@ -34,7 +34,7 @@ import {
   type RunCommandResult,
 } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, canonicalizePath, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
-import { startTracking, updateTask, removeTask, emitTaskNotification, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { startTracking, updateTask, removeTask, emitTaskNotification, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation (no zod/validation library is a dependency of this package -- verified before
@@ -186,6 +186,11 @@ function buildRunCommandOptions(
    * grandchild. What was missing was the CHANNEL: nothing upstream of this function had an
    * `AbortSignal` to give it, so an interrupted turn abandoned the await and the command kept
    * running. Threading `ctx.signal` here is the entire fix.
+   *
+   * FOREGROUND ONLY (review r1 finding 2, controller ruling): `runBackground` strips this field. The
+   * pin's `ShellCommand.background()` drops its abort listeners, so a turn interrupt never kills a
+   * backgrounded command -- it ends by its own exit, a TaskStop, or the session's teardown
+   * (`stopSessionShellTasks`, background-task-runtime.ts).
    */
   signal?: AbortSignal;
 } {
@@ -330,15 +335,18 @@ function formatSandboxAnnotation(posture: string, sandboxOverrideRequested: bool
 
 // Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
 // strings for a background bash task's own task_notification.summary -- measured directly on the
-// pinned binary, not paraphrased. `exitCode` is `null` only for a timeout/abort, neither of which
-// reaches the "completed"/"failed" branches below (the natural-exit handler's own status derivation
-// already routes those through "failed"; TaskStop's own "was stopped" wording, task-stop.ts, is what
-// a genuine interrupt gets) -- coerced to 1 rather than left `null` in that structurally-unreachable
-// case, so the string is never literally "exit code null".
+// pinned binary, not paraphrased.
+//
+// Review r1 finding 2: NO EXIT CODE IS EVER INVENTED. A command that timed out, blew the output cap,
+// or was killed by something outside this runtime has no real exit code (`exitCode === null`); it
+// reports the pinned "failed" wording WITHOUT the "with exit code <N>" suffix rather than a
+// fabricated 1. A command this runtime itself killed (TaskStop, the session's teardown, an abort)
+// never reaches here as "failed" at all -- see `resolveBackgroundOutcome`.
 function bashBackgroundSummary(description: string, status: "completed" | "failed", exitCode: number | null): string {
-  const code = exitCode ?? 1;
-  return status === "completed" ? `Background command "${description}" completed (exit code ${code})` : `Background command "${description}" failed with exit code ${code}`;
+  if (status === "completed") return `Background command "${description}" completed (exit code ${exitCode ?? 0})`;
+  return exitCode === null ? `Background command "${description}" failed` : `Background command "${description}" failed with exit code ${exitCode}`;
 }
+
 
 function formatForegroundResult(parts: {
   stdout: CappedOutput;
@@ -380,7 +388,9 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   // pin emits for a foreground call -- a command that finishes before this fires never touches the
   // registry at all. `randomUUID()` directly (never `createBackgroundTask`): a foreground row has no
   // `.output` file and must not depend on `configureBackgroundTaskRoot` having been called.
-  const description = input.description ?? input.command;
+  // Review r1 finding 11: `||`, not `??` -- the pin falls back to the command for an EMPTY
+  // description too, not only an absent one.
+  const description = input.description || input.command;
   let foregroundTaskId: string | undefined;
   let foregroundPid: number | undefined;
   const registerTimer = setTimeout(() => {
@@ -395,6 +405,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       isBackgrounded: false,
       ...(foregroundPid !== undefined ? { pid: foregroundPid } : {}),
       ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
+      ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}),
       emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
     });
     try {
@@ -464,17 +475,25 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
 
   const success = result.exitCode === 0 && !result.timedOut && !result.aborted;
 
-  // §3's foreground finish: REMOVE the row (no task_updated) and emit task_notification with
-  // output_file:"" and the description as the summary -- never the background surfaces' own
+  // §3's foreground finish: emit task_notification with output_file:"" and the description as the
+  // summary, then REMOVE the row (no task_updated) -- never the background surfaces' own
   // sandbox-annotated wording, which is a background-only convention.
+  //
+  // Review r1 finding 10: notify BEFORE removing. The wire order is unchanged (removeTask emits
+  // nothing), but the engine's Notification-hook guard reads the row to tell a foreground
+  // notification from a background one -- with the row already gone it had to treat "no row" as
+  // foreground, which silenced the hook for every producer that has no row at all. A TaskStop that
+  // already finalized this row holds its claim, so this attempt is a silent no-op (exactly one
+  // notification) and `removeTask` then drops row and claim together.
   if (foregroundTaskId !== undefined) {
-    const removed = removeTask(foregroundTaskId);
-    if (removed !== undefined) {
-      emitTaskNotification(removed, {
+    const row = getTask(foregroundTaskId);
+    if (row !== undefined) {
+      emitTaskNotification(row, {
         status: result.aborted ? "stopped" : success ? "completed" : "failed",
         outputFile: "",
         summary: description,
       });
+      removeTask(foregroundTaskId);
     }
   }
 
@@ -505,7 +524,9 @@ function summarizeCommand(command: string, max = 80): string {
 }
 
 async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
-  const runOptions = buildRunCommandOptions(input, ctx);
+  // Review r1 finding 2: the per-turn signal is dropped for a BACKGROUND run (see
+  // `buildRunCommandOptions`' own `signal` note) -- a turn interrupt must not kill it.
+  const { signal: _turnSignal, ...runOptions } = buildRunCommandOptions(input, ctx);
   const timeoutMs = resolveTimeout(input.timeout);
 
   // Pre-flight the SAME checks runCommand performs internally, synchronously, BEFORE creating the
@@ -559,14 +580,15 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   // is optional and `tasks.set()` is a plain overwrite, so calling it again from onSpawned with the
   // real pid is a safe, idempotent update of the SAME entry, never a duplicate.
   const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
-  startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
+  const ownership = { ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}) };
+  startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, isBackgrounded: true, ...ownership, emitter });
 
   const completion = runCommand({
     ...runOptions,
     command: input.command,
     timeoutMs,
     onSpawned: ({ pid }) => {
-      startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
+      startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
     },
     onStdout: (c) => outStream.write(c),
     onStderr: (c) => outStream.write(c),
@@ -602,20 +624,26 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   completion.then(
     (result) => {
       outStream.end();
-      if (getTask(taskId)?.status !== "running") return; // TaskStop already recorded a terminal status
-      const status = result.exitCode === 0 && !result.timedOut ? "completed" : "failed";
+      if (getTask(taskId)?.status !== "running") return; // TaskStop / teardown already recorded a terminal status
+      const outcome = resolveBackgroundOutcome(result);
       updateTask(taskId, {
-        status,
+        status: outcome.status,
         endTime: Date.now(),
-        notification: { summary: bashBackgroundSummary(description, status, result.exitCode) },
+        notification: { summary: outcome.status === "stopped" ? killedTaskSummary("bash", description) : bashBackgroundSummary(description, outcome.status, outcome.exitCode) },
       });
-      ctx.emitFrame({
-        type: "system",
-        subtype: "background_tasks_changed",
-        tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
-        uuid: randomUUID(),
-        session_id: ctx.sessionId,
-      });
+      // Review r1 finding 7: a torn-down session's emitFrame may throw -- never an unhandled
+      // rejection inside this completion callback. The registry's status is already correct.
+      try {
+        ctx.emitFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
+          uuid: randomUUID(),
+          session_id: ctx.sessionId,
+        });
+      } catch {
+        /* see above */
+      }
     },
     (err) => {
       outStream.end();

@@ -151,7 +151,8 @@ describe("TaskStop executor", () => {
     const agentCtx = fakeCtx({ emitFrame: (f) => agentFrames.push(f) });
     startTracking({ taskId: "a1", kind: "agent", outputPath: "/x/a1.output", description: "review the diff", emitter: { emitFrame: agentCtx.emitFrame, sessionId: agentCtx.sessionId } });
     await taskStop()({ task_id: "a1" }, agentCtx);
-    expect((agentFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe("review the diff (stopped)");
+    // Review r1 finding 4: the SAME text the child's own settle() reports on a parent abort.
+    expect((agentFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe("stopped by request");
   });
 
   test("shell_id is an alias for the same task-id namespace, never a second registry", async () => {

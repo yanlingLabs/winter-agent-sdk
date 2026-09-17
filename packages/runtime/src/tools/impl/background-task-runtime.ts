@@ -37,6 +37,7 @@ import type {
   SDKTaskUpdatedMessage,
 } from "@yanlinglabs/winter-agent-sdk";
 import { wireTaskType } from "../background-tasks.ts";
+import type { RunCommandResult } from "../../sandbox/spawn.ts";
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -77,9 +78,10 @@ export interface BackgroundTaskHandle {
    * two wire kinds the pin's own `register()` puts the flag on at all) -- `undefined` for every other
    * kind (workflow, monitor_ws), which never carry it on `task_started` either. `false` marks a
    * FOREGROUND row: excluded from `listRunningTasks()`'s own `background_tasks_changed` listing
-   * (§1's `"isBackgrounded" in task && task.isBackgrounded === false` rule), and its terminal
-   * transition goes through `removeTask` + a caller-built notification rather than `updateTask`
-   * (§3/§4's "foreground success removes the row, no task_updated").
+   * (§1's `"isBackgrounded" in task && task.isBackgrounded === false` rule). A foreground BASH row
+   * terminates through a caller-built notification + `removeTask` (§3, no task_updated); a
+   * foreground AGENT row terminates through `updateTask` exactly like a background one (§4, corrected
+   * from a live run of the pin).
    */
   isBackgrounded?: boolean;
   /** The model's own `tool_use` id for the call that created this task, when known -- carried onto this row's own `task_notification`/`task_updated` unless a call overrides it. */
@@ -88,14 +90,39 @@ export interface BackgroundTaskHandle {
   totalPausedMs?: number;
   error?: string;
   emitter?: TaskFrameEmitter;
+  /**
+   * Review r1 finding 4: the row's LIVE usage counters, when the task kind has any (an agent row --
+   * `tools/impl/agent.ts` wires it to the child's own progress snapshot). `notifyTerminal` reads it
+   * as the default `task_notification.usage`, so EVERY terminal door for an agent row -- the agent's
+   * own result path AND a TaskStop that finalizes the row first -- reports the same usage, instead
+   * of the TaskStop door silently dropping it.
+   */
+  usage?: () => TaskUsage | undefined;
+  /**
+   * The spawning engine's own agent key (`ToolExecutionContext.agentId`) -- absent for a task the
+   * TOP-LEVEL session started. Read only by `stopSessionShellTasks` below (engine teardown), which is
+   * what makes a subagent's teardown stop the shells THAT subagent started and nothing else (the
+   * pin's own `killShellTasksForAgent` on agent exit).
+   */
+  ownerAgentId?: string;
+}
+
+export interface TaskUsage {
+  total_tokens: number;
+  tool_uses: number;
+  duration_ms: number;
 }
 
 const tasks = new Map<string, BackgroundTaskHandle>();
 // Task-frames parity (contract §1, "Ik"): the once-per-id notification claim. A SEPARATE set from
-// `tasks` itself (rather than a field on the handle) because a claim must survive `removeTask` --
-// the foreground success path removes the row and THEN notifies, and a late duplicate attempt (the
-// process's own natural-exit handler racing a TaskStop that already removed/notified) must still be
-// a no-op with no row left to check it against.
+// `tasks` itself (rather than a field on the handle) so `emitTaskNotification` can guard a bare
+// `{taskId, emitter}` pick as well as a live row.
+//
+// Review r1 finding 12: BOUNDED BY THE REGISTRY. A claim lives exactly as long as its row: every
+// caller now notifies BEFORE removing (bash.ts's foreground finish, finding 10), and `removeTask`
+// drops the claim together with the row -- once a row is gone nothing in this package can reach its
+// id again (TaskStop, TaskOutput and every completion handler look the row up first), so the claim
+// has nothing left to guard. Within a row's life the once-per-id guarantee is unchanged.
 const notifiedTaskIds = new Set<string>();
 
 export interface StartTrackingInput {
@@ -109,6 +136,8 @@ export interface StartTrackingInput {
   isBackgrounded?: boolean;
   toolUseId?: string;
   emitter?: TaskFrameEmitter;
+  usage?: () => TaskUsage | undefined;
+  ownerAgentId?: string;
 }
 
 // §1's register(): "emits task_started unless the id is already registered and non-terminal (a
@@ -137,10 +166,8 @@ export function getTask(taskId: string): BackgroundTaskHandle | undefined {
   return tasks.get(taskId);
 }
 
-export function setTaskStatus(taskId: string, status: BackgroundTaskStatus): void {
-  const t = tasks.get(taskId);
-  if (t) t.status = status;
-}
+// Review r1 finding 12: `setTaskStatus` (a bare status write that bypassed the §1 diff and the
+// terminal notification) is GONE. `updateTask` below is the one status door.
 
 export function listTasks(): readonly BackgroundTaskHandle[] {
   return [...tasks.values()];
@@ -228,7 +255,8 @@ export interface TaskNotificationInput {
   summary: string;
   /** Defaults to `task.outputPath`; a foreground task's own caller passes `""` explicitly (§3/§4: "no output file"). */
   outputFile?: string;
-  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+  /** Defaults to the row's own `usage()` accessor, when it has one (finding 4). */
+  usage?: TaskUsage;
   /** Defaults to `task.toolUseId`. */
   toolUseId?: string;
   skipTranscript?: boolean;
@@ -301,11 +329,19 @@ export function emitTaskNotification(task: Pick<BackgroundTaskHandle, "taskId" |
 function notifyTerminal(task: BackgroundTaskHandle, notification: TaskNotificationInput): void {
   // `task.status` is already terminal by the caller's own guard (updateTask, immediately below).
   const status = task.status as "completed" | "failed" | "stopped";
+  let usage = notification.usage;
+  if (usage === undefined && task.usage !== undefined) {
+    try {
+      usage = task.usage();
+    } catch {
+      usage = undefined; // a misbehaving accessor must never cost the notification itself
+    }
+  }
   emitTaskNotification(task, {
     status,
     outputFile: notification.outputFile ?? task.outputPath,
     summary: notification.summary,
-    ...(notification.usage !== undefined ? { usage: notification.usage } : {}),
+    ...(usage !== undefined ? { usage } : {}),
     ...(notification.toolUseId !== undefined ? { toolUseId: notification.toolUseId } : {}),
     ...(notification.skipTranscript !== undefined ? { skipTranscript: notification.skipTranscript } : {}),
     ...(notification.ambient !== undefined ? { ambient: notification.ambient } : {}),
@@ -323,8 +359,13 @@ function notifyTerminal(task: BackgroundTaskHandle, notification: TaskNotificati
  * value -- which already satisfies the table's extra "AND new value is defined" clause on
  * `error`/`isBackgrounded` for free, since neither is ever applied from an `undefined` input.
  *
- * Returns `undefined` for an unknown taskId (never throws) -- the same "no-op on an unknown id"
- * posture `setTaskStatus` already has.
+ * Returns `undefined` for an unknown taskId (never throws).
+ *
+ * Review r1 finding 6: a TERMINAL row is settled. Its `status`, `end_time`, `error` and
+ * `is_backgrounded` no longer move -- a late second terminal attempt (a foreground agent's own
+ * result path arriving after a TaskStop already finalized the row, a process exit handler racing a
+ * kill) used to leave a stray `task_updated {end_time}` on the wire AFTER the notification, and
+ * could flip a `stopped` row to `completed`. The first terminal verdict wins, permanently.
  */
 export function updateTask(taskId: string, changes: TaskUpdateChanges): BackgroundTaskHandle | undefined {
   const task = tasks.get(taskId);
@@ -332,7 +373,7 @@ export function updateTask(taskId: string, changes: TaskUpdateChanges): Backgrou
   const wasTerminal = isTerminal(task.status);
 
   const patch: SDKTaskUpdatedMessage["patch"] = {};
-  if (changes.status !== undefined && changes.status !== task.status) {
+  if (!wasTerminal && changes.status !== undefined && changes.status !== task.status) {
     task.status = changes.status;
     patch.status = wirePatchStatus(task.status);
   }
@@ -340,7 +381,7 @@ export function updateTask(taskId: string, changes: TaskUpdateChanges): Backgrou
     task.description = changes.description;
     patch.description = task.description;
   }
-  if (changes.endTime !== undefined && changes.endTime !== task.endTime) {
+  if (!wasTerminal && changes.endTime !== undefined && changes.endTime !== task.endTime) {
     task.endTime = changes.endTime;
     patch.end_time = task.endTime;
   }
@@ -348,11 +389,11 @@ export function updateTask(taskId: string, changes: TaskUpdateChanges): Backgrou
     task.totalPausedMs = changes.totalPausedMs;
     patch.total_paused_ms = task.totalPausedMs;
   }
-  if (changes.error !== undefined && changes.error !== task.error) {
+  if (!wasTerminal && changes.error !== undefined && changes.error !== task.error) {
     task.error = changes.error;
     patch.error = task.error;
   }
-  if (changes.isBackgrounded !== undefined && changes.isBackgrounded !== task.isBackgrounded) {
+  if (!wasTerminal && changes.isBackgrounded !== undefined && changes.isBackgrounded !== task.isBackgrounded) {
     task.isBackgrounded = changes.isBackgrounded;
     patch.is_backgrounded = task.isBackgrounded;
   }
@@ -381,15 +422,82 @@ export function updateTask(taskId: string, changes: TaskUpdateChanges): Backgrou
 }
 
 /**
- * §1's remove(id): deletes the row, emitting NO `task_updated`. Used for a task that finishes IN
- * THE FOREGROUND (§3/§4) -- the caller (bash.ts/agent.ts) builds and sends the `task_notification`
- * itself, through `emitTaskNotification`, using the handle this returns (which still carries
- * `.emitter`/`.toolUseId` for that call). Returns `undefined` for an unknown taskId, never throws.
+ * §1's remove(id): deletes the row, emitting NO `task_updated`. Used for a foreground BASH command
+ * that finishes in the foreground (§3) -- the caller builds and sends the `task_notification` itself,
+ * through `emitTaskNotification`, BEFORE calling this (review r1 finding 10: the engine's
+ * Notification-hook guard reads the row to tell a foreground notification from a background one, so
+ * the row must still exist when the frame is emitted). Removing also drops the id's notification
+ * claim (finding 12 -- see `notifiedTaskIds`). Returns `undefined` for an unknown taskId, never throws.
  */
 export function removeTask(taskId: string): BackgroundTaskHandle | undefined {
   const task = tasks.get(taskId);
-  if (task !== undefined) tasks.delete(taskId);
+  if (task !== undefined) {
+    tasks.delete(taskId);
+    notifiedTaskIds.delete(taskId);
+  }
   return task;
+}
+
+// --- The pinned kill wording (contract §4 "Summary wording", pin `CMe`) -------------------------
+//
+// ONE place for the "this task was killed" summary, shared by every door that kills a task: TaskStop
+// (task-stop.ts), a background command's own exit handler when its process was killed rather than
+// exiting (bash.ts/monitor.ts), and the engine's teardown sweep below. Bash and Monitor's command half
+// have pinned strings; the other kinds have none on the pin, so they keep one Winter wording each --
+// an agent's is the SAME text its own settle() reports (`"stopped by request"`, child-engine.ts), so
+// a TaskStop and a parent abort never describe one event two ways (review r1 finding 4).
+export const AGENT_STOPPED_SUMMARY = "stopped by request";
+
+export function killedTaskSummary(kind: BackgroundTaskKind, description: string): string {
+  if (kind === "bash") return `Background command "${description}" was stopped`;
+  if (kind === "monitor") return `Monitor "${description}" stopped`;
+  if (kind === "agent") return AGENT_STOPPED_SUMMARY;
+  return `${description} (stopped)`;
+}
+
+/**
+ * Review r1 finding 2: the ONE status derivation for a background shell's natural end (Bash and
+ * Monitor's command half share it -- it lives here, not in bash.ts, because an impl module must not
+ * import another executor module: impl-isolation.test.ts). `aborted` is a kill THIS runtime issued
+ * through the run's own signal -> `stopped` (the kill wording). Exit 0 with no timeout/cap ->
+ * `completed`. Everything else -> `failed`, carrying the real exit code only when one exists -- a
+ * timeout, an output cap or an outside kill has none, and none is invented.
+ */
+export function resolveBackgroundOutcome(result: Pick<RunCommandResult, "exitCode" | "timedOut" | "aborted" | "streamKilled">): { status: "completed" | "failed" | "stopped"; exitCode: number | null } {
+  if (result.aborted) return { status: "stopped", exitCode: null };
+  if (result.timedOut || result.streamKilled) return { status: "failed", exitCode: null };
+  if (result.exitCode === 0) return { status: "completed", exitCode: 0 };
+  return { status: "failed", exitCode: result.exitCode };
+}
+
+/**
+ * Review r1 finding 2 (controller ruling): a BACKGROUND shell no longer dies with the turn that
+ * started it -- the pin's `ShellCommand.background()` drops its abort listeners, so only its own
+ * exit, a TaskStop, or the session going away ends it. This is the "session going away" door: the
+ * engine's teardown calls it for its own `sessionId`, and for a subagent engine its own `agentId`
+ * (the pin's `killShellTasksForAgent` on agent exit). Each still-running background shell row
+ * (`bash`, Monitor's `monitor`/`monitor_ws` halves) the caller owns is finalized through the ONE
+ * update door -- `task_updated {killed}` then the kill-worded notification -- and THEN killed, the
+ * same order TaskStop uses so the process's own exit handler finds a terminal row and stays silent.
+ * Returns the ids it stopped. Never throws.
+ */
+export function stopSessionShellTasks(owner: { sessionId: string; agentId?: string }): string[] {
+  const stopped: string[] = [];
+  for (const task of [...tasks.values()]) {
+    if (task.status !== "running") continue;
+    if (task.kind !== "bash" && task.kind !== "monitor" && task.kind !== "monitor_ws") continue;
+    if (task.isBackgrounded === false) continue; // a foreground row belongs to the call awaiting it
+    if (task.emitter?.sessionId !== owner.sessionId) continue;
+    if (owner.agentId !== undefined && task.ownerAgentId !== owner.agentId) continue;
+    try {
+      updateTask(task.taskId, { status: "stopped", endTime: Date.now(), notification: { summary: killedTaskSummary(task.kind, task.description) } });
+      stopTask(task.taskId);
+      stopped.push(task.taskId);
+    } catch {
+      /* one misbehaving row must never strand the rest of the sweep */
+    }
+  }
+  return stopped;
 }
 
 // Test-only escape hatch, same rationale as background-tasks.ts's own resetBackgroundTaskRootForTest:

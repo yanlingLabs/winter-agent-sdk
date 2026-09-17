@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import "../descriptors/task-stop.ts";
 import { replaceExecutor, type ToolExecutor } from "../registry.ts";
-import { getTask, updateTask, stopTask, listRunningTasks, toBackgroundTasksChangedEntry, type BackgroundTaskKind } from "./background-task-runtime.ts";
+import { getTask, updateTask, stopTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, type BackgroundTaskKind } from "./background-task-runtime.ts";
 // Fix round 1 (M4): the internal-kind -> wire-`task_type` mapping. TaskStop is the THIRD producer of
 // that pinned field (after task_started and background_tasks_changed) and was missing from the
 // inventory the mapping's own header lists.
@@ -50,15 +50,10 @@ function formatResult(message: string, taskId: string, taskKind: BackgroundTaskK
   return JSON.stringify({ message, task_id: taskId, task_type: wireTaskType(taskKind), ...(command !== undefined ? { command } : {}) });
 }
 
-// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
-// "killed" strings for the two kinds the wording table pins one for -- `bash` and Monitor's command
-// half (`monitor`; the ws half and workflow/agent kinds have no pinned kill wording, so they keep
-// this file's own established generic phrasing).
-function taskStopSummary(kind: BackgroundTaskKind, description: string): string {
-  if (kind === "bash") return `Background command "${description}" was stopped`;
-  if (kind === "monitor") return `Monitor "${description}" stopped`;
-  return `${description} (stopped)`;
-}
+// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the kill wording now
+// lives in ONE place, `killedTaskSummary` (background-task-runtime.ts), shared with the background
+// exit handlers and the engine's teardown sweep -- and, for an agent, with the child's own settle()
+// text (review r1 finding 4: a TaskStop and a parent abort must not describe one event two ways).
 
 const taskStopExecutor: ToolExecutor = {
   async execute(input, ctx) {
@@ -84,10 +79,14 @@ const taskStopExecutor: ToolExecutor = {
     // §6: a registry update to {status: "killed" (the patch spelling), end_time} -> task_updated
     // then, synchronously, the once-per-id task_notification {status: "stopped"} -- ONE call through
     // the ONE update door, rather than a status write followed by a hand-built emitFrame literal.
-    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: taskStopSummary(task.kind, task.description) } });
+    // Review r1 finding 4: no `usage` here on purpose -- `notifyTerminal` defaults it from the row's
+    // own `usage()` accessor, which an agent row carries (agent.ts).
+    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: killedTaskSummary(task.kind, task.description) } });
     stopTask(id); // process-group kill (WS-12 §5.2) for bash/Monitor-command, or the task's own stop() for Monitor-ws
 
-    try {
+    // Review r1 finding 11: a FOREGROUND row was never listed (§1), so stopping it does not change the
+    // listed set -- `background_tasks_changed` is a level signal and must not fire for a non-change.
+    if (task.isBackgrounded !== false) try {
       ctx.emitFrame({
         type: "system",
         subtype: "background_tasks_changed",

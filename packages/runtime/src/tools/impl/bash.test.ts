@@ -8,7 +8,8 @@ import { getRegisteredTool } from "../registry.ts";
 import type { ToolExecutionContext } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
-import { resetBackgroundTaskRuntimeForTest, getTask } from "./background-task-runtime.ts";
+import { resetBackgroundTaskRuntimeForTest, getTask, stopSessionShellTasks, resolveBackgroundOutcome } from "./background-task-runtime.ts";
+import { taskStopExecutor } from "./task-stop.ts";
 import { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, buildRunCommandOptions } from "./bash.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 
@@ -608,6 +609,45 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(notif.status).toBe("failed");
     });
 
+    // Review r1 finding 2 (controller ruling): a backgrounded command drops the turn's abort -- the
+    // pin's ShellCommand.background() removes its abort listeners.
+    t("a turn abort does NOT kill a background command; it ends by its own exit", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const controller = new AbortController();
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), signal: controller.signal });
+      await bash()({ command: "sleep 0.6; echo survived", run_in_background: true }, ctx);
+      controller.abort();
+      for (let i = 0; i < 60 && !frames.some((f) => f.subtype === "task_notification"); i++) await new Promise((r) => setTimeout(r, 50));
+      const notif = frames.find((f) => f.subtype === "task_notification") as { status: string; summary: string };
+      expect(notif.status).toBe("completed");
+      expect(notif.summary).toBe('Background command "sleep 0.6; echo survived" completed (exit code 0)');
+    });
+
+    t("the session teardown sweep kills a running background command: task_updated {killed} then the kill-worded notification, exactly once", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), sessionId: "teardown-s" });
+      const res = await bash()({ command: "sleep 30", description: "long sleep", run_in_background: true }, ctx);
+      const taskId = /background task (\S+) started/.exec(res.output)![1]!;
+      expect(stopSessionShellTasks({ sessionId: "teardown-s" })).toEqual([taskId]);
+      // The killed process's own exit handler runs after this and must stay silent.
+      await new Promise((r) => setTimeout(r, 300));
+      const own = frames.filter((f) => (f as { task_id?: string }).task_id === taskId && f.subtype !== "task_started");
+      expect(own.map((f) => f.subtype)).toEqual(["task_updated", "task_notification"]);
+      expect((own[0] as { patch: { status?: string } }).patch.status).toBe("killed");
+      expect(own[1]).toMatchObject({ status: "stopped", summary: 'Background command "long sleep" was stopped' });
+      expect(getTask(taskId)?.status).toBe("stopped");
+    });
+
+    t("a timed-out background command reports failed WITHOUT a fabricated exit code", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      await bash()({ command: "sleep 5", description: "slow", timeout: 200, run_in_background: true }, ctx);
+      for (let i = 0; i < 60 && !frames.some((f) => f.subtype === "task_notification"); i++) await new Promise((r) => setTimeout(r, 50));
+      const notif = frames.find((f) => f.subtype === "task_notification") as { status: string; summary: string };
+      expect(notif.status).toBe("failed");
+      expect(notif.summary).toBe('Background command "slow" failed');
+    });
+
     t("foreground calls never touch the background task registry/output dir", async () => {
       const ctx = fakeCtx();
       const res = await bash()({ command: "echo hi" }, ctx);
@@ -691,6 +731,67 @@ describe("foreground: task-frames parity (contract §3)", () => {
       await promise;
       const notif = frames.find((f) => f.subtype === "task_notification") as { status: string };
       expect(notif.status).toBe("stopped");
+    },
+    15_000,
+  );
+});
+
+describe("resolveBackgroundOutcome (review r1 finding 2): no exit code is ever invented", () => {
+  test("aborted -> stopped; timeout / output cap -> failed with no code; exit 0 -> completed; non-zero -> failed with the real code; an outside kill (null) -> failed with no code", () => {
+    const base = { exitCode: null, timedOut: false, aborted: false, streamKilled: false };
+    expect(resolveBackgroundOutcome({ ...base, aborted: true })).toEqual({ status: "stopped", exitCode: null });
+    expect(resolveBackgroundOutcome({ ...base, timedOut: true })).toEqual({ status: "failed", exitCode: null });
+    expect(resolveBackgroundOutcome({ ...base, streamKilled: true, exitCode: 0 })).toEqual({ status: "failed", exitCode: null });
+    expect(resolveBackgroundOutcome({ ...base, exitCode: 0 })).toEqual({ status: "completed", exitCode: 0 });
+    expect(resolveBackgroundOutcome({ ...base, exitCode: 2 })).toEqual({ status: "failed", exitCode: 2 });
+    expect(resolveBackgroundOutcome(base)).toEqual({ status: "failed", exitCode: null });
+  });
+});
+
+describe("foreground: review r1 findings 10/11/13", () => {
+  beforeEach(() => resetBackgroundTaskRuntimeForTest());
+  afterEach(() => resetBackgroundTaskRuntimeForTest());
+
+  t(
+    "an EMPTY description falls back to the command (|| not ??)",
+    async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      await bash()({ command: "sleep 2.3", description: "" }, fakeCtx({ emitFrame: (f) => frames.push(f) }));
+      expect((frames.find((f) => f.subtype === "task_started") as { description: string }).description).toBe("sleep 2.3");
+    },
+    10_000,
+  );
+
+  t(
+    "the foreground notification is emitted while the row still exists (so the engine's hook guard can read it), and the row is gone afterwards",
+    async () => {
+      let rowAtNotify: unknown = "unset";
+      const ctx = fakeCtx({
+        emitFrame: (f) => {
+          if (f.subtype === "task_notification") rowAtNotify = getTask(f.task_id);
+        },
+      });
+      await bash()({ command: "sleep 2.3" }, ctx);
+      expect(rowAtNotify).toMatchObject({ isBackgrounded: false });
+      expect(rowAtNotify).not.toBe("unset");
+    },
+    10_000,
+  );
+
+  t(
+    "TaskStop on a running FOREGROUND command: exactly one task_updated + one task_notification, and NO background_tasks_changed (the listed set did not change)",
+    async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      const running = bash()({ command: "sleep 10", description: "fg sleep" }, ctx);
+      for (let i = 0; i < 60 && !frames.some((f) => f.subtype === "task_started"); i++) await new Promise((r) => setTimeout(r, 50));
+      const started = frames.find((f) => f.subtype === "task_started") as { task_id: string };
+      await taskStopExecutor.execute({ task_id: started.task_id }, ctx);
+      await running; // the killed process's own foreground finish runs after the stop
+      const own = frames.filter((f) => f.subtype !== "task_started");
+      expect(own.map((f) => f.subtype)).toEqual(["task_updated", "task_notification"]);
+      expect(own[1]).toMatchObject({ status: "stopped", summary: 'Background command "fg sleep" was stopped' });
+      expect(getTask(started.task_id)).toBeUndefined();
     },
     15_000,
   );

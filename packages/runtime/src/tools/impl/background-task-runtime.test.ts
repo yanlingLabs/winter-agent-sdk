@@ -3,7 +3,6 @@ import type { BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
 import {
   startTracking,
   getTask,
-  setTaskStatus,
   updateTask,
   removeTask,
   emitTaskNotification,
@@ -11,6 +10,8 @@ import {
   listRunningTasks,
   killTaskProcessGroup,
   stopTask,
+  stopSessionShellTasks,
+  killedTaskSummary,
   toBackgroundTasksChangedEntry,
   resetBackgroundTaskRuntimeForTest,
 } from "./background-task-runtime.ts";
@@ -34,11 +35,13 @@ describe("background-task-runtime", () => {
     expect(getTask("nope")).toBeUndefined();
   });
 
-  test("setTaskStatus transitions a tracked task; a no-op for an unknown id (never throws)", () => {
+  test("updateTask transitions a tracked task; a no-op for an unknown id (never throws) -- the ONE status door (review r1 finding 12: setTaskStatus is gone)", async () => {
     startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d" });
-    setTaskStatus("t1", "completed");
+    updateTask("t1", { status: "completed" });
     expect(getTask("t1")?.status).toBe("completed");
-    expect(() => setTaskStatus("unknown", "stopped")).not.toThrow();
+    expect(() => updateTask("unknown", { status: "stopped" })).not.toThrow();
+    const mod = await import("./background-task-runtime.ts");
+    expect("setTaskStatus" in mod).toBe(false);
   });
 
   test("listTasks/listRunningTasks reflect status transitions", () => {
@@ -46,7 +49,7 @@ describe("background-task-runtime", () => {
     startTracking({ taskId: "b", kind: "monitor", outputPath: "/b", description: "b" });
     expect(listTasks()).toHaveLength(2);
     expect(listRunningTasks()).toHaveLength(2);
-    setTaskStatus("a", "completed");
+    updateTask("a", { status: "completed" });
     expect(listRunningTasks().map((t) => t.taskId)).toEqual(["b"]);
   });
 
@@ -248,11 +251,13 @@ describe("background-task-runtime", () => {
       updateTask("t1", { status: "stopped", endTime: 1, notification: { summary: "stopped by TaskStop" } }); // TaskStop's own door
       expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
       // The natural-exit handler runs anyway (it did not check status first) and tries its own
-      // terminal update -- wasTerminal is already true, so no second notification, though the status
-      // field itself DOES flip (a disclosed, pre-existing quirk of updateTask not refusing a status
-      // change once terminal -- see this file's own header on notifyTerminal for the exact rule).
+      // terminal update -- the row is already terminal, so NOTHING moves (review r1 finding 6): no
+      // second notification, no stray task_updated, and the first verdict ("stopped") stands.
+      const before = emitter.frames.length;
       updateTask("t1", { status: "completed", endTime: 2, notification: { summary: "completed naturally" } });
-      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
+      expect(emitter.frames).toHaveLength(before);
+      expect(getTask("t1")?.status).toBe("stopped");
+      expect(getTask("t1")?.endTime).toBe(1);
     });
 
     test("§1: registering (startTracking) clears a PRIOR id's notification claim -- a resumed/replaced task can notify again on its own new terminal transition", () => {
@@ -276,7 +281,102 @@ describe("background-task-runtime", () => {
     });
   });
 
+  describe("review r1 finding 6: a terminal row is settled", () => {
+    test("a late endTime/error/isBackgrounded change on a terminal row emits NO task_updated (the foreground-agent-after-TaskStop stray frame)", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "agent", outputPath: "/x", description: "d", isBackgrounded: false, emitter });
+      updateTask("t1", { status: "stopped", endTime: 10, notification: { summary: "stopped by request" } });
+      expect(emitter.frames).toHaveLength(2);
+      updateTask("t1", { status: "failed", endTime: 20, error: "late", isBackgrounded: true, notification: { summary: "late" } });
+      expect(emitter.frames).toHaveLength(2);
+      expect(getTask("t1")).toMatchObject({ status: "stopped", endTime: 10, isBackgrounded: false });
+      expect(getTask("t1")?.error).toBeUndefined();
+    });
+  });
+
+  describe("review r1 finding 4: a row's own usage accessor is the notification's default usage", () => {
+    test("notifyTerminal reads usage() when the caller supplies none (the TaskStop door)", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "agent", outputPath: "/x", description: "d", emitter, usage: () => ({ total_tokens: 7, tool_uses: 2, duration_ms: 5 }) });
+      updateTask("t1", { status: "stopped", endTime: 1, notification: { summary: "stopped by request" } });
+      expect((emitter.frames[1] as { usage?: unknown }).usage).toEqual({ total_tokens: 7, tool_uses: 2, duration_ms: 5 });
+    });
+
+    test("an explicit usage wins over the accessor; a throwing accessor costs only the usage field", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "a", kind: "agent", outputPath: "/x", description: "d", emitter, usage: () => ({ total_tokens: 1, tool_uses: 1, duration_ms: 1 }) });
+      updateTask("a", { status: "completed", endTime: 1, notification: { summary: "ok", usage: { total_tokens: 9, tool_uses: 9, duration_ms: 9 } } });
+      expect((emitter.frames[1] as { usage?: { total_tokens: number } }).usage?.total_tokens).toBe(9);
+      startTracking({
+        taskId: "b",
+        kind: "agent",
+        outputPath: "/x",
+        description: "d",
+        emitter,
+        usage: () => {
+          throw new Error("boom");
+        },
+      });
+      updateTask("b", { status: "completed", endTime: 1, notification: { summary: "ok" } });
+      const notification = emitter.frames[3] as { subtype: string; usage?: unknown };
+      expect(notification.subtype).toBe("task_notification");
+      expect(notification.usage).toBeUndefined();
+    });
+  });
+
+  describe("killedTaskSummary: the one kill wording, per kind", () => {
+    test("bash and monitor use the pinned strings; agent uses the SAME text its own settle() reports", () => {
+      expect(killedTaskSummary("bash", "sleep")).toBe('Background command "sleep" was stopped');
+      expect(killedTaskSummary("monitor", "watch")).toBe('Monitor "watch" stopped');
+      expect(killedTaskSummary("agent", "child")).toBe("stopped by request");
+    });
+  });
+
+  describe("stopSessionShellTasks: the teardown door (review r1 finding 2)", () => {
+    test("stops only the owner's running BACKGROUND shell rows, through the update door, kill-worded", () => {
+      const s1 = fakeEmitter();
+      const s2 = { ...fakeEmitter(), sessionId: "s2" };
+      let stoppedWs = 0;
+      startTracking({ taskId: "bg", kind: "bash", outputPath: "/x", description: "sleep", isBackgrounded: true, emitter: s1 });
+      startTracking({ taskId: "ws", kind: "monitor_ws", outputPath: "/x", description: "ws", emitter: s1, stop: () => void stoppedWs++ });
+      startTracking({ taskId: "child-bg", kind: "bash", outputPath: "/x", description: "child", isBackgrounded: true, emitter: s1, ownerAgentId: "agent-1" });
+      startTracking({ taskId: "fg", kind: "bash", outputPath: "", description: "fg", isBackgrounded: false, emitter: s1 });
+      startTracking({ taskId: "agent", kind: "agent", outputPath: "/x", description: "a", isBackgrounded: true, emitter: s1 });
+      startTracking({ taskId: "other", kind: "bash", outputPath: "/x", description: "o", isBackgrounded: true, emitter: s2 });
+
+      // A subagent's teardown stops only ITS OWN shells.
+      expect(stopSessionShellTasks({ sessionId: "s1", agentId: "agent-1" })).toEqual(["child-bg"]);
+      expect(getTask("bg")?.status).toBe("running");
+
+      // The top-level teardown stops every remaining background shell of its session.
+      expect(stopSessionShellTasks({ sessionId: "s1" }).sort()).toEqual(["bg", "ws"]);
+      expect(stoppedWs).toBe(1);
+      expect(getTask("fg")?.status).toBe("running");
+      expect(getTask("agent")?.status).toBe("running");
+      expect(getTask("other")?.status).toBe("running");
+
+      const bgFrames = s1.frames.filter((f) => (f as { task_id?: string }).task_id === "bg");
+      expect(bgFrames.map((f) => (f as { subtype: string }).subtype)).toEqual(["task_updated", "task_notification"]);
+      expect((bgFrames[0] as { patch: { status?: string } }).patch.status).toBe("killed");
+      expect(bgFrames[1]).toMatchObject({ status: "stopped", summary: 'Background command "sleep" was stopped' });
+    });
+  });
+
   describe("removeTask: deletes the row, emits nothing itself (§3/§4's foreground finish)", () => {
+    test("review r1 finding 12: removing a notified row drops its claim too -- the claim set is bounded by the registry", () => {
+      const emitter = fakeEmitter();
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "", description: "d", isBackgrounded: false, emitter });
+      emitTaskNotification(getTask("t1")!, { status: "completed", outputFile: "", summary: "d" });
+      // Within the row's life the claim holds.
+      emitTaskNotification(getTask("t1")!, { status: "completed", outputFile: "", summary: "again" });
+      expect(emitter.frames).toHaveLength(1);
+      removeTask("t1");
+      // A later, unrelated registration under the same id is a fresh task with its own claim.
+      startTracking({ taskId: "t1", kind: "bash", outputPath: "", description: "d2", isBackgrounded: false, emitter });
+      emitTaskNotification(getTask("t1")!, { status: "completed", outputFile: "", summary: "d2" });
+      expect(emitter.frames).toHaveLength(2);
+    });
+
     test("returns the removed handle and the id is no longer tracked", () => {
       startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d" });
       const removed = removeTask("t1");
