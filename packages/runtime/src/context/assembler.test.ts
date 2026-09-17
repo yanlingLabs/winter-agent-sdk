@@ -564,18 +564,31 @@ describe("assembler -- agentListing (spawn-surface parity)", () => {
     expect(out.agentListingTypes).toEqual(["general-purpose"]);
   });
 
-  test("priorAgentTypes with no real change yields no block at all, and agentListingTypes still reports the current set", () => {
+  // L2b: user-context blocks are re-attached every turn and never persisted, so the FULL listing is
+  // rendered on every turn -- a first-turn-only listing would leave turn two with none at all.
+  test("priorAgentTypes with no real change still renders the full listing (every turn), and no delta block", () => {
     const entries = [{ agentType: "claude", whenToUse: "Catch-all.", tools: ["*"] }];
     const out = assemble({ agentListing: { entries, priorAgentTypes: ["claude"] } });
-    expect(out.userContextBlocks.some((b) => b.includes("Agent tool"))).toBe(false);
+    const agentBlocks = out.userContextBlocks.filter((b) => b.includes("agent types"));
+    expect(agentBlocks).toHaveLength(1);
+    expect(agentBlocks[0]).toContain("Available agent types for the Agent tool:");
     expect(out.agentListingTypes).toEqual(["claude"]);
   });
 
-  test("an empty entries list with priorAgentTypes given renders the removal delta, not the full header", () => {
+  test("a changed set renders the full CURRENT listing plus the added/removed delta after it", () => {
+    const entries = [{ agentType: "Plan", whenToUse: "Plans.", tools: ["*"] }];
+    const out = assemble({ agentListing: { entries, priorAgentTypes: ["Explore"] } });
+    expect(out.userContextBlocks.at(-2)).toContain("Available agent types for the Agent tool:");
+    expect(out.userContextBlocks.at(-2)).toContain("- Plan: Plans.");
+    expect(out.userContextBlocks.at(-1)).toContain("New agent types are now available for the Agent tool:\n- Plan: Plans. (Tools: All tools)");
+    expect(out.userContextBlocks.at(-1)).toContain("The following agent types are no longer available:\n- Explore");
+  });
+
+  test("an empty entries list with priorAgentTypes given renders ONLY the removal delta (nothing to list)", () => {
     const out = assemble({ agentListing: { entries: [], priorAgentTypes: ["Explore"] } });
     expect(out.userContextBlocks.at(-1)).toContain("The following agent types are no longer available:");
     expect(out.userContextBlocks.at(-1)).toContain("- Explore");
-    expect(out.userContextBlocks.at(-1)).not.toContain("Available agent types for the Agent tool:");
+    expect(out.userContextBlocks.some((b) => b.includes("Available agent types for the Agent tool:"))).toBe(false);
   });
 
   test("region.excludeDynamicSections=true still puts the listing AFTER the moved dynamic block", () => {

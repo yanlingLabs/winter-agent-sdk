@@ -14,7 +14,8 @@
 // call lives there) via the SAME `builtinNameOf` helper every descriptor uses -- everything else is a
 // canonical tool name this codebase spells as a bare literal in a dozen descriptor files already
 // (`"Read"`, `"Grep"`, ...), so a literal here carries no more drift risk than those do.
-import { SEND_MESSAGE_DEFINITION, READ_NOTIFICATIONS_DEFINITION } from "@yanlinglabs/winter-agent-sdk/tools";
+import { SEND_MESSAGE_DEFINITION, READ_NOTIFICATIONS_DEFINITION, WINTER_DEFAULT_TOOL_DEFINITIONS } from "@yanlinglabs/winter-agent-sdk/tools";
+import { WINTER_BRAND, mcpToolName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { AGENT_TOOL_CANONICAL_NAME } from "../provider/slots.ts";
 
 function builtinNameOf(def: { builtinName?: string; toolName: string }): string {
@@ -101,3 +102,46 @@ export const BACKGROUND_AGENT_TOOL_ALLOWLIST: readonly string[] = [
  * there is nothing to list for them here.
  */
 export const BACKGROUND_AGENT_ALWAYS_ALLOWED_TOOL: string = AGENT_TOOL_CANONICAL_NAME;
+
+// --- Application (lane L2b) --------------------------------------------------------------------
+
+export interface SubagentToolPoolOptions {
+  /** The child runs in `plan` mode -- `ExitPlanMode` stays (claude's own parenthetical). */
+  planMode: boolean;
+  /** The child is below the spawn-depth limit -- only then does it keep `Agent` (research §A6). */
+  mayNest: boolean;
+  /** The child is backgrounded -- its pool is further narrowed to the allowlist above. */
+  background: boolean;
+  /** The session's brand: names Winter's own standing-server twins (`mcp__<server>__send_message`, ...). */
+  brand?: Pick<BrandProfile, "mcpServerName">;
+}
+
+/**
+ * The child's EFFECTIVE tool pool, from the pool it would otherwise inherit (research §A6):
+ *   1. every name in `SUBAGENT_EXCLUDED_TOOLS` is removed (`ExitPlanMode` kept in plan mode);
+ *   2. `Agent` is removed once the child is at the spawn-depth limit (a child that cannot spawn must
+ *      not be offered the tool -- claude's depth-gated `Agent`);
+ *   3. a BACKGROUND child keeps only `BACKGROUND_AGENT_TOOL_ALLOWLIST`, plus `Agent` (depth-gated)
+ *      and every MCP tool, which pass regardless.
+ *
+ * WINTER'S OWN DEFAULT TOOLS ARE JUDGED BY THEIR BUILT-IN NAME. `SendMessage`, `ListAgents`,
+ * `ReadNotifications` and `advisor` are also registered as standing-server twins under
+ * `mcp__<server>__<tool>` (WS-09 §10); a twin is the same tool, so it follows its built-in name's
+ * verdict here rather than slipping through step 3's MCP passthrough (or step 1's exclusion) on its
+ * prefix alone. Only a genuine MCP server's tool is an "MCP tool" in claude's sense.
+ */
+export function applySubagentToolPool(tools: readonly string[], opts: SubagentToolPoolOptions): string[] {
+  const brand = opts.brand ?? WINTER_BRAND;
+  const twins = new Map<string, string>(WINTER_DEFAULT_TOOL_DEFINITIONS.map((def) => [mcpToolName(brand, def.toolName), builtinNameOf(def)]));
+  const excluded = new Set(SUBAGENT_EXCLUDED_TOOLS.filter((name) => !(opts.planMode && name === "ExitPlanMode")));
+  const allow = new Set(BACKGROUND_AGENT_TOOL_ALLOWLIST);
+  return tools.filter((name) => {
+    const policyName = twins.get(name) ?? name;
+    if (excluded.has(policyName)) return false;
+    if (policyName === AGENT_TOOL_CANONICAL_NAME && !opts.mayNest) return false;
+    if (!opts.background) return true;
+    if (policyName === BACKGROUND_AGENT_ALWAYS_ALLOWED_TOOL) return true; // depth already checked above
+    if (name.startsWith("mcp__") && !twins.has(name)) return true;
+    return allow.has(policyName);
+  });
+}

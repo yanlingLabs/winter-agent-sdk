@@ -174,7 +174,11 @@ const SKILL_TOOL_ADVERTISED_NAME = "Skill";
 // it lives inside this closure rather than in production-wiring.ts.
 import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-registry.ts";
 import { resolveProjectDirName } from "./paths/project-dir-name.ts";
-import { loadAgentDefinitions, type PluginAgentDefinition } from "./subagents/definitions.ts";
+import { loadAgentDefinitions, toAgentInfoList, type PluginAgentDefinition, type SourcedAgentDefinition } from "./subagents/definitions.ts";
+import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
+import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
+import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
+import type { AgentListingEntry } from "./context/agent-listing.ts";
 import { getPluginAgents } from "./subagents/plugin-agents.ts";
 import { getSkillSessionRuntime } from "./skills/runtime.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
@@ -297,7 +301,12 @@ export type ContentBlock =
   // the model-facing `tool_result` content. This is the ONE compile-forced edit in the R6-3 sweep:
   // every `return block.content` fallthrough in this repo stops type-checking, which is exactly why
   // the three variants below need FIXTURES instead of trusting the build.
-  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean }
+  //
+  // Spawn-surface parity (R-S4, research gap 6): `is_error` is NOT one of the synthetic markers
+  // above -- it is claude's own wire field, set on a REAL tool_result whose executor reported
+  // `isError: true` (every provider adapter maps it: Anthropic/Bedrock carry it natively, the
+  // OpenAI/Google families have no such field and keep the error text).
+  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean }
   // --- Phase 6 Task 3 (R6-3, derived-shapes-p6.md item (f)): the variants a real provider produces --
   //
   // NOT declared by the pinned artifact: `redacted_thinking`, a `type: 'thinking'` literal and
@@ -786,7 +795,7 @@ export interface ToolExecutor {
    * "a stopped child starts nothing new AND its in-flight Bash is killed" (R6-6), which was
    * previously impossible because the interrupt was a raced Promise with no channel into the tool.
    */
-  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal }): Promise<{ output: string }>;
+  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal }): Promise<{ output: string; isError?: boolean }>;
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -1017,6 +1026,13 @@ export interface EngineOptions {
    * a top-level host.
    */
   agentSystemPrompt?: string;
+  /**
+   * Spawn-surface parity (research §A1, `omitClaudeMd`): set by subagents/child-engine.ts from the
+   * child's resolved definition (`RuntimeAgentDefinition.omitProjectContext` -- the `Explore`/`Plan`/
+   * `web-fetch` built-ins). The assembler then drops the discovered instructions files and the git
+   * summary for this run. Never set by a top-level host.
+   */
+  omitProjectContext?: boolean;
   /**
    * R5-14: slash-command resolution (Lane S owns the filesystem half; the engine owns the built-ins
    * and the ordering between them). Consulted BEFORE the model sees a prompt. ABSENT => only the
@@ -1595,6 +1611,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     contextAccountant: injectedContextAccountant,
     systemPromptAssembler,
     agentSystemPrompt,
+    omitProjectContext,
     commandResolver,
     compactionController,
     structuredOutput,
@@ -1703,6 +1720,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // own note on why the fallback is not repeated at each reader.
   const sessionBrand = config.brand ?? WINTER_BRAND;
   const resolvedWinterHome = wiredWinterHome ?? config.winterHome;
+  // Spawn-surface parity (R-S5): the fork gate, resolved once per run -- the RuntimeConfig field
+  // wins in either direction, the env var is the fallback, and absent-and-unset is off.
+  const forkSubagentEnabled = config.forkSubagent ?? resolveForkSubagentEnabled(engineEnv ?? process.env, sessionBrand);
   const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
@@ -2755,7 +2775,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-07 §11's forced bypass -- straight into execution. Probe-confirmed, not hypothetical.
       // An intersection is also the only reading consistent with WS-10 §2 ("AgentDefinition.tools
       // RESTRICTS availability"): a restriction that can widen is not a restriction.
-      tools: req.definition?.tools !== undefined ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name)) : [...currentAdvertisedCanonicalNames],
+      //
+      // Spawn-surface parity: `tools: ["*"]` (every built-in that means "all tools") is the
+      // UNRESTRICTED case, exactly like an absent list -- claude's own wildcard. Filtering the literal
+      // "*" against the pool would hand those agents an EMPTY pool.
+      tools:
+        req.definition?.tools !== undefined && !req.definition.tools.includes("*")
+          ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name))
+          : [...currentAdvertisedCanonicalNames],
       // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
       // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
       // `WINTER_SUBAGENT_MODEL`, the inherited `config.model` -- passes through exactly as before.
@@ -3098,6 +3125,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Phase 4 Task 8 (Lane C Gap #3): the programmatic Options.agents map, straight from this
       // run's own RuntimeConfig -- see ToolExecutionContext.agents (registry.ts) for why.
       ...(config.agents !== undefined ? { agents: config.agents } : {}),
+      // Spawn-surface parity: the session env (kill switches), the resolved fork gate, whether this
+      // engine is itself a fork, and the live advertised set (the Agent tool's launch result reads it).
+      env: engineEnv ?? process.env,
+      forkSubagentEnabled: forkSubagentEnabled,
+      ...(config.insideFork === true ? { insideFork: true } : {}),
+      advertisedToolNames: () => currentAdvertisedCanonicalNames,
       // Phase 4 Task 8 (rider 27): dispatch-time availability enforcement. A FUNCTION, not a
       // snapshot, for two independent reasons: (1) `advertisedCfg` (below) is assigned AFTER this
       // one runs -- the same "declared later, read at call time" closure binding `emitToolReference`
@@ -3421,6 +3454,28 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `contextAccountant.contextTokens()` is the last call's context SIZE -- an overwrite, not an
   // accumulation, and blind to a workflow's own child agents. `budget.spent()` therefore reports an
   // honest 0 rather than a plausible wrong number, exactly as Lane W's own disclosure states.
+  /**
+   * Spawn-surface parity: THE one loader of this session's `subagent_type` set -- `system/init.agents`,
+   * the Agent-tool listing block, the Agent tool's description gates, `list_agents` and the
+   * workflow runtime's `resolveAgentType` all read it, so none of them can disagree with what the
+   * Agent tool itself resolves (tools/impl/agent.ts passes the same inputs through its ctx).
+   */
+  function sessionAgentDefinitions(at: { cwd?: string; trustedWorkspace?: boolean } = {}): Map<string, SourcedAgentDefinition> {
+    const pluginAgents = getPluginAgents(config.sessionId);
+    return loadAgentDefinitions({
+      home: permissionHome,
+      // Phase 5 fix wave, KNOWN-6: the resolved winter root every other fence in this run uses.
+      ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+      brand: sessionBrand,
+      cwd: at.cwd ?? config.cwd,
+      trustedWorkspace: at.trustedWorkspace ?? trustedWorkspace,
+      env: engineEnv ?? process.env,
+      forkSubagentEnabled,
+      ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
+      ...(pluginAgents !== undefined ? { pluginAgents: pluginAgents as Record<string, PluginAgentDefinition> } : {}),
+    });
+  }
+
   const workflowWinterHome = structuredOutput !== undefined ? (wiredWinterHome ?? config.winterHome) : undefined;
   // I5: held so teardown withdraws THIS registration and not whichever one is current.
   let disposeWorkflowSession: (() => void) | undefined;
@@ -3451,15 +3506,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // which is what makes a workflow `budget` bound the work its AGENTS do rather than only the
       // parent's own turns.
       spentTokens: () => contextAccountant.spentTokens(),
-      resolveAgentType: (agentType, ctx) =>
-        loadAgentDefinitions({
-          home: permissionHome,
-          brand: sessionBrand,
-          cwd: ctx.cwd,
-          trustedWorkspace: ctx.trustedWorkspace,
-          ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
-          ...(getPluginAgents(config.sessionId) !== undefined ? { pluginAgents: getPluginAgents(config.sessionId) as Record<string, PluginAgentDefinition> } : {}),
-        }).get(agentType),
+      // Spawn-surface parity (L2a's flagged omission, e53afe4's twin): the SAME loader init.agents,
+      // the Agent-tool listing and `list_agents` use -- including the resolved winter root and the
+      // session env -- so a workflow's `agent({type})` resolves exactly the set the model is shown.
+      resolveAgentType: (agentType, ctx) => sessionAgentDefinitions({ cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace }).get(agentType),
     });
   }
 
@@ -3720,27 +3770,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // never a second, independently-derived list that could disagree with what `subagent_type`
   // resolution actually accepts. `AGENT_TOOL_CANONICAL_NAME` is imported already (provider/slots.ts,
   // line 95) for the per-turn model-slot render just below this block.
-  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME)
-    ? [
-        ...loadAgentDefinitions({
-          home: permissionHome,
-          // Phase 5 fix wave, KNOWN-6 (this file's own `resolvedWinterHome`, line ~1702: "the same
-          // resolved root every other fence in this run uses"): WITHOUT this, a session run with a
-          // custom `<PREFIX>HOME` would list `init.agents` from `~/.winter/agents` (the OS home)
-          // while `subagent_type` resolution itself (`tools/impl/agent.ts` threads `ctx.winterHome`)
-          // resolves the SAME user tier from the configured root -- the exact two-places-for-one-
-          // configuration bug KNOWN-6 already closed once, reopened on this new call site were this
-          // omitted.
-          ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
-          brand: sessionBrand,
-          cwd: config.cwd,
-          trustedWorkspace,
-          env: engineEnv ?? process.env,
-          ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
-          ...(getPluginAgents(config.sessionId) !== undefined ? { pluginAgents: getPluginAgents(config.sessionId) as Record<string, PluginAgentDefinition> } : {}),
-        }).keys(),
-      ].sort((a, b) => a.localeCompare(b))
-    : undefined;
+  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -4034,6 +4064,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             continue;
           }
           // WS-13c §7: Winter-only, payload-free. The producer is wired by production-wiring.ts (Lane A) from Lane C's builder.
+          // Spawn-surface parity (research §A3): `Query.supportedAgents()`. The SAME set -- and the same
+          // "only when the Agent tool is advertised" gate -- as `system/init.agents`.
+          if (cf.subtype === "list_agents") {
+            output.write({
+              type: "control_response",
+              requestId: cf.requestId,
+              ok: true,
+              payload: currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME) ? toAgentInfoList(sessionAgentDefinitions()) : [],
+            });
+            continue;
+          }
           if (cf.subtype === "list_model_families") {
             // R-6c-21: the LIVE model key, exactly as `providerToolSpecs()` reads it. Called bare, the
             // producer fell back to the session's START model, so §7's switcher listed the family the
@@ -4564,13 +4605,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (foundAt === undefined) continue; // no on-disk trace of this record's own [deferred] marker in THIS run's rebuilt history
 
       const { mi, bi } = foundAt;
-      const substitute = (fields: { content: string; denied?: boolean; error?: boolean }): void => {
+      const substitute = (fields: { content: string; denied?: boolean; error?: boolean; isError?: boolean }): void => {
         const current = messages[mi]!;
         const blocks = (current.content as ContentBlock[]).slice();
         blocks[bi] = {
           type: "tool_result",
           tool_use_id: record.toolUseID,
           content: fields.content,
+          ...(fields.isError === true ? { is_error: true } : {}),
           ...(fields.denied === true ? { denied: true } : {}),
           ...(fields.error === true ? { error: true } : {}),
         };
@@ -4642,8 +4684,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         approvalStore.markConsuming(record.requestId);
         try {
           const result = await tools.execute({ id: record.toolUseID, name: record.toolName, input: inputToExecute });
-          approvalStore.markConsumed(record.requestId, { output: result.output });
-          substitute({ content: result.output });
+          approvalStore.markConsumed(record.requestId, { output: result.output, ...(result.isError === true ? { isError: true } : {}) });
+          substitute({ content: result.output, ...(result.isError === true ? { isError: true } : {}) });
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);
           approvalStore.markConsumed(record.requestId, { output: `[error: ${text}]`, isError: true });
@@ -4836,7 +4878,29 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     await performCompaction("auto", null);
   };
 
+  // Spawn-surface parity (research §A3): the Agent-tool listing block. `priorAgentTypes` is this
+  // SESSION's (this run's) memory of the set the previous turn listed, so a changed set also renders
+  // the "now available / no longer available" delta; `latestAgentDefinitions` is the set the current
+  // turn resolved, read by the Agent tool's description gates in `toolSpecFor` below.
+  let priorAgentTypes: string[] | undefined;
+  let latestAgentDefinitions: Map<string, SourcedAgentDefinition> | undefined;
+  const agentListingInput = (): SystemPromptInput["agentListing"] | undefined => {
+    // A session (or a child) without the Agent tool gets no listing -- a depth-limited child has had
+    // `Agent` removed from its own pool (child-engine.ts), so this is also the depth filter.
+    if (!currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME)) return undefined;
+    const defs = sessionAgentDefinitions();
+    latestAgentDefinitions = defs;
+    const entries: AgentListingEntry[] = [...defs.entries()].map(([agentType, def]) => ({
+      agentType,
+      whenToUse: def.description,
+      ...(def.tools !== undefined ? { tools: def.tools } : {}),
+      ...(def.disallowedTools !== undefined ? { disallowedTools: def.disallowedTools } : {}),
+    }));
+    return { entries, ...(priorAgentTypes !== undefined ? { priorAgentTypes } : {}) };
+  };
+
   const assemblePrompt = (): AssembledPrompt => {
+    const agentListing = agentListingInput();
     const base: SystemPromptInput = {
       config,
       cwd: config.cwd,
@@ -4850,9 +4914,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing for why the engine
       // rather than either lane owns this check.
       ...(skillListing !== undefined && skillListing.length > 0 && advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME) ? { skillListing } : {}),
+      ...(agentListing !== undefined ? { agentListing } : {}),
+      ...(omitProjectContext === true ? { omitProjectContext: true } : {}),
     };
     if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "", userContextBlocks: [] };
-    return systemPromptAssembler.assemble(base);
+    const assembled = systemPromptAssembler.assemble(base);
+    if (assembled.agentListingTypes !== undefined) priorAgentTypes = assembled.agentListingTypes;
+    return assembled;
   };
 
   // Builds the LIVE request's message list: the engine's own history, with this envelope's
@@ -4935,10 +5003,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * invisibly. The clone is per call, and the STATIC descriptor keeps the pinned four as its own
    * default -- which is also what a session with no `activeSlotSet` wired still advertises.
    */
+  // Spawn-surface parity (research §A2/§A3): the Agent tool's schema and description are gate-aware
+  // -- `run_in_background` drops when the fork gate is on or background tasks are disabled, the
+  // omitted-type sentence follows whether `general-purpose` exists, and a fork section appears with
+  // the fork gate. Rendered per call from the registry descriptor's own pure builders; with every
+  // gate at its default the result is byte-identical to the static registration.
+  const agentToolGates = (): AgentToolGateState => ({
+    forkEnabled: forkSubagentEnabled,
+    backgroundDisabled: resolveBackgroundTasksDisabled(engineEnv ?? process.env, sessionBrand),
+    generalPurposeAvailable: (latestAgentDefinitions ?? sessionAgentDefinitions()).has("general-purpose"),
+  });
+
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
     if (descriptor.canonicalName !== AGENT_TOOL_CANONICAL_NAME) {
       return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
     }
+    const gates = agentToolGates();
+    const gated = gates.forkEnabled !== AGENT_TOOL_GATE_DEFAULTS.forkEnabled || gates.backgroundDisabled !== AGENT_TOOL_GATE_DEFAULTS.backgroundDisabled || gates.generalPurposeAvailable !== AGENT_TOOL_GATE_DEFAULTS.generalPurposeAvailable;
+    if (gated) descriptor = { ...descriptor, description: renderAgentToolDescription(gates) + AGENT_MODEL_SLOTS_BLOCK, inputSchema: agentInputSchemaFor(gates) };
     const render = currentAgentModelRender();
     // An EMPTY enum is not a render: a session with no effective model to derive a family from
     // (`own-model` with no key) would otherwise advertise a `model` property whose enum admits
@@ -6006,7 +6088,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             interrupted = true;
             break;
           }
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output });
+          // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
+          // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}) });
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have

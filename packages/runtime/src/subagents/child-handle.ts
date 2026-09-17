@@ -100,6 +100,13 @@ export interface ChildTaskProgress {
   durationMs: number;
   /** The name of the LAST `tool_use` block in the qualifying message. */
   lastToolName: string;
+  /**
+   * Contract §8: the activity text of the child's MOST RECENT RECORDED tool call (every `tool_use`
+   * except the structured-output tool is recorded; the value is sticky across messages, like the
+   * pin's tracker `lastActivity`). `undefined` when that call's tool has no activity text (or nothing
+   * has been recorded yet) -- the caller then falls back to the task description.
+   */
+  activity?: string;
 }
 
 export interface ChildHandle {
@@ -109,6 +116,13 @@ export interface ChildHandle {
   resume(msg: GlobalAgentMessage): Promise<DeliveryOutcome>;
   result(): Promise<ChildResult>;
   stop(): Promise<void>;
+  /**
+   * Review r1 finding 4: the CURRENT generation's live usage counters (the same numbers
+   * `ChildResult.usage` settles with). Optional -- a hand-built test handle has none. The agent
+   * task's registry row reads it, so a TaskStop that finalizes the row before the child's own result
+   * arrives still reports usage.
+   */
+  usage?(): ChildResult["usage"];
 }
 
 // WS-10 §2's own AgentDefinition surface, ALREADY fully pinned as the wire-shaped
@@ -152,6 +166,15 @@ export interface SpawnChildRequest {
    * bookkeeping, surfaced per qualifying message instead of only once at settle().
    */
   onProgress?: (progress: ChildTaskProgress) => void;
+  /**
+   * Review r1 finding 9: fired ONCE, synchronously, with the real handle, after the child's record
+   * exists and BEFORE its first generation starts -- so a caller (tools/impl/agent.ts) can register
+   * the task and emit `task_started` before any child frame or `task_progress` for that task can
+   * exist. A throw from it is swallowed here (the caller records its own failure and decides what to
+   * do with the child once `spawn` returns). A spawner that never calls it (a hand-built test
+   * double) is fine: the caller falls back to registering after `spawn` resolves.
+   */
+  onSpawned?: (handle: ChildHandle) => void;
 }
 
 export interface ChildInheritance {

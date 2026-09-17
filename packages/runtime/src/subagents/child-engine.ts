@@ -98,10 +98,13 @@
 // never points the model at a file that cannot exist.
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, createContextAccountant, type ContextAccountant, type EngineSettingsRuleSeed, type Provider, type ProviderMessage, type ProviderUsage } from "../engine.ts";
-import { createInMemoryChannel } from "../protocol/channel.ts";
+import { createInMemoryChannel, type FrameSink } from "../protocol/channel.ts";
+import { STRUCTURED_OUTPUT_TOOL_NAME } from "../structured/seam.ts";
+import { toolActivityDescription } from "./activity.ts";
 import { getRegisteredTool, listRegisteredTools } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
 import { toDialectEntries, rebuildProviderMessages } from "../store/resume.ts";
@@ -117,7 +120,8 @@ import type {
   ChildEngineRunContext,
 } from "./child-handle.ts";
 import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging";
-import { checkAndRegisterSpawn, releaseSpawn } from "./limits.ts";
+import { checkAndRegisterSpawn, releaseSpawn, resolveMaxSpawnDepth } from "./limits.ts";
+import { applySubagentToolPool } from "./tool-pools.ts";
 import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
 import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";
 import { resolveForkInitialMessages } from "./fork.ts";
@@ -493,8 +497,24 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // actually ENFORCED (both hidden from advertisement AND denied at evaluation time, not merely
     // hidden) is `disallowedTools` -- computed as the complement of the allowlist against every
     // registered canonical tool name, unioned with the resolved definition's own `disallowedTools`.
+    //
+    // Spawn-surface parity (research §A6): the inherited pool is first narrowed to what a SUBAGENT
+    // may hold at all -- claude's exclusion set (ExitPlanMode kept in plan mode), `Agent` only while
+    // this child is still below the spawn-depth limit, and a background child's allowlist (MCP tools
+    // and the depth-gated `Agent` pass regardless). Everything below derives from this effective set.
+    // A FORK keeps the parent's EXACT pool (WS-10 §3.5; claude's fork uses its parent's tools as-is
+    // and skips this filter) -- a fork-inside-fork is refused by the Agent tool itself.
+    const effectiveTools =
+      req.fork === true
+        ? [...inherit.tools]
+        : applySubagentToolPool(inherit.tools, {
+            planMode: inherit.policy.effectiveMode === "plan",
+            mayNest: spawnDepth < resolveMaxSpawnDepth(env, deps.parentBrand),
+            background: req.runInBackground === true,
+            ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}),
+          });
     const allToolNames = listRegisteredTools().map((t) => t.descriptor.canonicalName);
-    const allowSet = new Set(inherit.tools);
+    const allowSet = new Set(effectiveTools);
     const complementDeny = allToolNames.filter((name) => !allowSet.has(name));
     const disallowedTools = [...new Set([...complementDeny, ...(req.definition?.disallowedTools ?? [])])];
 
@@ -506,7 +526,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // ALLOWED tool's own capabilityRequirements: the parent necessarily already held these tokens
     // (it advertised these exact tools to its own model), so granting the identical set to the child
     // never widens anything beyond what the parent itself already had.
-    const capabilities = [...new Set(inherit.tools.flatMap((name) => getRegisteredTool(name)?.descriptor.capabilityRequirements ?? []))];
+    const capabilities = [...new Set(effectiveTools.flatMap((name) => getRegisteredTool(name)?.descriptor.capabilityRequirements ?? []))];
 
     // WS-10 §2: "tools must include Skill if skills is used" -- validation only (skills has no
     // runtime anywhere in this codebase yet). Surfaced in the eventual spawn notice text, never a
@@ -547,9 +567,21 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
 
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
-    const workspaceResult = await createWorkspace({ parentCwd: inherit.sessionRoot, ...(req.isolation !== undefined ? { isolation: req.isolation } : {}), agentId, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
+    // Research §A5: a configured `WorktreeCreate` hook makes worktree isolation outside git a valid
+    // request rather than a refusal -- the session's hook callbacks (`parentHooks`) and its
+    // settings-file/plugin hook entries (`extraHookEntries`) both count.
+    const hasWorktreeCreateHooks = (deps.parentHooks?.["WorktreeCreate"]?.length ?? 0) > 0 || (deps.extraHookEntries ?? []).some((entry) => entry.event === "WorktreeCreate");
+    const workspaceResult = await createWorkspace({
+      parentCwd: inherit.sessionRoot,
+      ...(req.isolation !== undefined ? { isolation: req.isolation } : {}),
+      agentId,
+      ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}),
+      hasWorktreeCreateHooks,
+    });
     if (!workspaceResult.ok) {
-      throw new Error(`winter: Agent spawn failed -- ${workspaceResult.error}`);
+      // R-S4: the refusal reaches the model as claude's own message text (workspace.ts already words
+      // it claude's way) -- no product prefix in front of it.
+      throw new Error(workspaceResult.error);
     }
     const workspace = workspaceResult.workspace;
 
@@ -621,6 +653,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // `settle` itself now owns calling the generation's own `abortGeneration` (see its own comment),
     // so `.stop()` needs no separate abort handle of its own any more.
     let currentSettle: ((status: "completed" | "failed" | "stopped", content: string) => void) | undefined;
+    // Review r1 finding 4: the current generation's live counters (see `startGeneration`).
+    let currentUsage: (() => ChildResult["usage"]) | undefined;
 
     // One generation = one live `runEngine()` invocation, from its initial "user" turn until IT
     // reaches a terminal frame (or is stopped/stalls). `resume()` starts a NEW generation against
@@ -637,6 +671,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let totalToolUseCount = 0;
       let lastAssistantText = "";
       let generationSettled = false;
+      // Contract §8: the activity text of the most recent RECORDED tool call (every tool_use except
+      // the structured-output tool), sticky across messages exactly like the pin's tracker
+      // `lastActivity` -- `undefined` when that call's tool has no activity text.
+      let lastRecordedActivity: string | undefined;
+      const activityContext = { cwd: config.cwd, home: env["HOME"] ?? homedir() };
       // Task-frames parity (contract §4): the SAME counting `task_progress`/the final
       // `task_notification.usage` both use. `latestUsage` is the LAST turn's own reported usage
       // (never accumulated -- the pin's own formula reads only the latest message's input/cache
@@ -652,6 +691,60 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         const latestTotal = latestUsage === undefined ? 0 : latestUsage.inputTokens + (latestUsage.cacheWriteTokens ?? 0) + (latestUsage.cacheReadTokens ?? 0);
         return { total_tokens: latestTotal + cumulativeOutputTokens, tool_uses: totalToolUseCount, duration_ms: Date.now() - startedAt };
       }
+      // Review r1 finding 4: the live counters, readable from OUTSIDE this generation (the handle's
+      // `usage()`, which the agent task's registry row reads when a TaskStop finalizes it first).
+      currentUsage = () => {
+        const u = currentTaskProgressUsage();
+        return { totalTokens: u.total_tokens, toolUses: u.tool_uses, durationMs: u.duration_ms };
+      };
+
+      // Review r1 finding 9 (+ finding 8, + contract §8): the progress signal for a qualifying child
+      // assistant message is computed at WRITE time -- inside the sink the child engine writes into,
+      // synchronously with the turn's own `usage` record -- and read back by the pump. The pump reads
+      // the channel asynchronously, so against a fast provider it used to read the counters AFTER the
+      // next turn had already recorded its own input tokens. Keyed by the frame object itself (the
+      // in-memory channel hands the same reference through).
+      //
+      // A frame carrying `parent_tool_use_id` is a GRANDCHILD's, forwarded through this child's own
+      // stream (finding 8) -- it is not this child's message and counts toward nothing here.
+      const progressAtWrite = new WeakMap<WinterFrame, ChildTaskProgress>();
+      function recordAssistantFrame(frame: WinterFrame): ChildTaskProgress | undefined {
+        if (frame.type !== "data") return undefined;
+        const message = frame.message as { type?: string; parent_tool_use_id?: unknown; message?: { content?: Array<{ type?: string; name?: unknown; input?: unknown }> } };
+        if (message.type !== "assistant" || typeof message.parent_tool_use_id === "string") return undefined;
+        let lastToolName: string | undefined;
+        for (const block of message.message?.content ?? []) {
+          if (block.type !== "tool_use") continue;
+          totalToolUseCount += 1;
+          const name = typeof block.name === "string" ? block.name : "";
+          lastToolName = name;
+          if (name !== STRUCTURED_OUTPUT_TOOL_NAME) lastRecordedActivity = toolActivityDescription(name, block.input, activityContext);
+        }
+        if (lastToolName === undefined) return undefined;
+        const usage = currentTaskProgressUsage();
+        return {
+          toolUses: totalToolUseCount,
+          totalTokens: usage.total_tokens,
+          durationMs: usage.duration_ms,
+          lastToolName,
+          ...(lastRecordedActivity !== undefined ? { activity: lastRecordedActivity } : {}),
+        };
+      }
+      const runtimeOutput = channel.runtime.output;
+      const snapshottingOutput: FrameSink = {
+        write(frame: WinterFrame): void {
+          try {
+            const progress = recordAssistantFrame(frame);
+            if (progress !== undefined) progressAtWrite.set(frame, progress);
+          } catch {
+            /* bookkeeping must never cost the frame itself */
+          }
+          runtimeOutput.write(frame);
+        },
+        end(): void {
+          runtimeOutput.end();
+        },
+      };
 
       const watchdog = createStallWatchdog(resolveStallTimeoutMs(env, deps.parentBrand), (err) => {
         settle("failed", err.message); // settle() itself now owns calling abortGeneration()
@@ -766,19 +859,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // message" ordering).
       function observe(frame: WinterFrame): ChildTaskProgress | undefined {
         if (frame.type !== "data") return undefined;
-        const message = frame.message as ResultLikeMessage & { message?: { content?: Array<{ type?: string; text?: string; name?: string; [k: string]: unknown }> } };
+        const message = frame.message as ResultLikeMessage & { parent_tool_use_id?: unknown; message?: { content?: Array<{ type?: string; text?: string; name?: string; [k: string]: unknown }> } };
         if (message.type === "assistant") {
-          let lastToolName: string | undefined;
+          // Finding 8: a forwarded GRANDCHILD message is not this child's -- neither its text nor its
+          // tool calls describe this child's own progress.
+          if (typeof message.parent_tool_use_id === "string") return undefined;
           for (const block of message.message?.content ?? []) {
-            if (block["type"] === "tool_use") {
-              totalToolUseCount += 1;
-              if (typeof block["name"] === "string") lastToolName = block["name"];
-            }
             if (block["type"] === "text" && typeof block["text"] === "string") lastAssistantText = block["text"] as string;
           }
-          if (lastToolName === undefined) return undefined;
-          const usage = currentTaskProgressUsage();
-          return { toolUses: totalToolUseCount, totalTokens: usage.total_tokens, durationMs: usage.duration_ms, lastToolName };
+          // Counted and snapshotted at write time (finding 9) -- see `recordAssistantFrame`.
+          return progressAtWrite.get(frame);
         } else if (message.type === "result") {
           const isError = message.is_error === true;
           const resultText = typeof message.result === "string" ? message.result : lastAssistantText;
@@ -924,7 +1014,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // what a source-text check could never actually check.
         ...(childProvider.identity !== undefined ? { providerIdentity: childProvider.identity } : {}),
         input: channel.runtime.input,
-        output: channel.runtime.output,
+        // Finding 9: the write-time snapshotting wrapper around `channel.runtime.output`.
+        output: snapshottingOutput,
         // Every generation this handle ever runs -- spawn AND every resume -- reads `.provider` off
         // this SAME, now-always-materialised object (never a fresh `?? deps.provider` fallback):
         // that is the whole WS-13c §8 fix. `resume()` may reassign the closure variable `childProvider`
@@ -936,6 +1027,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // first user turn -- see the resolution site below for the full note. Conditionally spread so
         // a child with no definition prompt sends nothing, exactly as before.
         ...(agentSystemPrompt !== undefined && agentSystemPrompt.length > 0 ? { agentSystemPrompt } : {}),
+        // Spawn-surface parity (research §A1 `omitClaudeMd`): an Explore/Plan-style definition drops
+        // the project instructions files and the git summary from this child's own context.
+        ...(req.definition?.omitProjectContext === true ? { omitProjectContext: true } : {}),
         ...(writer !== undefined ? { store: writer } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
         // Fix wave (I2): the parent's live MCP state, injected as this child's own -- but ONLY when
@@ -1045,6 +1139,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       insideSubagent: true,
       agentId,
       isolationPinnedCwd: req.isolation === "worktree",
+      // Spawn-surface parity (R-S5): a forked worker may not fork again -- its own Agent tool reads this.
+      ...(req.fork === true ? { insideFork: true } : {}),
       disallowedTools,
       capabilities,
       forwardSubagentText: deps.forwardSubagentText === true,
@@ -1131,8 +1227,6 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const firstTurnText = [req.definition?.initialPrompt, req.prompt, definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
-
-    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt);
 
     const handle: ChildHandle = {
       record,
@@ -1381,7 +1475,21 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // another. `settle` itself now calls `abortGeneration` internally (see its own comment).
         currentSettle?.("stopped", "stopped by request");
       },
+      usage(): ChildResult["usage"] {
+        return currentUsage?.();
+      },
     };
+
+    // Review r1 finding 9: the caller learns the handle BEFORE the first generation starts, so its
+    // `task_started` precedes every frame (and every `task_progress`) this child can produce. A throw
+    // from the callback is the caller's own bookkeeping failure -- it records it and decides what to
+    // do with the child once this function returns; it must not abort the spawn from in here.
+    try {
+      req.onSpawned?.(handle);
+    } catch {
+      /* see above */
+    }
+    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt);
 
     spawnRegistered = false; // ownership of the depth/concurrency slot has moved into the generation's own settle()/stop()
     return handle;

@@ -422,6 +422,18 @@ export interface RuntimeConfig {
   // carrying them).
   agentId?: string;
   isolationPinnedCwd?: boolean;
+  /**
+   * Spawn-surface parity (R-S5): the fork gate -- `subagent_type: "fork"` is selectable (and the
+   * `fork` built-in is listed) only when this is `true`. `false` forces it off; ABSENT falls back to
+   * the `<PREFIX>FORK_SUBAGENT` env var (claude's own `CLAUDE_CODE_FORK_SUBAGENT` precedent), and
+   * absent-and-unset is OFF (a Winter session is non-interactive, like a headless SDK session).
+   */
+  forkSubagent?: boolean;
+  /**
+   * Spawn-surface parity (R-S5): set ONLY on the RuntimeConfig of a child that is itself a FORK --
+   * a forked worker may not fork again (claude's own refusal). Never set by `query()`.
+   */
+  insideFork?: boolean;
 
   // --- Phase 5 Task 2 (WS-11): the P5 session options' wire mirrors --------------------------------
   //

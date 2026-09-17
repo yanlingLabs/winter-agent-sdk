@@ -834,6 +834,7 @@ async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTr
 // is not volatile at all for these fixtures -- every scenario's child makes a fixed number of tool
 // calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
 const AGENT_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 // Task-frames parity (2026-09-17 contract §4): a foreground Agent spawn now emits its own
 // task_started/task_updated/task_notification/task_progress frames (§4's own correction -- it used
@@ -852,7 +853,9 @@ function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTrac
     if (value === null || typeof value !== "object") return value;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = AGENT_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : scrubValue(v);
+      // `ListAgents`' listing (the `subagentperm` child's own call) names the running child by its
+      // per-leg session/agent uuids -- scrubbed to their shape, the rest of the line kept.
+      out[k] = AGENT_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : k === "listing" && typeof v === "string" ? v.replace(UUID_RE, "<uuid>") : scrubValue(v);
     }
     return out;
   };
@@ -1698,7 +1701,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       (e) =>
         e.kind === "assistant" &&
         (e.payload as { parent_tool_use_id?: string }).parent_tool_use_id !== undefined &&
-        ((e.payload as { message: { content: Array<{ type: string; name?: string }> } }).message.content ?? []).some((blk) => blk.type === "tool_use" && blk.name === "ReadNotifications"),
+        ((e.payload as { message: { content: Array<{ type: string; name?: string }> } }).message.content ?? []).some((blk) => blk.type === "tool_use" && blk.name === "ListAgents"),
     );
     expect(childToolUse, "the child's own tool_use must reach the wire").toBeDefined();
     expect((childToolUse!.payload as { parent_tool_use_id?: string }).parent_tool_use_id).toBe(parentToolUseId);
@@ -1713,7 +1716,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     );
     expect(childToolResult, "the child's tool must have executed after the late permission answer").toBeDefined();
     const resultBlock = (childToolResult!.payload as { message: { content: Array<{ tool_use_id?: string; content?: string }> } }).message.content.find((blk) => blk.tool_use_id === "child-call-1")!;
-    expect(resultBlock.content).toContain('"notifications":[]');
+    expect(resultBlock.content).toContain('"listing":"- agent:');
     // Same on the other leg, pinned by VALUE so a shared regression (both legs dropping the field)
     // cannot pass compareTraces alone.
     expect(JSON.stringify(b.trace)).toContain('"parent_tool_use_id":"agent-call-1"');

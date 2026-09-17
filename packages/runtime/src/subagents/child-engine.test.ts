@@ -812,7 +812,7 @@ describe("child-engine.ts: C1 CRITICAL (P4-J, RETIRED by R5-3): AgentDefinition.
     const home = mkdtempSync(join(tmpdir(), "winter-lane-c-c1-fs-"));
     try {
       mkdirSync(join(home, ".winter", "agents"), { recursive: true });
-      writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\ndescription: reviews code\n---\nYou are a persona from a REAL markdown file on disk.");
+      writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: reviews code\n---\nYou are a persona from a REAL markdown file on disk.");
       resetRecordedProviderSystems(); // the recorder is process-wide -- a reader MUST clear it first
       const definitions = loadAgentDefinitions({ cwd: mkdtempSync(join(tmpdir(), "winter-lane-c-c1-cwd-")), home, trustedWorkspace: false });
       const definition = definitions.get("reviewer");
@@ -1694,7 +1694,13 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
       const { code, frames } = await driveParent(
         { provider: childProvider },
         baseConfig({ sessionId: "parent-mcp-s", mcpServers: { fixture: { type: "http", url: url.href } } }),
-        [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+        [
+          // The PARENT waits for the server now (a child no longer holds WaitForMcpServers), so the
+          // child's listing below runs against a connected server, as before.
+          { kind: "tool_use", calls: [{ id: "p-wait", name: "WaitForMcpServers", input: { servers: ["fixture"] } }] },
+          { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+          { kind: "text", text: "parent done" },
+        ],
       );
       expect(code).toBe(0);
       // The child's own tool_result blocks are forwarded to the parent's stream stamped with the
@@ -1702,11 +1708,11 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
       const blocks = dataMessages(frames)
         .filter((m) => m.type === "user")
         .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
-      const wait = JSON.parse(blocks.find((b) => b.tool_use_id === "c1")!.content) as { ready: boolean; connected: string[]; unknown: string[] };
-      // Before the fix: `{ready:true, connected:[], unknown:["fixture"]}` -- a WRONG answer, not
-      // merely an inert one (wait-for-mcp-servers.ts's own no-state-source branch).
-      expect(wait.connected).toEqual(["fixture"]);
-      expect(wait.unknown).toEqual([]);
+      // Spawn-surface parity (research §A6): `WaitForMcpServers` is one of the tools claude removes
+      // from EVERY subagent, so the child's call is refused (never executed against any state) --
+      // the shared-state proof below rides `ListMcpResourcesTool`, which a child keeps.
+      const waitBlock = blocks.find((b) => b.tool_use_id === "c1") as { content: string; denied?: boolean } | undefined;
+      expect(waitBlock?.denied).toBe(true);
       const listRaw = blocks.find((b) => b.tool_use_id === "c2")!.content;
       // Before the fix: "no MCP lifecycle is configured for this session".
       expect(listRaw).not.toContain("no MCP lifecycle");
@@ -1725,7 +1731,6 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
     const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "call the session's mcp tool", runInBackground: false };
     const childProvider = scriptedProvider([
       { kind: "tool_use", calls: [{ id: "c1", name: "mcp__fixture__echo", input: { text: "from-the-child" } }] },
-      { kind: "tool_use", calls: [{ id: "c2", name: "WaitForMcpServers", input: {} }] },
       { kind: "text", text: "child called mcp" },
     ]);
     let sawSdkMcpCall = false;
@@ -1746,8 +1751,8 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
       .filter((m) => m.type === "user")
       .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
     expect(blocks.find((b) => b.tool_use_id === "c1")!.content).toContain("echo:from-the-child");
-    const wait = JSON.parse(blocks.find((b) => b.tool_use_id === "c2")!.content) as { connected: string[] };
-    expect(wait.connected).toEqual(["fixture"]); // EXACTLY the parent's set -- no more, no less
+    // (The former `WaitForMcpServers` follow-up call is gone: spawn-surface parity removes that tool
+    // from every subagent, research §A6. The sibling test above pins the refusal.)
   }, 20_000);
 
   // Fix wave follow-up (8), whole-branch M7: the session's programmatic `Options.agents` map reaches
@@ -3129,7 +3134,9 @@ describe("child-engine.ts: R-1 -- the managed bypass veto binds in a child by de
           return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "d", prompt: "child-go", subagent_type: "bypasser" } }] };
         }
         if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
-        return { kind: "tool_use", calls: [{ id: "c-1", name: "ReadNotifications", input: {} }] };
+        // `ListAgents`, a messaging-class tool a child keeps (spawn-surface parity removes
+        // `ReadNotifications` from every subagent), so the call still needs a permission decision.
+        return { kind: "tool_use", calls: [{ id: "c-1", name: "ListAgents", input: {} }] };
       },
     };
     const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, undefined, { WINTER_HOME: opts.home });
@@ -3200,5 +3207,190 @@ describe("child-engine.ts: R-1 -- the managed bypass veto binds in a child by de
     } finally {
       for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
     }
+  });
+});
+
+// ==================================================================================================
+// Spawn-surface parity (research §A6) + review r1 findings 8/9 + contract §8, end to end through a
+// REAL child engine: the child's own advertised tool pool, and the progress signal's activity text,
+// counters snapshotted at write time, and grandchild frames kept out of the count.
+// ==================================================================================================
+describe("child-engine.ts: spawn-surface parity -- the child's tool pool, and progress activity (§8)", () => {
+  const POOL_PROBE = "t_spawn_surface_pool_probe";
+  function registerPoolProbe(progressCalls: ChildTaskProgress[], spawned: string[] = []): void {
+    registerTool({
+      descriptor: {
+        canonicalName: POOL_PROBE,
+        advertisedName: POOL_PROBE,
+        source: "builtin",
+        inputSchema: { type: "object" },
+        description: "spawns a child with onProgress/onSpawned wired and awaits it",
+        exposure: "eager",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx: ToolExecutionContext) {
+          if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+          const req: SpawnChildRequest = { ...(input as SpawnChildRequest), onProgress: (p) => progressCalls.push(p), onSpawned: (h) => spawned.push(h.record.id) };
+          const handle = await ctx.session.spawnChild(req);
+          if (req.runInBackground) return { output: JSON.stringify({ agentId: handle.record.id }) };
+          const result = await handle.result();
+          return { output: JSON.stringify({ status: result.status }) };
+        },
+      },
+    });
+    cleanupToolNames.push(POOL_PROBE);
+  }
+
+  /** A child provider that records the tool NAMES it was offered on its first request, then finishes. */
+  function poolRecordingProvider(seen: string[][]): Provider {
+    return {
+      async generate(request) {
+        seen.push((request.tools ?? []).map((t) => t.name));
+        return { kind: "text", text: "child done" };
+      },
+    };
+  }
+
+  test("a foreground child loses claude's excluded tools but keeps Agent below the depth limit (and the rest of its pool)", async () => {
+    registerPoolProbe([]);
+    const seen: string[][] = [];
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "go", runInBackground: false };
+    const { code } = await driveParent({ provider: poolRecordingProvider(seen) }, baseConfig({ capabilities: ["winter.subagents", "winter.global-messaging"] }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: POOL_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    const tools = seen[0]!;
+    for (const excluded of ["TaskOutput", "ExitPlanMode", "EnterPlanMode", "AskUserQuestion", "WaitForMcpServers", "RefreshMcpTools", "Workflow", "ScheduleWakeup", "ReadNotifications"]) {
+      expect(tools, `${excluded} must be removed from every subagent`).not.toContain(excluded);
+    }
+    expect(tools).toContain("Agent");
+    expect(tools).toContain("Read");
+    expect(tools).toContain("TaskCreate"); // not excluded, and a foreground child is not allowlisted
+  });
+
+  test("a child AT the spawn-depth limit is not offered the Agent tool at all", async () => {
+    registerPoolProbe([]);
+    const seen: string[][] = [];
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "go", runInBackground: false };
+    const { code } = await driveParent({ provider: poolRecordingProvider(seen), env: { ...process.env, WINTER_MAX_SUBAGENT_SPAWN_DEPTH: "1" } }, baseConfig({ capabilities: ["winter.subagents"] }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: POOL_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(seen[0]).not.toContain("Agent");
+    expect(seen[0]).toContain("Read");
+  });
+
+  test("a BACKGROUND child keeps only the allowlist (+ Agent below the limit, + real MCP tools); Winter's standing-server twins follow their built-in names", async () => {
+    registerPoolProbe([]);
+    const seen: string[][] = [];
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "go", runInBackground: true };
+    const { code } = await driveParent(
+      { provider: poolRecordingProvider(seen) },
+      baseConfig({
+        capabilities: ["winter.subagents", "winter.global-messaging"],
+        mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } },
+      }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: POOL_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    await waitUntil(() => seen.length > 0);
+    const tools = seen[0]!;
+    for (const kept of ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "TaskStop", "TaskGet", "SendMessage", "Agent", "mcp__fixture__echo"]) {
+      expect(tools, `${kept} passes a background child's allowlist`).toContain(kept);
+    }
+    for (const dropped of ["TaskCreate", "TaskList", "CronList", "ListAgents", "mcp__winter__list_agents"]) {
+      expect(tools, `${dropped} is outside a background child's allowlist`).not.toContain(dropped);
+    }
+  });
+
+  test("§8: progress carries the most recent recorded call's activity text (sticky across a structured-output call; undefined for a tool with none); onSpawned fires before any progress", async () => {
+    const progressCalls: ChildTaskProgress[] = [];
+    const spawned: string[] = [];
+    registerPoolProbe(progressCalls, spawned);
+    let turn = 0;
+    const cwd = "/tmp/winter-lane-c-child-engine-tests";
+    const childProvider: Provider = {
+      async generate() {
+        turn++;
+        if (turn === 1) return { kind: "tool_use", calls: [{ id: "c1", name: "Bash", input: { command: "echo   hi\n  there" } }] };
+        if (turn === 2) return { kind: "tool_use", calls: [{ id: "c2", name: "Read", input: { file_path: `${cwd}/src/a.ts` } }, { id: "c3", name: "StructuredOutput", input: {} }] };
+        if (turn === 3) return { kind: "tool_use", calls: [{ id: "c4", name: "TodoWrite", input: { todos: [] } }] };
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "go", runInBackground: false };
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ cwd }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: POOL_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(spawned).toHaveLength(1);
+    expect(progressCalls.map((p) => p.activity)).toEqual(["Running echo hi there", "Reading src/a.ts", undefined]);
+    // StructuredOutput is COUNTED and can be the last tool name, but it is never recorded as activity.
+    expect(progressCalls[1]).toMatchObject({ toolUses: 3, lastToolName: "StructuredOutput" });
+  });
+
+  test("finding 8: a GRANDCHILD's forwarded tool_use frames count toward nothing in the child's own progress", async () => {
+    const progressCalls: ChildTaskProgress[] = [];
+    registerPoolProbe(progressCalls);
+    let grandchildTurns = 0;
+    const provider: Provider = {
+      async generate({ messages }) {
+        const firstUser = messages.find((m) => m.role === "user");
+        const firstText = typeof firstUser?.content === "string" ? firstUser.content : JSON.stringify(firstUser?.content ?? "");
+        const hadTool = messages.some((m) => m.role === "tool");
+        if (firstText.includes("GRANDCHILD-TASK")) {
+          grandchildTurns++;
+          return hadTool ? { kind: "text", text: "grandchild done" } : { kind: "tool_use", calls: [{ id: "g1", name: "Glob", input: { pattern: "*.md" } }, { id: "g2", name: "Grep", input: { pattern: "x" } }] };
+        }
+        const childToolTurns = messages.filter((m) => m.role === "tool").length;
+        if (childToolTurns === 0) return { kind: "tool_use", calls: [{ id: "k1", name: "Agent", input: { description: "nested", prompt: "GRANDCHILD-TASK" } }] };
+        if (childToolTurns === 1) return { kind: "tool_use", calls: [{ id: "k2", name: "Read", input: { file_path: "/etc/hosts" } }] };
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "spawn a grandchild", runInBackground: false };
+    const { code } = await driveParent({ provider }, baseConfig({ capabilities: ["winter.subagents"] }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: POOL_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(grandchildTurns, "the grandchild really ran").toBe(2);
+    // Exactly the child's OWN two tool turns (Agent, then Read) -- the grandchild's two calls, which
+    // are forwarded through the child's own stream in between, are counted nowhere.
+    expect(progressCalls).toHaveLength(2);
+    expect(progressCalls[0]).toMatchObject({ toolUses: 1, lastToolName: "Agent", activity: "nested" });
+    expect(progressCalls[1]).toMatchObject({ toolUses: 2, lastToolName: "Read", activity: "Reading /etc/hosts" });
+  });
+
+  test("finding 9: progress counters are the ones current when the assistant frame was WRITTEN, not when the pump read it", async () => {
+    const progressCalls: ChildTaskProgress[] = [];
+    registerPoolProbe(progressCalls);
+    let turn = 0;
+    // Two fast tool turns with very different input sizes: a pump that read the counters late
+    // would report turn 2's input on turn 1's progress. HONEST LIMIT: the in-memory channel lets the
+    // pump keep up here, so this pins the VALUES rather than forcing the race; the fix itself is
+    // structural (the snapshot is taken inside the sink the child writes into).
+    const childProvider: Provider = {
+      async generate() {
+        turn++;
+        if (turn === 1) return { kind: "tool_use", calls: [{ id: "c1", name: "Glob", input: { pattern: "*" } }], usage: { inputTokens: 10, outputTokens: 1 } };
+        if (turn === 2) return { kind: "tool_use", calls: [{ id: "c2", name: "Glob", input: { pattern: "*" } }], usage: { inputTokens: 5000, outputTokens: 2 } };
+        return { kind: "text", text: "done", usage: { inputTokens: 9000, outputTokens: 3 } };
+      },
+    };
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "go", runInBackground: false };
+    await driveParent({ provider: childProvider }, baseConfig(), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: POOL_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(progressCalls.map((p) => p.totalTokens)).toEqual([11, 5003]);
+    expect(progressCalls[0]!.activity).toBe("Finding *");
   });
 });

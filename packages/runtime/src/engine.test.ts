@@ -4184,8 +4184,8 @@ describe("WS-13c: a child spawned by slot name", () => {
   test("WS13c-5: an unservable slot is the Agent tool's own typed error, naming the code and what would have served it", async () => {
     const { calls, toolResult } = await agentToolResult({ model: "opus" }, { resolveSlot: slotResolver(() => false) });
     expect(calls).toHaveLength(0); // rejected BEFORE any spawn work
-    expect(toolResult).toContain("Error: subagent spawn failed");
-    expect(toolResult).toContain("slot-unservable");
+    // R-S4 (spawn-surface parity): claude's shape -- the typed code and message, no wrapper prefix.
+    expect(toolResult).toStartWith("slot-unservable: ");
     expect(toolResult).toContain("anthropic/claude-opus-5");
     expect(toolResult).toContain("no credential configured");
   });
@@ -4434,7 +4434,7 @@ describe("engine teardown stops this session's background shells (review r1 find
       const own = messages.map((m, i) => ({ m, i })).filter(({ m }) => m.task_id === started!.task_id && m.subtype !== "task_started");
       expect(own.map(({ m }) => m.subtype)).toEqual(["task_updated", "task_notification"]);
       expect(own[0]!.i).toBeGreaterThan(resultIndex); // the turn ended first; the SESSION ending killed it
-      expect((own[0]!.m as { patch: { status?: string } }).patch.status).toBe("killed");
+      expect((own[0]!.m as unknown as { patch: { status?: string } }).patch.status).toBe("killed");
       expect(own[1]!.m).toMatchObject({ status: "stopped", summary: 'Background command "teardown probe" was stopped' });
       expect(getTrackedTask(started!.task_id as string)?.status).toBe("stopped");
     } finally {
@@ -4478,5 +4478,246 @@ describe("system/init.agents (spawn-surface parity)", () => {
     const agents = await initAgents({ agents: { Explore: { description: "my own explorer", prompt: "p" }, extra: { description: "d", prompt: "p" } } });
     expect(agents).toContain("extra");
     expect(agents).toContain("Explore");
+  });
+});
+
+// --- Spawn-surface parity (lane L2b): the engine-side wiring --------------------------------------
+
+describe("spawn-surface parity (L2b): engine wiring", () => {
+  function capturingProvider(requests: Array<{ tools?: ProviderToolSpec[]; messages: ProviderMessage[] }>, turns: Parameters<typeof scriptedProvider>[0]): Provider {
+    const inner = scriptedProvider(turns);
+    return {
+      async generate(request) {
+        requests.push({ ...(request.tools !== undefined ? { tools: request.tools } : {}), messages: request.messages.map((m) => ({ ...m })) });
+        return inner.generate(request);
+      },
+    };
+  }
+  async function run(opts: { config?: Partial<RuntimeConfig>; env?: Record<string, string | undefined>; provider: Provider; prompts?: string[]; betweenTurns?: () => void; extra?: Record<string, unknown> }): Promise<WinterFrame[]> {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, ...(opts.config ?? {}) }),
+      input: runtime.input,
+      output: runtime.output,
+      provider: opts.provider,
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
+      ...(opts.extra ?? {}),
+    });
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    const prompts = opts.prompts ?? ["go"];
+    for (let i = 0; i < prompts.length; i++) {
+      host.output.write({ type: "user", text: prompts[i]! });
+      // Wait for this turn's result before sending the next one.
+      const target = i + 1;
+      for (let n = 0; n < 400 && frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length < target; n++) await new Promise((r) => setTimeout(r, 5));
+      if (i < prompts.length - 1) opts.betweenTurns?.();
+    }
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    await done;
+    await reader;
+    return frames;
+  }
+
+  test("R-S4: an executor's isError reaches the wire tool_result as is_error:true; a success carries no is_error", async () => {
+    const PROBE = "t_l2b_is_error_probe";
+    registerTool({
+      descriptor: { canonicalName: PROBE, advertisedName: PROBE, source: "builtin", inputSchema: { type: "object" }, description: "fails on request", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+      executor: { async execute(input: unknown) { return (input as { fail?: boolean }).fail === true ? { output: "it broke", isError: true } : { output: "fine" }; } },
+    });
+    try {
+      const requests: Array<{ messages: ProviderMessage[] }> = [];
+      const frames = await run({
+        provider: capturingProvider(requests, [
+          { kind: "tool_use", calls: [{ id: "bad", name: PROBE, input: { fail: true } }, { id: "good", name: PROBE, input: {} }] },
+          { kind: "text", text: "done" },
+        ]),
+      });
+      const results = frames
+        .filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "user")
+        .flatMap((f) => ((f as { message: { message: { content: Array<Record<string, unknown>> } } }).message.message.content ?? []))
+        .filter((b) => b["type"] === "tool_result");
+      expect(results.find((b) => b["tool_use_id"] === "bad")).toMatchObject({ content: "it broke", is_error: true });
+      expect(results.find((b) => b["tool_use_id"] === "good")).not.toHaveProperty("is_error");
+      // ...and into the history the NEXT provider request carries.
+      const history = requests[1]!.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])) as Array<Record<string, unknown>>;
+      expect(history.find((b) => b["tool_use_id"] === "bad")).toMatchObject({ is_error: true });
+    } finally {
+      unregisterToolForTest(PROBE);
+    }
+  });
+
+  test("research §A3: the listing rides the first request, stays on every turn, and a changed set adds the delta", async () => {
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-l2b-listing-"));
+    try {
+      const { createSystemPromptAssembler } = await import("./context/assembler.ts");
+      const requests: Array<{ messages: ProviderMessage[] }> = [];
+      const lastUserText = (i: number): string => {
+        const users = requests[i]!.messages.filter((m) => m.role === "user" && typeof m.content === "string");
+        return users[users.length - 1]!.content as string;
+      };
+      await run({
+        config: { winterHome },
+        provider: capturingProvider(requests, [
+          { kind: "text", text: "one" },
+          { kind: "text", text: "two" },
+        ]),
+        prompts: ["first", "second"],
+        betweenTurns: () => {
+          mkdirSync(join(winterHome, "agents"), { recursive: true });
+          writeFileSync(join(winterHome, "agents", "late-helper.md"), "---\nname: late-helper\ndescription: arrived between turns\n---\nBody.");
+        },
+        extra: { systemPromptAssembler: createSystemPromptAssembler({ home: winterHome, settings: () => ({}) }), winterHome },
+      });
+      expect(lastUserText(0)).toContain("Available agent types for the Agent tool:\n- claude: ");
+      expect(lastUserText(0)).toContain("- general-purpose: ");
+      expect(lastUserText(0)).not.toContain("late-helper");
+      expect(lastUserText(1)).toContain("Available agent types for the Agent tool:");
+      expect(lastUserText(1)).toContain("New agent types are now available for the Agent tool:\n- late-helper: arrived between turns (Tools: All tools)");
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
+  });
+
+  test("a session without the Agent tool gets no listing at all", async () => {
+    const { createSystemPromptAssembler } = await import("./context/assembler.ts");
+    const requests: Array<{ messages: ProviderMessage[] }> = [];
+    await run({
+      config: { disallowedTools: ["Agent"] },
+      provider: capturingProvider(requests, [{ kind: "text", text: "one" }]),
+      extra: { systemPromptAssembler: createSystemPromptAssembler({ home: mkdtempSync(join(tmpdir(), "winter-l2b-nolist-")), settings: () => ({}) }) },
+    });
+    expect(JSON.stringify(requests[0]!.messages)).not.toContain("agent types");
+  });
+
+  test("research §A2/§A3: the Agent tool spec follows the per-session gates (fork on -> no run_in_background + fork section; general-purpose absent -> the required sentence)", async () => {
+    const specFor = async (config: Partial<RuntimeConfig>, env?: Record<string, string | undefined>): Promise<ProviderToolSpec> => {
+      const requests: Array<{ tools?: ProviderToolSpec[]; messages: ProviderMessage[] }> = [];
+      await run({ config, ...(env !== undefined ? { env } : {}), provider: capturingProvider(requests, [{ kind: "text", text: "one" }]) });
+      return requests[0]!.tools!.find((t) => t.name === "Agent")!;
+    };
+    const plain = await specFor({});
+    expect(Object.keys((plain.inputSchema as { properties: object }).properties)).toContain("run_in_background");
+    expect(plain.description).toContain("If omitted, the general-purpose agent is used.");
+    expect(plain.description).not.toContain("Forking:");
+
+    const forked = await specFor({ forkSubagent: true });
+    expect(Object.keys((forked.inputSchema as { properties: object }).properties)).not.toContain("run_in_background");
+    expect(forked.description).toContain("Forking:");
+
+    const noGeneral = await specFor({}, { WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "1" });
+    expect(noGeneral.description).toContain("subagent_type is required: the general-purpose agent is not available in this session, so choose one of the listed agent types.");
+
+    const bgOff = await specFor({}, { WINTER_DISABLE_BACKGROUND_TASKS: "1" });
+    expect(Object.keys((bgOff.inputSchema as { properties: object }).properties)).not.toContain("run_in_background");
+  });
+
+  test("RuntimeConfig.forkSubagent:true lists the fork built-in even with the env var unset; false hides it even when the env var is set", async () => {
+    const initAgents = async (config: Partial<RuntimeConfig>, env: Record<string, string | undefined>): Promise<string[] | undefined> => {
+      const frames = await run({ config, env, provider: echoProvider });
+      const init = frames.find((f) => f.type === "data" && (f as { message?: { subtype?: string } }).message?.subtype === "init") as { message: { agents?: string[] } };
+      return init.message.agents;
+    };
+    expect(await initAgents({ forkSubagent: true }, {})).toContain("fork");
+    expect(await initAgents({ forkSubagent: false }, { WINTER_FORK_SUBAGENT: "1" })).not.toContain("fork");
+    expect(await initAgents({}, { WINTER_FORK_SUBAGENT: "1" })).toContain("fork");
+  });
+
+  test("research §A3: list_agents answers the session's AgentInfo[] (the init.agents set); an Agent-less session answers []", async () => {
+    const listAgents = async (config: Partial<RuntimeConfig>): Promise<unknown> => {
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({ config: baseConfig(config), input: runtime.input, output: runtime.output, provider: echoProvider });
+      host.output.write({ type: "control_request", requestId: "la-1", subtype: "list_agents", payload: undefined });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      return (frames.find((f) => f.type === "control_response" && (f as { requestId: string }).requestId === "la-1") as { payload: unknown }).payload;
+    };
+    const infos = (await listAgents({ agents: { reviewer: { description: "reviews", prompt: "p", model: "opus" } } })) as Array<{ name: string; description: string; model?: string }>;
+    expect(infos.map((i) => i.name)).toEqual(["claude", "Explore", "general-purpose", "Plan", "reviewer"]);
+    expect(infos.find((i) => i.name === "reviewer")).toEqual({ name: "reviewer", description: "reviews", model: "opus" });
+    expect(infos.find((i) => i.name === "general-purpose")).not.toHaveProperty("model"); // "inherit" is absence
+    expect(await listAgents({ disallowedTools: ["Agent"] })).toEqual([]);
+  });
+
+  test('`tools: ["*"]` (every unrestricted built-in) inherits the parent\'s whole pool, never an empty one', async () => {
+    const seen: ChildInheritance[] = [];
+    registerChildEngineFactory(() => ({
+      async spawn(_req: SpawnChildRequest, inherit: ChildInheritance): Promise<ChildHandle> {
+        seen.push(inherit);
+        const handle = createFakeChildHandle();
+        handle.simulateCompletion("x");
+        return handle;
+      },
+    }));
+    try {
+      await run({
+        config: { capabilities: ["winter.subagents"] },
+        provider: capturingProvider([], [{ kind: "tool_use", calls: [{ id: "a1", name: "Agent", input: { description: "d", prompt: "p" } }] }, { kind: "text", text: "done" }]),
+      });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.tools).toContain("Read");
+      expect(seen[0]!.tools).toContain("Agent");
+    } finally {
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("research §A1: omitProjectContext drops the instructions file from the assembled request", async () => {
+    const { createSystemPromptAssembler } = await import("./context/assembler.ts");
+    const cwd = mkdtempSync(join(tmpdir(), "winter-l2b-omit-"));
+    const home = mkdtempSync(join(tmpdir(), "winter-l2b-omit-home-"));
+    try {
+      writeFileSync(join(cwd, "WINTER.md"), "PROJECT-RULES-MARKER");
+      const textFor = async (omit: boolean): Promise<string> => {
+        const requests: Array<{ messages: ProviderMessage[] }> = [];
+        await run({
+          config: { cwd },
+          provider: capturingProvider(requests, [{ kind: "text", text: "one" }]),
+          extra: { systemPromptAssembler: createSystemPromptAssembler({ home, settings: () => ({}) }), ...(omit ? { omitProjectContext: true } : {}) },
+        });
+        return JSON.stringify(requests[0]!.messages);
+      };
+      expect(await textFor(false)).toContain("PROJECT-RULES-MARKER");
+      expect(await textFor(true)).not.toContain("PROJECT-RULES-MARKER");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("the workflow runtime's resolveAgentType reads the user tier from the RESOLVED winter root (e53afe4's twin)", async () => {
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-l2b-wf-"));
+    try {
+      mkdirSync(join(winterHome, "agents"), { recursive: true });
+      writeFileSync(join(winterHome, "agents", "wf-helper.md"), "---\nname: wf-helper\ndescription: workflow agent\n---\nBody.");
+      const { createStructuredOutputSeam } = await import("./structured/ajv-seam.ts");
+      const { getWorkflowSession } = await import("./workflows/host-registry.ts");
+      const PROBE = "t_l2b_wf_probe";
+      let resolved: unknown = "unset";
+      registerTool({
+        descriptor: { canonicalName: PROBE, advertisedName: PROBE, source: "builtin", inputSchema: { type: "object" }, description: "reads the workflow session", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+        executor: {
+          async execute(_input: unknown, ctx) {
+            resolved = getWorkflowSession(ctx.sessionId)?.resolveAgentType?.("wf-helper", { cwd: ctx.cwd, trustedWorkspace: false });
+            return { output: "ok" };
+          },
+        },
+      });
+      try {
+        await run({
+          config: { sessionId: `wf-${randomUUID()}`, winterHome },
+          provider: capturingProvider([], [{ kind: "tool_use", calls: [{ id: "w1", name: PROBE, input: {} }] }, { kind: "text", text: "done" }]),
+          extra: { structuredOutput: createStructuredOutputSeam() },
+        });
+      } finally {
+        unregisterToolForTest(PROBE);
+      }
+      expect(resolved).toMatchObject({ description: "workflow agent" });
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
   });
 });

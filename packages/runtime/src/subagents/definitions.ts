@@ -17,7 +17,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type AgentInfo, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
-import { resolveBuiltinAgents, type BuiltinAgentGates } from "./builtin-agents.ts";
+import { resolveBuiltinAgents, resolveBuiltinAgentGates, type BuiltinAgentGates } from "./builtin-agents.ts";
 
 export type AgentDefinitionSource = "programmatic" | "project" | "user" | "plugin" | "builtin";
 
@@ -260,6 +260,12 @@ export interface LoadAgentDefinitionsOptions {
    */
   builtinAgents?: Record<string, RuntimeAgentDefinition>;
   /**
+   * Spawn-surface parity (R-S5): the session's RESOLVED fork gate (`RuntimeConfig.forkSubagent`,
+   * which wins over the env var in either direction). Absent = the env fallback alone decides, as
+   * `resolveBuiltinAgentGates` always did.
+   */
+  forkSubagentEnabled?: boolean;
+  /**
    * Scope item 2: a rejected filesystem agent file (missing/invalid `name`, missing `description`) is
    * "logged/recorded clearly" through this optional callback rather than a return-value change --
    * see `AgentDefinitionRejection`'s own header for why the return type cannot change here.
@@ -279,7 +285,13 @@ export interface LoadAgentDefinitionsOptions {
 export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<string, SourcedAgentDefinition> {
   const out = new Map<string, SourcedAgentDefinition>();
   const brand = opts.brand ?? WINTER_BRAND;
-  const builtins = opts.builtinAgents ?? resolveBuiltinAgents({ brand, ...(opts.env !== undefined ? { env: opts.env } : {}) });
+  const builtins =
+    opts.builtinAgents ??
+    resolveBuiltinAgents({
+      brand,
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
+      ...(opts.forkSubagentEnabled !== undefined ? { gates: { ...resolveBuiltinAgentGates(opts.env ?? process.env, brand), forkSubagentEnabled: opts.forkSubagentEnabled } } : {}),
+    });
   for (const [name, def] of Object.entries(builtins)) out.set(name, { ...def, _source: "builtin" });
   for (const [name, def] of Object.entries(opts.pluginAgents ?? {})) {
     const { plugin, ...definition } = def;
@@ -386,7 +398,8 @@ export function toAgentInfoList(defs: ReadonlyMap<string, SourcedAgentDefinition
 export function validateAgentDefinition(def: RuntimeAgentDefinition): string[] {
   const warnings: string[] = [];
   if (def.skills !== undefined && def.skills.length > 0) {
-    if (def.tools === undefined || !def.tools.includes("Skill")) {
+    // `["*"]` (the built-ins' wildcard) includes Skill like every other tool.
+    if (def.tools === undefined || (!def.tools.includes("Skill") && !def.tools.includes("*"))) {
       warnings.push('AgentDefinition declares "skills" but its own "tools" list does not include "Skill" (WS-10 §2)');
     }
   }

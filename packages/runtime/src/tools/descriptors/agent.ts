@@ -100,7 +100,9 @@ export function agentInputSchemaFor(gates: AgentToolGateState = AGENT_TOOL_GATE_
 // 'subagent_type is required...')") needs the IDENTICAL wording this tool description advertises --
 // two independently-typed copies of the same sentence is exactly how a future edit drifts them apart.
 export const OMITTED_TYPE_SENTENCE_AVAILABLE = "If omitted, the general-purpose agent is used.";
-export const OMITTED_TYPE_SENTENCE_UNAVAILABLE = "subagent_type is required: the general-purpose agent is not available in this session, so choose one of the listed agent types.";
+/** The shared head of both omitted-type texts (research §A3/§A7): the description's sentence and the runtime refusal's message. */
+export const OMITTED_TYPE_REQUIRED_PREFIX = "subagent_type is required: the general-purpose agent is not available in this session";
+export const OMITTED_TYPE_SENTENCE_UNAVAILABLE = `${OMITTED_TYPE_REQUIRED_PREFIX}, so choose one of the listed agent types.`;
 
 const FORK_SECTION = [
   "",

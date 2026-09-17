@@ -730,13 +730,16 @@ export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceE
 // is not volatile at all for these fixtures -- every scenario's child makes a fixed number of tool
 // calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
 const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
   const scrubValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(scrubValue);
     if (value === null || typeof value !== "object") return value;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = P4_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : scrubValue(v);
+    // `ListAgents`' listing (the `subagentperm` child's call) names the running child by its per-run
+    // session/agent uuids -- scrubbed to their shape, the rest of the line pinned.
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = P4_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : k === "listing" && typeof v === "string" ? v.replace(UUID_RE, "<uuid>") : scrubValue(v);
     return out;
   };
   return entries.map((entry) => {
@@ -886,16 +889,18 @@ export async function traceWinterSubagentSpawnRound(): Promise<ConformanceTraceE
 // Phase 4 fix wave (task-8 review I2 + whole-branch KNOWN 11): the spawn round in which the CHILD
 // itself makes a tool call, with `forwardSubagentText` ON so the child's own frames reach the wire.
 //
-// What this golden pins, frame by frame (17 -> 18 goldens; the ONLY new one this wave adds):
+// What this golden pins, frame by frame (17 -> 18 goldens; the ONLY new one this wave adds).
+// (Task-frames parity adds the foreground agent's own task_started/task_progress/task_updated/
+// task_notification frames around these, so the indices below are the order, not the positions.)
 //   [0] system/init            -- one, and only one (P4-J(c)): a child's own init never surfaces.
 //   [1] assistant              -- the PARENT's `Agent` tool_use, id `agent-call-1`, NO
 //                                 parent_tool_use_id (it is the top-level turn's own block).
-//   [2] assistant              -- the CHILD's `ReadNotifications` tool_use, id `child-call-1`,
+//   [2] assistant              -- the CHILD's `ListAgents` tool_use, id `child-call-1`,
 //                                 stamped `parent_tool_use_id: "agent-call-1"`. THE point of this
 //                                 golden: before it, `parent_tool_use_id` appeared in no committed
 //                                 golden at all.
-//   [3] user                   -- the CHILD's own tool_result, same stamp, carrying the fixed
-//                                 `{"notifications":[],"remaining":0}` -- proof the child's call was
+//   [3] user                   -- the CHILD's own tool_result, same stamp, carrying its listing
+//                                 (uuids scrubbed to `<uuid>`) -- proof the child's call was
 //                                 genuinely EXECUTED after its permission request was answered
 //                                 (`canUseTool` here answers immediately; the LATE-answer half,
 //                                  which needs a real clock, is the equivalence scenario's job --

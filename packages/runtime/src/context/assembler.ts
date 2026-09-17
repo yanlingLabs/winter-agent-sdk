@@ -263,11 +263,22 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // FIRST" is. Absent `agentListing` (every pre-existing caller, and any turn where `Agent` is not
       // advertised) contributes nothing -- see `SystemPromptInput.agentListing`'s own header for why
       // that decision belongs to the caller, not this function.
+      //
+      // FULL EVERY TURN, plus the delta when the set moved (L2b integration). User-context blocks are
+      // re-attached to each turn's request and never enter history (the seam's own P1-B rule), so
+      // the pin's "list once, then deltas" -- which relies on its listing attachment staying in the
+      // transcript -- would leave every turn after the first with no listing at all here. The full
+      // block is therefore rendered whenever there is anything to list, and a changed set ADDS
+      // claude's "now available / no longer available" block beside it on the turn it changed.
       let agentListingTypes: string[] | undefined;
       if (input.agentListing !== undefined) {
-        const listing = renderAgentListing(input.agentListing.entries, input.agentListing.priorAgentTypes);
-        if (listing.text !== undefined) userContextBlocks.push(listing.text);
-        agentListingTypes = listing.agentTypes;
+        const full = renderAgentListing(input.agentListing.entries);
+        if (full.text !== undefined && input.agentListing.entries.length > 0) userContextBlocks.push(full.text);
+        if (input.agentListing.priorAgentTypes !== undefined) {
+          const delta = renderAgentListing(input.agentListing.entries, input.agentListing.priorAgentTypes);
+          if (delta.text !== undefined) userContextBlocks.push(delta.text);
+        }
+        agentListingTypes = full.agentTypes;
       }
 
       // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,

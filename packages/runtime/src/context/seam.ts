@@ -98,7 +98,9 @@ export interface SystemPromptInput {
    * `priorAgentTypes` mirrors the seam's own "plain data snapshot, no session-mutable state" rule
    * (this file's own header): the CALLER holds the cross-turn state (which agentTypes were listed
    * last time) and hands it in fresh each call, exactly like every other per-turn input here. Omitted
-   * = this session's first listing.
+   * = this session's first listing. The FULL listing renders every turn (these blocks are never
+   * persisted, so a first-turn-only listing would vanish on turn two); a `priorAgentTypes` that
+   * differs from `entries` additionally renders the added/removed delta block.
    */
   agentListing?: { entries: AgentListingEntry[]; priorAgentTypes?: readonly string[] };
   /**

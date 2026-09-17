@@ -14,10 +14,10 @@
 // child-engine.ts's own header still discloses the remaining subsystem-level seams.
 import { randomUUID } from "node:crypto";
 import { writeFileSync, appendFileSync } from "node:fs";
-import { WINTER_BRAND, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, envName, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { AGENT_TOOL_CANONICAL_NAME } from "../../provider/slots.ts";
-import "../descriptors/agent.ts"; // self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
+import { OMITTED_TYPE_REQUIRED_PREFIX } from "../descriptors/agent.ts"; // also self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
 import { createBackgroundTask } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared background-task runtime TaskStop/TaskOutput are built on.
 // Task-frames parity (2026-09-17 contract §4): `backgroundAgentTasks`/`currentBackgroundTasksChanged`
@@ -26,10 +26,12 @@ import { createBackgroundTask } from "../background-tasks.ts";
 // wire spelling itself (background-tasks.ts's WIRE_TASK_TYPES), the second map carried nothing the
 // registry did not already have; the two were kept in lockstep by hand, which is exactly the
 // "per-tool literal" duplication the update/notify doors below exist to remove.
-import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
-import { loadAgentDefinitions } from "../../subagents/definitions.ts";
+import { startTracking, updateTask, getTask, removeTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { loadAgentDefinitions, findAgentByType, formatAgentNotFound, formatAgentAmbiguous } from "../../subagents/definitions.ts";
 import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
+import { resolveForkSubagentEnabled } from "../../subagents/builtin-agents.ts";
+import { hasGitRoot } from "../../subagents/git-root.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, ChildTaskProgress, SpawnChildRequest } from "../../subagents/child-handle.ts";
 
 // ONE PRODUCER for the name (P6.6): `provider/slots.ts` declares it, `descriptors/agent.ts`
@@ -84,13 +86,17 @@ function emitAgentTaskStarted(ctx: ToolExecutionContext, taskId: string, parentT
 // Task-frames parity (contract §4): one `task_progress` per qualifying child assistant message,
 // foreground and background alike -- `child-engine.ts`'s own `SpawnChildRequest.onProgress` is what
 // calls this, through the closure built in `execute()` below.
+//
+// Contract §8: `description` is the child's most recent recorded tool call's ACTIVITY text
+// (`progress.activity`, computed by child-engine.ts from that call's input), falling back to the task
+// description only when that tool has none.
 function emitAgentTaskProgress(ctx: ToolExecutionContext, taskId: string, parentToolUseId: string, description: string, subagentType: string | undefined, progress: ChildTaskProgress): void {
   ctx.emitFrame({
     type: "system",
     subtype: "task_progress",
     task_id: taskId,
     tool_use_id: parentToolUseId,
-    description,
+    description: progress.activity ?? description,
     ...(subagentType !== undefined ? { subagent_type: subagentType } : {}),
     usage: { total_tokens: progress.totalTokens, tool_uses: progress.toolUses, duration_ms: progress.durationMs },
     last_tool_name: progress.lastToolName,
@@ -208,65 +214,99 @@ function registerAgentTask(
     isBackgrounded,
     toolUseId: parentToolUseId,
     emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
+    ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}),
     stop: () => {
       void handle.stop();
     },
+    // Review r1 finding 4: whichever door finalizes this row (the agent's own result path or a
+    // TaskStop that gets there first) reports the child's live usage.
+    usage: () => toWireUsage(handle.usage?.()),
   });
-  writeAgentTaskStub(outputPath, handle);
-  emitAgentTaskStarted(ctx, taskId, parentToolUseId, description, subagentType, isBackgrounded, handle.record.spawnDepth, prompt);
+  // Review r1 finding 12: a registration that fails AFTER the row exists must not leave a
+  // "running" row behind that nothing will ever finalize.
+  try {
+    writeAgentTaskStub(outputPath, handle);
+    emitAgentTaskStarted(ctx, taskId, parentToolUseId, description, subagentType, isBackgrounded, handle.record.spawnDepth, prompt);
+  } catch (err) {
+    removeTask(taskId);
+    throw err;
+  }
   return { taskId, outputPath };
 }
 
-function startBackgroundAgentTask(
-  handle: ChildHandle,
-  ctx: ToolExecutionContext,
-  description: string,
-  prompt: string,
-  subagentType: string | undefined,
-  parentToolUseId: string,
-  // Task-frames parity: the `onProgress` closure baked into `req` (execute()'s own SpawnChildRequest,
-  // BEFORE spawnChild is called) needs the real taskId the moment it exists -- this is that channel.
-  setTaskId: (taskId: string) => void,
-): ToolResultPayload {
-  // `handle` is ALREADY a real, running child by the time this function is called (spawnChild has
-  // already succeeded, in the caller). Everything below is bookkeeping ON TOP of that live child --
-  // if ANY of it throws (createBackgroundTask before configureBackgroundTaskRoot, a filesystem
-  // error writing the stub, a torn-down session's emitFrame), the child would otherwise become a
-  // silent ORPHAN: already running, tracked nowhere, awaited by nothing, stoppable by nothing. The
-  // try/catch below exists ONLY to prevent that -- on any failure here, stop() the child rather than
-  // leaving it live with zero visibility, and surface a legible error instead of letting the
-  // executor throw past this point with a real subagent already in flight underneath it.
-  let taskId: string;
-  let outputPath: string;
-  try {
-    ({ taskId, outputPath } = registerAgentTask(ctx, handle, description, prompt, subagentType, parentToolUseId, true));
-    setTaskId(taskId);
-    ctx.emitFrame({
-      type: "system",
-      subtype: "background_tasks_changed",
-      tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
-      uuid: randomUUID(),
-      session_id: ctx.sessionId,
-    });
-  } catch (err) {
-    void handle.stop();
-    return {
-      output: `Error: subagent ${handle.record.id} was spawned but its background-task setup failed -- stopped it rather than leaving an orphan: ${err instanceof Error ? err.message : String(err)}`,
-      isError: true,
-    };
-  }
+// --- Spawn-surface parity (L2b): the model-facing refusals and the launch result -----------------
 
-  // Fire-and-forget: run_in_background's whole point is returning before completion (mirrors
-  // bash.ts's own identical completion.then pattern for its own background tasks). Per the
-  // seam-contracts-p4.test.ts fixture's own pinned behavior, result() resolves exactly once and
-  // never rejects -- the onRejected branch is defense-in-depth only, never expected to fire.
+/** R-S5 / claude's own wording (an error message, not prompt text -- R-S4). */
+export const FORK_INSIDE_FORK_REFUSAL = "Fork is not available inside a forked worker. Complete your task directly using your tools.";
+/**
+ * R-S5: claude's fork+remote refusal. The research file truncates claude's string after the dash; the
+ * tail is a WINTER completion (disclosed).
+ */
+export const FORK_REMOTE_REFUSAL = 'Fork cannot use isolation: "remote" — a fork inherits this session\'s live conversation, which a remote environment cannot receive. Omit isolation, or use isolation: "worktree".';
+
+/** R-S4: a thrown-style Agent-tool error -- claude's plain message text, `is_error: true`, no prefix. */
+function refusal(message: string): ToolResultPayload {
+  return { output: message, isError: true };
+}
+
+function isTruthyEnv(v: string | undefined): boolean {
+  return v === "1" || v === "true";
+}
+
+/**
+ * Research §A5: the remote fallback is SILENT to the model -- claude records it in its debug log only.
+ * Winter's equivalent: one stderr line, and only when `<PREFIX>DEBUG` is set for the session.
+ */
+function debugLog(ctx: ToolExecutionContext, line: string): void {
+  const brand = ctx.brand ?? WINTER_BRAND;
+  if (!isTruthyEnv((ctx.env ?? process.env)[envName(brand, "DEBUG")])) return;
+  try {
+    process.stderr.write(`${brand.envPrefix.toLowerCase().replace(/_$/, "")}[debug]: ${line}\n`);
+  } catch {
+    /* a closed stderr must never fail a spawn */
+  }
+}
+
+/**
+ * Research §A8: the background launch result. claude's structured shape (`status: "async_launched"`,
+ * `agentId`, `description`, `prompt`, `outputFile`, `canReadOutputFile`) plus the model-facing
+ * guidance, Winter-worded: it launched, a notification will arrive, do not predict its results, do
+ * not read the output file while it runs, and SendMessage reaches it. `taskId` is a Winter extension
+ * (a Winter agent id is not its task id, and TaskStop/TaskOutput take the task id).
+ */
+function backgroundLaunchResult(args: { agentId: string; taskId: string; description: string; prompt: string; outputFile: string; canReadOutputFile: boolean }): ToolResultPayload {
+  const guidance = [
+    `Agent launched in the background ("${args.description}").`,
+    `agentId: ${args.agentId} -- an internal identifier; do not show it to the user. To give this agent more instructions, or to continue it after it finishes, use SendMessage with to: "${args.agentId}". To cancel it, use TaskStop with task_id: "${args.taskId}".`,
+    "It is running now, and you will be notified automatically when it finishes. Do not guess at or describe its results before that notification arrives, and do not repeat the work it is doing.",
+    args.canReadOutputFile
+      ? `Its output is being recorded at ${args.outputFile}. Do not read or tail that file while the agent is still running -- wait for the notification. Until then, work only on things that do not overlap with this agent's task, or briefly tell the user what you launched and end your turn.`
+      : "Briefly tell the user what you launched and end your turn; the agent's result will arrive in a later message.",
+  ].join("\n");
+  return {
+    output: JSON.stringify({
+      status: "async_launched",
+      agentId: args.agentId,
+      taskId: args.taskId,
+      description: args.description,
+      prompt: args.prompt,
+      outputFile: args.outputFile,
+      canReadOutputFile: args.canReadOutputFile,
+      message: guidance,
+    }),
+  };
+}
+
+// Fire-and-forget completion of a BACKGROUND agent task whose row is already registered (by the
+// spawn's own `onSpawned`, or by the fallback below). Mirrors bash.ts's own completion.then pattern.
+// Per the seam-contracts-p4.test.ts fixture's own pinned behavior, result() resolves exactly once
+// and never rejects -- the onRejected branch is defense-in-depth only.
+function finishBackgroundAgentTaskLater(handle: ChildHandle, ctx: ToolExecutionContext, taskId: string, parentToolUseId: string, outputPath: string): void {
   handle.result().then(
     (result) => {
-      // A TaskStop that already finalized this row (its own `updateTask` call, moving status out of
-      // "running") gets here first when `handle.stop()`'s own `settle("stopped", ...)` resolves
-      // `result()` -- `finalizeAgentTask` is idempotent either way (updateTask's own empty-diff/
-      // already-terminal guards), but the guard avoids a redundant stub-append and
-      // background_tasks_changed for the common case, matching workflow.ts's own identical guard.
+      // A TaskStop that already finalized this row (its own `updateTask` call) gets here first when
+      // `handle.stop()`'s own settle resolves `result()` -- the guard avoids a redundant stub-append
+      // and background_tasks_changed (updateTask itself would refuse the late change anyway).
       if (getTask(taskId)?.status !== "running") return;
       try {
         appendFileSync(outputPath, `\n[${new Date().toISOString()}] subagent ${handle.record.id} ${result.status}.\n`);
@@ -291,17 +331,6 @@ function startBackgroundAgentTask(
       finalizeAgentTask(taskId, parentToolUseId, outputPath, { status: "failed", content: `subagent ${handle.record.id}: result() rejected unexpectedly` });
     },
   );
-
-  return {
-    output: JSON.stringify({
-      status: "async_launched",
-      agentId: handle.record.id,
-      taskId,
-      ...(subagentType !== undefined ? { agentType: subagentType } : {}),
-      outputFile: outputPath,
-      message: `Subagent ${handle.record.id} started in the background (task ${taskId}). Use TaskOutput to peek at ${outputPath}, or SendMessage to steer/resume it once addressable.`,
-    }),
-  };
 }
 
 export const agentExecutor: ToolExecutor = {
@@ -312,7 +341,7 @@ export const agentExecutor: ToolExecutor = {
     if (description === undefined || prompt === undefined) {
       return { output: 'Error: Agent requires both "description" and "prompt" string fields.', isError: true };
     }
-    const subagentType = typeof record["subagent_type"] === "string" ? (record["subagent_type"] as string) : undefined;
+    const requestedType = typeof record["subagent_type"] === "string" ? (record["subagent_type"] as string) : undefined;
     const model = typeof record["model"] === "string" ? (record["model"] as string) : undefined;
     const runInBackgroundInput = typeof record["run_in_background"] === "boolean" ? (record["run_in_background"] as boolean) : undefined;
     const isolation = typeof record["isolation"] === "string" ? (record["isolation"] as string) : undefined;
@@ -326,118 +355,132 @@ export const agentExecutor: ToolExecutor = {
     // WS-10 §1.2: `team_name`/`mode` are deprecated, accepted-ignored -- deliberately never read
     // from `record` at all; there is no decision anywhere below that could consult them.
 
-    // WS-10 §8: isolation:"remote" is schema-accepted but capability-gated -- v1 Winter has no
-    // remote execution backend configured anywhere in this codebase. A typed unsupported-capability
-    // error, checked BEFORE any spawn work (limits/definitions/workspace), matching this whole spec
-    // family's "a rejected spawn should be cheap and side-effect-free" posture (WS-10 §6, mirrored
-    // verbatim in child-engine.ts's own depth/concurrency check ordering).
-    if (isolation === "remote") {
-      return {
-        output: 'Error: isolation:"remote" is not available -- no remote execution backend is configured for this session (WS-10 §8 unsupported-capability error).',
-        isError: true,
-      };
-    }
-    const resolvedIsolation: "worktree" | undefined = isolation === "worktree" ? "worktree" : undefined;
-
     // registry.ts's own documented contract (ToolExecutionContext.session.spawnChild's own header
     // comment): "Lane C's own tools/impl/agent.ts (the one production caller) is expected to treat
-    // an absent method as 'no child-spawn capability configured for this run'" -- matching the exact
-    // phrasing this lane's own child-engine.test.ts fixtures already use for the identical check.
+    // an absent method as 'no child-spawn capability configured for this run'".
     if (!ctx.session.spawnChild) {
       return { output: "no spawnChild capability configured", isError: true };
     }
 
-    // WS-10 §2: subagent_type selects an AgentDefinition. Both sources now resolve -- filesystem
-    // (the user tier always, a project `agents/*.md` only in a trusted workspace, RULING
-    // R4-7 / resolveWorkspaceTrust()) AND the session's own PROGRAMMATIC `Options.agents` map,
-    // which reaches this executor via `ctx.agents` (Phase 4 Task 8 closed Lane C's Disclosed Gap #3
-    // by adding that field to ToolExecutionContext and threading `config.agents` onto it in
-    // engine.ts's buildDefaultToolExecutor). `loadAgentDefinitions`'s own `programmatic` parameter
-    // was always implemented and independently tested; this call site simply had nothing to pass it
-    // until the seam existed. Precedence across sources is definitions.ts's own (programmatic >
-    // project > user, "most specific wins" -- see that file's own header).
+    const env = ctx.env ?? process.env;
+    const agentsBrand = ctx.brand ?? WINTER_BRAND;
+
+    // R-S5: the fork gate (the session's resolved RuntimeConfig/env verdict) and its refusals. With
+    // the gate OFF, "fork" is an ordinary name that no definition carries -- the not-found error below.
+    const forkEnabled = ctx.forkSubagentEnabled ?? resolveForkSubagentEnabled(env, agentsBrand);
+    const isFork = forkEnabled && requestedType === "fork";
+    if (isFork && ctx.insideFork === true) return refusal(FORK_INSIDE_FORK_REFUSAL);
+    if (isFork && isolation === "remote") return refusal(FORK_REMOTE_REFUSAL);
+
+    // WS-10 §2: the session's subagent_type set -- built-ins (lowest tier), plugin, user, project
+    // (trust-gated, RULING R4-7) and programmatic -- read with the SESSION's env so the built-in kill
+    // switches apply per session (limits.ts precedent), and the same inputs every other reader of
+    // this set uses (engine.ts's `sessionAgentDefinitions`).
+    const trustedWorkspace = resolveWorkspaceTrust(ctx);
+    const pluginAgents = getPluginAgents(ctx.sessionId);
+    const definitions = loadAgentDefinitions({
+      cwd: ctx.cwd,
+      home: ctx.home,
+      brand: agentsBrand,
+      ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+      trustedWorkspace,
+      env,
+      forkSubagentEnabled: forkEnabled,
+      ...(ctx.agents !== undefined ? { programmatic: ctx.agents as Record<string, RuntimeAgentDefinition> } : {}),
+      ...(pluginAgents !== undefined ? { pluginAgents } : {}),
+    });
+
+    // Research §A4/§A7: omitted -> general-purpose; a name resolves after normalization (exact match
+    // first); a miss or an ambiguity refuses with claude's own wording and the available list.
     let definition: RuntimeAgentDefinition | undefined;
-    if (subagentType !== undefined) {
-      // M11 (fix wave follow-up 6): the SESSION's own trust verdict, threaded from engine.ts through
-      // ToolExecutionContext -- never a second hardcoded constant that could drift from the one the
-      // permission evaluator and hook registry already use.
-      const trustedWorkspace = resolveWorkspaceTrust(ctx);
-      // Phase 5 Task 8 (Lane S's "What T8 must wire" item 3): plugin-contributed definitions, out of
-      // the session-keyed registry `production-wiring.ts` populates. NOT folded into `ctx.agents` --
-      // that field is the PROGRAMMATIC tier, and a plugin agent must sit at the BOTTOM of
-      // `loadAgentDefinitions`' precedence (programmatic > project > user > plugin), never above a
-      // user's own user-tier `agents/<name>.md`. See subagents/plugin-agents.ts for why the key is
-      // the session id rather than the agent id.
-      const pluginAgents = getPluginAgents(ctx.sessionId);
-      // P7a fix r1 (Minor-1): the session's own profile, for BOTH the directories this reads and
-      // the message it may print. `engine.ts`'s own `resolveAgentType` already threads one; this
-      // second call site did not, so a branded session's Agent tool looked in `<home>/.winter/agents`.
-      const agentsBrand = ctx.brand ?? WINTER_BRAND;
-      const definitions = loadAgentDefinitions({
-        cwd: ctx.cwd,
-        home: ctx.home,
-        brand: agentsBrand,
-        // Phase 5 fix wave, KNOWN-6: the RESOLVED winter root, so a session run under a custom
-        // `<PREFIX>HOME` finds its user agent definitions in the SAME root its skills and commands
-        // came from. `ctx.winterHome` is threaded by `buildDefaultToolExecutor`.
-        ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
-        trustedWorkspace,
-        ...(ctx.agents !== undefined ? { programmatic: ctx.agents as Record<string, RuntimeAgentDefinition> } : {}),
-        ...(pluginAgents !== undefined ? { pluginAgents } : {}),
-      });
-      const found = definitions.get(subagentType);
-      if (found === undefined) {
-        return {
-          // P7a fix r1 (Minor-1): the MODEL-FACING text derives too. `loadAgentDefinitions` above
-          // already reads the branded directories; a message naming `~/.winter/agents` sent the
-          // model to look in a directory this product does not have.
-          output: `Error: unknown subagent_type "${subagentType}" -- no AgentDefinition by that name was found (checked ~/${agentsBrand.homeDirName}/agents/*.md${trustedWorkspace ? ` and ${agentsBrand.projectDirName}/agents/*.md` : ""}${ctx.agents !== undefined ? " and this session's programmatic agents" : ""}).`,
-          isError: true,
-        };
+    let subagentType: string;
+    if (requestedType === undefined) {
+      const generalPurpose = definitions.get("general-purpose");
+      if (generalPurpose === undefined) {
+        const available = [...definitions.keys()].sort();
+        return refusal(`${OMITTED_TYPE_REQUIRED_PREFIX}. Available agents: ${available.length > 0 ? available.join(", ") : "none"}`);
       }
-      definition = found;
+      definition = generalPurpose;
+      subagentType = "general-purpose";
+    } else {
+      const found = findAgentByType(definitions, requestedType);
+      if (found.kind === "not-found") return refusal(formatAgentNotFound(requestedType, [...definitions.keys()]));
+      if (found.kind === "ambiguous") return refusal(formatAgentAmbiguous(requestedType, found.matches));
+      definition = found.definition;
+      subagentType = found.name;
     }
 
+    // Research §A5 / R-S8: `remote` stays advertised but has no backend -- claude's SILENT fallback:
+    // a worktree when the session root is inside a git repository, else a plain local agent (a debug
+    // line only, never a model-facing error). The `web-fetch` built-in ignores isolation altogether.
+    let resolvedIsolation: "worktree" | undefined = isolation === "worktree" ? "worktree" : undefined;
+    if (isolation === "remote") {
+      const root = ctx.session.getSessionRoot();
+      const inGit = await hasGitRoot(root);
+      resolvedIsolation = inGit ? "worktree" : undefined;
+      debugLog(ctx, `Agent isolation "remote" is unavailable; running ${inGit ? "in a worktree" : "locally"} instead (${root})`);
+    }
+    if (subagentType === "web-fetch") resolvedIsolation = undefined;
+
     // WS-10 §5: run_in_background is an invocation REQUEST, not the whole rule -- resolveForegroundBackground
-    // owns the full chain (team constraints -> WINTER_DISABLE_BACKGROUND_TASKS -> fork default ->
-    // invocation -> result-needed). `isFork` is always false here: AgentInput (WS-10 §1.2's pinned
-    // field table) has no fork-triggering field at all -- fork is a SEPARATE spawn shape
-    // (SpawnChildRequest.fork), never reachable through the model-facing Agent tool.
-    // `resultNeededImmediately` is deliberately never passed -- see policy.ts's own header comment
-    // on that parameter for why this call site has no meaningful value to give it.
+    // owns the full chain. R-S7: Winter keeps its FOREGROUND default (it has no held-back turn result
+    // for a background agent), with the fork gate on as well.
     const fgbg = resolveForegroundBackground({
       ...(runInBackgroundInput !== undefined ? { invocationRequest: runInBackgroundInput } : {}),
       ...(definition?.background !== undefined ? { definitionBackground: definition.background } : {}),
-      isFork: false,
+      isFork,
+      env,
+      brand: agentsBrand,
     });
 
-    // Phase 4 Task 8 closed Lane C's Disclosed Gap #4: `ctx.toolUseId` IS the model's own
-    // `tool_use` block id for this call (registry.ts threads `EngineToolCall.id` onto every
-    // ToolExecutionContext it builds), so WS-10 §4's "child progress correlated, keyed by parent
-    // tool-use ID" is now keyed on the real id a host can match against the tool_use block it saw.
-    // The randomUUID() fallback stays for a hand-built context that supplies no id (every
-    // pre-existing impl/*.test.ts fixture): internally self-consistent, never a fabricated claim to
-    // be the model's id.
+    // Phase 4 Task 8 closed Lane C's Disclosed Gap #4: `ctx.toolUseId` IS the model's own `tool_use`
+    // block id for this call. The randomUUID() fallback stays for a hand-built context.
     const parentToolUseId = ctx.toolUseId ?? randomUUID();
 
-    // Task-frames parity (contract §4): `onProgress` is wired into the request BEFORE spawnChild
-    // even runs, but the real task id does not exist until AFTER it resolves (background allocates
-    // one via createBackgroundTask; foreground, a few lines below, allocates one the same way) -- so
-    // the closure reads a variable this same scope assigns once the id is known, rather than the id
-    // being a field of the request itself. A progress frame that somehow arrived before the id was
-    // set (not reachable in practice -- see child-engine.ts's own header on why the pump cannot run
-    // ahead of spawnChild's own return) would simply be dropped rather than throw.
+    // Task-frames parity: the task row + `task_started` are created from the spawn's own
+    // `onSpawned` (review r1 finding 9) -- BEFORE the child's first generation, so nothing the child
+    // produces can precede them. A spawner that never calls it (a hand-built test double) is covered
+    // by the fallback after `spawnChild` returns. A registration failure is RECORDED, not thrown:
+    // the child already exists by then, and what to do with it is decided below.
     let taskId: string | undefined;
+    let outputPath: string | undefined;
+    let registrationError: { error: unknown } | undefined;
+    const register = (handle: ChildHandle): void => {
+      if (taskId !== undefined || registrationError !== undefined) return;
+      try {
+        const registered = registerAgentTask(ctx, handle, description, prompt, subagentType, parentToolUseId, fgbg.background);
+        taskId = registered.taskId;
+        outputPath = registered.outputPath;
+        if (fgbg.background) {
+          ctx.emitFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
+            uuid: randomUUID(),
+            session_id: ctx.sessionId,
+          });
+        }
+      } catch (err) {
+        registrationError = { error: err };
+      }
+    };
+
     const req: SpawnChildRequest = {
       parentToolUseId,
       prompt,
       runInBackground: fgbg.background,
       ...(definition !== undefined ? { definition } : {}),
-      ...(model !== undefined ? { model } : {}),
+      ...(isFork ? { fork: true as const } : {}),
+      // R-S5: a fork always inherits the parent's model -- `model` is ignored for it.
+      ...(model !== undefined && !isFork ? { model } : {}),
       ...(resolvedIsolation !== undefined ? { isolation: resolvedIsolation } : {}),
       ...(name !== undefined ? { name } : {}),
+      onSpawned: register,
       onProgress: (progress) => {
-        if (taskId === undefined) return;
+        // Review r1 finding 3: a RESUMED child (SendMessage) runs a new generation under the same
+        // request, and a stopped child may still flush buffered frames -- neither may report
+        // progress for a task whose notification has already gone out.
+        if (taskId === undefined || getTask(taskId)?.status !== "running") return;
         emitAgentTaskProgress(ctx, taskId, parentToolUseId, description, subagentType, progress);
       },
     };
@@ -446,66 +489,56 @@ export const agentExecutor: ToolExecutor = {
     try {
       handle = await ctx.session.spawnChild(req);
     } catch (err) {
-      // Catches every synchronous/asynchronous failure spawnChild can produce: depth/concurrency
-      // limits (limits.ts), an unresolvable model alias (resolution.ts), a slot that nothing this
-      // session has can serve (WS-13c §4 step 5), a workspace-creation failure (workspace.ts, e.g.
-      // isolation:"worktree" outside a git repo), or "no child engine factory is registered"
-      // (Disclosed Gap #1, child-engine.ts's own header) -- one legible tool error, never an
-      // uncaught throw out of this executor.
-      //
-      // WS-13c §3/§4 (P6.6): the CODE joins the text when the error carries one. A typed refusal
-      // whose code is dropped reads to the model as an unexplained failure, and `slot-unservable`
-      // (nothing serves it) versus `ambiguous-slot-name` (two families use that name) are two
-      // different things for the model to do next -- pick another slot, or name the family's own.
+      // Catches every failure spawnChild can produce: depth/concurrency limits (limits.ts), an
+      // unresolvable model alias (resolution.ts), a slot nothing serves (WS-13c §4 step 5), a
+      // workspace-creation failure (workspace.ts), or "no child engine factory is registered".
+      // R-S4: claude's shape -- the thrown message, `is_error: true`. WS-13c §3/§4 (P6.6): the
+      // typed code still joins the text when the error carries one.
       const code = typeof (err as { code?: unknown } | null)?.code === "string" ? (err as { code: string }).code : undefined;
       const message = err instanceof Error ? err.message : String(err);
-      return { output: `Error: subagent spawn failed -- ${code !== undefined ? `${code}: ` : ""}${message}`, isError: true };
+      return refusal(`${code !== undefined ? `${code}: ` : ""}${message}`);
     }
+    register(handle); // no-op when the spawn already called `onSpawned`
 
     if (!fgbg.background) {
-      // Phase 4 fix wave (I5): a FOREGROUND child is tracked in the same unified task namespace a
-      // background one is, so `TaskStop` can reach it -- before this, a foreground child had no
-      // task id at all and `stop()` was reachable through no tool.
-      //
-      // Task-frames parity (contract §4): the pin registers a FOREGROUND agent too (`task_started
-      // {..., is_backgrounded: false}`) and terminates it through the SAME `updateTask` door a
-      // background agent uses -- the older "deliberately SILENT, remove on success" posture this
-      // file's own history carried was measured wrong against a live run of the pin (that
-      // remove-without-task_updated path is bash.ts's own foreground convention, never an agent's).
-      // `background_tasks_changed` still never follows registration or termination here (§1's own
-      // listing rule already excludes `isBackgrounded:false` rows, so emitting one would announce a
-      // row nothing lists anyway) -- that is the ONE structural difference from the background path
-      // below, per `finalizeAgentTask`'s own header.
-      //
-      // Best-effort by construction: the tracking row is a convenience on top of a child this call
-      // is ALREADY awaiting, so a failure to create it (a hand-built ToolExecutionContext whose run
-      // never called configureBackgroundTaskRoot) must degrade to "no task id", never fail the call.
-      let outputPath: string | undefined;
-      try {
-        const registered = registerAgentTask(ctx, handle, description, prompt, subagentType, parentToolUseId, false);
-        taskId = registered.taskId;
-        outputPath = registered.outputPath;
-      } catch {
-        /* see above -- tracking is auxiliary to a child this call already owns */
-      }
+      // Task-frames parity (contract §4): a FOREGROUND agent is registered too (`is_backgrounded:
+      // false`) and terminates through the SAME `updateTask` door as a background one; it is never
+      // listed, so no `background_tasks_changed` follows. The row is a convenience on top of a child
+      // this call is already awaiting, so a failed registration degrades to "no task id".
       try {
         const result = await handle.result();
-        if (taskId !== undefined && outputPath !== undefined) finalizeAgentTask(taskId, parentToolUseId, outputPath, result);
+        // Review r1 finding 6: a TaskStop may already have finalized this row.
+        if (taskId !== undefined && outputPath !== undefined && getTask(taskId)?.status === "running") finalizeAgentTask(taskId, parentToolUseId, outputPath, result);
         return foregroundResultToPayload(handle.record, result, prompt, subagentType);
       } catch (err) {
-        // `handle.result()` per seam-contracts-p4.test.ts's own pinned behavior never actually
-        // rejects -- this mirrors the background path's own defense-in-depth-only onRejected branch,
-        // never expected to fire, but a terminal update here (rather than an orphaned "running" row)
-        // is cheap insurance if it ever does.
-        if (taskId !== undefined && outputPath !== undefined) {
+        // `handle.result()` never rejects per seam-contracts-p4.test.ts -- defense in depth only.
+        if (taskId !== undefined && outputPath !== undefined && getTask(taskId)?.status === "running") {
           finalizeAgentTask(taskId, parentToolUseId, outputPath, { status: "failed", content: err instanceof Error ? err.message : String(err) });
         }
         throw err;
       }
     }
 
-    return startBackgroundAgentTask(handle, ctx, description, prompt, subagentType, parentToolUseId, (id) => {
-      taskId = id;
+    // BACKGROUND: `handle` is already a real, running child. If its bookkeeping failed, the child
+    // would otherwise be a silent ORPHAN (running, tracked nowhere, stoppable by nothing) -- stop it
+    // and surface a legible error instead.
+    if (registrationError !== undefined || taskId === undefined || outputPath === undefined) {
+      void handle.stop();
+      const err = registrationError?.error;
+      return {
+        output: `Error: subagent ${handle.record.id} was spawned but its background-task setup failed -- stopped it rather than leaving an orphan: ${err instanceof Error ? err.message : String(err ?? "no task id")}`,
+        isError: true,
+      };
+    }
+    finishBackgroundAgentTaskLater(handle, ctx, taskId, parentToolUseId, outputPath);
+    const advertised = ctx.advertisedToolNames?.();
+    return backgroundLaunchResult({
+      agentId: handle.record.id,
+      taskId,
+      description,
+      prompt,
+      outputFile: outputPath,
+      canReadOutputFile: advertised === undefined || advertised.includes("Read") || advertised.includes("Bash"),
     });
   },
 };
