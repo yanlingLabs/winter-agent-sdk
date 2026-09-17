@@ -589,3 +589,39 @@ describe("assembler -- agentListing (spawn-surface parity)", () => {
     expect(listingIdx).toBeGreaterThan(dynamicIdx);
   });
 });
+
+// --- Spawn-surface parity (research §A1 Explore/Plan field table): omitProjectContext -------------
+
+describe("assembler -- omitProjectContext (RuntimeAgentDefinition.omitProjectContext's assembler-side effect)", () => {
+  test("drops the WINTER.md-equivalent instructions-file blocks, keeps the memory index", () => {
+    writeFileSync(join(cwd, WINTER_MD_BASENAME), "PROJECT RULES", "utf8");
+    const withIt = assemble({ omitProjectContext: false });
+    const without = assemble({ omitProjectContext: true });
+    expect(withIt.userContextBlocks.some((b) => b.includes("PROJECT RULES"))).toBe(true);
+    expect(without.userContextBlocks.some((b) => b.includes("PROJECT RULES"))).toBe(false);
+  });
+
+  test("drops gitSummary from the dynamic section, keeps every other dynamic field", () => {
+    const withIt = assemble({ gitSummary: "branch: main, 3 files changed" });
+    const without = assemble({ gitSummary: "branch: main, 3 files changed", omitProjectContext: true });
+    expect(withIt.system).toContain("branch: main, 3 files changed");
+    expect(without.system).not.toContain("branch: main, 3 files changed");
+    // cwd/platform/date -- the rest of the dynamic section -- are unaffected.
+    expect(without.system).toContain(cwd);
+  });
+
+  test("absent (undefined) is byte-identical to false -- every pre-existing caller is unaffected", () => {
+    writeFileSync(join(cwd, WINTER_MD_BASENAME), "PROJECT RULES", "utf8");
+    const omitted = assemble({});
+    const explicitFalse = assemble({ omitProjectContext: false });
+    expect(omitted).toEqual(explicitFalse);
+  });
+
+  test("the memory index and the agent listing are NOT affected -- the omission is scoped to instructions+git only", () => {
+    const out = assemble({
+      omitProjectContext: true,
+      agentListing: { entries: [{ agentType: "Explore", whenToUse: "Search.", disallowedTools: [] }] },
+    });
+    expect(out.userContextBlocks.some((b) => b.includes("Available agent types"))).toBe(true);
+  });
+});

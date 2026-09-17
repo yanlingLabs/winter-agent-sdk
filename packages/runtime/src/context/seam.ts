@@ -101,6 +101,17 @@ export interface SystemPromptInput {
    * = this session's first listing.
    */
   agentListing?: { entries: AgentListingEntry[]; priorAgentTypes?: readonly string[] };
+  /**
+   * Spawn-surface parity (research §A1's `Explore`/`Plan` field table: "`omitClaudeMd: true`;
+   * context also drops gitStatus", mirrored on `RuntimeAgentDefinition.omitProjectContext`). When
+   * true, this render OMITS the discovered project-instructions blocks (`discoverWinterMd`'s own
+   * user+project WINTER.md-equivalent files) from `userContextBlocks`, AND omits `gitSummary` from
+   * the dynamic section, even when the caller supplied one. Everything else (the memory index, the
+   * skill listing, the agent listing, the dynamic section's non-git fields) is UNAFFECTED -- claude's
+   * own two dropped things are the instructions file and git status specifically, never the whole
+   * context surface. Absent/false = every pre-existing caller, byte-identical.
+   */
+  omitProjectContext?: boolean;
 }
 
 /**

@@ -173,13 +173,18 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(settings?.autoMemoryDirectory !== undefined ? { override: settings.autoMemoryDirectory } : {}) })) : undefined;
 
       // --- the dynamic block ------------------------------------------------------------------
+      //
+      // Spawn-surface parity: `omitProjectContext` drops `gitSummary` specifically (claude's own
+      // Explore/Plan "context also drops gitStatus") -- every OTHER dynamic-section field (cwd,
+      // platform, date, memory) is untouched, since claude's own omission is scoped to exactly two
+      // things (the instructions file, handled below, and git status).
       const dynamic = renderDynamicSections({
         cwd: input.cwd,
         platform: input.platform,
         osVersion: input.osVersion,
         shell: input.shell,
         date: input.date,
-        ...(input.gitSummary !== undefined ? { gitSummary: input.gitSummary } : {}),
+        ...(input.gitSummary !== undefined && input.omitProjectContext !== true ? { gitSummary: input.gitSummary } : {}),
         ...(memoryDir !== undefined ? { memoryDir } : {}),
       });
 
@@ -242,7 +247,12 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // and the environment has to precede the instructions that depend on it.
       const userContextBlocks: string[] = [];
       if (region.excludeDynamicSections) userContextBlocks.push(dynamic);
-      for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
+      // Spawn-surface parity: `omitProjectContext` drops the discovered instructions-file blocks
+      // entirely (claude's own "omitClaudeMd") -- the memory index just below is UNAFFECTED (claude's
+      // own omission never touches memory).
+      if (input.omitProjectContext !== true) {
+        for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
+      }
       if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir, brand.instructionsFile));
 
       // Spawn-surface parity (research §A3, scope item 3): the Agent-tool listing, LAST among the
