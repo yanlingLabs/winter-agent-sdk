@@ -187,6 +187,8 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         model: input.model === undefined || input.model === resolved.modelKey ? resolved.providerModelId : input.model,
         messages: rendered as ProviderMessageLike[],
         ...(input.system !== undefined ? { system: input.system } : {}),
+        // 0.0.16 request layout: the cache blocks ride alongside `system` (which stays their join).
+        ...(input.systemBlocks !== undefined ? { systemBlocks: input.systemBlocks } : {}),
         ...(input.tools !== undefined ? { tools: input.tools } : {}),
         ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
