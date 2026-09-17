@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { homedir, release as osRelease } from "node:os";
+import { homedir, release as osRelease, type as osType } from "node:os";
 // Phase 5 fix wave, I1: `buildBaselineDenyRules` compares the resolved winter root against the
 // literal default, so it needs path resolution.
 import { join, resolve } from "node:path";
@@ -73,7 +73,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 // types can live down there while `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay up here.
 // `TurnRequest` is imported for its `toolChoice`/`effort`/`thinking` member types, so the engine's
 // request and an adapter's request cannot drift apart on the three fields they share.
-import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
 import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
@@ -179,6 +179,22 @@ import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
 import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
 import type { AgentListingEntry } from "./context/agent-listing.ts";
+import { attachmentMessage, dateChangeAnnounced, localDateString, skillListingResumeSeed, type AttachmentPayload, type DateChangeAttachment, type SkillListingAttachment } from "./context/attachments.ts";
+import { computeAgentListingDelta } from "./context/agent-listing.ts";
+import {
+  buildRequestMessages,
+  buildSystemBlocks,
+  clearSessionRequestLayout,
+  joinSystemBlocks,
+  recordSessionRequestLayout,
+  registerSessionContextReload,
+  renderSystemContext,
+  renderUserContext,
+  unregisterSessionContextReload,
+  type ContextEntry,
+} from "./context/request-layout.ts";
+import { computeGitStatus } from "./context/git-status.ts";
+import { renderSkillListingContent } from "./skills/listing.ts";
 import { getPluginAgents } from "./subagents/plugin-agents.ts";
 import { getSkillSessionRuntime } from "./skills/runtime.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
@@ -359,6 +375,21 @@ export interface ProviderMessage {
    * `thinking` block with a fabricated signature.
    */
   decoration?: { text: string; door: "tag" | "thinking-channel" };
+  /**
+   * 0.0.16 request layout (P16-5/P16-6): a PERSISTED ATTACHMENT -- claude's `type: "attachment"`
+   * transcript entry. The message is a `user`-role entry in the engine's history whose `content` is
+   * the attachment's rendered, `<system-reminder>`-wrapped text; `attachment` is the payload the
+   * transcript stores and the history folds read back (context/attachments.ts). It is placed right
+   * after the user prompt or tool results that triggered it, persisted through
+   * `SessionPersistence.recordAttachmentEntry`, and survives resume.
+   */
+  meta?: { attachment: AttachmentPayload };
+  /**
+   * 0.0.16 request layout: the per-request userContext message (claude's `mbt`) at INDEX 0 of the
+   * live request. Never in the engine's history and never persisted; it only appears on an outbound
+   * request whose first history message it could not be merged into (context/request-layout.ts).
+   */
+  isMeta?: true;
 }
 
 // M6 (fix wave, P3 close-out): the advisor's own TranscriptSource wants plain {role, text} entries
@@ -433,6 +464,13 @@ export interface ProviderRequest {
    * host supplied no system prompt", never as an error.
    */
   system?: string;
+  /**
+   * 0.0.16 request layout (P16-5): `system` as claude's ordered cache blocks -- the static prefix
+   * (`global`), then the session-specific rest with the systemContext lines appended LAST (`org`).
+   * When present, `system` equals the texts joined by a blank line, so a provider that only reads
+   * `system` sees the same prompt.
+   */
+  systemBlocks?: SystemPromptBlock[];
   // --- Phase 6 Task 3 (R6-3): everything a REAL adapter needs, all optional, all additive ----------
   /**
    * The session's ADVERTISED tool set with real JSON Schemas -- what an adapter puts in the request's
@@ -817,8 +855,25 @@ export interface ToolExecutor {
 // recordUserEntry (the dialect has only user/assistant roles — the "tool" role above is internal to
 // this engine's own history, never persisted as such); assistant text/tool_use both route through
 // recordAssistantEntry as content blocks. Entirely optional — the engine runs fine without a store.
+/**
+ * SDK 0.0.16: one extra attachment producer (`EngineOptions.attachmentProducers`). `messages` is the
+ * engine's live history -- after a compaction, claude's post-boundary slice -- for folds to read.
+ */
+export type AttachmentProducer = (ctx: {
+  phase: "turn-start" | "tool-round" | "compaction";
+  messages: readonly ProviderMessage[];
+  sessionId: string;
+  agentId?: string;
+}) => AttachmentPayload[] | Promise<AttachmentPayload[]>;
+
 export interface SessionPersistence {
   recordUserEntry(content: string | ContentBlock[]): void | Promise<void>;
+  /**
+   * SDK 0.0.16 (P16-5/P16-6): one persisted attachment -- claude's `{type: "attachment", attachment}`
+   * transcript entry, chained like any other. Optional: a store without it keeps the attachment in
+   * this run's memory only (a resumed session then re-announces it).
+   */
+  recordAttachmentEntry?(attachment: AttachmentPayload): void | Promise<void>;
   /**
    * Phase 6 Task 3 (R6-7): `opts.uuid` PRE-ALLOCATES the entry's own dialect uuid.
    *
@@ -1027,11 +1082,26 @@ export interface EngineOptions {
 
   /**
    * R5-16: prompt assembly (Lane C). Called once per user envelope; its `system` goes on the live
-   * `ProviderRequest`, its `userContextBlocks` are prepended to that envelope's own user message on
-   * the request only. ABSENT => the engine sends `agentSystemPrompt` (or nothing) and authors no
-   * text of its own -- see context/seam.ts.
+   * `ProviderRequest`. SDK 0.0.16: its `userContext()` builds the index-0 context message, memoized
+   * per session (context/request-layout.ts). ABSENT => the engine sends `agentSystemPrompt` (or
+   * nothing), no index-0 message, and authors no text of its own -- see context/seam.ts.
    */
   systemPromptAssembler?: SystemPromptAssembler;
+  /**
+   * SDK 0.0.16 (P16-5/P16-6): extra PERSISTED-ATTACHMENT producers, run by the attachment scan at the
+   * start of every turn, after every tool round and after a compaction -- after the built-in ones
+   * (agent listing, skill listing, date change). Whatever they return is appended to the history as
+   * attachment messages (context/attachments.ts), persisted, and sent in claude's positions. The
+   * reusable door for other lanes' attachments (task notifications, plan-mode reminders).
+   */
+  attachmentProducers?: readonly AttachmentProducer[];
+  /**
+   * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
+   * knows one (production wiring answers from the catalog). Absent => the bare-id line.
+   */
+  describeModel?: (model: string) => { displayName?: string } | undefined;
+  /** SDK 0.0.16: the engine's clock for the `currentDate` entry and the `date_change` fold. Tests only; absent => `new Date()`. */
+  now?: () => Date;
   /**
    * R5-3 / P4-J retirement: the child persona a subagent runs with (`AgentDefinition.prompt`
    * composed over any inherited base). Reaches the assembler as `SystemPromptInput.agentPrompt`, and
@@ -1133,8 +1203,12 @@ export interface EngineOptions {
    * gap exactly -- a listing tells the model to "call the `Skill` tool", and a session with a
    * restricted `tools` list would be instructed to call a tool it does not have. `Skill` is in the
    * pinned default 24 (capture (g)), so the default path is unaffected.
+   *
+   * SDK 0.0.16: rendered as claude's persisted `skill_listing` attachment -- once, then only the
+   * skills not yet sent (session state, seeded on resume, kept across compaction). A GETTER is read
+   * afresh at every attachment scan, which is how a skill added mid-session reaches the model.
    */
-  skillListing?: SkillListing;
+  skillListing?: SkillListing | (() => SkillListing);
   /**
    * Phase 5 fix wave, C1: the settings-file `permissions` block, per tier.
    *
@@ -1667,6 +1741,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     systemPromptAssembler,
     agentSystemPrompt,
     omitProjectContext,
+    attachmentProducers,
+    describeModel,
+    now: engineClock,
     commandResolver,
     compactionController,
     structuredOutput,
@@ -4945,6 +5022,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // model can no longer see evidence of having loaded must not stay silently callable.
     onCompaction(loadedToolSet, result.evidencedToolNames);
 
+    // SDK 0.0.16 (P16-5/P16-6): claude's post-compaction context. The userContext/systemContext memo
+    // is dropped (the instructions files, the memory index and the git snapshot are re-read for the
+    // next request), and the attachment scan runs over the compacted history at once -- the folds no
+    // longer see the dropped listing, so it is re-announced as an INITIAL listing right after the
+    // summary. The skill listing's sent-names state is deliberately kept (claude keeps it too).
+    clearSessionContext();
+    await scanAttachments("compaction");
+
     return { ok: true, summary: result.summary, retainedCount: result.retained.length };
   };
 
@@ -4965,19 +5050,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     await performCompaction("auto", null);
   };
 
-  // Spawn-surface parity (research §A3): the Agent-tool listing block. `priorAgentTypes` is this
-  // SESSION's (this run's) memory of the set the previous turn listed, so a changed set also renders
-  // the "now available / no longer available" delta; `latestAgentDefinitions` is the set the current
-  // turn resolved, read by the Agent tool's description gates in `toolSpecFor` below.
-  let priorAgentTypes: string[] | undefined;
+  // --- SDK 0.0.16 (P16-5/P16-6): the request layout and the persisted attachments -----------------
+  //
+  // `latestAgentDefinitions` is the set the last listing scan resolved, read by the Agent tool's
+  // description gates in `toolSpecFor` below.
   let latestAgentDefinitions: Map<string, SourcedAgentDefinition> | undefined;
-  const agentListingInput = (): SystemPromptInput["agentListing"] | undefined => {
-    // A session (or a child) without the Agent tool gets no listing -- a depth-limited child has had
-    // `Agent` removed from its own pool (child-engine.ts), so this is also the depth filter.
+  /**
+   * The agent types this session may list right now, or `undefined` when the Agent tool is not
+   * advertised (claude's `s1t` then produces nothing at all). A child without `Agent` in its pool
+   * (child-engine.ts's depth gate) gets `undefined` here, which is also the depth filter.
+   */
+  const agentListingEntries = (): AgentListingEntry[] | undefined => {
     if (!currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME)) return undefined;
     const defs = sessionAgentDefinitions();
     latestAgentDefinitions = defs;
-    const entries: AgentListingEntry[] = [...defs.entries()].map(([agentType, def]) => ({
+    return [...defs.entries()].map(([agentType, def]) => ({
       agentType,
       // Review r2 finding 11: capped for every non-builtin source (project/user/plugin/
       // programmatic) -- see capAgentListingWhenToUse's own header for why 1,000 chars.
@@ -4985,68 +5072,183 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(def.tools !== undefined ? { tools: def.tools } : {}),
       ...(def.disallowedTools !== undefined ? { disallowedTools: def.disallowedTools } : {}),
     }));
-    return { entries, ...(priorAgentTypes !== undefined ? { priorAgentTypes } : {}) };
   };
 
-  const assemblePrompt = (): AssembledPrompt => {
-    const agentListing = agentListingInput();
-    const base: SystemPromptInput = {
+  const clock = (): Date => engineClock?.() ?? new Date();
+
+  const promptInput = (): SystemPromptInput => {
+    const env = engineEnv ?? process.env;
+    const modelDisplayName = currentModel !== undefined ? describeModel?.(currentModel)?.displayName : undefined;
+    return {
       config,
       cwd: config.cwd,
-      env: engineEnv ?? process.env,
+      env,
       platform: process.platform,
-      osVersion: osRelease(),
-      shell: (engineEnv ?? process.env)["SHELL"] ?? "",
-      date: new Date().toISOString().slice(0, 10),
+      // claude's `OS Version: <type> <release>`.
+      osVersion: `${osType()} ${osRelease()}`,
+      shell: env["SHELL"] ?? "",
+      date: localDateString(clock()),
+      ...(currentModel !== undefined ? { model: currentModel } : {}),
+      ...(modelDisplayName !== undefined ? { modelDisplayName } : {}),
       planMode: policyStateStore.getState().mode === "plan",
       ...(agentSystemPrompt !== undefined ? { agentPrompt: agentSystemPrompt } : {}),
-      // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing for why the engine
-      // rather than either lane owns this check.
-      ...(skillListing !== undefined && skillListing.length > 0 && advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME) ? { skillListing } : {}),
-      ...(agentListing !== undefined ? { agentListing } : {}),
       ...(omitProjectContext === true ? { omitProjectContext: true } : {}),
     };
-    if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "", userContextBlocks: [] };
-    const assembled = systemPromptAssembler.assemble(base);
-    if (assembled.agentListingTypes !== undefined) priorAgentTypes = assembled.agentListingTypes;
-    return assembled;
   };
 
-  // Builds the LIVE request's message list: the engine's own history, with this envelope's
-  // user-context blocks prepended to a user message in it.
+  const assemblePrompt = (input: SystemPromptInput): AssembledPrompt => {
+    if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "" };
+    return systemPromptAssembler.assemble(input);
+  };
+
+  // --- the session context (claude's userContext + systemContext memos) ---------------------------
   //
-  // Applied to a COPY, never to `messages` -- Ruling P1-B keeps persistence and history free of
-  // presentation concerns, and a block that entered history would be re-sent on every later turn,
-  // re-persisted, and eventually summarized into a compaction as if the model had said it. The
-  // blocks are re-attached each turn instead, which is what R5-9's "always injected as user-context"
-  // means operationally.
-  //
-  // RULING P5-F (fix round 1, M2): THE ATTACHMENT POINT IS RECOMPUTED FROM THE REBUILT MESSAGE LIST
-  // ON EVERY PROVIDER CALL -- never a cached index. The first version captured
-  // `turnUserIndex = messages.length - 1` once per envelope, which a MID-TURN COMPACTION strands: the
-  // engine replaces `messages` wholesale with `[summary, ...retained]`, so with `retained: []` index
-  // 0 is the SUMMARY and the WINTER.md/memory blocks were prepended INSIDE the summary text, and with
-  // any other retention count the index pointed at an unrelated message or past the end and the
-  // blocks were silently dropped for the rest of that turn.
-  //
-  // "The LAST user-role message" is the correct anchor after re-anchoring: it is this envelope's own
-  // prompt when nothing has compacted, and the summary-anchored first user message when everything
-  // was summarized away (the summary is pushed as a `user` message, and the envelope's prompt is
-  // inside it) -- in both cases the newest thing the model is being asked about. Searching from the
-  // END also makes it correct on a resumed session, whose FIRST user message belongs to an earlier
-  // run.
-  const requestMessages = (blocks: string[]): ProviderMessage[] => {
-    const copy = messages.map((m) => ({ ...m }));
-    if (blocks.length === 0) return copy;
-    for (let i = copy.length - 1; i >= 0; i--) {
-      const target = copy[i];
-      if (target === undefined || target.role !== "user" || typeof target.content !== "string") continue;
-      target.content = `${blocks.join("\n\n")}\n\n${target.content}`;
-      return copy;
+  // DELIBERATE BEHAVIOUR CHANGE (SDK 0.0.16, P16-5). Until 0.0.15 the instructions files and the
+  // memory index were RE-READ ON EVERY TURN and prepended to that turn's user message. claude builds
+  // its userContext (`claudeMd`, `currentDate`) and its systemContext (`gitStatus`) ONCE per session,
+  // memoized, and rebuilds them only after a compaction (or an explicit reload); Winter now does the
+  // same. Consequence: an edit to WINTER.md or MEMORY.md is seen after the next compaction or in a new
+  // session -- exactly as in claude -- while SETTINGS stay live (the assembler reads them per envelope;
+  // the no-restart rule is about settings, not file contents). The payoff is a byte-stable index-0
+  // message, which is what makes the conversation prefix cacheable at all.
+  interface SessionContext {
+    userContext: ContextEntry[];
+    userContextText: string | undefined;
+    systemContextText: string | undefined;
+    /** The date the `currentDate` entry was built with; `undefined` when there is no such entry. */
+    date: string | undefined;
+  }
+  let sessionContext: SessionContext | undefined;
+  /** Cleared by a compaction and by `reloadSessionContext`; the next request rebuilds it. */
+  const clearSessionContext = (): void => {
+    sessionContext = undefined;
+  };
+  const ensureSessionContext = async (assembled: AssembledPrompt, input: SystemPromptInput): Promise<SessionContext> => {
+    if (sessionContext !== undefined) return sessionContext;
+    const placement = assembled.systemContextPlacement ?? "none";
+    const gitStatus = placement !== "none" ? await computeGitStatus(config.cwd) : undefined;
+    let userContext: ContextEntry[] = systemPromptAssembler?.userContext?.(input) ?? [];
+    // `excludeDynamicSections`: claude's `{...systemContext, ...userContext, ...dynamic}` -- git FIRST.
+    if (placement === "userContext" && gitStatus !== undefined) userContext = [["gitStatus", gitStatus], ...userContext];
+    const dated = userContext.find(([key]) => key === "currentDate");
+    sessionContext = {
+      userContext,
+      userContextText: renderUserContext(userContext),
+      systemContextText: placement === "system" && gitStatus !== undefined ? renderSystemContext([["gitStatus", gitStatus]]) : undefined,
+      date: dated !== undefined ? input.date : undefined,
+    };
+    return sessionContext;
+  };
+  registerSessionContextReload(config.sessionId, config.agentId, clearSessionContext);
+  facetDisposers.push(() => {
+    unregisterSessionContextReload(config.sessionId, config.agentId);
+    clearSessionRequestLayout(config.sessionId, config.agentId);
+  });
+
+  /**
+   * The provider request's system prompt for one generation: claude's cache blocks (the static
+   * prefix, then the dynamic half with the systemContext appended last) and their join. A test
+   * double that reports no `systemParts` keeps the plain `system` string and sends no blocks.
+   */
+  const requestSystem = (assembled: AssembledPrompt, context: SessionContext): { system: string; systemBlocks?: SystemPromptBlock[] } => {
+    if (assembled.systemParts === undefined) {
+      return { system: [assembled.system, context.systemContextText].filter((p): p is string => p !== undefined && p.length > 0).join("\n\n") };
     }
-    // No string-content user message anywhere (a tool-result-only history): nothing to attach to, and
-    // inventing a message would put context in the transcript the model never asked for.
-    return copy;
+    const systemBlocks = buildSystemBlocks({ ...assembled.systemParts, ...(context.systemContextText !== undefined ? { systemContext: context.systemContextText } : {}) });
+    return { system: joinSystemBlocks(systemBlocks), systemBlocks };
+  };
+
+  // Builds the LIVE request's message list (context/request-layout.ts): a COPY of the history with
+  // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
+  // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
+  // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
+  const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText);
+
+  // --- the skill listing's session state (claude's `sentSkillNames`) -------------------------------
+  //
+  // NOT a fold: a set of names already sent, seeded on resume from the persisted `skill_listing`
+  // entries (claude's `vlr`), and NOT reset by a compaction (claude clears it only on /clear or a
+  // skills reload, neither of which Winter has).
+  const sentSkillNames = new Set<string>();
+  let skillResumeSeed: Set<string> | null = null;
+  let suppressNextSkillListing = false;
+  {
+    const seed = skillListingResumeSeed(messages);
+    if (seed.names.length > 0) skillResumeSeed = new Set(seed.names);
+    if (seed.suppressNext) suppressNextSkillListing = true;
+  }
+  const currentSkillListing = (): SkillListing => (typeof skillListing === "function" ? skillListing() : (skillListing ?? []));
+  /** claude's `Urn` + `rwt`: the `skill_listing` attachment for the skills not yet sent, or `undefined`. */
+  const skillListingAttachment = (): SkillListingAttachment | undefined => {
+    // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing.
+    if (!advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME)) return undefined;
+    const listing = currentSkillListing();
+    if (skillResumeSeed !== null) {
+      for (const entry of listing) if (skillResumeSeed.has(entry.name)) sentSkillNames.add(entry.name);
+      skillResumeSeed = null;
+    }
+    if (suppressNextSkillListing) {
+      suppressNextSkillListing = false;
+      for (const entry of listing) sentSkillNames.add(entry.name);
+      return undefined;
+    }
+    const fresh = listing.filter((entry) => !sentSkillNames.has(entry.name));
+    if (fresh.length === 0) return undefined;
+    const isInitial = sentSkillNames.size === 0;
+    for (const entry of fresh) sentSkillNames.add(entry.name);
+    return { type: "skill_listing", content: renderSkillListingContent(fresh), skillCount: fresh.length, isInitial, names: fresh.map((e) => e.name) };
+  };
+
+  /** claude's `alr`: a `date_change` once the local date moved past the one the session context was built with. */
+  const dateChangeAttachment = (): DateChangeAttachment | undefined => {
+    const contextDate = sessionContext?.date;
+    if (contextDate === undefined) return undefined;
+    const today = localDateString(clock());
+    if (today === contextDate || dateChangeAnnounced(messages, today)) return undefined;
+    return { type: "date_change", newDate: today };
+  };
+
+  const recordAttachment = async (attachment: AttachmentPayload): Promise<void> => {
+    if (store?.recordAttachmentEntry === undefined) return;
+    try {
+      await store.recordAttachmentEntry(attachment);
+    } catch {
+      /* auxiliary, exactly like recordUser/recordAssistant -- a store failure is never turn-fatal */
+    }
+  };
+
+  /**
+   * THE ATTACHMENT SCAN (claude's `nlr`): at the start of every turn, after every tool round that
+   * continues the turn, and after a compaction. Each attachment is appended to the history right
+   * after what triggered it (the user prompt, the tool results, the summary) and persisted; the
+   * request builder then places it where claude does. Order: the agent listing, the skill listing,
+   * the date change, then any host/lane producers.
+   */
+  const scanAttachments = async (phase: "turn-start" | "tool-round" | "compaction"): Promise<void> => {
+    const produced: AttachmentPayload[] = [];
+    // R5-16: the built-in attachments are AUTHORED text (context/*), so they ride only when an
+    // assembler is registered -- with none, the engine authors nothing, exactly as before (0.0.15's
+    // listing lived in the assembler for the same reason). Host/lane producers run regardless.
+    if (systemPromptAssembler !== undefined) {
+      const entries = agentListingEntries();
+      if (entries !== undefined) {
+        const delta = computeAgentListingDelta(entries, messages);
+        if (delta !== undefined) produced.push(delta);
+      }
+      const skills = skillListingAttachment();
+      if (skills !== undefined) produced.push(skills);
+      const date = dateChangeAttachment();
+      if (date !== undefined) produced.push(date);
+    }
+    for (const producer of attachmentProducers ?? []) {
+      produced.push(...(await producer({ phase, messages, sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) })));
+    }
+    for (const attachment of produced) {
+      const message = attachmentMessage(attachment);
+      if (message === undefined) continue;
+      messages.push(message);
+      await recordAttachment(attachment);
+    }
   };
 
   // --- Phase 6 Task 3: the provider request's own inputs ------------------------------------------
@@ -5523,7 +5725,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
     // Phase 5 Task 3: assembled AFTER the envelope is recorded (so a store failure never leaves an
     // assembled-but-unrecorded turn) and BEFORE the first provider call of the turn.
-    const assembled = assemblePrompt();
+    const envelopeInput = promptInput();
+    const assembled = assemblePrompt(envelopeInput);
+    // SDK 0.0.16: the session context is built (once, memoized) BEFORE the scan, so the date fold
+    // compares against the date the index-0 context actually carries.
+    await ensureSessionContext(assembled, envelopeInput);
+    await scanAttachments("turn-start");
 
     // R5-10: the attempt budget is PER ENVELOPE, not per run. Each user envelope is expected to
     // produce its own structured result, so a run-wide counter would let one envelope's failures
@@ -5583,11 +5790,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
       let turn: ProviderTurn;
       try {
-        const outboundMessages = requestMessages(assembled.userContextBlocks);
+        // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
+        const context = await ensureSessionContext(assembled, envelopeInput);
+        const outboundMessages = requestMessages(context);
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
         const toolSpecs = providerToolSpecs();
+        const outboundSystem = requestSystem(assembled, context);
+        // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
+        recordSessionRequestLayout(config.sessionId, config.agentId, {
+          ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
+          systemBlocks: outboundSystem.systemBlocks ?? [],
+          userContext: context.userContext,
+          tools: toolSpecs,
+        });
         const raced = await raceInterrupt(
           activeProvider.generate({
             messages: outboundMessages,
@@ -5595,7 +5812,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // than sending `system: ""`. The two are equivalent to a provider ("this host supplied no
             // system prompt" -- ProviderRequest's own contract), and omitting keeps every
             // pre-P5 consumer, fixture and recorded trace byte-identical to before this task.
-            ...(assembled.system.length > 0 ? { system: assembled.system } : {}),
+            ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
+            // SDK 0.0.16: claude's cache blocks, only when the assembler reported its halves.
+            ...(outboundSystem.systemBlocks !== undefined && outboundSystem.systemBlocks.length > 0 ? { systemBlocks: outboundSystem.systemBlocks } : {}),
             // --- Phase 6 Task 3 (R6-3): the real adapter's inputs ----------------------------------
             //
             // Every one is CONDITIONALLY SPREAD, so a session that configures none sends the exact
@@ -6305,6 +6524,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
       if (finalResult) break roundLoop; // relocated below the emit/push/record (Ruling P1-H) — see comment above
       if (interrupted) break roundLoop;
+      // SDK 0.0.16 (P16-6): claude's scan after every tool round -- a mid-turn change (a new agent
+      // definition, a new skill, midnight) is announced right after these tool results, and the
+      // request builder folds it into them.
+      await scanAttachments("tool-round");
       // loop back for the next provider.generate() call
     }
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Provider, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
+import type { Provider, ProviderMessage, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
 import { registerTool } from "../tools/registry.ts";
 
 // --- Phase 5 Task 2 (R5-3): the mock family's half of the provider-seam extension ------------------
@@ -42,6 +42,18 @@ function syntheticUsage(input: ProviderRequest, turn: ProviderTurn): ProviderUsa
   return { inputTokens: Math.max(1, Math.ceil(inputChars / 4)), outputTokens: Math.max(1, Math.ceil(outputChars / 4)) };
 }
 
+/**
+ * SDK 0.0.16: a user message's TEXT. The live request now merges the index-0 context, the persisted
+ * attachments and the prompt into one message of text blocks (claude's wire shape), so a double that
+ * reads "the user's text" joins the text blocks; the prompt is always the LAST block, so the last line
+ * is still the prompt's last line.
+ */
+export function userMessageText(message: ProviderMessage | undefined): string {
+  if (message === undefined) return "";
+  if (typeof message.content === "string") return message.content;
+  return message.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+}
+
 /** Wraps one mock Provider with the two seam obligations above. Applied at every hand-out point in this file. */
 function instrumentMockProvider(provider: Provider): Provider {
   return {
@@ -63,7 +75,7 @@ function instrumentMockProvider(provider: Provider): Provider {
 export const echoProvider: Provider = instrumentMockProvider({
   async generate({ messages }) {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    const text = typeof lastUser?.content === "string" ? lastUser.content : "";
+    const text = userMessageText(lastUser);
     return { kind: "text", text: `echo: ${text}` };
   },
 });
@@ -358,7 +370,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return instrumentMockProvider({
         async generate({ messages }): Promise<ProviderTurn> {
           const lastUser = [...messages].reverse().find((m) => m.role === "user");
-          const raw = typeof lastUser?.content === "string" ? lastUser.content : "";
+          const raw = userMessageText(lastUser);
           const filePath = raw.slice(raw.lastIndexOf("\n") + 1);
           if (step === 0) {
             step++;
@@ -495,7 +507,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
             // handed `Write` a multi-kilobyte "path" -- observed as a real `ENAMETOOLONG` on both
             // legs, identically. The scenario's own prompt is a single-line absolute path, and the
             // blocks are always separated from it by a blank line, so the last line IS the prompt.
-            const raw = typeof lastUser?.content === "string" ? lastUser.content : "";
+            const raw = userMessageText(lastUser);
             const filePath = raw.slice(raw.lastIndexOf("\n") + 1);
             return { kind: "tool_use", calls: [{ id: "laneb-call-1", name: "Write", input: { file_path: filePath, content: "winter-t8-laneb-fixture-content\n" } }] };
           }
@@ -554,7 +566,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           const firstUser = messages.find((m) => m.role === "user");
-          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const firstText = userMessageText(firstUser);
           if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) return { kind: "text", text: "child finished" };
           const alreadySpawned = messages.some(
             (m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" && b.name === "Agent"),
@@ -591,7 +603,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           const firstUser = messages.find((m) => m.role === "user");
-          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const firstText = userMessageText(firstUser);
           const calls = messages.flatMap((m) =>
             m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => (b as { name: string }).name) : [],
           );
@@ -621,7 +633,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           const firstUser = messages.find((m) => m.role === "user");
-          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const firstText = userMessageText(firstUser);
           if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) return { kind: "text", text: "child finished" };
           const assistantCalls = messages.flatMap((m) =>
             m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => (b as { name: string }).name) : [],

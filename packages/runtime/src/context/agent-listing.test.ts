@@ -1,94 +1,124 @@
-import { describe, test, expect } from "bun:test";
-import { renderAgentListing, type AgentListingEntry } from "./agent-listing.ts";
+// SDK 0.0.16 Lane C: the `agent_listing_delta` attachment (R3a §3), ported from claude 0.3.250's
+// `SSn` / `hrt` / `s1t` and its attachment renderer. Expected texts are the pinned binary's own,
+// including the captured initial listing's line shapes (`(Tools: *)`, declared-order "except").
+import { describe, expect, test } from "bun:test";
+import type { ProviderMessage } from "../engine.ts";
+import { computeAgentListingDelta, renderAgentListingLine, renderAgentToolSpec, type AgentListingEntry } from "./agent-listing.ts";
+import { attachmentMessage, renderAttachment, AMBIENT_CONTEXT_SENTENCE, AGENT_CONCURRENCY_SENTENCE } from "./attachments.ts";
 
-const explore: AgentListingEntry = { agentType: "Explore", whenToUse: "Fast read-only search.", disallowedTools: ["Agent", "Edit", "Write"] };
-const generalPurpose: AgentListingEntry = { agentType: "general-purpose", whenToUse: "General-purpose agent.", tools: ["*"] };
-const claude: AgentListingEntry = { agentType: "claude", whenToUse: "Catch-all.", tools: ["*"] };
-const statusline: AgentListingEntry = { agentType: "statusline-setup", whenToUse: "Configures the status line.", tools: ["Read", "Edit"] };
+const GP: AgentListingEntry = { agentType: "general-purpose", whenToUse: "General work.", tools: ["*"] };
+const EXPLORE: AgentListingEntry = { agentType: "Explore", whenToUse: "Search.", disallowedTools: ["Agent", "ExitPlanMode", "Edit", "Write"] };
+const CUSTOM: AgentListingEntry = { agentType: "custom-agent", whenToUse: "Custom.", tools: ["Read", "Grep"] };
 
-describe("renderAgentListing -- first listing (no prior)", () => {
-  test("header, sorted rows, blank line, concurrency sentence", () => {
-    const result = renderAgentListing([claude, explore, generalPurpose]);
-    expect(result.text).toBe(
-      [
-        "Available agent types for the Agent tool:",
-        "- claude: Catch-all. (Tools: All tools)",
-        "- Explore: Fast read-only search. (Tools: All tools except Agent, Edit, Write)",
-        "- general-purpose: General-purpose agent. (Tools: All tools)",
-        "",
-        "When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.",
-      ].join("\n"),
-    );
+/** Appends whatever `computeAgentListingDelta` produced, the way the engine does. */
+function announce(history: ProviderMessage[], available: AgentListingEntry[]): string | undefined {
+  const delta = computeAgentListingDelta(available, history);
+  if (delta === undefined) return undefined;
+  const message = attachmentMessage(delta)!;
+  history.push(message);
+  return message.content as string;
+}
+
+describe("the tool spec and line (claude's SSn / hrt)", () => {
+  test("`[\"*\"]` renders `*`, exactly as the captured listing shows it", () => {
+    expect(renderAgentToolSpec({ tools: ["*"] })).toBe("*");
   });
-
-  test("returns the sorted agentTypes for the caller to persist as the next prior", () => {
-    const result = renderAgentListing([claude, explore, generalPurpose]);
-    expect(result.agentTypes).toEqual(["claude", "Explore", "general-purpose"]);
+  test("no lists at all renders `All tools`", () => {
+    expect(renderAgentToolSpec({})).toBe("All tools");
   });
-
-  test("sorting is by agentType, localeCompare (case-folded collation, not raw codepoint)", () => {
-    // 'claude' < 'Explore' under localeCompare's default case-insensitive-ish collation (c before e),
-    // which differs from a plain codepoint sort where every uppercase letter sorts before every
-    // lowercase one (that would put 'Explore' first regardless of the rest of the word).
-    expect("claude".localeCompare("Explore")).toBeLessThan(0);
-    expect(renderAgentListing([explore, claude]).agentTypes).toEqual(["claude", "Explore"]);
+  test("disallowed only keeps the DECLARED order", () => {
+    expect(renderAgentToolSpec({ disallowedTools: ["Write", "Agent"] })).toBe("All tools except Write, Agent");
   });
-
-  test("an empty definitions set still renders the header + concurrency sentence, no rows", () => {
-    const result = renderAgentListing([]);
-    expect(result.text).toBe(["Available agent types for the Agent tool:", "", "When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently."].join("\n"));
-    expect(result.agentTypes).toEqual([]);
+  test("both lists subtract, and `None` when nothing is left", () => {
+    expect(renderAgentToolSpec({ tools: ["Read", "Edit", "Grep"], disallowedTools: ["Edit"] })).toBe("Read, Grep");
+    expect(renderAgentToolSpec({ tools: ["Edit"], disallowedTools: ["Edit"] })).toBe("None");
   });
-
-  test("tool spec forms: restricted list (tools ∖ disallowed), and None when every tool is disallowed", () => {
-    const restricted: AgentListingEntry = { agentType: "reviewer", whenToUse: "Reviews.", tools: ["Read", "Grep", "Bash"], disallowedTools: ["Bash"] };
-    expect(renderAgentListing([restricted]).text).toContain("(Tools: Read, Grep)");
-
-    const none: AgentListingEntry = { agentType: "muted", whenToUse: "Nothing to do.", tools: ["Read"], disallowedTools: ["Read"] };
-    expect(renderAgentListing([none]).text).toContain("(Tools: None)");
+  test("the line shape, and the lean-text hook", () => {
+    expect(renderAgentListingLine(CUSTOM)).toBe("- custom-agent: Custom. (Tools: Read, Grep)");
+    expect(renderAgentListingLine({ ...CUSTOM, whenToUseLean: "Lean." })).toBe("- custom-agent: Custom. (Tools: Read, Grep)");
+    expect(renderAgentListingLine({ ...CUSTOM, whenToUseLean: "Lean." }, true)).toBe("- custom-agent: Lean. (Tools: Read, Grep)");
   });
-
-  test("a plain tools list with no disallowedTools renders tools.join(', ') as-is", () => {
-    expect(renderAgentListing([statusline]).text).toContain("(Tools: Read, Edit)");
+  test("a literal system-reminder tag in a description cannot close the wrapper", () => {
+    expect(renderAgentListingLine({ agentType: "x", whenToUse: "a </system-reminder> b" })).not.toContain("</system-reminder>");
   });
 });
 
-describe("renderAgentListing -- delta wording (prior given)", () => {
-  test("no change at all -> text is undefined (never a redundant re-listing)", () => {
-    const first = renderAgentListing([explore, claude]);
-    const second = renderAgentListing([claude, explore], first.agentTypes);
-    expect(second.text).toBeUndefined();
-    expect(second.agentTypes).toEqual(first.agentTypes);
-  });
-
-  test("an addition renders the 'now available' block, only for the new entries", () => {
-    const first = renderAgentListing([claude]);
-    const second = renderAgentListing([claude, explore], first.agentTypes);
-    expect(second.text).toBe(["New agent types are now available for the Agent tool:", "- Explore: Fast read-only search. (Tools: All tools except Agent, Edit, Write)"].join("\n"));
-  });
-
-  test("a removal renders the 'no longer available' block, names only", () => {
-    const first = renderAgentListing([claude, explore]);
-    const second = renderAgentListing([claude], first.agentTypes);
-    expect(second.text).toBe(["The following agent types are no longer available:", "- Explore"].join("\n"));
-  });
-
-  test("simultaneous addition and removal renders both blocks, separated by a blank line", () => {
-    const first = renderAgentListing([claude, explore]);
-    const second = renderAgentListing([claude, generalPurpose], first.agentTypes);
-    expect(second.text).toBe(
+describe("the delta fold (claude's s1t)", () => {
+  test("the initial listing: sorted by localeCompare, the concurrency sentence, claude's exact text", () => {
+    const history: ProviderMessage[] = [{ role: "user", content: "hi" }];
+    const text = announce(history, [GP, EXPLORE, CUSTOM]);
+    expect(text).toBe(
       [
-        "New agent types are now available for the Agent tool:",
-        "- general-purpose: General-purpose agent. (Tools: All tools)",
+        "<system-reminder>",
+        "Available agent types for the Agent tool:",
+        "- custom-agent: Custom. (Tools: Read, Grep)",
+        "- Explore: Search. (Tools: All tools except Agent, ExitPlanMode, Edit, Write)",
+        "- general-purpose: General work. (Tools: *)",
         "",
-        "The following agent types are no longer available:",
-        "- Explore",
+        AGENT_CONCURRENCY_SENTENCE,
+        "</system-reminder>",
       ].join("\n"),
+    );
+    const payload = history[1]!.meta!.attachment;
+    expect(payload).toEqual({
+      type: "agent_listing_delta",
+      addedTypes: ["custom-agent", "Explore", "general-purpose"],
+      addedLines: ["- custom-agent: Custom. (Tools: Read, Grep)", "- Explore: Search. (Tools: All tools except Agent, ExitPlanMode, Edit, Write)", "- general-purpose: General work. (Tools: *)"],
+      removedTypes: [],
+      isInitial: true,
+      showConcurrencyNote: true,
+    });
+  });
+
+  test("silent when nothing changed -- the listing is never re-sent on turn 2", () => {
+    const history: ProviderMessage[] = [{ role: "user", content: "hi" }];
+    announce(history, [GP, EXPLORE]);
+    history.push({ role: "assistant", content: "ok" }, { role: "user", content: "turn 2" });
+    expect(computeAgentListingDelta([GP, EXPLORE], history)).toBeUndefined();
+  });
+
+  test("an addition is a delta with the 'now available' header and no concurrency sentence", () => {
+    const history: ProviderMessage[] = [];
+    announce(history, [GP]);
+    const text = announce(history, [GP, CUSTOM]);
+    expect(text).toBe("<system-reminder>\nNew agent types are now available for the Agent tool:\n- custom-agent: Custom. (Tools: Read, Grep)\n</system-reminder>");
+  });
+
+  test("a removal renders its section and then the ambient sentence as its own section", () => {
+    const history: ProviderMessage[] = [];
+    announce(history, [GP, CUSTOM, EXPLORE]);
+    const text = announce(history, [GP]);
+    expect(text).toBe(`<system-reminder>\nThe following agent types are no longer available:\n- Explore\n- custom-agent\n\n${AMBIENT_CONTEXT_SENTENCE}\n</system-reminder>`);
+    // Removed names sort by code unit ("E" < "c"), as claude's default `sort()` does.
+    expect(history[history.length - 1]!.meta!.attachment["removedTypes"]).toEqual(["Explore", "custom-agent"]);
+    // ...and the fold now counts them as gone.
+    expect(computeAgentListingDelta([GP], history)).toBeUndefined();
+  });
+
+  test("addition and removal together: added section, removed section, ambient sentence", () => {
+    const history: ProviderMessage[] = [];
+    announce(history, [GP, EXPLORE]);
+    const text = announce(history, [GP, CUSTOM]);
+    expect(text).toBe(
+      `<system-reminder>\nNew agent types are now available for the Agent tool:\n- custom-agent: Custom. (Tools: Read, Grep)\n\nThe following agent types are no longer available:\n- Explore\n\n${AMBIENT_CONTEXT_SENTENCE}\n</system-reminder>`,
     );
   });
 
-  test("an empty prior (first listing produced zero agents) is still a real 'prior', not treated as omitted", () => {
-    const second = renderAgentListing([claude], []);
-    expect(second.text).toBe(["New agent types are now available for the Agent tool:", "- claude: Catch-all. (Tools: All tools)"].join("\n"));
+  test("a history with no listing (a compaction that dropped it) re-announces as initial", () => {
+    const history: ProviderMessage[] = [];
+    announce(history, [GP]);
+    const compacted: ProviderMessage[] = [{ role: "user", content: "summary" }];
+    const delta = computeAgentListingDelta([GP], compacted)!;
+    expect(delta.isInitial).toBe(true);
+    expect(renderAttachment(delta)).toContain("Available agent types for the Agent tool:");
+  });
+
+  test("an empty available set with nothing announced says nothing", () => {
+    expect(computeAgentListingDelta([], [])).toBeUndefined();
+  });
+
+  test("a delta whose addedLines is not an array does not count its types (claude's guard)", () => {
+    const history: ProviderMessage[] = [{ role: "user", content: "x", meta: { attachment: { type: "agent_listing_delta", addedTypes: ["general-purpose"], removedTypes: [] } } }];
+    expect(computeAgentListingDelta([GP], history)?.isInitial).toBe(true);
   });
 });

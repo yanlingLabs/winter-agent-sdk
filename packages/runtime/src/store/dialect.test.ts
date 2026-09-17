@@ -449,7 +449,7 @@ async function drainAll(proc: SpawnedRuntimeProcess): Promise<WinterFrame[]> {
 }
 
 describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
-  test("a two-envelope session with one tool round persists 6 entries: full field set, single-chain parentUuid graph, correct role/content shapes", async () => {
+  test("a two-envelope session with one tool round persists 7 entries (SDK 0.0.16: the agent-listing attachment after the first prompt): full field set, single-chain parentUuid graph, correct role/content shapes", async () => {
     const home = freshHome();
     try {
       const sessionId = randomUUID();
@@ -476,14 +476,14 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
       expect(existsSync(jsonlPath)).toBe(true);
 
       const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
-      expect(rawLines).toHaveLength(6);
+      expect(rawLines).toHaveLength(7);
       expect(rawLines.some((l) => l.includes(DIALECT_RECORD_ENTRY_TYPE))).toBe(false); // never a transcript line
       const rawParsed = rawLines.map((l) => JSON.parse(l) as SessionStoreEntry);
 
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const loaded = await store.load({ projectKey, sessionId });
       expect(loaded).toEqual(rawParsed); // load() is a pure pass-through of the raw jsonl here (no meta.json in play)
-      expect(loaded!.length).toBe(6);
+      expect(loaded!.length).toBe(7);
 
       // full field set + ISO timestamps on every entry
       for (const e of loaded!) {
@@ -506,22 +506,28 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
       // correct role/content shapes, turn by turn
       expect(loaded![0]!.type).toBe("user");
       expect(loaded![0]!.message).toEqual({ role: "user", content: "go" });
-      expect(loaded![1]!.type).toBe("assistant");
-      expect((loaded![1]!.message as { content: unknown }).content).toEqual([{ type: "tool_use", id: "call1", name: "t", input: {} }]);
-      expect(loaded![2]!.type).toBe("user");
-      expect((loaded![2]!.message as { content: unknown }).content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: 't:{}' }]);
-      expect(loaded![3]!.type).toBe("assistant");
-      expect((loaded![3]!.message as { content: unknown }).content).toEqual([{ type: "text", text: "done" }]);
-      expect(loaded![4]!.type).toBe("user");
-      expect(loaded![4]!.message).toEqual({ role: "user", content: "thanks" });
-      expect(loaded![5]!.type).toBe("assistant");
-      expect((loaded![5]!.message as { content: unknown }).content).toEqual([{ type: "text", text: "ok" }]);
+      // claude's persisted attachment: right after the prompt that triggered it, no `message` field.
+      expect(loaded![1]!.type).toBe("attachment");
+      expect(loaded![1]!.message).toBeUndefined();
+      expect((loaded![1]!.attachment as { type: string; isInitial: boolean }).type).toBe("agent_listing_delta");
+      expect((loaded![1]!.attachment as { type: string; isInitial: boolean }).isInitial).toBe(true);
+      expect(loaded![2]!.type).toBe("assistant");
+      expect((loaded![2]!.message as { content: unknown }).content).toEqual([{ type: "tool_use", id: "call1", name: "t", input: {} }]);
+      expect(loaded![3]!.type).toBe("user");
+      expect((loaded![3]!.message as { content: unknown }).content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: 't:{}' }]);
+      expect(loaded![4]!.type).toBe("assistant");
+      expect((loaded![4]!.message as { content: unknown }).content).toEqual([{ type: "text", text: "done" }]);
+      // Turn 2 adds NO listing entry -- nothing changed.
+      expect(loaded![5]!.type).toBe("user");
+      expect(loaded![5]!.message).toEqual({ role: "user", content: "thanks" });
+      expect(loaded![6]!.type).toBe("assistant");
+      expect((loaded![6]!.message as { content: unknown }).content).toEqual([{ type: "text", text: "ok" }]);
 
       // dialect record sidecar
       const summaries = await store.listSessionSummaries!(projectKey);
       expect(summaries).toHaveLength(1);
       expect(summaries[0]).toMatchObject({
-        entryCount: 6,
+        entryCount: 7,
         producerRuntime: "winter-agent",
         producerEngineVersion: RUNTIME_ENGINE_VERSION,
         dialectFamily: "claude-code-jsonl",
@@ -589,13 +595,14 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
 
       // A thrown round breaks the loop immediately (finalResult is already set) — generate() is
       // never called a second time, so there is no closing assistant entry, same shape as P1-G below.
-      expect(parsed.map((e) => e.type)).toEqual(["user", "assistant", "user"]);
+      // SDK 0.0.16: the agent-listing attachment follows the prompt.
+      expect(parsed.map((e) => e.type)).toEqual(["user", "attachment", "assistant", "user"]);
       expect(parsed[0]!.message).toEqual({ role: "user", content: "go" });
-      expect((parsed[1]!.message as { content: unknown }).content).toEqual([
+      expect((parsed[2]!.message as { content: unknown }).content).toEqual([
         { type: "tool_use", id: "call1", name: "good_tool", input: {} },
         { type: "tool_use", id: "call2", name: "bad_tool", input: {} },
       ]);
-      expect((parsed[2]!.message as { content: unknown }).content).toEqual([
+      expect((parsed[3]!.message as { content: unknown }).content).toEqual([
         { type: "tool_result", tool_use_id: "call1", content: "ok" },
         { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
       ]);
@@ -643,10 +650,11 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
       const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
       const parsed = rawLines.map((l) => JSON.parse(l) as SessionStoreEntry);
 
-      expect(parsed.map((e) => e.type)).toEqual(["user", "assistant", "user"]); // no closing assistant entry
+      // no closing assistant entry; SDK 0.0.16: the agent-listing attachment follows the prompt.
+      expect(parsed.map((e) => e.type)).toEqual(["user", "attachment", "assistant", "user"]);
       expect(parsed[0]!.message).toEqual({ role: "user", content: "go" });
-      expect((parsed[1]!.message as { content: unknown }).content).toEqual([{ type: "tool_use", id: "call1", name: "slow_tool", input: {} }]);
-      expect((parsed[2]!.message as { content: unknown }).content).toEqual([
+      expect((parsed[2]!.message as { content: unknown }).content).toEqual([{ type: "tool_use", id: "call1", name: "slow_tool", input: {} }]);
+      expect((parsed[3]!.message as { content: unknown }).content).toEqual([
         { type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true },
       ]);
 

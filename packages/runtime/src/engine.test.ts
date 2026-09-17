@@ -475,7 +475,9 @@ test("Ruling P1-G: interrupt mid-tool-execution leaves a paired synthetic tool_r
   expect(toolUseMsg).toBeDefined(); // no dangling tool_use — it's exactly this message, paired below
   const toolResultMsg = secondCallMessages.find((m) => m.role === "tool");
   expect(toolResultMsg).toBeDefined();
-  expect(toolResultMsg!.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true }]);
+  // SDK 0.0.16: the next prompt directly follows the tool results, so the live request merges it into
+  // the same user turn -- results first, then the text (claude's normalization). History keeps both.
+  expect(toolResultMsg!.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true }, { type: "text", text: "again" }]);
 });
 
 test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, never a dangling tool_use", async () => {
@@ -558,6 +560,8 @@ test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, 
   expect(toolResultHistoryMsg!.content).toEqual([
     { type: "tool_result", tool_use_id: "call1", content: "ok" },
     { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
+    // SDK 0.0.16: the next prompt merges into the same user turn after the results (claude's shape).
+    { type: "text", text: "again" },
   ]);
 });
 
@@ -4669,15 +4673,12 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
     }
   });
 
-  test("research §A3: the listing rides the first request, stays on every turn, and a changed set adds the delta", async () => {
+  test("P16-6: the listing is sent ONCE (turn 1), stays in place byte-identical on turn 2, and a changed set adds only the delta", async () => {
     const winterHome = mkdtempSync(join(tmpdir(), "winter-l2b-listing-"));
     try {
       const { createSystemPromptAssembler } = await import("./context/assembler.ts");
       const requests: Array<{ messages: ProviderMessage[] }> = [];
-      const lastUserText = (i: number): string => {
-        const users = requests[i]!.messages.filter((m) => m.role === "user" && typeof m.content === "string");
-        return users[users.length - 1]!.content as string;
-      };
+      const blockTexts = (m: ProviderMessage): string[] => (typeof m.content === "string" ? [m.content] : m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])));
       await run({
         config: { winterHome },
         provider: capturingProvider(requests, [
@@ -4691,11 +4692,24 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
         },
         extra: { systemPromptAssembler: createSystemPromptAssembler({ home: winterHome, settings: () => ({}) }), winterHome },
       });
-      expect(lastUserText(0)).toContain("Available agent types for the Agent tool:\n- claude: ");
-      expect(lastUserText(0)).toContain("- general-purpose: ");
-      expect(lastUserText(0)).not.toContain("late-helper");
-      expect(lastUserText(1)).toContain("Available agent types for the Agent tool:");
-      expect(lastUserText(1)).toContain("New agent types are now available for the Agent tool:\n- late-helper: arrived between turns (Tools: All tools)");
+      const first = requests[0]!.messages;
+      expect(first).toHaveLength(1);
+      const listing = blockTexts(first[0]!)[0]!;
+      expect(listing).toContain("Available agent types for the Agent tool:\n- claude: ");
+      expect(listing).toContain("- general-purpose: ");
+      expect(listing).not.toContain("late-helper");
+
+      const second = requests[1]!.messages;
+      // Turn 1's message is repeated byte for byte -- the listing was not re-sent or moved.
+      expect(second[0]).toEqual(first[0]);
+      const all = second.flatMap(blockTexts);
+      expect(all.filter((t) => t.includes("Available agent types for the Agent tool:"))).toHaveLength(1);
+      // The new turn carries ONLY the delta, ahead of its prompt.
+      const last = blockTexts(second.at(-1)!);
+      expect(last).toEqual([
+        "<system-reminder>\nNew agent types are now available for the Agent tool:\n- late-helper: arrived between turns (Tools: All tools)\n</system-reminder>\n",
+        "second",
+      ]);
     } finally {
       rmSync(winterHome, { recursive: true, force: true });
     }
@@ -4718,8 +4732,9 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
         provider: capturingProvider(requests, [{ kind: "text", text: "one" }]),
         extra: { systemPromptAssembler: createSystemPromptAssembler({ home: winterHome, settings: () => ({}) }), winterHome },
       });
-      const users = requests[0]!.messages.filter((m) => m.role === "user" && typeof m.content === "string");
-      const text = users[users.length - 1]!.content as string;
+      // SDK 0.0.16: the listing is the first block of the merged first message.
+      const first = requests[0]!.messages[0]!.content;
+      const text = typeof first === "string" ? first : first.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
       expect(text).toContain(`- verbose: ${"x".repeat(1000)}…`);
       expect(text).not.toContain("x".repeat(1001));
       // A built-in's own whenToUse (well under 1,000 chars either way) is untouched -- no ellipsis

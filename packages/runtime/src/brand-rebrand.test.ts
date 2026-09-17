@@ -150,7 +150,8 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
 
     const config = acmeConfig({ cwd, systemPrompt: { type: "preset", preset: "claude_code" } });
     await withWiring(config, { ACME_HOME: acmeHome }, (wiring) => {
-      const assembled = wiring.engineOptions.systemPromptAssembler.assemble({
+      // SDK 0.0.16: the instructions files are the index-0 userContext's `claudeMd` entry.
+      const entries = wiring.engineOptions.systemPromptAssembler.userContext!({
         config,
         cwd,
         platform: "darwin",
@@ -160,7 +161,7 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
         planMode: false,
         env: { ACME_HOME: acmeHome },
       });
-      const blocks = assembled.userContextBlocks.join("\n");
+      const blocks = entries.map(([, value]) => value).join("\n");
       expect(blocks).toContain("ACME-USER-INSTRUCTIONS");
       expect(blocks).toContain("ACME-PROJECT-INSTRUCTIONS");
       expect(blocks).not.toContain("WINTER-USER-DECOY");

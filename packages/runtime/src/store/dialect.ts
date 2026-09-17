@@ -611,6 +611,29 @@ export function invokedSkillsEntry(opts: {
   };
 }
 
+/**
+ * SDK 0.0.16 (P16-5/P16-6): claude 0.3.250's persisted ATTACHMENT entry --
+ * `{type: "attachment", attachment: {type, ...payload}, uuid, parentUuid, ...}`, captured from the
+ * pinned binary's own transcript. No `message` field: the model-facing text is rendered from the
+ * payload on resume (store/resume.ts, through context/attachments.ts), exactly as claude does.
+ */
+export const ATTACHMENT_ENTRY_TYPE = "attachment";
+
+export function attachmentEntry(opts: {
+  attachment: { type: string; [key: string]: unknown };
+  chain: Chain;
+  ctx: SessionCtx;
+  sidechain?: SidechainStamp;
+}): DialectEntryBase & { type: "attachment"; attachment: { type: string; [key: string]: unknown } } {
+  return {
+    type: ATTACHMENT_ENTRY_TYPE,
+    ...baseFields(opts.ctx, opts.chain),
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    // A deep copy: the transcript entry must not change under a caller that keeps mutating its payload.
+    attachment: JSON.parse(JSON.stringify(opts.attachment)) as { type: string; [key: string]: unknown },
+  };
+}
+
 export function fileHistoryEntry(opts: {
   record: FileHistoryEntryPayload;
   chain: Chain;
@@ -727,6 +750,18 @@ export class TranscriptWriter implements SessionPersistence {
   async recordAssistantEntry(content: Block[], opts?: { uuid?: string }): Promise<void> {
     const chain: Chain = { parentUuid: this.parentUuid };
     const entry = assistantEntry({ content, chain, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}), ...(opts?.uuid !== undefined ? { uuid: opts.uuid } : {}) });
+    await this.appendWithDialectRecord(entry);
+    this.parentUuid = entry.uuid;
+    this.trackConversational(entry.uuid);
+  }
+
+  /**
+   * SDK 0.0.16: one persisted attachment. It is CONVERSATIONAL -- it is a message in the engine's
+   * history -- so it is tracked with the user/assistant entries, which keeps a compaction boundary's
+   * preserved-message uuids aligned with the retained history.
+   */
+  async recordAttachmentEntry(attachment: { type: string; [key: string]: unknown }): Promise<void> {
+    const entry = attachmentEntry({ attachment, chain: { parentUuid: this.parentUuid }, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}) });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
     this.trackConversational(entry.uuid);
@@ -1078,6 +1113,9 @@ function withPermissionJournal(writer: TranscriptWriter, location: { winterHome:
     // own header warns about. provider-state.test.ts drives its ordering fixture through
     // `resolveEngineSession` (never a bare TranscriptWriter) so this forward is on the tested path.
     recordAssistantEntry: (content, opts) => writer.recordAssistantEntry(content, opts),
+    // SDK 0.0.16: forwarded like every other write (see the boundary forward below for why a missing
+    // forward would silently drop every attachment).
+    recordAttachmentEntry: (attachment) => writer.recordAttachmentEntry(attachment),
     recordProviderState: (record) => writer.recordProviderState(record),
     loadProviderState: () => writer.loadProviderState(),
     loadProviderIdentity: () => writer.loadProviderIdentity(),
@@ -1397,7 +1435,9 @@ export async function resolveEngineSession(opts: {
   // that predate this run, so the writer inherits the resumed chain's own conversational uuids.
   // Every entry kind that `rebuildProviderMessages` turns into a provider message is included, and
   // in the same order, so "the last N conversational entries" means the same thing on both sides.
-  const initialConversationalUuids = chainEntries.filter((e) => e.message !== undefined && (e.type === "user" || e.type === "assistant" || e.type === "compact_summary")).map((e) => e.uuid);
+  const initialConversationalUuids = chainEntries
+    .filter((e) => (e.message !== undefined && (e.type === "user" || e.type === "assistant" || e.type === "compact_summary")) || (e.type === ATTACHMENT_ENTRY_TYPE && e.attachment !== undefined))
+    .map((e) => e.uuid);
   const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome, initialConversationalUuids });
   const effectiveConfig: RuntimeConfig = { ...config, sessionId: targetSessionId };
   // Task 11 (WS-07 §9): the SAME (winterHome, targetProjectKey, targetSessionId) triple the writer

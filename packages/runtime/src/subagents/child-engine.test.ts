@@ -14,7 +14,7 @@ import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs
 import { runEngine, createContextAccountant, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
-import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
+import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems, userMessageText } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest, type ChildInheritance, type ChildTaskProgress } from "./child-handle.ts";
 // Phase 5 Task 8: the two child threads with no fixture of their own until now.
 import { createStructuredOutputSeam } from "../structured/ajv-seam.ts";
@@ -569,7 +569,7 @@ describe("child-engine.ts: durable resume (WS-10 §7)", () => {
         );
         if (alreadyCalledBlockTool) return { kind: "text", text: "quick done" };
         const firstUser = messages.find((m) => m.role === "user");
-        const text = typeof firstUser?.content === "string" ? firstUser.content : "";
+        const text = userMessageText(firstUser);
         if (text.includes("hold the slot")) return { kind: "tool_use", calls: [{ id: `b-${randomUUID()}`, name: BLOCK_TOOL, input: {} }] };
         return { kind: "text", text: "quick done" };
       },
@@ -872,7 +872,7 @@ describe("child-engine.ts: C1 CRITICAL (P4-J, RETIRED by R5-3): AgentDefinition.
         // the persona survive composition), and a real assembler would drag a memory directory and a
         // machine-specific path into the assertion for no gain.
         systemPromptAssembler: {
-          assemble: (input) => ({ system: `[[PREFIX]]\n${input.agentPrompt ?? ""}\n[[SUFFIX]]`, userContextBlocks: [] }),
+          assemble: (input) => ({ system: `[[PREFIX]]\n${input.agentPrompt ?? ""}\n[[SUFFIX]]` }),
         },
       },
       baseConfig(),
@@ -1641,7 +1641,7 @@ describe("child-engine.ts: child session identity (fix wave I1, WS-10 addressing
     const childProvider: Provider = {
       async generate({ messages }) {
         const firstUser = messages.find((m) => m.role === "user");
-        const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+        const firstText = userMessageText(firstUser);
         if (firstText.includes("BETA")) return { kind: "text", text: "beta done" };
         for (const m of messages) {
           if (!Array.isArray(m.content)) continue;
@@ -1923,7 +1923,7 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
         async generate(args) {
           if (childFirstTurn === "") {
             const firstUser = args.messages.find((m) => m.role === "user");
-            childFirstTurn = typeof firstUser?.content === "string" ? firstUser.content : "";
+            childFirstTurn = userMessageText(firstUser);
           }
           return scripted.generate(args);
         },
@@ -2127,7 +2127,7 @@ describe("child-engine.ts: rider 12 -- a dispatch-child inherits its parent's ou
             // `insideSubagent` is the child's own marker -- the parent's assemble() call reaches
             // here too, and recording both would make the assertion ambiguous.
             if (input.config.insideSubagent === true) seenChildStyles.push(input.config.outputStyle);
-            return { system: "probe", userContextBlocks: [] };
+            return { system: "probe" };
           },
         },
       },
@@ -2150,7 +2150,7 @@ describe("child-engine.ts: rider 12 -- a dispatch-child inherits its parent's ou
         systemPromptAssembler: {
           assemble: (input) => {
             if (input.config.insideSubagent === true) seenChildStyles.push(input.config.outputStyle);
-            return { system: "probe", userContextBlocks: [] };
+            return { system: "probe" };
           },
         },
       },
@@ -2883,7 +2883,7 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
     }
   });
 
-  test("the skill LISTING actually reaches a child's system prompt (it was declared upstream and dropped)", async () => {
+  test("the skill LISTING actually reaches a child's own request (it was declared upstream and dropped) -- SDK 0.0.16: as the child's own skill_listing attachment", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-new4-skill-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "winter-new4-skill-cwd-"));
     try {
@@ -2895,9 +2895,11 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
       // forwarding deleted and proved nothing. The child provider is a distinct object from the
       // parent's, which is the only clean way to attribute a system prompt here.
       const childSystems: string[] = [];
+      const childFirstMessages: string[] = [];
       const recordingChild: Provider = {
         async generate(req) {
           childSystems.push(typeof req.system === "string" ? req.system : JSON.stringify(req.system ?? ""));
+          childFirstMessages.push(userMessageText(req.messages[0]));
           if (req.messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
           return { kind: "tool_use", calls: [{ id: "child-1", name: "Write", input: { file_path: join(cwd, "child.txt"), content: "CHILD\n" } }] };
         },
@@ -2910,7 +2912,12 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
         allow: ["Write", "Skill"],
       });
       expect(childSystems.length, "the child must actually have run").toBeGreaterThan(0);
-      expect(childSystems.join("\n"), "a child must be shown the same skill menu its parent is").toContain("A DISTINCTIVE SKILL DESCRIPTION");
+      // The child's first message carries its own `skill_listing` attachment (claude's header), not
+      // the system prompt.
+      expect(childFirstMessages[0], "a child must be shown the same skill menu its parent is").toContain(
+        "The following skills are available for use with the Skill tool:\n\n- audit-things: A DISTINCTIVE SKILL DESCRIPTION for the listing.",
+      );
+      expect(childSystems.join("\n")).not.toContain("A DISTINCTIVE SKILL DESCRIPTION");
     } finally {
       for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
     }

@@ -16,32 +16,38 @@
 //    compaction. Nothing in this file assumes anything about where they land beyond "the turn's
 //    user message".
 //
-// WHAT GOES IN `system` VS `userContextBlocks`:
+// WHAT GOES WHERE (SDK 0.0.16, P16-5 -- claude 0.3.250's request layout):
 //
-//   system            the authored prompt (minimal / caller string / caller blocks / preset),
-//                     the output style, the child persona, the plan-mode block, the skill listing,
-//                     and -- unless moved -- the dynamic sections.
-//   userContextBlocks the dynamic sections WHEN MOVED (always first, per R5-9), then WINTER.md
-//                     (user, then project outermost-to-innermost), then auto-memory.
+//   system (static half)   the authored prompt (minimal / caller string / caller blocks / preset), or
+//                          a replacing output style.
+//   system (dynamic half)  the caller's post-boundary blocks, the output style, the child persona,
+//                          the plan-mode block, `# auto memory`, `# Environment`. The engine appends
+//                          the systemContext `gitStatus` after these (`systemContextPlacement`).
+//   userContext()          the index-0 context entries: `claudeMd` (every instructions file and the
+//                          MEMORY.md index, one value), then `currentDate` -- plus, under
+//                          `excludeDynamicSections`, the `Environment` and `auto memory` sections.
+//   (engine attachments)   the agent listing and the skill listing are persisted attachments now
+//                          (context/attachments.ts); nothing here renders them.
 //
-// The split is not stylistic. `system` is the cacheable, session-stable half; the user-context
-// blocks are file content that changes underneath a running session, and putting them in `system`
-// would either poison prompt caching or go stale for the rest of a long session. The seam's own
-// doc names WINTER.md and the memory index as exactly what R5-9's "always injected as
-// user-context" means operationally.
+// The instructions files and the memory index are FILE CONTENT that changes underneath a running
+// session. claude builds them into the userContext ONCE per session context and rebuilds it after a
+// compaction; the engine memoizes `userContext()` the same way (see engine.ts's session-context
+// memo), so an edit is seen after the next compaction or in a new session.
 import type { RuntimeConfig, Settings, SystemPromptPreset } from "@yanlinglabs/winter-agent-sdk";
-import { DEFAULT_OUTPUT_STYLE, WINTER_BRAND, resolveWinterHome, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@yanlinglabs/winter-agent-sdk";
-import type { AssembledPrompt, SkillListing, SystemPromptAssembler, SystemPromptInput } from "./seam.ts";
-import { renderDynamicSections } from "./dynamic-sections.ts";
+import { DEFAULT_OUTPUT_STYLE, WINTER_BRAND, envName, resolveWinterHome, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@yanlinglabs/winter-agent-sdk";
+import { join } from "node:path";
+import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./seam.ts";
+import { renderEnvironmentContextValue, renderEnvironmentSection, renderStaticEnvironmentSection, type EnvironmentInput } from "./dynamic-sections.ts";
 import { MINIMAL_PROMPT, MINIMAL_PROMPT_VERSION } from "./minimal-prompt.ts";
 import { resolvePresetSystemPrompt, WINTER_CODE_PRESET_VERSION } from "./winter-code-preset.ts";
-import { discoverWinterMd } from "./winter-md.ts";
-import { autoMemoryEnabled, renderMemoryBlock } from "./memory.ts";
+import { discoverWinterMd, projectInstructionRoot, renderInstructionsContext, type InstructionsContextFile } from "./winter-md.ts";
+import { autoMemoryEnabled, loadMemoryIndex, MEMORY_INDEX_BASENAME, renderAutoMemoryContextValue, renderAutoMemorySection } from "./memory.ts";
+import { neutralizeReminderTags } from "./injection.ts";
+import { gitInstructionsEnabled } from "./git-status.ts";
+import type { ContextEntry } from "./request-layout.ts";
 import { memoryDirFor } from "./memory-key.ts";
 import { resolveOutputStyle, type ResolvedOutputStyle } from "./output-styles.ts";
 import { renderPlanModeBlock } from "./plan-mode.ts";
-import { renderAgentListing } from "./agent-listing.ts";
-import { systemReminder } from "./injection.ts";
 
 export interface SystemPromptAssemblerDeps {
   /**
@@ -78,6 +84,8 @@ interface PromptRegion {
   presetVersion?: string;
   /** WS-11 §6.3, and INERT unless the preset arm asked for it (item (c): its own pinned doc says so). */
   excludeDynamicSections: boolean;
+  /** SDK 0.0.16: a caller block array that named a dynamic boundary (claude's cache split applies to it). */
+  callerBoundary?: boolean;
 }
 
 /**
@@ -116,7 +124,7 @@ function resolveRegion(systemPrompt: RuntimeConfig["systemPrompt"]): PromptRegio
     // Only the FIRST boundary splits; later ones are ordinary blocks in the dynamic half.
     const at = systemPrompt.indexOf(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
     if (at === -1) return { staticBlocks: [...systemPrompt], callerDynamicBlocks: [], authored: false, excludeDynamicSections: false };
-    return { staticBlocks: systemPrompt.slice(0, at), callerDynamicBlocks: systemPrompt.slice(at + 1), authored: false, excludeDynamicSections: false };
+    return { staticBlocks: systemPrompt.slice(0, at), callerDynamicBlocks: systemPrompt.slice(at + 1), authored: false, excludeDynamicSections: false, callerBoundary: true };
   }
 
   if (isPresetOption(systemPrompt)) {
@@ -139,55 +147,55 @@ function resolveRegion(systemPrompt: RuntimeConfig["systemPrompt"]): PromptRegio
   return { staticBlocks: [MINIMAL_PROMPT], callerDynamicBlocks: [], authored: true, presetVersion: MINIMAL_PROMPT_VERSION, excludeDynamicSections: false };
 }
 
-/**
- * The skill listing (R5-17). Lane S owns discovery, ordering and truncation; this only places the
- * listing, so nothing here re-derives `skillListingMaxDescChars` / `skillListingBudgetFraction`.
- */
-function renderSkillListing(listing: SkillListing): string {
-  return [
-    "## Available skills",
-    "Call the `Skill` tool with one of these names to load its full instructions before you rely on it. The one-line description is all you have until you do.",
-    ...listing.map((s) => `- **${s.name}** (${s.source}) — ${s.description}`),
-  ].join("\n");
+/** Everything both halves of the assembler derive from one input. */
+interface ResolvedContext {
+  settings: Settings | undefined;
+  brand: NonNullable<RuntimeConfig["brand"]> | typeof WINTER_BRAND;
+  home: string;
+  settingSources: RuntimeConfig["settingSources"];
+  region: PromptRegion;
+  memoryDir: string | undefined;
+  environment: EnvironmentInput;
+}
+
+function resolveContext(deps: SystemPromptAssemblerDeps, input: SystemPromptInput): ResolvedContext {
+  const settings = deps.settings?.();
+  const config = input.config;
+  // P7a (D19): the session's own profile, off the config it is already reading. `WINTER_BRAND`
+  // is the fallback for the configs this repository hand-builds in tests -- a live session's
+  // config always carries the resolved profile (`query()` never omits it).
+  const brand = config.brand ?? WINTER_BRAND;
+  const home = deps.home ?? resolveWinterHome(input.env, brand);
+  const region = resolveRegion(config.systemPrompt);
+
+  // --- auto-memory ----------------------------------------------------------------------------
+  //
+  // PRECEDENCE, and every link is tested: an explicit host-supplied directory, then the settings
+  // key, then the computed `<home>/projects/<memory-key>/memory`. The settings key is never taken
+  // from PROJECT settings -- `OVERLAY_NEVER_KEYS` enforces that upstream, in the settings layer, and
+  // this consumes whatever survived it.
+  const memoryOn = autoMemoryEnabled(settings);
+  const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(settings?.autoMemoryDirectory !== undefined ? { override: settings.autoMemoryDirectory } : {}) })) : undefined;
+
+  const environment: EnvironmentInput = {
+    cwd: input.cwd,
+    isGitRepo: projectInstructionRoot(input.cwd) !== null,
+    platform: input.platform,
+    shell: input.shell,
+    osVersion: input.osVersion,
+    ...(config.additionalDirectories !== undefined && config.additionalDirectories.length > 0 ? { additionalDirectories: config.additionalDirectories } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.modelDisplayName !== undefined ? { modelDisplayName: input.modelDisplayName } : {}),
+  };
+
+  return { settings, brand, home, settingSources: config.settingSources, region, memoryDir, environment };
 }
 
 export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}): SystemPromptAssembler {
   return {
     assemble(input: SystemPromptInput): AssembledPrompt {
-      const settings = deps.settings?.();
       const config = input.config;
-      // P7a (D19): the session's own profile, off the config it is already reading. `WINTER_BRAND`
-      // is the fallback for the configs this repository hand-builds in tests -- a live session's
-      // config always carries the resolved profile (`query()` never omits it).
-      const brand = config.brand ?? WINTER_BRAND;
-      const home = deps.home ?? resolveWinterHome(input.env, brand);
-      const settingSources = config.settingSources;
-      const region = resolveRegion(config.systemPrompt);
-
-      // --- auto-memory ------------------------------------------------------------------------
-      //
-      // PRECEDENCE, and every link is tested: an explicit host-supplied directory, then the
-      // settings key, then the computed `<home>/projects/<memory-key>/memory`. The settings key is
-      // never taken from PROJECT settings -- `OVERLAY_NEVER_KEYS` enforces that upstream, in the
-      // settings layer, and this consumes whatever survived it.
-      const memoryOn = autoMemoryEnabled(settings);
-      const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(settings?.autoMemoryDirectory !== undefined ? { override: settings.autoMemoryDirectory } : {}) })) : undefined;
-
-      // --- the dynamic block ------------------------------------------------------------------
-      //
-      // Spawn-surface parity: `omitProjectContext` drops `gitSummary` specifically (claude's own
-      // Explore/Plan "context also drops gitStatus") -- every OTHER dynamic-section field (cwd,
-      // platform, date, memory) is untouched, since claude's own omission is scoped to exactly two
-      // things (the instructions file, handled below, and git status).
-      const dynamic = renderDynamicSections({
-        cwd: input.cwd,
-        platform: input.platform,
-        osVersion: input.osVersion,
-        shell: input.shell,
-        date: input.date,
-        ...(input.gitSummary !== undefined && input.omitProjectContext !== true ? { gitSummary: input.gitSummary } : {}),
-        ...(memoryDir !== undefined ? { memoryDir } : {}),
-      });
+      const { settings, brand, home, settingSources, region, memoryDir, environment } = resolveContext(deps, input);
 
       // --- the output style -------------------------------------------------------------------
       //
@@ -216,7 +224,15 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       const replaceRegion = styleBody !== undefined && style !== null && !style.keepBasePrompt;
 
       // --- assembly ---------------------------------------------------------------------------
-      const staticHalf = replaceRegion ? [styleBody as string] : region.staticBlocks;
+      //
+      // SDK 0.0.16: the dynamic sections are claude's -- `# auto memory` then `# Environment` (its
+      // `memory` then `env_info_simple`), in the dynamic half. Under `excludeDynamicSections` the
+      // machine-specific half of both moves into the index-0 userContext (`userContext()` below) and
+      // only the model/product half of the environment stays, in the STATIC half (claude's `MGn`).
+      const staticHalf: (string | undefined)[] = [
+        ...(replaceRegion ? [styleBody] : region.staticBlocks),
+        region.excludeDynamicSections ? renderStaticEnvironmentSection(environment) : undefined,
+      ];
       const dynamicHalf: (string | undefined)[] = [
         ...region.callerDynamicBlocks,
         replaceRegion ? undefined : styleBody,
@@ -233,79 +249,65 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
               ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}),
             })
           : undefined,
-        input.skillListing !== undefined && input.skillListing.length > 0 ? renderSkillListing(input.skillListing) : undefined,
-        region.excludeDynamicSections ? undefined : dynamic,
+        region.excludeDynamicSections || memoryDir === undefined ? undefined : renderAutoMemorySection(memoryDir, brand.instructionsFile),
+        region.excludeDynamicSections ? undefined : renderEnvironmentSection(environment),
       ];
+      const nonEmpty = (parts: (string | undefined)[]): string[] => parts.filter((part): part is string => part !== undefined && part.trim().length > 0);
+      const staticParts = nonEmpty(staticHalf);
+      const dynamicParts = nonEmpty(dynamicHalf);
+      const system = [...staticParts, ...dynamicParts].join("\n\n");
 
-      const system = [...staticHalf, ...dynamicHalf]
-        .filter((part): part is string => part !== undefined && part.trim().length > 0)
-        .join("\n\n");
-
-      // --- user context, in the pinned order --------------------------------------------------
+      // --- where the systemContext goes (claude's `ko`) ----------------------------------------
       //
-      // The moved dynamic block is FIRST, which is R5-9's own wording ("the first user-context
-      // block") and not an ordering choice: a host that moved it did so to get a cacheable prefix,
-      // and the environment has to precede the instructions that depend on it.
-      const userContextBlocks: string[] = [];
-      if (region.excludeDynamicSections) userContextBlocks.push(dynamic);
-      // Spawn-surface parity: `omitProjectContext` drops the discovered instructions-file blocks
-      // entirely (claude's own "omitClaudeMd") -- the memory index just below is UNAFFECTED (claude's
-      // own omission never touches memory).
-      if (input.omitProjectContext !== true) {
-        for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
-      }
-      if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir, brand.instructionsFile));
+      // claude computes NO systemContext for a custom system prompt (string or array), and its
+      // Explore/Plan agents drop `gitStatus`; `<PREFIX>DISABLE_GIT_INSTRUCTIONS` over the
+      // `includeGitInstructions` setting is its kill switch. Under `excludeDynamicSections` the
+      // snapshot becomes the FIRST index-0 entry instead of the last system part.
+      const gitWanted =
+        region.authored &&
+        input.omitProjectContext !== true &&
+        gitInstructionsEnabled(input.env[envName(brand, "DISABLE_GIT_INSTRUCTIONS")], settings?.includeGitInstructions);
+      const systemContextPlacement = !gitWanted ? "none" : region.excludeDynamicSections ? "userContext" : "system";
 
-      // Spawn-surface parity (research §A3, scope item 3): the Agent-tool listing, LAST among the
-      // user-context blocks -- WINTER.md/the memory index are file content describing the project and
-      // the user's own accumulated context, which reads naturally before "here is what you can spawn
-      // right now"; nothing in R5-9/the seam's own ordering rule pins this one specifically, so this
-      // is a disclosed ordering choice, not a spec-pinned position the way "the moved dynamic block is
-      // FIRST" is. Absent `agentListing` (every pre-existing caller, and any turn where `Agent` is not
-      // advertised) contributes nothing -- see `SystemPromptInput.agentListing`'s own header for why
-      // that decision belongs to the caller, not this function.
-      //
-      // FULL EVERY TURN, plus the delta when the set moved (L2b integration). User-context blocks are
-      // re-attached to each turn's request and never enter history (the seam's own P1-B rule), so
-      // the pin's "list once, then deltas" -- which relies on its listing attachment staying in the
-      // transcript -- would leave every turn after the first with no listing at all here. The full
-      // block is therefore rendered whenever there is anything to list, and a changed set ADDS
-      // claude's "now available / no longer available" block beside it on the turn it changed.
-      // Review r2 finding 11 (whole-branch): wrapped in the SAME `<system-reminder>` wrapper every
-      // other harness-injected block in this file uses (memory.ts's `renderMemoryBlock`, winter-md.ts's
-      // discovered-instructions blocks) -- the tool's own description (`renderAgentToolDescription`)
-      // already SAYS the listing arrives this way ("announced in a runtime-injected reminder"), which
-      // was false until this fix (the block used to be pushed raw, an unlabelled, un-neutralized
-      // string). `systemReminder` both labels the block (so the model can tell harness-injected
-      // context from something the user typed) and neutralizes any literal `<system-reminder>`/
-      // `</system-reminder>` INSIDE it -- load-bearing here specifically because `renderAgentListing`'s
-      // own rows fold in a project/user/plugin file's `description` verbatim (whenToUse-capping,
-      // just above in engine.ts, bounds the LENGTH; this bounds the TAG-BREAKOUT risk the length cap
-      // does not touch at all).
-      const AGENT_LISTING_LABEL = "Agent-tool listing (injected by the runtime, not typed by the user):";
-      let agentListingTypes: string[] | undefined;
-      if (input.agentListing !== undefined) {
-        const full = renderAgentListing(input.agentListing.entries);
-        if (full.text !== undefined && input.agentListing.entries.length > 0) userContextBlocks.push(systemReminder(AGENT_LISTING_LABEL, full.text));
-        if (input.agentListing.priorAgentTypes !== undefined) {
-          const delta = renderAgentListing(input.agentListing.entries, input.agentListing.priorAgentTypes);
-          if (delta.text !== undefined) userContextBlocks.push(systemReminder(AGENT_LISTING_LABEL, delta.text));
-        }
-        agentListingTypes = full.agentTypes;
-      }
-
-      // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,
-      // not only on `resolveOutputStyle`'s return value -- which no host calls and no frame carries,
-      // so the ruling's "observable" clause held nowhere a caller could see it. Present only when a
-      // project-tier style genuinely asked to replace and was refused; absent (never `false`)
-      // otherwise, so nothing about a session with no project style moves.
+      // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT.
+      // Present only when a project-tier style genuinely asked to replace and was refused.
       return {
         system,
-        userContextBlocks,
+        systemParts: { staticParts, dynamicParts, hasBoundary: region.authored || region.callerBoundary === true },
+        systemContextPlacement,
         ...(region.presetVersion !== undefined ? { presetVersion: region.presetVersion } : {}),
         ...(style?.replacementDowngraded === true ? { replacementDowngraded: true } : {}),
-        ...(agentListingTypes !== undefined ? { agentListingTypes } : {}),
       };
+    },
+
+    userContext(input: SystemPromptInput): ContextEntry[] {
+      const { brand, home, settingSources, region, memoryDir, environment } = resolveContext(deps, input);
+      const entries: ContextEntry[] = [];
+
+      // `claudeMd`: every instructions file (user, then each directory from the repository root down,
+      // checked-in before local) and the MEMORY.md index last, as ONE value. `omitProjectContext`
+      // (claude's `omitClaudeMd`) drops the whole key.
+      if (input.omitProjectContext !== true) {
+        const files: InstructionsContextFile[] = discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) }).map((b) => ({
+          path: b.path,
+          kind: b.scope,
+          content: b.text,
+        }));
+        if (memoryDir !== undefined) {
+          const index = loadMemoryIndex(memoryDir);
+          if (index !== null) files.push({ path: join(memoryDir, MEMORY_INDEX_BASENAME), kind: "auto-memory", content: neutralizeReminderTags(index) });
+        }
+        const claudeMd = renderInstructionsContext(files);
+        if (claudeMd !== undefined) entries.push(["claudeMd", claudeMd]);
+      }
+
+      entries.push(["currentDate", `Today's date is ${input.date}.`]);
+
+      if (region.excludeDynamicSections) {
+        entries.push(["Environment", renderEnvironmentContextValue(environment)]);
+        if (memoryDir !== undefined) entries.push(["auto memory", renderAutoMemoryContextValue(memoryDir, brand.instructionsFile)]);
+      }
+      return entries;
     },
   };
 }

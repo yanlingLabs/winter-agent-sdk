@@ -140,6 +140,11 @@ export interface Settings {
   /** `sdk.d.ts:5503`. The listing's share of the context window (default 0.01). */
   skillListingBudgetFraction?: number;
   /**
+   * `sdk.d.ts:5539`. SDK 0.0.16: whether the systemContext `gitStatus` snapshot is sent (default
+   * true). `<PREFIX>DISABLE_GIT_INSTRUCTIONS` overrides it either way.
+   */
+  includeGitInstructions?: boolean;
+  /**
    * A settings-tier MCP server block. Deliberately `Record<string, unknown>` rather than a typed
    * server union: `settings/loaders/mcp-config.ts` validates each entry and `resolveMcpServerSources`
    * is the sole authority on the shapes, so a type here would be a second, drift-prone declaration

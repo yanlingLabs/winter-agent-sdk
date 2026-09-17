@@ -1,73 +1,100 @@
-// Phase 5 Lane C (task 6) -- the DYNAMIC block (WS-11 §6.3, Ruling R5-9).
+// SDK 0.0.16 Lane C (P16-5): the session's `# Environment` section, in claude 0.3.250's shape.
 //
-// The machine- and session-specific facts a model cannot know any other way: where it is running,
-// on what, in which shell, on what date, what the repository looks like right now, and where its
-// memory lives. R5-9 names that list; §6.3 makes its POSITION configurable, because the whole
-// point of separating it is caching -- the authored prompt above it is identical for every session
-// on every host, so a host that moves this block out of `system` (via `excludeDynamicSections`)
-// gets a system prefix that caches across sessions and machines.
+// Replaces 0.0.15's `## Current session` block. claude splits what that block carried three ways,
+// and so does Winter now:
+//   - cwd / git-repo flag / platform / shell / OS version / the model -> this `# Environment`
+//     section, in the DYNAMIC half of the system prompt (claude's `env_info_simple`, `mHn`);
+//   - the date -> the userContext `currentDate` entry (context/assembler.ts), so the system prompt
+//     stays byte-stable across midnight and a `date_change` attachment announces the new day;
+//   - the memory directory -> the `# auto memory` section (context/memory.ts).
+// The git summary it used to carry is the systemContext `gitStatus` snapshot now
+// (context/git-status.ts), appended to the system prompt last.
 //
-// This module only RENDERS. Where the result lands -- `system`, or the first user-context block --
-// is the assembler's decision, and is the one thing §6.3 actually configures.
+// SHAPE, from the pinned binary: a `# Environment` heading, the fixed lead-in line (with its
+// trailing space), then ` - `-bulleted facts; an array fact (the additional working directories)
+// nests one level deeper. The PRODUCT lines at the end are Winter's own wording (claude's describe
+// its own CLI and model family).
 //
-// EVERY FIELD IS OMITTED WHEN ABSENT, never rendered as an empty or placeholder value. The engine
-// populates only some of these today (`gitSummary` and `memoryDir` have no producer until T8), and
-// a block that said "Git: undefined" would be actively worse than one that said nothing: the model
-// cannot tell a missing input from a genuine empty repository state.
+// `excludeDynamicSections` splits the section the way claude does: the model/product half is
+// session-independent enough to stay in the cacheable STATIC half (`fHn`), and the machine half
+// moves into the index-0 userContext under the key `Environment` (`gHn`, with its heading stripped by
+// `jEe`).
+
+export const ENVIRONMENT_HEADING = "# Environment";
+export const ENVIRONMENT_LEAD_IN = "You have been invoked in the following environment: ";
+
+/** Winter's product line (claude's equivalent lines describe its own CLI). */
+export const WINTER_PRODUCT_LINE = "Winter runs this session as an agent runtime on behalf of a host application; the host decides how your output is shown to the user.";
+
+export interface EnvironmentInput {
+  cwd: string;
+  isGitRepo: boolean;
+  platform: string;
+  /** The raw `$SHELL` value; reduced to `zsh` / `bash` the way claude reduces it. */
+  shell: string;
+  /** `<os type> <os release>`, e.g. `Darwin 25.6.0`. */
+  osVersion: string;
+  additionalDirectories?: readonly string[];
+  /** The model id this session generates with. Absent: no model line. */
+  model?: string;
+  /** The model's display name, when the catalog knows one. */
+  modelDisplayName?: string;
+  /** The model's knowledge cutoff, when known. Winter's catalog carries none today, so the line is normally absent. */
+  knowledgeCutoff?: string;
+}
+
+/** claude's `GEe`: the shell as `zsh`, `bash`, the raw value, or `unknown`. */
+export function shellName(raw: string): string {
+  const shell = raw.trim().length > 0 ? raw : "unknown";
+  if (shell.includes("zsh")) return "zsh";
+  if (shell.includes("bash")) return "bash";
+  return shell;
+}
+
+/** claude's `Sf`, exactly: ` - <fact>`, and each member of a nested array as `  - <item>`. */
+function bullets(items: ReadonlyArray<string | readonly string[]>): string[] {
+  return items.flatMap((item) => (typeof item === "string" ? [` - ${item}`] : item.map((sub) => `  - ${sub}`)));
+}
+
+function modelLines(input: Pick<EnvironmentInput, "model" | "modelDisplayName" | "knowledgeCutoff">): string[] {
+  const lines: string[] = [];
+  if (input.model !== undefined && input.model.length > 0) {
+    lines.push(
+      input.modelDisplayName !== undefined && input.modelDisplayName.length > 0
+        ? `You are powered by the model named ${input.modelDisplayName}. The exact model ID is ${input.model}.`
+        : `You are powered by the model ${input.model}.`,
+    );
+  }
+  if (input.knowledgeCutoff !== undefined && input.knowledgeCutoff.length > 0) lines.push(`Assistant knowledge cutoff is ${input.knowledgeCutoff}.`);
+  return lines;
+}
+
+function machineFacts(input: EnvironmentInput): Array<string | readonly string[]> {
+  const dirs = input.additionalDirectories ?? [];
+  return [
+    `Primary working directory: ${input.cwd}`,
+    `Is a git repository: ${input.isGitRepo}`,
+    ...(dirs.length > 0 ? ["Additional working directories:", dirs] : []),
+    `Platform: ${input.platform}`,
+    `Shell: ${shellName(input.shell)}`,
+    `OS Version: ${input.osVersion}`,
+  ];
+}
+
+/** The whole section for the system prompt's dynamic half (claude's `mHn`). */
+export function renderEnvironmentSection(input: EnvironmentInput): string {
+  return [ENVIRONMENT_HEADING, ENVIRONMENT_LEAD_IN, ...bullets([...machineFacts(input), ...modelLines(input), WINTER_PRODUCT_LINE])].join("\n");
+}
+
+/** `excludeDynamicSections`, static half (claude's `fHn`): the model and product lines only. */
+export function renderStaticEnvironmentSection(input: Pick<EnvironmentInput, "model" | "modelDisplayName" | "knowledgeCutoff">): string {
+  return [ENVIRONMENT_HEADING, ...bullets([...modelLines(input), WINTER_PRODUCT_LINE])].join("\n");
+}
 
 /**
- * Deliberately NOT `## Environment`: the preset carries a section by that name (its posture toward
- * the machine), and two identical headings in one prompt make it ambiguous which one an
- * instruction belongs to. This block is the live readings; the preset section is the standing
- * attitude toward them.
+ * `excludeDynamicSections`, userContext half (claude's `gHn` through `jEe`): the machine facts under
+ * the lead-in, WITHOUT the heading -- the heading's text becomes the userContext key `Environment`.
  */
-export const DYNAMIC_SECTIONS_HEADING = "## Current session";
-
-export interface DynamicSectionsInput {
-  cwd: string;
-  platform: string;
-  osVersion: string;
-  shell: string;
-  date: string;
-  gitSummary?: string;
-  /** Absent when auto-memory is disabled -- which is how "disabled" reads in this block. */
-  memoryDir?: string;
-}
-
-/** Blank and whitespace-only are ABSENT, matching the `isUnset` convention the paths layer uses for env values. */
-function present(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-export function renderDynamicSections(input: DynamicSectionsInput): string {
-  const lines: string[] = [DYNAMIC_SECTIONS_HEADING];
-
-  const cwd = present(input.cwd);
-  if (cwd !== undefined) lines.push(`- Working directory: ${cwd}`);
-
-  const platform = present(input.platform);
-  const osVersion = present(input.osVersion);
-  if (platform !== undefined) lines.push(osVersion === undefined ? `- Platform: ${platform}` : `- Platform: ${platform} (release ${osVersion})`);
-  else if (osVersion !== undefined) lines.push(`- OS release: ${osVersion}`);
-
-  const shell = present(input.shell);
-  if (shell !== undefined) lines.push(`- Shell: ${shell}`);
-
-  const date = present(input.date);
-  if (date !== undefined) lines.push(`- Today's date: ${date}`);
-
-  const memoryDir = present(input.memoryDir);
-  if (memoryDir !== undefined) lines.push(`- Auto-memory directory: ${memoryDir}`);
-
-  // Last, and indented if multi-line: a git summary is the only field with no bounded shape, and an
-  // un-indented second line would read as a sibling bullet of the list rather than as continuation.
-  const gitSummary = present(input.gitSummary);
-  if (gitSummary !== undefined) {
-    const [first, ...rest] = gitSummary.split("\n");
-    lines.push(`- Repository: ${first}`);
-    for (const line of rest) lines.push(`  ${line}`);
-  }
-
-  return lines.join("\n");
+export function renderEnvironmentContextValue(input: EnvironmentInput): string {
+  return [ENVIRONMENT_LEAD_IN, ...bullets(machineFacts(input))].join("\n");
 }
