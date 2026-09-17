@@ -631,6 +631,15 @@ export type SdkMessage =
       skills: string[];
       plugins: InitPluginInfo[];
       mcp_servers?: WireMcpServerStatus[];
+      /**
+       * Spawn-surface parity (research §A3): the per-session `subagent_type` names -- the SAME set
+       * `Query.supportedAgents()` reports (research: "Same list feeds `system/init.agents?:
+       * string[]` and `Query.supportedAgents(): AgentInfo[]`"). Present only when the `Agent` tool
+       * is itself advertised (absent otherwise, matching `mcp_servers`' own conditional-presence
+       * convention on this same frame) -- the engine-side producer is `engine.ts`'s own
+       * `system/init` block.
+       */
+      agents?: string[];
       [k: string]: unknown;
     }
   | SDKHookStartedMessage

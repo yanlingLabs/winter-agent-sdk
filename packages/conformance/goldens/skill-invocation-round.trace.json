@@ -51,7 +51,13 @@
       "skills": [
         "p5probe"
       ],
-      "plugins": []
+      "plugins": [],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
+      ]
     }
   },
   {
