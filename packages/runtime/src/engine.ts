@@ -3711,6 +3711,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     ? [
         ...loadAgentDefinitions({
           home: permissionHome,
+          // Phase 5 fix wave, KNOWN-6 (this file's own `resolvedWinterHome`, line ~1702: "the same
+          // resolved root every other fence in this run uses"): WITHOUT this, a session run with a
+          // custom `<PREFIX>HOME` would list `init.agents` from `~/.winter/agents` (the OS home)
+          // while `subagent_type` resolution itself (`tools/impl/agent.ts` threads `ctx.winterHome`)
+          // resolves the SAME user tier from the configured root -- the exact two-places-for-one-
+          // configuration bug KNOWN-6 already closed once, reopened on this new call site were this
+          // omitted.
+          ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
           brand: sessionBrand,
           cwd: config.cwd,
           trustedWorkspace,
