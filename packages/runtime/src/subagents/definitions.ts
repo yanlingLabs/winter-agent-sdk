@@ -16,7 +16,7 @@
 // pre-parsed from the wire.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { WINTER_BRAND, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type AgentInfo, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { resolveBuiltinAgents, type BuiltinAgentGates } from "./builtin-agents.ts";
 
 export type AgentDefinitionSource = "programmatic" | "project" | "user" | "plugin" | "builtin";
@@ -354,6 +354,29 @@ export function formatAgentNotFound(requested: string, available: readonly strin
 export function formatAgentAmbiguous(requested: string, matches: readonly string[]): string {
   const sorted = [...matches].sort();
   return `Agent type '${requested}' is ambiguous — matches ${sorted.join(", ")}. Use the exact name: ${sorted.join(" or ")}.`;
+}
+
+/**
+ * The pinned `AgentInfo[]` shape (`Query.supportedAgents()`, research §A3: "Same list feeds
+ * `system/init.agents?: string[]` and `Query.supportedAgents(): AgentInfo[]`") -- lane L2b's own
+ * `list_agents` control handler is expected to build its response with this, so the two lists this
+ * one merged map feeds (the bare-name `init.agents`/`findAgentByType` and the richer `AgentInfo[]`)
+ * can never disagree about WHICH agents exist.
+ *
+ * `model: "inherit"` is OMITTED, never passed through literally: the pin's own field doc reads
+ * "Model alias this agent uses. If omitted, inherits the parent's model" -- `"inherit"` is Winter's
+ * internal sentinel for exactly that (`engine.ts`'s own `resolveChildModel`: `defModel !== "inherit"`
+ * is the guard), and a caller reading `AgentInfo.model` verbatim would otherwise see the literal
+ * string `"inherit"` where the pin's own contract says absence means the same thing.
+ */
+export function toAgentInfoList(defs: ReadonlyMap<string, SourcedAgentDefinition>): AgentInfo[] {
+  return [...defs.entries()]
+    .map(([name, def]) => ({
+      name,
+      description: def.description,
+      ...(def.model !== undefined && def.model !== "inherit" ? { model: def.model } : {}),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // WS-10 §2: "tools must include Skill if skills is used" -- VALIDATION ONLY (skills = a P5 seam,

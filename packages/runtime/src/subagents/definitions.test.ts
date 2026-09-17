@@ -10,6 +10,7 @@ import {
   findAgentByType,
   formatAgentNotFound,
   formatAgentAmbiguous,
+  toAgentInfoList,
   type AgentDefinitionRejection,
   type SourcedAgentDefinition,
 } from "./definitions.ts";
@@ -309,6 +310,32 @@ describe("formatAgentNotFound / formatAgentAmbiguous (research §A4 wording)", (
 
   test("ambiguous wording names both matches and the exact-name instruction", () => {
     expect(formatAgentAmbiguous("myagent", ["my_agent", "my-agent"])).toBe("Agent type 'myagent' is ambiguous — matches my-agent, my_agent. Use the exact name: my-agent or my_agent.");
+  });
+});
+
+describe("toAgentInfoList (Query.supportedAgents()'s own shape, research §A3)", () => {
+  function defsOf(entries: Record<string, { description: string; model?: string }>): Map<string, SourcedAgentDefinition> {
+    const m = new Map<string, SourcedAgentDefinition>();
+    for (const [name, e] of Object.entries(entries)) m.set(name, { description: e.description, prompt: "p", ...(e.model !== undefined ? { model: e.model } : {}), _source: "builtin" });
+    return m;
+  }
+
+  test("maps name/description/model, sorted by name", () => {
+    const list = toAgentInfoList(defsOf({ Explore: { description: "d1", model: "opus" }, claude: { description: "d2" } }));
+    expect(list).toEqual([
+      { name: "claude", description: "d2" },
+      { name: "Explore", description: "d1", model: "opus" },
+    ]);
+  });
+
+  test('model: "inherit" is OMITTED, never passed through as the literal string', () => {
+    const list = toAgentInfoList(defsOf({ Explore: { description: "d", model: "inherit" } }));
+    expect(list[0]).toEqual({ name: "Explore", description: "d" });
+    expect(list[0]).not.toHaveProperty("model");
+  });
+
+  test("an empty map yields an empty array", () => {
+    expect(toAgentInfoList(new Map())).toEqual([]);
   });
 });
 

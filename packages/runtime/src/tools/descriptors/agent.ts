@@ -95,8 +95,12 @@ export function agentInputSchemaFor(gates: AgentToolGateState = AGENT_TOOL_GATE_
   return { type: "object", properties, required: ["description", "prompt"] };
 }
 
-const OMITTED_TYPE_SENTENCE_AVAILABLE = "If omitted, the general-purpose agent is used.";
-const OMITTED_TYPE_SENTENCE_UNAVAILABLE = "subagent_type is required: the general-purpose agent is not available in this session, so choose one of the listed agent types.";
+// Exported (not module-private): lane L2b's own runtime refusal in `tools/impl/agent.ts` for an
+// OMITTED `subagent_type` (research §A7: "Omitted subagent_type → general-purpose (else
+// 'subagent_type is required...')") needs the IDENTICAL wording this tool description advertises --
+// two independently-typed copies of the same sentence is exactly how a future edit drifts them apart.
+export const OMITTED_TYPE_SENTENCE_AVAILABLE = "If omitted, the general-purpose agent is used.";
+export const OMITTED_TYPE_SENTENCE_UNAVAILABLE = "subagent_type is required: the general-purpose agent is not available in this session, so choose one of the listed agent types.";
 
 const FORK_SECTION = [
   "",

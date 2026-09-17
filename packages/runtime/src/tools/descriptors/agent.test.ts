@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS } from "./agent.ts";
+import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, OMITTED_TYPE_SENTENCE_AVAILABLE, OMITTED_TYPE_SENTENCE_UNAVAILABLE } from "./agent.ts";
 import { getRegisteredTool } from "../registry.ts";
 import "./agent.ts"; // self-sufficiency: guarantee the static registration ran
 
@@ -45,7 +45,13 @@ describe("renderAgentToolDescription (research §A3, scope item 5)", () => {
   test("carries the two mechanism sentences the scope brief names verbatim", () => {
     const text = renderAgentToolDescription(AGENT_TOOL_GATE_DEFAULTS);
     expect(text).toContain("Available agent types are listed in <system-reminder> messages in the conversation.");
-    expect(text).toContain("If omitted, the general-purpose agent is used.");
+    expect(text).toContain(OMITTED_TYPE_SENTENCE_AVAILABLE);
+  });
+
+  test("the two omitted-type sentences are EXPORTED, so lane L2b's own runtime refusal can reuse them verbatim (never a second, drift-prone copy)", () => {
+    expect(OMITTED_TYPE_SENTENCE_AVAILABLE).toBe("If omitted, the general-purpose agent is used.");
+    expect(OMITTED_TYPE_SENTENCE_UNAVAILABLE).toBe("subagent_type is required: the general-purpose agent is not available in this session, so choose one of the listed agent types.");
+    expect(renderAgentToolDescription({ forkEnabled: false, backgroundDisabled: false, generalPurposeAvailable: false })).toContain(OMITTED_TYPE_SENTENCE_UNAVAILABLE);
   });
 
   test("general-purpose unavailable -> the required-when-unavailable sentence replaces the omitted-type one", () => {
