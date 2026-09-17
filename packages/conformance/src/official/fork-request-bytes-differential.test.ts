@@ -84,14 +84,27 @@ function lastUserText(messages: GenericMsg[]): string {
 
 type Step = "parent-spawn-call" | "parent-ack-reply" | "parent-notification-reply" | "fork-a-reply" | "fork-b-reply";
 
+/** ONLY text blocks / plain-string content -- NEVER `textsOf`'s `JSON.stringify` fallback over a
+ *  `tool_result` block. Winter's own spawn-ack `tool_result` echoes the child's prompt inside its
+ *  JSON content (the same shape scenario 3 observed: `"prompt":"..."`), so scanning every block
+ *  indiscriminately misroutes the PARENT's own ack round (whose last message holds two
+ *  tool_results) as a fork child's reply the instant either directive marker appears inside that
+ *  JSON -- caught empirically: `decideStep` was routing the ack round to `fork-a-reply`. */
+function directiveMarkerTextsOf(content: unknown): string[] {
+  const blocks = blocksOf(content);
+  if (blocks.length > 0) return blocks.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string);
+  if (typeof content === "string") return [content];
+  return [];
+}
+
 /** LAST-message routing throughout (never first-message) -- a fork child inherits the PARENT's own
  *  first message verbatim (R3a §2), so a first-message check would misroute every fork turn as a
  *  fresh parent turn. */
 function decideStep(messages: GenericMsg[]): Step {
   const last = messages.at(-1);
-  const lastTexts = textsOf(last?.content);
-  if (lastTexts.some((t) => t.includes(FORK_A_MARKER))) return "fork-a-reply";
-  if (lastTexts.some((t) => t.includes(FORK_B_MARKER))) return "fork-b-reply";
+  const lastMarkerTexts = directiveMarkerTextsOf(last?.content);
+  if (lastMarkerTexts.some((t) => t.includes(FORK_A_MARKER))) return "fork-a-reply";
+  if (lastMarkerTexts.some((t) => t.includes(FORK_B_MARKER))) return "fork-b-reply";
   if (lastUserText(messages).includes("<task-notification>")) return "parent-notification-reply";
   if (hasToolResultFor(messages, TOOL_USE_A) || hasToolResultFor(messages, TOOL_USE_B)) return "parent-ack-reply";
   return "parent-spawn-call";

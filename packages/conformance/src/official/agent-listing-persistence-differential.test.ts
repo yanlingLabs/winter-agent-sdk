@@ -60,6 +60,18 @@ function findAgentListingBlocks(messages: GenericMsg[]): string[] {
   return allTexts(messages).filter((t) => t.includes(AGENT_LISTING_MARKER));
 }
 
+/** The index of the MESSAGE (not block) carrying the listing marker, or -1 if absent. A count check
+ *  alone ("exactly one occurrence") cannot tell "persisted in place" from "moved": a layout that
+ *  drops the listing from message 0 and re-adds it to the newest turn's message would still show
+ *  count=1 and (with the right timing) byte-identical text, yet be exactly the bug this scenario
+ *  exists to catch. Position is the check that actually discriminates the two. */
+function findAgentListingMessageIndex(messages: GenericMsg[]): number {
+  for (let i = 0; i < messages.length; i++) {
+    if (textsOf(messages[i]!.content).some((t) => t.includes(AGENT_LISTING_MARKER))) return i;
+  }
+  return -1;
+}
+
 interface ListingLine {
   type: string;
   description: string;
@@ -180,11 +192,19 @@ describe.skipIf(skipReason !== undefined)(`agent listing persistence: Winter run
       const winterBlocks1 = findAgentListingBlocks(winterMessages1);
       const winterBlocks2 = findAgentListingBlocks(winterMessages2);
 
+      const officialIndex1 = findAgentListingMessageIndex(officialMessages1);
+      const officialIndex2 = findAgentListingMessageIndex(officialMessages2);
+      const winterIndex1 = findAgentListingMessageIndex(winterMessages1);
+      const winterIndex2 = findAgentListingMessageIndex(winterMessages2);
+
       const report = {
         official: {
           occurrencesInRequest1: officialBlocks1.length,
           occurrencesInRequest2: officialBlocks2.length,
           byteStableAcrossTurns: officialBlocks1[0] === officialBlocks2[0],
+          messageIndexInRequest1: officialIndex1,
+          messageIndexInRequest2: officialIndex2,
+          isLastMessageInRequest2: officialIndex2 === officialMessages2.length - 1,
           lines: officialBlocks1[0] === undefined ? [] : parseListingLines(officialBlocks1[0]),
           hasConcurrencyNote: officialBlocks1[0]?.includes(CONCURRENCY_NOTE) ?? false,
         },
@@ -192,6 +212,9 @@ describe.skipIf(skipReason !== undefined)(`agent listing persistence: Winter run
           occurrencesInRequest1: winterBlocks1.length,
           occurrencesInRequest2: winterBlocks2.length,
           byteStableAcrossTurns: winterBlocks1[0] === winterBlocks2[0],
+          messageIndexInRequest1: winterIndex1,
+          messageIndexInRequest2: winterIndex2,
+          isLastMessageInRequest2: winterIndex2 === winterMessages2.length - 1,
           lines: winterBlocks1[0] === undefined ? [] : parseListingLines(winterBlocks1[0]),
           hasConcurrencyNote: winterBlocks1[0]?.includes(CONCURRENCY_NOTE) ?? false,
         },
@@ -205,9 +228,9 @@ describe.skipIf(skipReason !== undefined)(`agent listing persistence: Winter run
 
       const EXPECTED_WINTER_BUILTIN_TYPES = ["claude", "Explore", "general-purpose", "Plan"].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-      const sides: Array<{ label: string; blocks1: string[]; blocks2: string[]; lines: ListingLine[] }> = [
-        { label: "official", blocks1: officialBlocks1, blocks2: officialBlocks2, lines: report.official.lines },
-        { label: "winter", blocks1: winterBlocks1, blocks2: winterBlocks2, lines: report.winter.lines },
+      const sides: Array<{ label: string; blocks1: string[]; blocks2: string[]; lines: ListingLine[]; index1: number; index2: number; total2: number }> = [
+        { label: "official", blocks1: officialBlocks1, blocks2: officialBlocks2, lines: report.official.lines, index1: officialIndex1, index2: officialIndex2, total2: officialMessages2.length },
+        { label: "winter", blocks1: winterBlocks1, blocks2: winterBlocks2, lines: report.winter.lines, index1: winterIndex1, index2: winterIndex2, total2: winterMessages2.length },
       ];
 
       for (const side of sides) {
@@ -220,6 +243,15 @@ describe.skipIf(skipReason !== undefined)(`agent listing persistence: Winter run
         // fresh copy appended after the tool round / the new user turn.
         expect(side.blocks2.length, `${side.label}: request 2 should STILL carry the listing exactly once (never duplicated as new content)`).toBe(1);
         expect(side.blocks1[0], `${side.label}: the listing block must be byte-identical between request 1 and request 2 (it stays in place, unmodified)`).toBe(side.blocks2[0]);
+
+        // --- target 2b (POSITION, not just count/bytes): a count-of-1 plus byte-identical text
+        // cannot by itself distinguish "persisted in place" from "moved" -- a layout that drops the
+        // listing from message 0 and re-adds an identical copy to the NEWEST turn would pass both
+        // checks above while still being exactly the bug this scenario exists to catch. The
+        // message INDEX holding the listing must be the same in both requests, and must never be
+        // request 2's own last message (the new turn).
+        expect(side.index2, `${side.label}: the listing's message index should be the SAME in request 2 as in request 1 (persisted in place, not moved)`).toBe(side.index1);
+        expect(side.index2 === side.total2 - 1, `${side.label}: the listing must NOT be part of request 2's own last message (i.e. not attached to the new turn)`).toBe(false);
 
         // --- target 3: the concurrency-note trailer sentence is present (both runtimes' listings
         // carry it, per the captured ground truth).
