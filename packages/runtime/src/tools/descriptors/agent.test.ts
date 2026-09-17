@@ -42,9 +42,15 @@ describe("agentInputSchemaFor (research §A2, scope item 5)", () => {
 });
 
 describe("renderAgentToolDescription (research §A3, scope item 5)", () => {
-  test("carries the two mechanism sentences the scope brief names verbatim", () => {
+  // Review r2 finding 3 (whole-branch, R-S10): the opening two sentences are now Winter-authored
+  // (they used to match claude's own pinned text verbatim) -- this test now asserts the INFORMATION
+  // survives the reword (an agent is spawned for a self-contained piece of work with its own tool
+  // access; the available types are announced via an injected reminder), not any specific phrasing.
+  test("carries the opening information (spawn mechanism + how types are announced) in Winter's own words, plus the shared omitted-type sentence", () => {
     const text = renderAgentToolDescription(AGENT_TOOL_GATE_DEFAULTS);
-    expect(text).toContain("Available agent types are listed in <system-reminder> messages in the conversation.");
+    expect(text).not.toContain("Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.");
+    expect(text).not.toContain("Available agent types are listed in <system-reminder> messages in the conversation.");
+    expect(text).toContain("runtime-injected reminder");
     expect(text).toContain(OMITTED_TYPE_SENTENCE_AVAILABLE);
   });
 
@@ -91,7 +97,7 @@ describe("the static registration (gate-off defaults, byte-identical shape to th
 
   test("the registered description starts with the Winter-worded opening and still carries the model-slots marker block", () => {
     const registered = getRegisteredTool("Agent");
-    expect(registered?.descriptor.description.startsWith("Launch a new agent to handle complex, multi-step tasks.")).toBe(true);
+    expect(registered?.descriptor.description.startsWith("Spawn a subagent to carry a self-contained piece of a task on your behalf")).toBe(true);
     expect(registered?.descriptor.description).toContain("Model options for this session:");
   });
 });

@@ -41,6 +41,7 @@ import { memoryDirFor } from "./memory-key.ts";
 import { resolveOutputStyle, type ResolvedOutputStyle } from "./output-styles.ts";
 import { renderPlanModeBlock } from "./plan-mode.ts";
 import { renderAgentListing } from "./agent-listing.ts";
+import { systemReminder } from "./injection.ts";
 
 export interface SystemPromptAssemblerDeps {
   /**
@@ -270,13 +271,25 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // transcript -- would leave every turn after the first with no listing at all here. The full
       // block is therefore rendered whenever there is anything to list, and a changed set ADDS
       // claude's "now available / no longer available" block beside it on the turn it changed.
+      // Review r2 finding 11 (whole-branch): wrapped in the SAME `<system-reminder>` wrapper every
+      // other harness-injected block in this file uses (memory.ts's `renderMemoryBlock`, winter-md.ts's
+      // discovered-instructions blocks) -- the tool's own description (`renderAgentToolDescription`)
+      // already SAYS the listing arrives this way ("announced in a runtime-injected reminder"), which
+      // was false until this fix (the block used to be pushed raw, an unlabelled, un-neutralized
+      // string). `systemReminder` both labels the block (so the model can tell harness-injected
+      // context from something the user typed) and neutralizes any literal `<system-reminder>`/
+      // `</system-reminder>` INSIDE it -- load-bearing here specifically because `renderAgentListing`'s
+      // own rows fold in a project/user/plugin file's `description` verbatim (whenToUse-capping,
+      // just above in engine.ts, bounds the LENGTH; this bounds the TAG-BREAKOUT risk the length cap
+      // does not touch at all).
+      const AGENT_LISTING_LABEL = "Agent-tool listing (injected by the runtime, not typed by the user):";
       let agentListingTypes: string[] | undefined;
       if (input.agentListing !== undefined) {
         const full = renderAgentListing(input.agentListing.entries);
-        if (full.text !== undefined && input.agentListing.entries.length > 0) userContextBlocks.push(full.text);
+        if (full.text !== undefined && input.agentListing.entries.length > 0) userContextBlocks.push(systemReminder(AGENT_LISTING_LABEL, full.text));
         if (input.agentListing.priorAgentTypes !== undefined) {
           const delta = renderAgentListing(input.agentListing.entries, input.agentListing.priorAgentTypes);
-          if (delta.text !== undefined) userContextBlocks.push(delta.text);
+          if (delta.text !== undefined) userContextBlocks.push(systemReminder(AGENT_LISTING_LABEL, delta.text));
         }
         agentListingTypes = full.agentTypes;
       }

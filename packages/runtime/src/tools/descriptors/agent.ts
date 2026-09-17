@@ -110,23 +110,32 @@ const FORK_SECTION = [
 ].join("\n");
 
 /**
- * research §A3's own structure, Winter-worded, gate-aware. The two sentences the scope brief quotes
- * verbatim ("Available agent types are listed in <system-reminder> messages in the conversation." /
- * "If omitted, the general-purpose agent is used.") are mechanism statements about how THIS session's
- * own listing (item 3, `renderAgentListing`) and lookup (item 1, `findAgentByType`'s omitted-type
- * fallback) actually behave -- reused as given, not claude prose.
+ * research §A3's own structure, Winter-worded, gate-aware.
+ *
+ * R-S10 (whole-branch review r2 finding 3, controller ruling): a tool DESCRIPTION is multi-sentence
+ * prose and must be Winter-authored throughout, including its OPENING sentences -- an earlier
+ * version of this function argued the opening two sentences were "mechanism statements... reused as
+ * given, not claude prose" and left them byte-identical to claude's own pinned text (the exact
+ * strings the review's r2 finding 3 names). That argument does not survive R-S10: a fact being true
+ * of Winter's own runtime does not license copying the SENTENCE Anthropic used to state it. Both
+ * opening sentences below are reworded to carry the identical information (how an agent is launched
+ * and specialized; that the available types are announced in an injected reminder) in Winter's own
+ * words. `OMITTED_TYPE_SENTENCE_AVAILABLE`/`_UNAVAILABLE` are UNCHANGED -- R-S10's own allowance
+ * covers a short functional one-liner reused as BOTH a description sentence and a refusal message
+ * (the shared-constant discipline two lines up exists precisely so the two never drift), which is
+ * the category the ruling exempts.
  */
 export function renderAgentToolDescription(gates: AgentToolGateState = AGENT_TOOL_GATE_DEFAULTS): string {
   const backgroundAdvertised = !gates.forkEnabled && !gates.backgroundDisabled;
   const parts = [
-    "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.",
-    "Available agent types are listed in <system-reminder> messages in the conversation.",
+    "Spawn a subagent to carry a self-contained piece of a task on your behalf; each agent type brings its own specialization and its own tool access.",
+    "The agent types available to you right now are announced in a runtime-injected reminder earlier in this conversation.",
     gates.generalPurposeAvailable ? OMITTED_TYPE_SENTENCE_AVAILABLE : OMITTED_TYPE_SENTENCE_UNAVAILABLE,
     [
       "When to use the Agent tool:",
       "- The task is complex or long enough that doing it inline would spend a lot of your own context on intermediate steps you don't need to keep.",
       "- The task is naturally delegable: a self-contained search, a focused piece of research, an isolated implementation step.",
-      "- You have several independent pieces of work to launch — send them in a single message with multiple tool uses so they run concurrently.",
+      "- Several pieces of work are independent of one another — batch their launches into one message so they proceed side by side instead of one after another.",
     ].join("\n"),
     [
       "Writing the prompt:",

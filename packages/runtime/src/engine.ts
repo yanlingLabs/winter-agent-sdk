@@ -1565,6 +1565,24 @@ function providerStateDenyPatterns(projectsRoot: string): string[] {
   return [`${projectsRoot}/**/*${PROVIDER_STATE_FILE_SUFFIX}`, `${projectsRoot}/*${PROVIDER_STATE_FILE_SUFFIX}`];
 }
 
+// Review r2 finding 11 (whole-branch): a project/user/plugin `agents/*.md` file's `description` (the
+// Agent-tool listing's own `whenToUse`) is UNTRUSTED-length input re-sent to the model on every turn
+// the set changes (and, once 0.0.16's persisted-delta design lands, on every FIRST listing) -- a
+// checked-in or plugin-shipped file with a multi-kilobyte description would cost real context budget
+// on every session that loads it, silently. Built-ins are Winter's own, fixed, already-reviewed
+// strings (research §A1's own summaries, R-S2's copied `whenToUse`s all run well under this) and are
+// never capped -- there is nothing to protect against there. 1,000 chars is chosen because the
+// pin's own built-in `whenToUse` strings run roughly 200-400 chars (r3a's own "Selected explicitly
+// via subagent_type" fork line is 140), so 1,000 comfortably covers a genuinely long, honest
+// description while still bounding a runaway file to about 250 tokens rather than an unbounded one.
+const AGENT_LISTING_WHEN_TO_USE_MAX_CHARS = 1000;
+
+function capAgentListingWhenToUse(whenToUse: string, source: SourcedAgentDefinition["_source"]): string {
+  if (source === "builtin") return whenToUse;
+  if (whenToUse.length <= AGENT_LISTING_WHEN_TO_USE_MAX_CHARS) return whenToUse;
+  return `${whenToUse.slice(0, AGENT_LISTING_WHEN_TO_USE_MAX_CHARS)}…`;
+}
+
 /**
  * Fix r2 (N4): the facet's PROCESS-LEVEL registrations, withdrawn from a `finally` that no throw can
  * skip.
@@ -4961,7 +4979,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     latestAgentDefinitions = defs;
     const entries: AgentListingEntry[] = [...defs.entries()].map(([agentType, def]) => ({
       agentType,
-      whenToUse: def.description,
+      // Review r2 finding 11: capped for every non-builtin source (project/user/plugin/
+      // programmatic) -- see capAgentListingWhenToUse's own header for why 1,000 chars.
+      whenToUse: capAgentListingWhenToUse(def.description, def._source),
       ...(def.tools !== undefined ? { tools: def.tools } : {}),
       ...(def.disallowedTools !== undefined ? { disallowedTools: def.disallowedTools } : {}),
     }));

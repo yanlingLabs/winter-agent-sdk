@@ -4701,6 +4701,36 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
     }
   });
 
+  // Review r2 finding 11 (whole-branch): a project/user/plugin agent's own `description` is
+  // capped at 1,000 chars before it ever reaches the listing -- a checked-in or plugin-shipped file
+  // with a runaway description must not cost unbounded context on every turn. Built-ins are never
+  // capped (nothing here is long enough to trigger it anyway).
+  test("review r2 finding 11: a user-tier agent's over-long whenToUse is capped at 1,000 chars with an ellipsis; a built-in's own is never capped", async () => {
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-l2b-cap-"));
+    try {
+      const { createSystemPromptAssembler } = await import("./context/assembler.ts");
+      mkdirSync(join(winterHome, "agents"), { recursive: true });
+      const longDescription = "x".repeat(1500);
+      writeFileSync(join(winterHome, "agents", "verbose.md"), `---\nname: verbose\ndescription: ${longDescription}\n---\nBody.`);
+      const requests: Array<{ messages: ProviderMessage[] }> = [];
+      await run({
+        config: { winterHome },
+        provider: capturingProvider(requests, [{ kind: "text", text: "one" }]),
+        extra: { systemPromptAssembler: createSystemPromptAssembler({ home: winterHome, settings: () => ({}) }), winterHome },
+      });
+      const users = requests[0]!.messages.filter((m) => m.role === "user" && typeof m.content === "string");
+      const text = users[users.length - 1]!.content as string;
+      expect(text).toContain(`- verbose: ${"x".repeat(1000)}…`);
+      expect(text).not.toContain("x".repeat(1001));
+      // A built-in's own whenToUse (well under 1,000 chars either way) is untouched -- no ellipsis
+      // appears anywhere near it.
+      const generalPurposeLine = text.split("\n").find((l) => l.startsWith("- general-purpose:"))!;
+      expect(generalPurposeLine).not.toContain("…");
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
+  });
+
   test("a session without the Agent tool gets no listing at all", async () => {
     const { createSystemPromptAssembler } = await import("./context/assembler.ts");
     const requests: Array<{ messages: ProviderMessage[] }> = [];
