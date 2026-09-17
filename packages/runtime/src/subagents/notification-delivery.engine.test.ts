@@ -398,6 +398,42 @@ describe("the input-closed hold", () => {
     clearNotificationQueue(sessionId);
   });
 
+  test("an INTERRUPT arriving while the WIND-DOWN is all that is left ends the session -- even with the ceiling off", async () => {
+    const sessionId = "notify-abort-idle";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    registerBackgroundRow(sessionId, "idle-abort-task", "agent");
+    const frames: WinterFrame[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      // Ceiling OFF: without the interrupt this session would wait for its background agent forever,
+      // which is what makes this the real test of the idle-interrupt path (an interrupt then is a
+      // no-op for the turn loop -- there is no turn -- so only the wait can act on it).
+      config: { sessionId, cwd, model: "winter-test/notify", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+      env: { WINTER_PRINT_BG_WAIT_CEILING_MS: "0" },
+      input: runtime.input,
+      output: runtime.output,
+      provider: { generate: async () => ({ kind: "text", text: "ok" }) },
+      tools: stubExecutor,
+    });
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    // Wait for the turn to be OVER (its result is held, so the wire shows nothing) and the wait to be
+    // the only thing left, then interrupt.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(frameKinds(frames).filter((k) => k === "result")).toHaveLength(0); // held
+    host.output.write({ type: "control_request", requestId: "int", subtype: "interrupt", payload: undefined });
+    await done;
+    await reader;
+    // The held result still reaches the host, and the session returned instead of waiting forever.
+    expect(frameKinds(frames).filter((k) => k === "result")).toHaveLength(1);
+    resetBackgroundTaskRuntimeForTest();
+    clearNotificationQueue(sessionId);
+  }, 10_000);
+
   test("an INTERRUPT while a result is held ends the wait, flushes the held result, and stops nothing it does not own", async () => {
     const sessionId = "notify-abort";
     clearNotificationQueue(sessionId);

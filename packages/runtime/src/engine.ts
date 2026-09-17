@@ -4158,8 +4158,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // the pin's own doc comment on this frame calls "the authoritative turn-over signal".
     if (!inputClosed && !turnActive) emitSessionState("idle");
   };
-  /** Set when a turn ends interrupted -- claude's `Fu` reads it to decide whether to stop background agents. */
-  let lastTurnInterrupted = false;
+  /**
+   * The SESSION-level abort, claude's `Qe.signal.aborted`: set when a turn ends interrupted AND when an
+   * `interrupt` arrives while the wind-down is the only thing still running. Both matter, and the
+   * second is why this is not simply "the last turn was interrupted": with the input closed and no
+   * turn active, `interruptCurrentTurn.current` is null, so an interrupt would otherwise be a silent
+   * no-op and a session waiting on a background agent under `…_CEILING_MS=0` would never return.
+   * `runBackgroundWait` breaks on it; the post-loop flush reads it to decide whether to stop the
+   * background children first (claude's `Fu`).
+   */
+  let sessionAborted = false;
   /**
    * SDK 0.0.16 Lane N, `session_state_changed` (frames.ts's own `SDKSessionStateChangedMessage`).
    * ENV-GATED exactly as the pin gates it (`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`): a default
@@ -4215,7 +4223,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         pumpNotifications();
         // An interrupted turn stops the wait outright (the pin's own `!aborted` guard on the wait
         // branch): the caller asked for the session to end, not for more background work.
-        if (lastTurnInterrupted) break;
+        if (sessionAborted) break;
         const running = runningBackgroundTasks();
         const queued = notifications.peekMain() !== undefined;
         if (!turnActive && !queued && running.length === 0) break;
@@ -4442,6 +4450,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           if (cf.subtype === "interrupt") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
             interruptCurrentTurn.current?.(); // no-op while idle: nothing active to abort
+            // Lane N: ...and "nothing active to abort" is exactly the case the wind-down has to hear
+            // about. With the input closed and no turn running, the only thing still holding this
+            // session open is the background wait -- an interrupt there means "stop waiting", which
+            // nothing else in this branch would have told it.
+            if (inputClosed && !turnActive) {
+              sessionAborted = true;
+              signalBackgroundWait();
+            }
             // Phase 6 Task 3 (R6-I): an interrupt ENDS the turn, so the quiescent boundary a parked
             // `set_model` was waiting for has arrived early -- apply it now rather than leaving the
             // session on a model the host has already asked it to leave.
@@ -6885,7 +6901,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
-      lastTurnInterrupted = true;
+      sessionAborted = true;
       writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials });
     }
     // Fix r1 (M1): the messaging facet's own quiescent boundary, fired on BOTH branches. It used to
@@ -6905,7 +6921,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // outlived it would keep burning tokens with nobody reading its result. Then the held results go
   // out, re-stamped with the session's totals, and only then does the ordinary teardown below run --
   // which is what makes "the model was told about its background work" true before the sweep.
-  if (heldResults.length > 0 && lastTurnInterrupted) {
+  if (heldResults.length > 0 && sessionAborted) {
     await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
   }
   flushHeldResults();
