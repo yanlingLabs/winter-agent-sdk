@@ -37,6 +37,7 @@ import type {
   SDKTaskUpdatedMessage,
 } from "@yanlinglabs/winter-agent-sdk";
 import { wireTaskType } from "../background-tasks.ts";
+import { enqueueTaskNotification, renderShellNotification } from "../../subagents/notification-queue.ts";
 import type { RunCommandResult } from "../../sandbox/spawn.ts";
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped";
@@ -327,6 +328,8 @@ export interface TaskNotificationInput {
   toolUseId?: string;
   skipTranscript?: boolean;
   ambient?: boolean;
+  /** Lane N: see `TaskNotificationEmission.modelNotification`. */
+  modelNotification?: string | null;
 }
 
 export interface TaskUpdateChanges {
@@ -353,6 +356,19 @@ export interface TaskNotificationEmission {
   toolUseId?: string;
   skipTranscript?: boolean;
   ambient?: boolean;
+  /**
+   * SDK 0.0.16 Lane N: the MODEL-facing `<task-notification>` document for this same terminal event
+   * (`subagents/notification-queue.ts`). Three cases, and the default is the interesting one:
+   *
+   *  - ABSENT -- derived from the row: a BACKGROUND row gets the shell/monitor document, carrying the
+   *    same pinned `summary` the frame carries (claude's `AMe` uses one text on both surfaces), and a
+   *    FOREGROUND row (`isBackgrounded === false`) gets NONE, because the model is already being
+   *    handed that task's result as its own `tool_result`.
+   *  - a STRING -- this exact document (the agent/workflow/TaskStop shapes, whose XML says more than
+   *    the frame's summary does: `<result>`, `<usage>`, the actor that stopped it).
+   *  - `null` -- explicitly no model notification.
+   */
+  modelNotification?: string | null;
 }
 
 /**
@@ -363,7 +379,7 @@ export interface TaskNotificationEmission {
  * terminal detection below or a foreground remove-then-notify caller (bash.ts/agent.ts) that has
  * nothing left in the registry to update.
  */
-export function emitTaskNotification(task: Pick<BackgroundTaskHandle, "taskId" | "emitter" | "toolUseId">, notification: TaskNotificationEmission): void {
+export function emitTaskNotification(task: Pick<BackgroundTaskHandle, "taskId" | "emitter" | "toolUseId"> & Partial<Pick<BackgroundTaskHandle, "kind" | "description" | "isBackgrounded" | "ownerAgentId" | "outputPath">>, notification: TaskNotificationEmission): void {
   if (notifiedTaskIds.has(task.taskId)) return;
   notifiedTaskIds.add(task.taskId);
   if (!task.emitter) return;
@@ -390,6 +406,28 @@ export function emitTaskNotification(task: Pick<BackgroundTaskHandle, "taskId" |
   } catch {
     /* a torn-down session's emitFrame must never fail the caller */
   }
+  // Lane N: the SECOND, model-facing channel -- the same once-per-id claim above governs both, so a
+  // task id can no more notify the model twice than it can emit two frames. Addressed to the row's
+  // OWNING agent (a shell a subagent started notifies that subagent), and enqueued AFTER the frame
+  // purely so a producer reading the wire sees the familiar order; the queue is drained later either
+  // way.
+  // `??` would be WRONG here: `null` is the explicit "no model notification" case, and must not fall
+  // through to the derived default.
+  const value =
+    notification.modelNotification !== undefined
+      ? notification.modelNotification
+      : task.isBackgrounded === false
+        ? null
+        : renderShellNotification({ taskId: task.taskId, ...(toolUseId !== undefined ? { toolUseId } : {}), ...(notification.outputFile.length > 0 ? { outputFile: notification.outputFile } : {}), status: notification.status, summary: notification.summary });
+  if (value !== null) {
+    enqueueTaskNotification({
+      sessionId: task.emitter.sessionId,
+      value,
+      ...(task.ownerAgentId !== undefined ? { agentId: task.ownerAgentId } : {}),
+      taskId: task.taskId,
+      priority: "next",
+    });
+  }
 }
 
 function notifyTerminal(task: BackgroundTaskHandle, notification: TaskNotificationInput): void {
@@ -407,6 +445,7 @@ function notifyTerminal(task: BackgroundTaskHandle, notification: TaskNotificati
     status,
     outputFile: notification.outputFile ?? task.outputPath,
     summary: notification.summary,
+    ...(notification.modelNotification !== undefined ? { modelNotification: notification.modelNotification } : {}),
     ...(usage !== undefined ? { usage } : {}),
     ...(notification.toolUseId !== undefined ? { toolUseId: notification.toolUseId } : {}),
     ...(notification.skipTranscript !== undefined ? { skipTranscript: notification.skipTranscript } : {}),

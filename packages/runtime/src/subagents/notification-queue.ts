@@ -459,3 +459,111 @@ export function taskNotificationAttachment(notifications: readonly QueuedNotific
     taskIds: notifications.flatMap((n) => (n.taskId !== undefined ? [n.taskId] : [])),
   };
 }
+
+// --- monitor stream events (claude's `Qnn` coalescer + `TD`) ---------------------------------------
+
+/** claude's `XZ`: one event line is capped here. */
+const MONITOR_LINE_CAP = 500;
+/** claude's `mnt`: one delivered BATCH is capped here. */
+const MONITOR_BATCH_CAP = 3000;
+/** claude's `R_n`: lines are coalesced for this long before a batch is delivered. */
+const MONITOR_DEBOUNCE_MS = 200;
+/** claude's own suppression wording (a short functional string), used when the queue is already saturated for this task. */
+const MONITOR_SUPPRESSED = (count: number): string => `[${count} events suppressed — output rate too high. Consider using TaskStop to restart this monitor with a more selective filter.]`;
+
+export interface MonitorEventRelay {
+  /** Feeds raw stream text; complete lines are coalesced and delivered on the debounce. */
+  onData(chunk: string): void;
+  /** Delivers whatever is buffered right now (the monitor ending). */
+  flush(): void;
+  /** Stops delivering (the task is terminal); the terminal notification is a separate, ordinary producer. */
+  dispose(): void;
+}
+
+/**
+ * The model-facing relay for a Monitor's STREAM (claude's `oLt`, minus its token bucket). Lines are
+ * coalesced for 200 ms, capped per line and per batch, and delivered as `TD` documents.
+ *
+ * DELIBERATE SIMPLIFICATION (recorded): claude rate-limits with a token bucket and will KILL a
+ * monitor that keeps overflowing it. Winter instead refuses to let more than `maxPending` event
+ * notifications for one task sit in the queue undelivered, and folds everything beyond that into
+ * claude's own "[N events suppressed …]" line on the next delivery. The bound is what matters -- an
+ * unbounded relay would turn one chatty socket into an unbounded number of model turns.
+ */
+export function createMonitorEventRelay(opts: {
+  sessionId: string;
+  taskId: string;
+  description: string;
+  agentId?: string;
+  maxPending?: number;
+  schedule?: (fn: () => void) => () => void;
+}): MonitorEventRelay {
+  const schedule =
+    opts.schedule ??
+    ((fn: () => void) => {
+      const timer = setTimeout(fn, MONITOR_DEBOUNCE_MS);
+      if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as { unref: () => void }).unref();
+      return () => clearTimeout(timer);
+    });
+  const maxPending = opts.maxPending ?? 5;
+  const queue = notificationQueueFor(opts.sessionId);
+  let carry = "";
+  let lines: string[] = [];
+  let suppressed = 0;
+  let cancel: (() => void) | undefined;
+  let disposed = false;
+
+  const cap = (line: string): string => (line.length > MONITOR_LINE_CAP ? `${line.slice(0, MONITOR_LINE_CAP)}...(truncated)` : line);
+
+  const deliver = (final: boolean): void => {
+    cancel?.();
+    cancel = undefined;
+    if (disposed) return;
+    if (final && carry.trim().length > 0) {
+      lines.push(cap(carry.trim()));
+      carry = "";
+    }
+    if (lines.length === 0 && suppressed === 0) return;
+    if (queue.peek(opts.agentId).filter((e) => e.taskId === opts.taskId).length >= maxPending) {
+      suppressed += lines.length;
+      lines = [];
+      return;
+    }
+    const body = suppressed > 0 ? [MONITOR_SUPPRESSED(suppressed), ...lines] : lines;
+    suppressed = 0;
+    lines = [];
+    let event = body.join("\n");
+    if (event.length > MONITOR_BATCH_CAP) event = `${event.slice(0, MONITOR_BATCH_CAP)}\n...(truncated)`;
+    enqueueTaskNotification({
+      sessionId: opts.sessionId,
+      value: renderMonitorEventNotification({ taskId: opts.taskId, description: opts.description, event }),
+      ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
+      taskId: opts.taskId,
+      priority: "next",
+    });
+  };
+
+  return {
+    onData(chunk: string): void {
+      if (disposed) return;
+      carry += chunk;
+      if (carry.length > MONITOR_BATCH_CAP * 8) carry = carry.slice(-MONITOR_BATCH_CAP * 8);
+      let index = carry.indexOf("\n");
+      while (index !== -1) {
+        const line = carry.slice(0, index).trim();
+        carry = carry.slice(index + 1);
+        if (line.length > 0) lines.push(cap(line));
+        index = carry.indexOf("\n");
+      }
+      if (lines.length > 0 && cancel === undefined) cancel = schedule(() => deliver(false));
+    },
+    flush(): void {
+      deliver(true);
+    },
+    dispose(): void {
+      cancel?.();
+      cancel = undefined;
+      disposed = true;
+    },
+  };
+}
