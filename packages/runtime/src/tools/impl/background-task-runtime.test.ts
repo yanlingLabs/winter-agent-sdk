@@ -9,6 +9,7 @@ import {
   listTasks,
   listRunningTasks,
   killTaskProcessGroup,
+  killOrphanedSpawn,
   stopTask,
   stopSessionShellTasks,
   killedTaskSummary,
@@ -69,6 +70,15 @@ describe("background-task-runtime", () => {
     // spawn+kill path end to end).
     startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", pid: 999999 });
     expect(() => killTaskProcessGroup("t1")).not.toThrow();
+  });
+
+  // Review r2 finding 10's own companion: killOrphanedSpawn is the bare process-group kill bash.ts/
+  // monitor.ts fall back to when startTracking hands back a row that is NOT "running" (the
+  // stop-before-onSpawned window) -- it never touches the registry at all, since the registry has
+  // no record of a pid that was never merged in.
+  test("killOrphanedSpawn signals the negative pid directly, with no registry row required, and never throws", () => {
+    expect(killOrphanedSpawn(999999)).toBe(false); // not a real, owned process group -- reports honestly
+    expect(() => killOrphanedSpawn(999999)).not.toThrow();
   });
 
   test("stopTask returns false for an unknown task", () => {
@@ -143,14 +153,22 @@ describe("background-task-runtime", () => {
       expect(getTask("t1")?.status).toBe("running");
     });
 
-    test("re-registering a TERMINAL id replaces the row (a resume/replacement), not a merge", () => {
+    // Review r2 finding 10 (whole-branch): REWRITTEN. This test used to prove the opposite of the
+    // fix -- that re-registering a TERMINAL id built a fresh, "running" replacement row. See the
+    // corrected test in the "updateTask" describe block below for why that was the actual bug: no
+    // production caller re-registers a terminal id to mean "a genuinely new task" (there is no
+    // "resume/replacement" concept startTracking's own contract ever named) -- every real call
+    // site's SECOND `startTracking` call is the SAME in-flight task's onSpawned pid update, and the
+    // window where the row has ALREADY gone terminal by the time that second call arrives is a real,
+    // if narrow, race with TaskStop -- not a signal to start over.
+    test("re-registering a TERMINAL id returns the SAME row, untouched -- never a fresh 'running' replacement", () => {
       startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d" });
       updateTask("t1", { status: "completed", endTime: 1000 });
       const before = getTask("t1")!;
       const after = startTracking({ taskId: "t1", kind: "bash", outputPath: "/y", description: "d2" });
-      expect(after).not.toBe(before);
-      expect(after.status).toBe("running");
-      expect(after.outputPath).toBe("/y");
+      expect(after).toBe(before);
+      expect(after.status).toBe("completed");
+      expect(after.outputPath).toBe("/x"); // the new input's own fields were never merged in
     });
   });
 
@@ -260,17 +278,34 @@ describe("background-task-runtime", () => {
       expect(getTask("t1")?.endTime).toBe(1);
     });
 
-    test("§1: registering (startTracking) clears a PRIOR id's notification claim -- a resumed/replaced task can notify again on its own new terminal transition", () => {
+    // Review r2 finding 10 (whole-branch): REWRITTEN. `startTracking` over a TERMINAL row used to
+    // re-arm it (a fresh `{...input, status:"running", startedAt: Date.now()}`, the once-per-id
+    // notification claim cleared) as if it were "a genuinely new registration" -- but every real
+    // production call site (bash.ts/monitor.ts's own pre-spawn-then-onSpawned pattern) calls
+    // `startTracking` a SECOND time for the SAME still-in-flight task, not to start a new one. If a
+    // TaskStop lands in the window between those two calls (finalizing the row BEFORE the real pid
+    // even arrives), the old behavior resurrected a STOPPED task back to "running" and let it notify
+    // a SECOND time once it later reached ITS OWN terminal status -- exactly the "at most once per
+    // task id" contract §1 pins, broken here rather than by any caller. `startTracking` now returns
+    // the terminal row UNTOUCHED: no re-arm, no claim reset, so no second notification is possible.
+    test("§1 (CORRECTED by review r2 finding 10): startTracking over a TERMINAL row never re-arms it -- the existing terminal handle comes back untouched, and no second notification is ever possible", () => {
       const emitter = fakeEmitter();
       startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
       updateTask("t1", { status: "completed", endTime: 1, notification: { summary: "first run" } });
       expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
-      // A genuinely NEW registration under the same id (§1: "unless the id is already registered and
-      // non-terminal" -- this one IS terminal, so startTracking replaces rather than merges) is a
-      // fresh task, entitled to its own notification.
-      startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter });
+
+      // The "stop landed before onSpawned's real pid arrived" window: a second startTracking call
+      // for the SAME id, now terminal, carrying a pid the first call never had.
+      const reArmed = startTracking({ taskId: "t1", kind: "bash", outputPath: "/x", description: "d", emitter, pid: 4242 });
+      expect(reArmed.status).toBe("completed"); // still terminal -- never flipped back to "running"
+      expect(reArmed.startedAt).toBe(getTask("t1")!.startedAt); // untouched, not reset to Date.now()
+      expect(reArmed).toBe(getTask("t1")!); // the SAME object -- no fresh handle was built at all
+      expect(reArmed.pid).toBeUndefined(); // the input was never merged in either
+
+      // updateTask already refuses a further transition on a terminal row (review r1 finding 6) --
+      // together the two fixes make a second notification for this id structurally unreachable.
       updateTask("t1", { status: "completed", endTime: 2, notification: { summary: "second run" } });
-      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(2);
+      expect(emitter.frames.filter((f) => (f as { subtype: string }).subtype === "task_notification")).toHaveLength(1);
     });
 
     test("defaults tool_use_id from the task itself when the call does not supply one", () => {

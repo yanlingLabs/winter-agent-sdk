@@ -156,6 +156,24 @@ export function startTracking(input: StartTrackingInput): BackgroundTaskHandle {
     notifiedTaskIds.delete(input.taskId); // "registering also clears the terminal-notification claim"
     return existing;
   }
+  // Review r2 finding 10 (whole-branch): a row that has ALREADY reached a terminal status must
+  // never be RE-ARMED. bash.ts/monitor.ts's own "register before spawning, merge again from
+  // onSpawned with the real pid" pattern (this function's own header) has a real window for a
+  // TaskStop to land BETWEEN those two calls -- the pre-spawn call registers a running row with no
+  // pid yet; a TaskStop in that window finalizes it (terminal status, the once-per-id notification
+  // claimed); the onSpawned call then arrives here with the real pid. The OLD `else` branch below
+  // built a FRESH `{...input, status:"running", startedAt: Date.now()}` over that terminal row
+  // unconditionally -- a plain `tasks.set()` -- which un-stopped it (a `running` status a caller can
+  // observe again) AND cleared its once-per-id notification claim, so the SAME task id could
+  // notify a SECOND time once this resurrected copy later reached its own (real) terminal status --
+  // exactly the "at most once per task id" guarantee contract §1 pins, broken by this registry
+  // rather than by any caller. `existing` is returned COMPLETELY UNTOUCHED here -- no field merge,
+  // no `startedAt` reset, no claim cleared -- because a terminal row has already said everything it
+  // is ever going to say; a caller that ignores the return value (bash.ts/monitor.ts's own
+  // fire-and-forget onSpawned calls, both pre-existing) sees no behavior change beyond the fix
+  // itself, and a caller that DOES read it (none today) gets the true, already-terminal state
+  // rather than a fabricated "running" one.
+  if (existing !== undefined) return existing;
   const handle: BackgroundTaskHandle = { ...input, status: "running", startedAt: Date.now() };
   tasks.set(input.taskId, handle);
   notifiedTaskIds.delete(input.taskId);
@@ -183,19 +201,42 @@ export function listRunningTasks(): readonly BackgroundTaskHandle[] {
   return listTasks().filter((t) => t.status === "running" && t.isBackgrounded !== false);
 }
 
-// WS-12 §5.2's identical process-group kill rule, reused for TaskStop: negative-pid SIGKILL targets
-// the whole group (the child was always spawned `detached: true`, making it its own group leader),
-// reaping sandbox-exec/bash/any forked grandchildren. Returns false (never throws) when the task is
-// unknown or already has no live pid -- TaskStop treats that as "nothing to kill," not an error.
-export function killTaskProcessGroup(taskId: string): boolean {
-  const t = tasks.get(taskId);
-  if (!t || t.pid === undefined) return false;
+// WS-12 §5.2's process-group kill rule: negative-pid SIGKILL targets the whole group (the child was
+// always spawned `detached: true`, making it its own group leader), reaping sandbox-exec/bash/any
+// forked grandchildren. Never throws; returns false only when the OS call itself failed (the pid is
+// already gone, or was never a real group leader).
+function killProcessGroup(pid: number): boolean {
   try {
-    process.kill(-t.pid, "SIGKILL");
+    process.kill(-pid, "SIGKILL");
     return true;
   } catch {
     return false;
   }
+}
+
+// Reused for TaskStop. Returns false (never throws) when the task is unknown or already has no
+// live pid -- TaskStop treats that as "nothing to kill," not an error.
+export function killTaskProcessGroup(taskId: string): boolean {
+  const t = tasks.get(taskId);
+  if (!t || t.pid === undefined) return false;
+  return killProcessGroup(t.pid);
+}
+
+/**
+ * Review r2 finding 10 (whole-branch, "the option that keeps callers correct"): the counterpart to
+ * `startTracking` never re-arming a terminal row. bash.ts/monitor.ts's own `onSpawned` callback
+ * calls `startTracking` a SECOND time once the real OS process exists, to attach its pid to the
+ * registry row -- but if a TaskStop landed in the window between the pre-spawn registration and
+ * this call (the row is now terminal, and correctly stays that way per finding 10), the row NEVER
+ * learns this pid, because `startTracking` returns the terminal row untouched rather than merging
+ * it in. Without this function the OS process itself -- which really did just get spawned, is
+ * really still running, and really was supposed to die with its already-stopped task -- would leak
+ * for the rest of the daemon's process lifetime: nothing else ever learns its pid. `onSpawned`
+ * calls this directly (bypassing the registry entirely, since the registry has no pid to act on)
+ * exactly when the row it gets back from `startTracking` is not `"running"`.
+ */
+export function killOrphanedSpawn(pid: number): boolean {
+  return killProcessGroup(pid);
 }
 
 // The one call TaskStop actually makes: tries the process-group kill first (bash / Monitor's

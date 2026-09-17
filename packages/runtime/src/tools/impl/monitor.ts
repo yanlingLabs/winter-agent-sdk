@@ -24,7 +24,7 @@ import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type Too
 import { createBackgroundTask } from "../background-tasks.ts";
 import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailableError } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
-import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome } from "./background-task-runtime.ts";
+import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -247,7 +247,11 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       command: input.command,
       timeoutMs: effectiveTimeout,
       onSpawned: ({ pid }) => {
-        startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+        const row = startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+        // Review r2 finding 10 ("the option that keeps callers correct") -- see bash.ts's own
+        // identical comment: a TaskStop landing before this callback leaves the row terminal and
+        // pid-less, so the real (still-running) process would otherwise leak.
+        if (row.status !== "running") killOrphanedSpawn(pid);
       },
       onStdout: (c) => {
         if (c.length > 0) producedOutput = true;

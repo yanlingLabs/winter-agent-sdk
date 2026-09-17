@@ -34,7 +34,7 @@ import {
   type RunCommandResult,
 } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, canonicalizePath, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
-import { startTracking, updateTask, removeTask, emitTaskNotification, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome } from "./background-task-runtime.ts";
+import { startTracking, updateTask, removeTask, emitTaskNotification, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation (no zod/validation library is a dependency of this package -- verified before
@@ -588,7 +588,14 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
     command: input.command,
     timeoutMs,
     onSpawned: ({ pid }) => {
-      startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+      const row = startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+      // Review r2 finding 10 ("the option that keeps callers correct"): a TaskStop can land in the
+      // window between the pre-spawn registration above and this callback -- the row is terminal by
+      // the time the real pid arrives, `startTracking` correctly leaves it untouched (never re-arms
+      // it), and so this pid never enters the registry at all. The OS process itself was still
+      // really spawned and is really still running; nothing else will ever learn its pid to kill it.
+      // Killed directly here, bypassing the registry (which has no record of this pid to act on).
+      if (row.status !== "running") killOrphanedSpawn(pid);
     },
     onStdout: (c) => outStream.write(c),
     onStderr: (c) => outStream.write(c),
