@@ -3001,7 +3001,7 @@ describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session s
           // NO `subagent_type`: it is optional, and naming one that has no AgentDefinition makes the
           // Agent call fail outright -- the first draft did exactly that, and the floors test then
           // passed because no child ever ran. A vacuous pass on a security fixture.
-          return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "tamper", prompt: "child-go" } }] };
+          return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "tamper", prompt: "child-go", run_in_background: false } }] };
         }
         // READ THEN WRITE: `read-ladder.ts` refuses a Write to an unread existing file, so a
         // Write-only child would be stopped by the ladder and the fixture would measure that.
@@ -3138,7 +3138,7 @@ describe("child-engine.ts: R-1 -- the managed bypass veto binds in a child by de
         const insideChild = messages.some((m) => m.role === "user" && JSON.stringify(m.content).includes("child-go"));
         if (!insideChild) {
           if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "parent done" };
-          return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "d", prompt: "child-go", subagent_type: "bypasser" } }] };
+          return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "d", prompt: "child-go", subagent_type: "bypasser", run_in_background: false } }] };
         }
         if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
         // `ListAgents`, a messaging-class tool a child keeps (spawn-surface parity removes
@@ -3400,7 +3400,7 @@ describe("child-engine.ts: spawn-surface parity -- the child's tool pool, and pr
           return hadTool ? { kind: "text", text: "grandchild done" } : { kind: "tool_use", calls: [{ id: "g1", name: "Glob", input: { pattern: "*.md" } }, { id: "g2", name: "Grep", input: { pattern: "x" } }] };
         }
         const childToolTurns = messages.filter((m) => m.role === "tool").length;
-        if (childToolTurns === 0) return { kind: "tool_use", calls: [{ id: "k1", name: "Agent", input: { description: "nested", prompt: "GRANDCHILD-TASK" } }] };
+        if (childToolTurns === 0) return { kind: "tool_use", calls: [{ id: "k1", name: "Agent", input: { description: "nested", prompt: "GRANDCHILD-TASK", run_in_background: false } }] };
         if (childToolTurns === 1) return { kind: "tool_use", calls: [{ id: "k2", name: "Read", input: { file_path: "/etc/hosts" } }] };
         return { kind: "text", text: "child done" };
       },
@@ -3475,7 +3475,7 @@ describe("child-engine.ts + Agent tool: no task_progress after the task's notifi
           return { kind: "tool_use", calls: [{ id: "rc1", name: "Glob", input: { pattern: "*" } }] };
         }
         const toolTurns = messages.filter((m) => m.role === "tool").length;
-        if (toolTurns === 0) return { kind: "tool_use", calls: [{ id: "agent-r1", name: "Agent", input: { description: "resumable", prompt: "CHILD-R1" } }] };
+        if (toolTurns === 0) return { kind: "tool_use", calls: [{ id: "agent-r1", name: "Agent", input: { description: "resumable", prompt: "CHILD-R1", run_in_background: false } }] };
         if (toolTurns === 1) {
           let agentId = "missing";
           for (const m of messages) {

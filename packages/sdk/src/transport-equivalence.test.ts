@@ -2677,7 +2677,18 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       // The run id first (it is a SUBSTRING of the two paths and of the task's own output file), then
       // the remaining per-run identifiers by key. Both quote forms, because every one of these also
       // appears inside the JSON-encoded tool_result string.
-      const withoutRunIds = JSON.parse(JSON.stringify(t).replace(/wf_[0-9a-f]+/g, "wf_RUNID")) as ConformanceTraceEntry[];
+      // SDK 0.0.16 Lane N: `end_time` is a NUMBER, so it is scrubbed HERE rather than through
+      // `scrubVolatileText` (whose own replacement only rewrites string values). It is in this trace at
+      // all because a closed-input session now WAITS for its background work instead of tearing down
+      // the moment its turn ends -- the workflow's terminal `task_updated`, its notification, and the
+      // unsolicited turn that carries that notification to the model are all part of the round now, on
+      // both legs. A wall-clock field two separate runs could only agree on by accident.
+      const withoutRunIds = JSON.parse(JSON.stringify(t).replace(/wf_[0-9a-f]+/g, "wf_RUNID").replace(/"end_time":[0-9]+/g, '"end_time":0')) as ConformanceTraceEntry[];
+      // SDK 0.0.16 Lane N: `end_time` joins the volatile set. A closed-input session now WAITS for its
+      // background work instead of tearing down the moment its turn ends, so the workflow's terminal
+      // `task_updated` (and the unsolicited turn that delivers its notification to the model) are part
+      // of this trace on both legs -- and that patch carries a wall-clock timestamp, which two separate
+      // runs can only ever agree on by accident.
       return scrubVolatileText(withoutRunIds, [volatileKey("taskId"), volatileKey("task_id"), volatileKey("transcriptDir"), volatileKey("scriptPath"), volatileKey("output_file"), volatileKey("tool_use_id")]);
     };
     expect(compareTraces(scrub(a.trace), scrub(b.trace))).toEqual([]);

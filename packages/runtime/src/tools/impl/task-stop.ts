@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import "../descriptors/task-stop.ts";
 import { replaceExecutor, type ToolExecutor } from "../registry.ts";
 import { getTask, updateTask, stopTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, type BackgroundTaskKind } from "./background-task-runtime.ts";
+import { renderAgentNotification, renderTaskStopNotification } from "../../subagents/notification-queue.ts";
 // Fix round 1 (M4): the internal-kind -> wire-`task_type` mapping. TaskStop is the THIRD producer of
 // that pinned field (after task_started and background_tasks_changed) and was missing from the
 // inventory the mapping's own header lists.
@@ -81,7 +82,18 @@ const taskStopExecutor: ToolExecutor = {
     // the ONE update door, rather than a status write followed by a hand-built emitFrame literal.
     // Review r1 finding 4: no `usage` here on purpose -- `notifyTerminal` defaults it from the row's
     // own `usage()` accessor, which an agent row carries (agent.ts).
-    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: killedTaskSummary(task.kind, task.description) } });
+    // SDK 0.0.16 Lane N: the MODEL-facing document names the ACTOR, which only this door knows -- the
+    // model called TaskStop, so the actor is the assistant (claude's `killedBy: "parent"`). An AGENT
+    // row takes the agent shape (claude's `vP` with a killed status, carrying the child's usage);
+    // every other kind takes claude's `gnt`: `Task "<description>" was stopped by <who>`. A FOREGROUND
+    // row gets none (the awaiting tool call reports the stop to the model itself).
+    const modelNotification =
+      task.isBackgrounded === false
+        ? null
+        : task.kind === "agent"
+          ? renderAgentNotification({ taskId: id, ...(task.toolUseId !== undefined ? { toolUseId: task.toolUseId } : {}), description: task.description, status: "stopped", stoppedBy: "parent", outputFile: task.outputPath })
+          : renderTaskStopNotification({ taskId: id, ...(task.toolUseId !== undefined ? { toolUseId: task.toolUseId } : {}), description: task.description, stoppedBy: "parent" });
+    updateTask(id, { status: "stopped", endTime: Date.now(), notification: { summary: killedTaskSummary(task.kind, task.description), modelNotification } });
     stopTask(id); // process-group kill (WS-12 §5.2) for bash/Monitor-command, or the task's own stop() for Monitor-ws
 
     // Review r1 finding 11: a FOREGROUND row was never listed (§1), so stopping it does not change the

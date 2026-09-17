@@ -17,6 +17,7 @@ import {
   toBackgroundTasksChangedEntry,
   resetBackgroundTaskRuntimeForTest,
 } from "./background-task-runtime.ts";
+import { notificationQueueFor, clearNotificationQueue } from "../../subagents/notification-queue.ts";
 
 function fakeEmitter(): { emitFrame: (f: BackgroundTaskMessage) => void; sessionId: string; frames: BackgroundTaskMessage[] } {
   const frames: BackgroundTaskMessage[] = [];
@@ -488,5 +489,71 @@ describe("background-task-runtime", () => {
       const entries = listRunningTasks().map(toBackgroundTasksChangedEntry);
       expect(entries.map((e) => e.task_id)).toEqual(["bg"]);
     });
+  });
+});
+
+// --- SDK 0.0.16 Lane N: the MODEL-facing channel beside the frame door ----------------------------
+describe("the model-facing task notification (Lane N)", () => {
+  test("a BACKGROUND row enqueues the shell document, carrying the frame's own summary", () => {
+    clearNotificationQueue("s1");
+    const em = fakeEmitter();
+    startTracking({ taskId: "t1", kind: "bash", outputPath: "/tmp/t1.output", description: "build", isBackgrounded: true, toolUseId: "toolu_b", emitter: em });
+    updateTask("t1", { status: "completed", endTime: 1, notification: { summary: 'Background command "build" completed (exit code 0)' } });
+    const queued = notificationQueueFor("s1").drainFor();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.taskId).toBe("t1");
+    expect(queued[0]!.agentId).toBeUndefined();
+    expect(queued[0]!.value).toBe('<task-notification>\n<task-id>t1</task-id>\n<tool-use-id>toolu_b</tool-use-id>\n<output-file>/tmp/t1.output</output-file>\n<status>completed</status>\n<summary>Background command "build" completed (exit code 0)</summary>\n</task-notification>');
+    clearNotificationQueue("s1");
+  });
+
+  test("a FOREGROUND row enqueues NOTHING -- the model already gets that task's result as its tool_result", () => {
+    clearNotificationQueue("s1");
+    const em = fakeEmitter();
+    const row = startTracking({ taskId: "t2", kind: "bash", outputPath: "/tmp/t2.output", description: "quick", isBackgrounded: false, emitter: em });
+    emitTaskNotification(row, { status: "completed", outputFile: "", summary: "quick" });
+    expect(em.frames.filter((f) => f.subtype === "task_notification")).toHaveLength(1);
+    expect(notificationQueueFor("s1").size()).toBe(0);
+    clearNotificationQueue("s1");
+  });
+
+  test("OWNERSHIP: a row a SUBAGENT started is addressed to that subagent", () => {
+    clearNotificationQueue("s1");
+    const em = fakeEmitter();
+    startTracking({ taskId: "t3", kind: "bash", outputPath: "/tmp/t3.output", description: "child build", isBackgrounded: true, ownerAgentId: "agent-7", emitter: em });
+    updateTask("t3", { status: "failed", endTime: 1, notification: { summary: 'Background command "child build" failed with exit code 2' } });
+    const q = notificationQueueFor("s1");
+    q.registerEndpoint("agent-7", () => {});
+    expect(q.drainFor()).toHaveLength(0); // not the parent's
+    expect(q.drainFor("agent-7").map((e) => e.taskId)).toEqual(["t3"]);
+    clearNotificationQueue("s1");
+  });
+
+  test("an explicit `modelNotification` wins, and `null` suppresses the model channel entirely", () => {
+    clearNotificationQueue("s1");
+    const em = fakeEmitter();
+    startTracking({ taskId: "t4", kind: "agent", outputPath: "/tmp/t4.output", description: "probe", isBackgrounded: true, emitter: em });
+    updateTask("t4", { status: "completed", endTime: 1, notification: { summary: "the child's own report text", modelNotification: "<task-notification>\n<task-id>t4</task-id>\n</task-notification>" } });
+    expect(notificationQueueFor("s1").drainFor()[0]!.value).toBe("<task-notification>\n<task-id>t4</task-id>\n</task-notification>");
+    startTracking({ taskId: "t5", kind: "bash", outputPath: "/tmp/t5.output", description: "silent", isBackgrounded: true, emitter: em });
+    updateTask("t5", { status: "completed", endTime: 1, notification: { summary: "s", modelNotification: null } });
+    expect(notificationQueueFor("s1").size()).toBe(0);
+    clearNotificationQueue("s1");
+  });
+
+  test("the once-per-id claim governs BOTH channels: a second terminal attempt enqueues nothing", () => {
+    clearNotificationQueue("s1");
+    const em = fakeEmitter();
+    const row = startTracking({ taskId: "t6", kind: "bash", outputPath: "/tmp/t6.output", description: "d", isBackgrounded: true, emitter: em });
+    updateTask("t6", { status: "completed", endTime: 1, notification: { summary: "first" } });
+    emitTaskNotification(row, { status: "failed", outputFile: "/tmp/t6.output", summary: "second" });
+    expect(em.frames.filter((f) => f.subtype === "task_notification")).toHaveLength(1);
+    expect(notificationQueueFor("s1").size()).toBe(1);
+    clearNotificationQueue("s1");
+  });
+
+  test("a row with no emitter (no session) enqueues nothing and never throws", () => {
+    const row = startTracking({ taskId: "t7", kind: "bash", outputPath: "/x", description: "d", isBackgrounded: true });
+    expect(() => emitTaskNotification(row, { status: "completed", outputFile: "/x", summary: "s" })).not.toThrow();
   });
 });

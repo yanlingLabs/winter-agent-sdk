@@ -607,6 +607,25 @@ export interface SDKContinuityWarningMessage {
   session_id: string;
 }
 
+/**
+ * SDK 0.0.16 Lane N: `notifySessionStateChanged` (pinned `sdk.d.ts`: "Mirrors notifySessionStateChanged.
+ * 'idle' fires after heldBackResult flushes and the bg-agent do-while exits -- authoritative turn-over
+ * signal"). ENV-GATED on both runtimes: the pinned binary emits it only under
+ * `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`, Winter only under `WINTER_EMIT_SESSION_STATE_EVENTS`, so a
+ * default session's frame stream is byte-identical with or without this variant existing.
+ *
+ * `requires_action` is declared (it is in the pinned union) but has no Winter producer: Winter's
+ * approval prompts ride `control_request`, not a session-state transition.
+ */
+export interface SDKSessionStateChangedMessage {
+  type: "system";
+  subtype: "session_state_changed";
+  state: "idle" | "running" | "requires_action";
+  uuid: string;
+  session_id: string;
+  [k: string]: unknown;
+}
+
 export type SdkMessage =
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the LOADED-SURFACE fields.
   // `output_style` and `skills` are REQUIRED on the pin -- Task 1's own finding is that a Winter
@@ -648,6 +667,7 @@ export type SdkMessage =
   | SDKPermissionDeniedMessage
   | SDKStatusMessage
   | SDKCompactBoundaryMessage
+  | SDKSessionStateChangedMessage
   | BackgroundTaskMessage
   // Phase 6 Task 3: the provider-facing family. Listed BEFORE the open catch-all at the end of this
   // union so each stays independently discriminable on `type`/`subtype`.

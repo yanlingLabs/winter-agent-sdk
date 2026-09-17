@@ -30,6 +30,7 @@ import { startTracking, updateTask, getTask, removeTask, listRunningTasks, toBac
 import { loadAgentDefinitions, findAgentByType, formatAgentNotFound, formatAgentAmbiguous, type SourcedAgentDefinition } from "../../subagents/definitions.ts";
 import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
+import { renderAgentNotification } from "../../subagents/notification-queue.ts";
 import { resolveForkSubagentEnabled } from "../../subagents/builtin-agents.ts";
 import { hasGitRoot } from "../../subagents/git-root.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, ChildTaskProgress, SpawnChildRequest } from "../../subagents/child-handle.ts";
@@ -123,6 +124,7 @@ function emitAgentTaskProgress(ctx: ToolExecutionContext, taskId: string, parent
 // task_notification".
 function finalizeAgentTask(taskId: string, parentToolUseId: string, outputPath: string, result: ChildResult): void {
   const usage = toWireUsage(result.usage);
+  const row = getTask(taskId);
   updateTask(taskId, {
     status: result.status,
     endTime: Date.now(),
@@ -132,6 +134,25 @@ function finalizeAgentTask(taskId: string, parentToolUseId: string, outputPath: 
       outputFile: outputPath,
       toolUseId: parentToolUseId,
       ...(usage !== undefined ? { usage } : {}),
+      // SDK 0.0.16 Lane N: the MODEL-facing document (claude's `vP`). A FOREGROUND agent gets none --
+      // this tool call's own return value already carries the child's result to the model. A
+      // BACKGROUND one gets the summary the pin builds from the DESCRIPTION (`Agent "<desc>"
+      // finished`), with the child's report text in `<result>` -- deliberately not the frame's own
+      // `summary`, which IS that report text (contract §4). `stoppedBy` is left absent here (Winter's
+      // `ChildResult` carries no killer attribution, so the wording is the pin's unattributed "was
+      // stopped"); `task-stop.ts` knows the actor and passes it.
+      modelNotification:
+        row?.isBackgrounded === false
+          ? null
+          : renderAgentNotification({
+              taskId,
+              toolUseId: parentToolUseId,
+              description: row?.description ?? "",
+              status: result.status,
+              outputFile: outputPath,
+              ...(result.status === "failed" ? { error: result.content } : { finalMessage: result.content }),
+              ...(result.usage !== undefined ? { usage: { totalTokens: result.usage.totalTokens, toolUses: result.usage.toolUses, durationMs: result.usage.durationMs } } : {}),
+            }),
     },
   });
 }
