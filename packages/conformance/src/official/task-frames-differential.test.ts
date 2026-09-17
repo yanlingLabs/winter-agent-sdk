@@ -44,6 +44,7 @@ import {
   type GenericMessage,
   type GenericBlock,
   type RawFrame,
+  type Step,
 } from "./task-frames-script.ts";
 // Same relative-import discipline as resume-conformance.test.ts's own `dialect.ts` import in this
 // file family: `packages/conformance` has NO package.json dependencies at all (it publishes
@@ -163,8 +164,18 @@ function officialTextTurn(text: string): Array<{ event: string; data: unknown }>
  * stdout line by line into raw SDK messages. Every request the binary makes is logged to stderr,
  * including non-POST pings -- never the request's `system`/`tools` prose, only structural facts.
  */
-async function runOfficialScript(binaryPath: string): Promise<RawFrame[]> {
+interface OfficialRun {
+  rawFrames: RawFrame[];
+  /** The routing decision for every POST request, in order -- the harness's own solidity check
+   *  (see the test body): a broken route here must fail LOUDLY and distinctly from a genuine
+   *  Winter-side gap, never silently produce a short `official.structure` that misattributes the
+   *  failure to Winter. */
+  steps: Step[];
+}
+
+async function runOfficialScript(binaryPath: string): Promise<OfficialRun> {
   let requestCount = 0;
+  const steps: Step[] = [];
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -184,6 +195,7 @@ async function runOfficialScript(binaryPath: string): Promise<RawFrame[]> {
       }
       const messages = Array.isArray(body.messages) ? body.messages : [];
       const step = decideStep(messages);
+      steps.push(step);
       console.error(
         `[official loopback] #${requestCount} POST ${url.pathname} messages=${messages.length} roles=${messages.map((m) => String(m.role)).join(",")} ` +
           `toolResultIds=${JSON.stringify(extractToolResultIds(messages))} toolUseIds=${JSON.stringify(extractToolUseIds(messages))} -> step=${step}`,
@@ -269,7 +281,7 @@ async function runOfficialScript(binaryPath: string): Promise<RawFrame[]> {
     if (exitCode !== 0) {
       throw new Error(`the pinned claude binary exited ${exitCode} -- see the [official stderr tail] log above`);
     }
-    return rawFrames;
+    return { rawFrames, steps };
   } finally {
     server.stop(true);
     rmSync(root, { recursive: true, force: true });
@@ -376,11 +388,23 @@ describe.skipIf(skipReason !== undefined)(
       "STRUCTURE parity: bg-bash (fails) -> fg-bash (crosses 2000ms) -> foreground Agent whose child calls Bash -> final text",
       async () => {
         console.error("\n=== running the OFFICIAL pinned binary ===");
-        const officialRaw = await runOfficialScript(binaryPath);
+        const officialRun = await runOfficialScript(binaryPath);
+        // The official side is the ground truth this whole test is built on -- a broken route here
+        // (e.g. a routing regression that silently falls through to "fallback" on turn 1) must fail
+        // LOUDLY and distinctly from a genuine Winter-side gap, never quietly produce a short
+        // `official.structure` that misattributes the failure to Winter (a short official sequence
+        // and a short Winter sequence can otherwise "match" by both being wrong the same way).
+        const expectedSteps: Step[] = ["bg-call", "fg-call", "agent-call", "child-echo", "child-final", "agent-final"];
+        expect(
+          officialRun.steps,
+          `the official loopback took an unexpected route -- the harness itself is broken, not (necessarily) Winter:\n` +
+            `expected: ${JSON.stringify(expectedSteps)}\nactual:   ${JSON.stringify(officialRun.steps)}`,
+        ).toEqual(expectedSteps);
+
         console.error("\n=== running WINTER's in-process engine ===");
         const winterRaw = await runWinterScript();
 
-        const official = normalizeAndProject(officialRaw);
+        const official = normalizeAndProject(officialRun.rawFrames);
         const winter = normalizeAndProject(winterRaw);
 
         console.log("\n--- OFFICIAL normalized task-frame sequence (full, uuid/session_id dropped, task ids relabeled) ---");
@@ -402,19 +426,35 @@ describe.skipIf(skipReason !== undefined)(
         console.log(`official (${official.structure.length} frames): ${JSON.stringify(official.structure, null, 2)}`);
         console.log(`winter (${winter.structure.length} frames):   ${JSON.stringify(winter.structure, null, 2)}`);
 
-        expect(
-          winter.structure.length,
-          `STRUCTURE frame count differs: official has ${official.structure.length}, winter has ${winter.structure.length}.\n` +
-            `official: ${JSON.stringify(official.structure, null, 2)}\nwinter:   ${JSON.stringify(winter.structure, null, 2)}`,
-        ).toBe(official.structure.length);
-
-        for (let i = 0; i < official.structure.length; i++) {
+        // Element-wise BEFORE the length check: a length mismatch alone ("Expected 9, Received 2")
+        // is true but useless next to "index 0 is missing task_type/tool_use_id" -- checking the
+        // overlapping prefix first means the FIRST failure line always names the first frame whose
+        // CONTENT actually differs, falling back to a length-only message only when every
+        // overlapping frame already matches (Winter emitted a strict, correct prefix and just
+        // stopped early or ran on).
+        const minLen = Math.min(official.structure.length, winter.structure.length);
+        for (let i = 0; i < minLen; i++) {
           expect(
             winter.structure[i],
             `STRUCTURE differs at index ${i} (${official.structure[i]?.subtype}):\n` +
               `official: ${JSON.stringify(official.structure[i], null, 2)}\nwinter:   ${JSON.stringify(winter.structure[i], null, 2)}`,
           ).toEqual(official.structure[i]);
         }
+        expect(
+          winter.structure.length,
+          `STRUCTURE frame count differs (every overlapping frame above matched): official has ${official.structure.length}, winter has ${winter.structure.length}.\n` +
+            `official: ${JSON.stringify(official.structure, null, 2)}\nwinter:   ${JSON.stringify(winter.structure, null, 2)}`,
+        ).toBe(official.structure.length);
+
+        // Asserted SEPARATELY, per the contract's own "keep Winter's current emission positions;
+        // do not reorder existing frames" -- background_tasks_changed's interleaving with the other
+        // frames is unspecified, but the SET it lists at each of its own distinct emissions is not:
+        // this is the one place §1/§7's "a foreground task is never listed" and §2's task_type
+        // spellings on a listed entry are checked.
+        expect(
+          winter.bgSnapshots,
+          `background_tasks_changed distinct snapshots differ:\nofficial: ${JSON.stringify(official.bgSnapshots)}\nwinter:   ${JSON.stringify(winter.bgSnapshots)}`,
+        ).toEqual(official.bgSnapshots);
       },
       120_000,
     );
