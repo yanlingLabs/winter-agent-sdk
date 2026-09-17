@@ -101,7 +101,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine, createContextAccountant, type ContextAccountant, type EngineSettingsRuleSeed, type Provider, type ProviderMessage, type ProviderUsage } from "../engine.ts";
+import { runEngine, createContextAccountant, type ContextAccountant, type EngineOptions, type EngineSettingsRuleSeed, type Provider, type ProviderMessage, type ProviderUsage } from "../engine.ts";
 import { createInMemoryChannel, type FrameSink } from "../protocol/channel.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME } from "../structured/seam.ts";
 import { toolActivityDescription } from "./activity.ts";
@@ -299,6 +299,8 @@ export interface ChildEngineFactoryDeps {
   // engine already gates the block on `Skill` actually being advertised to that agent, so a child
   // whose tool set excludes `Skill` still gets nothing (see EngineOptions.skillListing).
   skillListing?: SkillListing;
+  /** SDK 0.0.16: the catalog's model display names, for the child's own `# Environment` line. */
+  describeModel?: EngineOptions["describeModel"];
   /**
    * Phase 5 residual round (NEW-4): THE SETTINGS SEED, tags intact.
    *
@@ -1048,6 +1050,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Phase 5 fix wave (B-low): the assembler above PLACES the skill listing; without this it
         // had nothing to place, so every child ran with an empty one.
         ...(deps.skillListing !== undefined ? { skillListing: deps.skillListing } : {}),
+        ...(deps.describeModel !== undefined ? { describeModel: deps.describeModel } : {}),
         // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already
         // existed on the factory and was read ONLY for transcript paths (`childTranscriptSubpath`);
         // the engine needs it to derive `buildBaselineDenyRules(resolvedWinterHome)`, which is what

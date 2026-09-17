@@ -154,6 +154,23 @@ describe("T8 production wiring: the guards it carries", () => {
     }
   });
 
+  test("SDK 0.0.16: describeModel names a catalog model by its display name (key, provider id or alias); an unlisted model gets none", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const row = loadCatalog().models.find((m) => m.displayName.length > 0 && m.aliases.length > 0)!;
+      expect(wiring.engineOptions.describeModel(row.key)).toEqual({ displayName: row.displayName });
+      expect(wiring.engineOptions.describeModel(row.upstreamId)?.displayName).toBeDefined();
+      expect(wiring.engineOptions.describeModel("winter-test/echo")).toBeUndefined();
+      expect(wiring.childFactoryOptions.describeModel).toBe(wiring.engineOptions.describeModel);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("`skills` omitted means EVERY indexed skill (capture (4): omission is not skills-off)", async () => {
     mkdirSync(join(home, "skills", "prov-skill"), { recursive: true });
     writeFileSync(join(home, "skills", "prov-skill", "SKILL.md"), "---\nname: prov-skill\ndescription: a probe\n---\nBODY\n");
