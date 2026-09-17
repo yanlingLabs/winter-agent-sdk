@@ -6306,6 +6306,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     turnActive = true;
     emitSessionState("running");
     turnStartedByNotification = (userFrame as { taskNotification?: unknown }).taskNotification === true;
+    // I1 (fix wave, whole-branch review): a REAL host envelope starting a turn clears the
+    // session-level abort flag. Before this, ONE interrupted turn set `sessionAborted = true` for the
+    // rest of the session's whole life -- every closed-input hold/ceiling/sweep after it was skipped
+    // outright (`runBackgroundWait`'s own `if (sessionAborted) break`), even once the host went on to
+    // start and complete an entirely ordinary later turn. A task-notification envelope deliberately
+    // does NOT reset it: it is not the host asking for another turn, and resetting there would
+    // silently un-abort a session whose end the host already asked for.
+    if (!turnStartedByNotification) sessionAborted = false;
     if (turnStartedByNotification) {
       // Captured from the pinned binary: an unsolicited turn opens with its own `system/init`, then
       // the assistant stream, then its own `result`. A host that renders turns off this stream needs

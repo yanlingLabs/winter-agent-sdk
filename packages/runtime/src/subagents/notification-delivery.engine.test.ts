@@ -513,6 +513,81 @@ describe("the input-closed hold", () => {
     resetBackgroundTaskRuntimeForTest();
     clearNotificationQueue(sessionId);
   });
+
+  // I1 (fix wave, whole-branch review): `sessionAborted` used to be set once, on the FIRST
+  // interrupted turn, and never reset -- disabling the closed-input hold/ceiling/sweep for the
+  // REST of the session's life, even after an entirely ordinary later turn completed normally.
+  test("an interrupted turn 1, followed by a completed turn 2, does not disable the later hold -- a background completion still reaches the model", async () => {
+    const sessionId = "notify-i1-reset";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    registerBackgroundRow(sessionId, "i1-task", "agent");
+
+    const { host, runtime } = createInMemoryChannel();
+    let enteredGenerate!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enteredGenerate = resolve;
+    });
+    let turn = 0;
+    const done = runEngine({
+      config: { sessionId, cwd, model: "winter-test/notify", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+      input: runtime.input,
+      output: runtime.output,
+      provider: {
+        generate() {
+          turn++;
+          if (turn === 1) {
+            enteredGenerate();
+            return new Promise(() => {}); // blocks forever -- only the interrupt below ends this turn
+          }
+          return Promise.resolve({ kind: "text", text: "ok" });
+        },
+      },
+      tools: stubExecutor,
+    });
+    const seen: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) seen.push(f);
+    })();
+    const results = (): number => frameKinds(seen).filter((k) => k === "result").length;
+
+    // Turn 1: interrupted mid-generation -- this is what used to latch `sessionAborted = true` forever.
+    host.output.write({ type: "user", text: "turn one" });
+    await entered;
+    host.output.write({ type: "control_request", requestId: "int1", subtype: "interrupt", payload: { scope: "turn" } });
+    for (let n = 0; n < 400 && results() < 1; n++) await new Promise((r) => setTimeout(r, 5));
+    expect(results()).toBe(1);
+
+    // Turn 2: an ordinary, REAL host envelope -- I1's own reset point.
+    host.output.write({ type: "user", text: "turn two" });
+    for (let n = 0; n < 400 && results() < 2; n++) await new Promise((r) => setTimeout(r, 5));
+    expect(results()).toBe(2);
+
+    // Close input with the background agent STILL running, then finish it a beat later.
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await new Promise((r) => setTimeout(r, 60));
+    updateTask("i1-task", {
+      status: "completed",
+      endTime: Date.now(),
+      notification: { summary: "the child's report", modelNotification: renderAgentNotification({ taskId: "i1-task", description: "agent probe", status: "completed", finalMessage: "found it" }) },
+    });
+
+    await done;
+    await reader;
+    // Without I1's fix, `sessionAborted` was still `true` from turn 1's interrupt, so
+    // `runBackgroundWait`'s very own first iteration hits `if (sessionAborted) break` before it ever
+    // looks at what is still running -- no hold, no notification turn, and the completion above never
+    // reaches the model (only 2 results total). With the fix, turn 2 clears the flag, the hold runs,
+    // and a THIRD result -- the notification's own turn -- appears, carrying the child's report.
+    expect(results()).toBe(3);
+    // The notification's own turn is the LAST thing on the wire (init, assistant, result) --
+    // exactly the "between-turn delivery" shape proven above, now reached from behind an earlier
+    // interrupt rather than a session with no interrupt history at all.
+    const kinds = frameKinds(seen);
+    expect(kinds.slice(-3)).toEqual(["system:init", "assistant", "result"]);
+    resetBackgroundTaskRuntimeForTest();
+    clearNotificationQueue(sessionId);
+  });
 });
 
 // --- session_state_changed (env-gated, exactly as the pin gates it) --------------------------------
