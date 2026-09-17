@@ -48,6 +48,10 @@ import { createInMemoryApprovalStore, createFileDurableApprovalStore, WINTER_RUN
 // Task 8 (P3 close-out): RULING P2-E's own pinned cap constant, reused (never a hand-copied number)
 // so the "over the cap" fixture below can never silently drift from what validateNewRule enforces.
 import { MAX_DOUBLE_STARS } from "./permissions/paths.ts";
+// Task-frames parity (2026-09-17 contract §7): drives the fixture tool below, which registers a row
+// directly in the shared task registry so its own task_notification's `isBackgrounded` is fully
+// controlled by the test.
+import { startTracking as trackTaskFrame, resetBackgroundTaskRuntimeForTest } from "./tools/impl/background-task-runtime.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -4300,5 +4304,106 @@ describe("WS-13c: a child spawned by slot name", () => {
     const { calls } = await spawnWith({ model: "opus" }, {});
     expect(calls[0]!.inherit.model).toBe("opus");
     expect(calls[0]!.inherit.slot).toBeUndefined();
+  });
+});
+
+// ==================================================================================================
+// Task-frames parity (2026-09-17 contract §7): `buildDefaultToolExecutor`'s own `emitFrame` closure
+// fires Winter's Notification hook for a `task_notification` -- but the pin fires nothing extra for
+// a FOREGROUND task's own notification, so this must be background-only. Driven end to end (a real
+// runEngine, a real Notification hook control_request) rather than at the unit level, because the
+// thing under test IS the wiring between ctx.emitFrame and fireObservationalHook.
+// ==================================================================================================
+describe("Task-frames parity §7: the Notification hook fires only for a background task's own notification", () => {
+  const NOTIFY_PROBE_TOOL_NAME = "t_taskframes_notify_probe";
+
+  // A fixture tool: registers a row in the shared task registry per its own scripted `input`
+  // ({taskId, isBackgrounded}), then emits that row's task_notification directly through
+  // ctx.emitFrame -- the SAME seam bash.ts/agent.ts/monitor.ts/workflow.ts/task-stop.ts all go
+  // through, driven here with full control over `isBackgrounded` so both branches of engine.ts's
+  // own guard are reachable from one fixture, in one run.
+  function registerNotifyProbeTool(): void {
+    registerTool({
+      descriptor: {
+        canonicalName: NOTIFY_PROBE_TOOL_NAME,
+        advertisedName: NOTIFY_PROBE_TOOL_NAME,
+        source: "builtin",
+        inputSchema: { type: "object" },
+        description: "fixture: registers a task row then emits its task_notification",
+        exposure: "eager",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx) {
+          const { taskId, isBackgrounded } = input as { taskId: string; isBackgrounded?: boolean };
+          trackTaskFrame({ taskId, kind: "bash", outputPath: "", description: "d", ...(isBackgrounded !== undefined ? { isBackgrounded } : {}) });
+          ctx.emitFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "completed",
+            output_file: "",
+            summary: "d",
+            uuid: randomUUID(),
+            session_id: ctx.sessionId,
+          });
+          return { output: "ok" };
+        },
+      },
+    });
+  }
+
+  test("a BACKGROUND task's task_notification fires the Notification hook; a FOREGROUND one does not", async () => {
+    resetBackgroundTaskRuntimeForTest();
+    registerNotifyProbeTool();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        {
+          kind: "tool_use",
+          calls: [
+            { id: "bg-1", name: NOTIFY_PROBE_TOOL_NAME, input: { taskId: "bg-task", isBackgrounded: true } },
+            { id: "fg-1", name: NOTIFY_PROBE_TOOL_NAME, input: { taskId: "fg-task", isBackgrounded: false } },
+          ],
+        },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        hooks: { Notification: [{ hookCount: 1, source: "sdk" }] },
+      });
+      // `tools` deliberately OMITTED (never stubExecutor, which bypasses the real registry dispatch
+      // entirely and would never reach the fixture tool's own executor -- registerSpawnProbeTool's
+      // own tests above use the identical pattern) so the REAL tools/registry.ts dispatch, and the
+      // REAL ctx.emitFrame closure under test, are what actually run this call.
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+
+      const notificationHookCalls: Array<{ notification_type?: string }> = [];
+      for await (const f of host.input) {
+        if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+          const cf = f as ControlRequestFrame;
+          const payload = cf.payload as { event: string; payload?: { notification_type?: string } };
+          if (payload.event === "Notification") notificationHookCalls.push(payload.payload ?? {});
+          host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+        }
+      }
+      await done;
+
+      // Filtered to `task_*` types -- the engine ALSO fires an unrelated "idle" notification once the
+      // turn settles and the session waits for the next input (R5-13's own idle point), which this
+      // guard neither touches nor is meant to.
+      const taskNotifications = notificationHookCalls.filter((c) => c.notification_type?.startsWith("task_"));
+      expect(taskNotifications).toHaveLength(1);
+      expect(taskNotifications[0]?.notification_type).toBe("task_completed");
+    } finally {
+      unregisterToolForTest(NOTIFY_PROBE_TOOL_NAME);
+      resetBackgroundTaskRuntimeForTest();
+    }
   });
 });

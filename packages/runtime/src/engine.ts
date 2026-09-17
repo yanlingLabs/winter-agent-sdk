@@ -244,6 +244,9 @@ import {
 import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type ResolvedReviewer, type TranscriptEntry } from "./tools/impl/advisor.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
+// Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
+// task's own notification apart from a background one -- see the `emitFrame` closure below for why.
+import { getTask } from "./tools/impl/background-task-runtime.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
@@ -2848,9 +2851,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // completed/failed/stopped union straight into `notification_type`, which is an open string
         // on the pin (OQ-P5-8) -- so the vocabulary is Winter's, and it is at least the runtime's own
         // word for what happened rather than a second invented one.
+        //
+        // Task-frames parity (contract §7): the pin fires NOTHING extra for a foreground task's own
+        // notification -- this hook is background-only. `getTask` (the shared registry) is the one
+        // place that knows: a foreground bash row is already REMOVED by the time its own notification
+        // reaches here (bash.ts's own remove-then-notify, §3), so `t === undefined` reads as
+        // foreground; a foreground agent's row survives (it terminates through `updateTask`, §4) but
+        // carries `isBackgrounded === false`. Both are excluded by the one check below; a background
+        // row (isBackgrounded true or absent) still fires exactly as before.
         if (frame.subtype === "task_notification") {
-          const status = typeof frame.status === "string" ? frame.status : "completed";
-          emitNotification(`task_${status}`, `Background task ${frame.task_id} ${status}.`, "Task finished");
+          const task = getTask(frame.task_id);
+          if (task !== undefined && task.isBackgrounded !== false) {
+            const status = typeof frame.status === "string" ? frame.status : "completed";
+            emitNotification(`task_${status}`, `Background task ${frame.task_id} ${status}.`, "Task finished");
+          }
         }
       },
       // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.3): the real fill for ToolExecutionContext.
