@@ -1461,6 +1461,8 @@ export interface RegistryToolExecutorDeps {
   advertisedToolNames?: () => readonly string[];
   // Review r2 finding 2: mirrors ToolExecutionContext.onAgentDefinitionRejected exactly.
   onAgentDefinitionRejected?: (rejection: { source: "user" | "project" | "plugin"; filePath: string; reason: string }) => void;
+  // SDK 0.0.16 Lane P: mirrors ToolExecutionContext.agentAvailability exactly -- see that field's own comment.
+  agentAvailability?: () => { availableNames: readonly string[]; unavailableMessage: (agentType: string) => string | undefined };
   // Phase 4 Task 8 (rider 27): the session's own availability inputs, so this adapter can enforce
   // `isAvailable` AT DISPATCH rather than only at advertisement. Rationale, from Lane C's own I3
   // finding: `AskUserQuestion`'s `availability: { insideSubagent: false }` excluded it from a child's
@@ -1541,6 +1543,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.insideFork !== undefined ? { insideFork: deps.insideFork } : {}),
         ...(deps.advertisedToolNames !== undefined ? { advertisedToolNames: deps.advertisedToolNames } : {}),
         ...(deps.onAgentDefinitionRejected !== undefined ? { onAgentDefinitionRejected: deps.onAgentDefinitionRejected } : {}),
+        ...(deps.agentAvailability !== undefined ? { agentAvailability: deps.agentAvailability } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);

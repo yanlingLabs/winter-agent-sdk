@@ -51,7 +51,7 @@ describe("availableAgentNames (SDK 0.0.16 Lane P, R3b §4)", () => {
 
 describe("isBuiltinAllToolsDenied (SDK 0.0.16 Lane P, R3b §4 zFn)", () => {
   test("a disallowedTools-only definition (Explore/Plan's own shape) is exempt -- no explicit tools list to check", () => {
-    expect(isBuiltinAllToolsDenied({ tools: undefined }, [])).toBe(false);
+    expect(isBuiltinAllToolsDenied({}, [])).toBe(false);
   });
 
   test('tools: ["*"] is denied only when EVERY currently-advertised tool is gone', () => {

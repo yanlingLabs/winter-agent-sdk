@@ -147,6 +147,10 @@ import {
   // Phase 5 Task 3 (R5-11): the SAME write-path extraction the permission layer uses -- see the
   // checkpoint call site for why a second extraction would be a correctness bug, not a duplication nit.
   extractCandidateWritePaths,
+  // SDK 0.0.16 Lane P (R3b §4): the STANDALONE Agent(type) deny-rule lookup -- see its own header
+  // for why it is never woven into evaluate()'s stage-2 deny lookup above.
+  findAgentDenyRule,
+  agentTypeDeniedMessage,
   type PermissionCall,
   type EvaluationContext,
 } from "./permissions/evaluator.ts";
@@ -175,6 +179,9 @@ const SKILL_TOOL_ADVERTISED_NAME = "Skill";
 import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-registry.ts";
 import { resolveProjectDirName } from "./paths/project-dir-name.ts";
 import { createAgentDefinitionRejectionReporter, loadAgentDefinitions, toAgentInfoList, type PluginAgentDefinition, type SourcedAgentDefinition } from "./subagents/definitions.ts";
+// SDK 0.0.16 Lane P (R3b §4): the pure listing filters -- see availability.ts's own header for why
+// `isEnabled` (a required-MCP-server check) has no production implementation here.
+import { availableAgentNames, isBuiltinAllToolsDenied } from "./subagents/availability.ts";
 import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
 import { ForkRequestLayoutUnavailableError } from "./subagents/fork.ts";
 import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
@@ -2815,6 +2822,86 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return cachedSessionTempPaths;
   }
 
+  // SDK 0.0.16 Lane P: matches the established `v === "1" || v === "true"` convention every other
+  // env-gated boolean kill switch in this codebase already uses (`subagents/builtin-agents.ts`'s own
+  // `isTruthyEnv`, `tools/impl/agent.ts`'s own `isTruthyEnv`) -- a small, local copy rather than an
+  // import from either (neither module is otherwise a dependency of this one section).
+  function isTruthyEnvValue(v: string | undefined): boolean {
+    return v === "1" || v === "true";
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // SDK 0.0.16 Lane P (R3b §5): two small "which Claude tier is this model" helpers, both traced
+  // from the pinned 0.3.250 binary and both reused for two DIFFERENT purposes below -- the Explore
+  // model cap (`resolveChildModel`, immediately after this block) and the Agent-listing's lean/
+  // normal `whenToUse` choice (`scanAttachments`'s own `computeAgentListingDelta` call site).
+  //
+  // TRACED (python, latin-1 decode, grep around "whenToUseLean"/"leanPrompt"): claude's `D8`:
+  //   function D8(e,t){ if (e.agentType!=="Explore"||e.source!=="built-in") return e.model;
+  //     if (a.CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP) return "inherit";
+  //     return _Ut(t) ? "opus" : "inherit" }
+  //   function _Ut(e){ if (Me()!=="firstParty") return false;
+  //     let t=["haiku","sonnet","opus"]; return !OBt(e,t) }
+  // `Me()` reports the pin's own `AccountInfo.apiProvider` ("firstParty" = direct Anthropic API key
+  // or claude.ai/Console OAuth, never Bedrock/Vertex/Foundry/a gateway -- `session-provider.ts`'s
+  // own `API_PROVIDER_BY_PROVIDER_ID` mirrors the identical partition). `OBt(model, tiers)` checks
+  // membership; `_Ut` is therefore "first-party AND the model's tier is NOT haiku/sonnet/opus" --
+  // i.e. Fable, the one tier above Opus in Winter's own four-tier Claude family.
+  //
+  // WINTER MAPPING (recorded deviation from the research file's own "{anthropic, console, cc}"
+  // first-party set): this repo's own catalog (packages/provider-catalog) carries EXACTLY ONE
+  // Anthropic-family provider id, "anthropic" (`authKinds: ["api-key","oauth-approved"]` on one
+  // row -- verified directly in the compiled overlay, not assumed). claude's own "console"/"cc" arms
+  // belong to a DIFFERENT engine entirely (Anthropic's own `claude` binary via
+  // `@anthropic-ai/claude-agent-sdk`, CLAUDE.md's "official leg") -- they never appear as a
+  // `currentProviderIdentity.providerId` value in THIS package's own engine, so "first-party" here
+  // is simply `providerId === "anthropic"`.
+  //
+  // "which tier is modelKey" is answered by REVERSE-CHECKING `resolveSlot` (already used below for
+  // real slot-name requests): resolving a tier NAME in modelKey's own context and comparing the
+  // result's `modelKey` against `modelKey` itself tells us whether modelKey already IS that tier,
+  // on the SAME provider -- no separate catalog import needed (`resolveSlot` is the one catalog-
+  // aware dependency this closure already holds).
+  function claudeTierMatches(modelKey: string, tier: "haiku" | "sonnet" | "opus"): boolean {
+    if (resolveSlot === undefined) return false;
+    const resolution = resolveSlot(tier, modelKey);
+    return resolution.ok && resolution.modelKey === modelKey;
+  }
+
+  /**
+   * claude's `whenToUseLean` gate (`Iu(mz(model))`, traced): `Iu(e){return d().leanPrompt(e)}` calls
+   * a memoized `B(e)`, whose FULLY DETERMINISTIC branch is a hardcoded list of small/older model
+   * names (`o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")||` five specific
+   * dated Opus 4.x builds) that always takes the lean prose; every OTHER model falls through to a
+   * REMOTE, statsig-gated experiment (`L("simple_system_prompt", Ye(e))`) this repo has no way to
+   * evaluate from a static binary (it is resolved against Anthropic's own experiment service, not
+   * anything in the compiled artifact). DISCLOSED SIMPLIFICATION: Winter reproduces only the
+   * deterministic subset, mapped onto its own four-tier Claude family -- lean for haiku/sonnet on
+   * the "anthropic" provider; normal (the fuller, safer text) for opus/fable, any non-Claude-family
+   * model, or when the tier can't be determined -- rather than guessing at an unreproducible
+   * experiment's outcome. `claude-3-x`/specific dated Opus builds have no Winter analogue (this
+   * catalog's Claude family rows are current models only, not multiple dated generations).
+   */
+  function sessionLeanModel(modelKey: string): boolean {
+    if (currentProviderIdentity?.providerId !== "anthropic") return false;
+    return claudeTierMatches(modelKey, "haiku") || claudeTierMatches(modelKey, "sonnet");
+  }
+
+  /**
+   * claude's `_Ut`, reused verbatim per the trace above: first-party Anthropic AND modelKey's own
+   * tier is NOT haiku/sonnet/opus (i.e. Fable). `WINTER_DISABLE_EXPLORE_INHERIT_CAP` (env, read
+   * fresh per call -- brand-gate rules 9/10) opts out unconditionally, mirroring
+   * `CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP`'s own "return inherit" branch in `D8`.
+   */
+  function exploreModelCap(parentModel: string): string | undefined {
+    const env = engineEnv ?? process.env;
+    if (isTruthyEnvValue(env[envName(sessionBrand, "DISABLE_EXPLORE_INHERIT_CAP")])) return undefined;
+    if (currentProviderIdentity?.providerId !== "anthropic") return undefined;
+    const atOrBelowOpus = claudeTierMatches(parentModel, "haiku") || claudeTierMatches(parentModel, "sonnet") || claudeTierMatches(parentModel, "opus");
+    if (atOrBelowOpus) return undefined;
+    return "opus"; // resolveChildSlot (the caller's caller) resolves this slot name on the SAME provider
+  }
+
   // Phase 4 Task 3 (MUST 5, WS-10 §3.1/§3.5): the STRUCTURAL model precedence chain --
   // <PREFIX>SUBAGENT_MODEL -> per-invocation -> definition -> session, "inherit" meaning "continue
   // resolving," a fork ignoring an override BY CONTRACT. Real alias resolution against a provider
@@ -2842,6 +2929,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (req.model !== undefined && req.model !== "inherit") return req.model;
     const defModel = req.definition?.model;
     if (defModel !== undefined && defModel !== "inherit") return defModel;
+    // SDK 0.0.16 Lane P (R3b §5): the Explore built-in's own model cap -- claude's `D8`, position
+    // matches the trace exactly (env -> invocation override -> definition-step, THEN the cap, THEN
+    // plain inherit): every real override layer above has already had its say and found nothing, so
+    // only an ACTUAL "inherit" resolution is ever capped. `req.builtinAgentType` is set by
+    // `tools/impl/agent.ts` ONLY when the resolved definition's own `_source === "builtin"` -- a
+    // same-named user/project/plugin/programmatic "Explore" that merely shadows the built-in never
+    // reaches this branch (see that field's own header on `SpawnChildRequest`).
+    if (req.builtinAgentType === "Explore") {
+      const capped = exploreModelCap(config.model);
+      if (capped !== undefined) return capped;
+    }
     return config.model;
   }
 
@@ -3356,6 +3454,26 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Review r2 finding 2: `tools/impl/agent.ts`'s own `loadAgentDefinitions` call reads this off
       // `ctx.onAgentDefinitionRejected` and passes it straight through as `onReject`.
       onAgentDefinitionRejected: reportAgentDefinitionRejection,
+      // SDK 0.0.16 Lane P (R3b §4): `tools/impl/agent.ts`'s own name-resolution refusals read this
+      // -- see ToolExecutionContext.agentAvailability's own comment (registry.ts). Built fresh per
+      // call (never cached), exactly like `getAvailabilityInputs` below.
+      agentAvailability: () => {
+        const defs = sessionAgentDefinitions();
+        const rules = makeEvalCtx().policy.rules;
+        return {
+          availableNames: sessionAgentAvailableNames(defs),
+          unavailableMessage: (agentType: string): string | undefined => {
+            const def = defs.get(agentType);
+            if (def === undefined) return undefined;
+            const denyEntry = findAgentDenyRule(rules, agentType);
+            if (denyEntry !== undefined) return agentTypeDeniedMessage(agentType, denyEntry);
+            if (isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames)) {
+              return `Agent type '${agentType}' is unavailable because every tool it may use is denied by the current permission settings.`;
+            }
+            return undefined;
+          },
+        };
+      },
       // Phase 4 Task 8 (rider 27): dispatch-time availability enforcement. A FUNCTION, not a
       // snapshot, for two independent reasons: (1) `advertisedCfg` (below) is assigned AFTER this
       // one runs -- the same "declared later, read at call time" closure binding `emitToolReference`
@@ -3702,6 +3820,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     });
   }
 
+  // SDK 0.0.16 Lane P (R3b §4): the deny-rule lookup composed against THIS run's own live policy
+  // snapshot -- `makeEvalCtx()` (declared earlier in this closure) is called fresh here, never
+  // cached, so a live rule/settings change is reflected without a restart.
+  function sessionAgentAvailableNames(defs: Map<string, SourcedAgentDefinition>): string[] {
+    const rules = makeEvalCtx().policy.rules;
+    return availableAgentNames(defs, {
+      isDenied: (agentType) => findAgentDenyRule(rules, agentType) !== undefined,
+      ...(config.allowedAgentTypes !== undefined ? { allowedAgentTypes: config.allowedAgentTypes } : {}),
+      isAllToolsDenied: (def) => isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames),
+    });
+  }
+
+  /**
+   * `sessionAgentDefinitions()` filtered through claude's three listing filters -- Agent(type) deny
+   * rules, `allowedAgentTypes` (the running/child agent's own `tools` restriction) and
+   * all-tools-denied (R3b §4). `system/init.agents`, `list_agents`'s own `AgentInfo[]` and the
+   * Agent-tool listing block (`agentListingEntries` below) all read THIS, never the raw
+   * `sessionAgentDefinitions()`, so a denied/not-allowed/all-tools-denied type can never appear in
+   * one without the other two agreeing -- the SAME "one producer" precedent `sessionAgentDefinitions`
+   * itself documents for the unfiltered set, one level up.
+   */
+  function sessionAvailableAgentDefinitions(at: { cwd?: string; trustedWorkspace?: boolean } = {}): Map<string, SourcedAgentDefinition> {
+    const defs = sessionAgentDefinitions(at);
+    const names = new Set(sessionAgentAvailableNames(defs));
+    return new Map([...defs].filter(([name]) => names.has(name)));
+  }
+
   const workflowWinterHome = structuredOutput !== undefined ? (wiredWinterHome ?? config.winterHome) : undefined;
   // I5: held so teardown withdraws THIS registration and not whichever one is current.
   let disposeWorkflowSession: (() => void) | undefined;
@@ -3996,7 +4141,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // never a second, independently-derived list that could disagree with what `subagent_type`
   // resolution actually accepts. `AGENT_TOOL_CANONICAL_NAME` is imported already (provider/slots.ts,
   // line 95) for the per-turn model-slot render just below this block.
-  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
+  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAvailableAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -4297,7 +4442,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               type: "control_response",
               requestId: cf.requestId,
               ok: true,
-              payload: currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME) ? toAgentInfoList(sessionAgentDefinitions()) : [],
+              payload: currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME) ? toAgentInfoList(sessionAvailableAgentDefinitions()) : [],
             });
             continue;
           }
@@ -5125,13 +5270,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    */
   const agentListingEntries = (): AgentListingEntry[] | undefined => {
     if (!currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME)) return undefined;
-    const defs = sessionAgentDefinitions();
+    // SDK 0.0.16 Lane P (R3b §4): the FILTERED set -- a denied/not-allowed/all-tools-denied type
+    // never reaches the listing. `latestAgentDefinitions` (below) is now the filtered map too, which
+    // is what makes `generalPurposeAvailable` (this file's own gate for the Agent tool's
+    // omitted-subagent_type sentence, further down) correctly read false for a denied/not-allowed
+    // general-purpose without a second, independent check.
+    const defs = sessionAvailableAgentDefinitions();
     latestAgentDefinitions = defs;
     return [...defs.entries()].map(([agentType, def]) => ({
       agentType,
       // Review r2 finding 11: capped for every non-builtin source (project/user/plugin/
       // programmatic) -- see capAgentListingWhenToUse's own header for why 1,000 chars.
       whenToUse: capAgentListingWhenToUse(def.description, def._source),
+      // SDK 0.0.16 Lane P (R3b §5): claude's `whenToUseLean` -- set only on Winter's built-in
+      // Explore. Used instead of `whenToUse` by `renderAgentListingLine` when `leanModel` is true
+      // (the call site below).
+      ...(def.whenToUseLean !== undefined ? { whenToUseLean: def.whenToUseLean } : {}),
       ...(def.tools !== undefined ? { tools: def.tools } : {}),
       ...(def.disallowedTools !== undefined ? { disallowedTools: def.disallowedTools } : {}),
     }));
@@ -5344,7 +5498,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (systemPromptAssembler !== undefined && exactRequestLayout === undefined) {
       const entries = agentListingEntries();
       if (entries !== undefined) {
-        const delta = computeAgentListingDelta(entries, messages);
+        // SDK 0.0.16 Lane P (R3b §5): `leanModel` -- see `sessionLeanModel`'s own header for the
+        // traced rule and Winter's disclosed mapping onto its own Claude-family tiers.
+        const delta = computeAgentListingDelta(entries, messages, { leanModel: sessionLeanModel(currentProviderIdentity?.modelKey ?? currentModel) });
         if (delta !== undefined) produced.push(delta);
       }
       const skills = skillListingAttachment();
@@ -5414,7 +5570,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const agentToolGates = (): AgentToolGateState => ({
     forkEnabled: forkSubagentEnabled,
     backgroundDisabled: resolveBackgroundTasksDisabled(engineEnv ?? process.env, sessionBrand),
-    generalPurposeAvailable: (latestAgentDefinitions ?? sessionAgentDefinitions()).has("general-purpose"),
+    generalPurposeAvailable: (latestAgentDefinitions ?? sessionAvailableAgentDefinitions()).has("general-purpose"),
   });
 
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
