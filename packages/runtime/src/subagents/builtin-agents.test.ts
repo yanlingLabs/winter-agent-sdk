@@ -128,3 +128,22 @@ describe("resolveBuiltinAgents (R-S1 shipped set, R-S6 gating)", () => {
     }
   });
 });
+
+describe("Explore's whenToUseLean (SDK 0.0.16 Lane P, R3b §5)", () => {
+  test("Explore carries a distinct whenToUseLean, verbatim claude text, never equal to the normal description", () => {
+    const defs = resolveBuiltinAgents({ env: {} });
+    const lean = defs["Explore"]?.whenToUseLean;
+    expect(lean).toBeDefined();
+    expect(lean).not.toBe(defs["Explore"]?.description);
+    expect(lean).toContain("broad fan-out searches");
+    expect(lean).toContain("very thorough");
+  });
+
+  test("no other built-in carries whenToUseLean", () => {
+    const defs = resolveBuiltinAgents({ env: { WINTER_WEB_FETCH_AGENT: "true", WINTER_FORK_SUBAGENT: "true" } });
+    for (const name of Object.keys(defs)) {
+      if (name === "Explore") continue;
+      expect(defs[name]!.whenToUseLean, `${name} should not have a whenToUseLean`).toBeUndefined();
+    }
+  });
+});

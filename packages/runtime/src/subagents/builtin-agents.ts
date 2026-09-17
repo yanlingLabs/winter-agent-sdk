@@ -197,6 +197,15 @@ const GENERAL_PURPOSE_WHEN_TO_USE =
 const EXPLORE_WHEN_TO_USE =
   'Fast read-only search agent for locating code. Use it to find files by pattern (eg. "src/components/**/*.tsx"), grep for symbols or keywords (eg. "API endpoints"), or answer "where is X defined / which files reference Y." Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: "quick" for a single targeted lookup, "medium" for moderate exploration, or "very thorough" to search across multiple locations and naming conventions.';
 
+// SDK 0.0.16 Lane P (R3b §5): claude's own `whenToUseLean` on the Explore built-in, copied verbatim
+// -- a short model-facing one-liner, which R-S10 exempts from the "Winter-authored prose" posture
+// R-S2/R-S3 otherwise require (the shared-constant discipline that already covers
+// OMITTED_TYPE_SENTENCE_AVAILABLE/_UNAVAILABLE in tools/descriptors/agent.ts is the precedent this
+// falls under). Used in place of `description` by the listing renderer when the session's model
+// takes the lean prompt (`leanModel`, engine.ts's own `sessionLeanModel`).
+const EXPLORE_WHEN_TO_USE_LEAN =
+  'Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn\'t review or audit it. Specify search breadth: "medium" for moderate exploration, "very thorough" for multiple locations and naming conventions.';
+
 const PLAN_WHEN_TO_USE =
   "Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.";
 
@@ -242,6 +251,7 @@ export function resolveBuiltinAgents(opts?: { env?: Record<string, string | unde
   if (!gates.explorePlanDisabled) {
     out["Explore"] = {
       description: EXPLORE_WHEN_TO_USE,
+      whenToUseLean: EXPLORE_WHEN_TO_USE_LEAN,
       prompt: explorePrompt(),
       disallowedTools: [...EXPLORE_PLAN_DISALLOWED_TOOLS],
       model: "inherit",
