@@ -397,6 +397,56 @@ export function formatAgentAmbiguous(requested: string, matches: readonly string
   return `Agent type '${requested}' is ambiguous — matches ${sorted.join(", ")}. Use the exact name: ${sorted.join(" or ")}.`;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// SDK 0.0.16 Lane P (R3b §4): `allowedAgentTypes`, parsed off a RUNNING agent's own raw `tools` list.
+// ---------------------------------------------------------------------------------------------------
+//
+// claude: "`allowedAgentTypes` comes from the RUNNING agent's definition `tools` list:
+// `tools: ["*", "Agent(Explore, Plan)"]` -> allowed = [Explore, Plan] with all other tools kept;
+// explicit lists with `Agent(a,b)` likewise." An `Agent(...)` entry is a SCOPING annotation on the
+// Agent tool's own capability, not a separate tool-pool member -- it sits alongside `"*"`/ordinary
+// tool names in the SAME list, and every other entry is untouched by this function.
+//
+// PULLED FROM THE RAW LIST, before pool resolution ever sees it: `subagents/child-engine.ts`'s own
+// `effectiveTools` (the tool-pool allowlist a child's model actually sees) resolves against
+// REGISTERED CANONICAL TOOL NAMES only -- `"Agent(Explore, Plan)"` is not one, so it is silently
+// absent from that resolved set either way, and by the time a caller has only `effectiveTools` to
+// look at, the parenthetical's own data is already gone. This function reads the SAME source data
+// one step earlier, which is the only place the restriction survives.
+//
+// DISCLOSED GAP: an explicit list with ONLY `Agent(a,b)` and no bare `Agent`/`"*"` (no other entry
+// that keeps the Agent tool itself in the resolved pool) restricts spawnable TYPES correctly via
+// this function, but the Agent tool itself would not be advertised at all -- `effectiveTools`'
+// resolution (engine.ts's `buildChildInheritance`, a different lane's file this task does not own)
+// treats `Agent(a,b)` as an unrecognized, non-matching string, not as "Agent, scoped." Every example
+// in the research file pairs it with `"*"` (`tools: ["*", "Agent(Explore, Plan)"]`), which keeps the
+// Agent tool in the pool via the wildcard and is the case this function's own tests exercise.
+const AGENT_TYPES_TOOL_ENTRY_RE = /^Agent\((.*)\)$/s;
+
+/**
+ * Parses every `Agent(a, b)`-shaped entry out of `tools` into the restricted set of spawnable
+ * `subagent_type` names. `undefined` (unrestricted -- every type this session can otherwise resolve
+ * stays available) when `tools` itself is absent, or carries no such entry at all (including a bare
+ * `["*"]` or an explicit list of ordinary tool names with no `Agent(...)` entry). Whitespace around
+ * each name is trimmed; several `Agent(...)` entries (an unusual but not forbidden shape) union
+ * their names rather than only the last one winning.
+ */
+export function allowedAgentTypesFromTools(tools: readonly string[] | undefined): string[] | undefined {
+  if (tools === undefined) return undefined;
+  const names = new Set<string>();
+  let found = false;
+  for (const entry of tools) {
+    const m = AGENT_TYPES_TOOL_ENTRY_RE.exec(entry.trim());
+    if (!m) continue;
+    found = true;
+    for (const raw of m[1]!.split(",")) {
+      const name = raw.trim();
+      if (name.length > 0) names.add(name);
+    }
+  }
+  return found ? [...names] : undefined;
+}
+
 /**
  * The pinned `AgentInfo[]` shape (`Query.supportedAgents()`, research §A3: "Same list feeds
  * `system/init.agents?: string[]` and `Query.supportedAgents(): AgentInfo[]`") -- lane L2b's own
