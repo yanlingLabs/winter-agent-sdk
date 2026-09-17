@@ -4165,6 +4165,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     ...advertisedPartition.eager.map((d) => d.advertisedName),
     ...advertisedPartition.deferred.filter((d) => loadedNames.has(d.canonicalName)).map((d) => d.advertisedName),
   ];
+  // C2 (fix wave): the SAME composition as `advertisedToolNames` immediately above, re-run fresh at
+  // CALL time -- `advertisedToolNames` itself is a plain `const`, computed ONCE here at startup, so
+  // it goes stale the moment a `ToolSearch` selection loads a deferred tool mid-session.
+  // `buildSdkInitMessage`'s own `tools` field calls this, never the frozen constant.
+  const liveAdvertisedToolNames = (): string[] => {
+    const loaded = new Set(loadedToolSet.snapshot());
+    return [...advertisedPartition.eager.map((d) => d.advertisedName), ...advertisedPartition.deferred.filter((d) => loaded.has(d.canonicalName)).map((d) => d.advertisedName)];
+  };
   // WS-09 §2.1/§3: the live MCP server connection-state snapshot, wire-mapped (T1's Open Question 5
   // spelling: needsAuth -> 'needs-auth'). Conditionally present -- absent whenever no state source
   // is configured for this run (every session before Lane A's own real transports exist, and every
@@ -4222,38 +4230,52 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     skills: initSkills !== undefined ? [...initSkills] : ([] as string[]),
     plugins: initPlugins !== undefined ? [...initPlugins] : ([] as InitPluginInfo[]),
   };
-  // SDK 0.0.16 Lane N: built once and KEPT, because claude emits it a SECOND time -- captured from
-  // the pinned binary 2026-09-17, an unsolicited (task-notification) turn opens with its own
-  // `system/init` frame, then its assistant stream, then its own `result`. Re-emitted verbatim: every
-  // field on it is either session-constant or the bare string the caller passed (`model` is never the
-  // resolved identity -- see the `winter_provider` note below).
-  const sdkInitMessage = {
+  // SDK 0.0.16 Lane N: EMITTED A SECOND TIME -- captured from the pinned binary 2026-09-17, an
+  // unsolicited (task-notification) turn opens with its own `system/init` frame, then its assistant
+  // stream, then its own `result`.
+  //
+  // C2 (fix wave, whole-branch review): this used to be a plain `const sdkInitMessage = {...}`, built
+  // ONCE at startup and re-emitted VERBATIM for that second frame -- so an unsolicited turn reached
+  // after a `set_model`, a permission-mode change, or a ToolSearch load reported the SESSION'S
+  // STARTUP `model`/`permissionMode`/`tools`, not what the session was actually running with by then.
+  // Now a function, called fresh at each of the two emission sites: `model`/`permissionMode`/`tools`
+  // (and `winter_provider`, the same live-vs-frozen bug in the identical shape) are re-derived from
+  // the engine's own live bindings every time. At the FIRST call (session start, before any turn can
+  // have moved anything) `currentModel === config.model` and `currentProviderIdentity === providerIdentity`
+  // by construction, so this is byte-identical to the old frozen object for every existing golden.
+  const buildSdkInitMessage = () => ({
     message: {
       type: "system",
       subtype: "init",
       session_id: config.sessionId,
       cwd: config.cwd,
-      model: config.model,
+      // C2: the LIVE model -- `set_model`/resolution/resume reassign `currentModel`, while
+      // `config.model` stays the session's original value for its whole run (`resolveChildModel`'s
+      // own header comment, a few hundred lines up, states the identical distinction).
+      model: currentModel,
       permissionMode: policyStateStore.getState().mode,
-      tools: advertisedToolNames,
+      tools: liveAdvertisedToolNames(),
       // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
       // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
       // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
       apiKeySource: apiKeySource ?? "none",
       // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
-      // the pinned bare string the caller passed, because the goldens byte-compare it. Absent for a
-      // session with no resolved identity (a scripted double, every pre-P6 session), so nothing
-      // fabricates a provider row.
-      ...(providerIdentity !== undefined
+      // the live model string, because the goldens byte-compare the FIRST emission and this reads
+      // identically to the old frozen value there. C2: re-derived from `currentProviderIdentity` (the
+      // LIVE binding a switch reassigns), not the frozen startup `providerIdentity` -- the same
+      // staleness bug in the same shape, fixed alongside the three named above rather than left half
+      // corrected. Absent for a session with no resolved identity (a scripted double, every pre-P6
+      // session), so nothing fabricates a provider row.
+      ...(currentProviderIdentity !== undefined
         ? {
             winter_provider: {
-              providerId: providerIdentity.providerId,
-              modelKey: providerIdentity.modelKey,
-              ...(providerIdentity.adapterId !== undefined ? { adapterId: providerIdentity.adapterId } : {}),
-              ...(providerIdentity.adapterVersion !== undefined ? { adapterVersion: providerIdentity.adapterVersion } : {}),
-              ...(providerIdentity.catalogVersion !== undefined ? { catalogVersion: providerIdentity.catalogVersion } : {}),
-              ...(providerIdentity.continuationDomain !== undefined ? { continuationDomain: providerIdentity.continuationDomain } : {}),
-              ...(providerIdentity.authRefKind !== undefined ? { authRefKind: providerIdentity.authRefKind } : {}),
+              providerId: currentProviderIdentity.providerId,
+              modelKey: currentProviderIdentity.modelKey,
+              ...(currentProviderIdentity.adapterId !== undefined ? { adapterId: currentProviderIdentity.adapterId } : {}),
+              ...(currentProviderIdentity.adapterVersion !== undefined ? { adapterVersion: currentProviderIdentity.adapterVersion } : {}),
+              ...(currentProviderIdentity.catalogVersion !== undefined ? { catalogVersion: currentProviderIdentity.catalogVersion } : {}),
+              ...(currentProviderIdentity.continuationDomain !== undefined ? { continuationDomain: currentProviderIdentity.continuationDomain } : {}),
+              ...(currentProviderIdentity.authRefKind !== undefined ? { authRefKind: currentProviderIdentity.authRefKind } : {}),
             },
           }
         : {}),
@@ -4261,9 +4283,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
       ...(initAgentNames !== undefined ? { agents: initAgentNames } : {}),
     },
-  } as const;
+  });
   const writeSdkInit = (): void => {
-    output.write({ type: "data", ...sdkInitMessage } as Parameters<typeof output.write>[0]);
+    output.write({ type: "data", ...buildSdkInitMessage() } as Parameters<typeof output.write>[0]);
   };
   writeSdkInit();
 

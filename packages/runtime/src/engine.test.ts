@@ -15,7 +15,8 @@ import type {
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
-import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ProviderToolSpec, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ProviderToolSpec, type ToolExecutor, type SessionPersistence, type ResolveModelSwitch } from "./engine.ts";
+import { enqueueTaskNotification, clearNotificationQueue, renderAgentNotification } from "./subagents/notification-queue.ts";
 // WS-13c §3 (P6.6): the pinned Claude names and the public active-set shape the Agent tool renders from.
 import { CLAUDE_RESERVED_SLOT_NAMES } from "@yanlinglabs/winter-provider-catalog";
 import type { ActiveSlotSet } from "@yanlinglabs/winter-agent-sdk";
@@ -3140,6 +3141,118 @@ describe("Phase 4 Task 3: ctx.emitToolReference (MUST 6, WS-09 §8.2/§8.3)", ()
     } finally {
       unregisterMcpServerTools(SRV);
       unregisterToolForTest(SELECT_TOOL);
+    }
+  });
+});
+
+// ==================================================================================================
+// C2 (fix wave, whole-branch review): the SECOND system/init frame used to replay a payload built
+// ONCE at session start -- `model`, `permissionMode` and `tools` are re-derived from the engine's own
+// live bindings at every emission now (engine.ts's `buildSdkInitMessage`), never the frozen startup
+// snapshot. Exercises all three staleness axes in one real session: a `set_model` switch, a
+// `set_permission_mode` change, and a deferred tool loaded mid-session (the identical ToolSearch
+// stand-in the deferred-tool suite immediately above already uses).
+// ==================================================================================================
+describe("C2: the unsolicited turn's own system/init reports live state, not the session's startup snapshot", () => {
+  test("a set_model switch, a permission-mode change, and a newly loaded deferred tool are all reflected", async () => {
+    const sessionId = "c2-second-init";
+    const SRV = "c2-second-init-fixture";
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const canonicalName = `mcp__${SRV}__search_docs`;
+    replaceExecutor(canonicalName, { async execute() { return { output: "real result" }; } });
+    const SELECT_TOOL = "__c2_select_stand_in__";
+    registerTool({
+      descriptor: {
+        canonicalName: SELECT_TOOL,
+        advertisedName: SELECT_TOOL,
+        source: "sdk",
+        inputSchema: { type: "object" },
+        description: "test-only stand-in for the ToolSearch executor",
+        exposure: "hidden",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input, ctx) {
+          ctx.emitToolReference?.([canonicalName]);
+          return { output: "selected" };
+        },
+      },
+    });
+    try {
+      clearNotificationQueue(sessionId);
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call-1", name: SELECT_TOOL, input: {} }] }, // turn 1: load the deferred tool
+        { kind: "text", text: "loaded" },
+        { kind: "text", text: "second turn done" }, // turn 2: ordinary, nothing notable
+        { kind: "text", text: "unsolicited reply" }, // the unsolicited (task-notification) turn's own reply
+      ]);
+      const resolveModelSwitch: ResolveModelSwitch = (model) => ({
+        provider,
+        identity: { providerId: "winter-test", modelKey: model, family: "other" },
+        to: { providerId: "winter-test", modelKey: model, family: "other", readableState: "none" },
+      });
+      const done = runEngine({
+        config: baseConfig({ sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+        resolveModelSwitch,
+      });
+      const seen: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) seen.push(f);
+      })();
+      const results = (): number => seen.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+
+      // Turn 1: load the deferred tool. Awaited to completion BEFORE the mode switch below, so the
+      // switch to "plan" cannot land mid-turn and turn its own tool call into a permission prompt
+      // (bypassPermissions covers turn 1; the switch is deliberately a between-turns event, exactly
+      // like a real host's own `set_model`/`set_permission_mode` call between two round trips).
+      host.output.write({ type: "user", text: "search" });
+      for (let n = 0; n < 600 && results() < 1; n++) await new Promise((r) => setTimeout(r, 5));
+
+      host.output.write({ type: "control_request", requestId: "sm", subtype: "set_model", payload: { model: "winter-test/new-model" } });
+      host.output.write({ type: "control_request", requestId: "pm", subtype: "set_permission_mode", payload: "plan" });
+
+      // Turn 2: ordinary, no tool calls -- proves the FIRST init stays untouched and the turn
+      // machinery still works normally with the live model/mode already switched.
+      host.output.write({ type: "user", text: "go" });
+      for (let n = 0; n < 600 && results() < 2; n++) await new Promise((r) => setTimeout(r, 5));
+
+      // With the host caught up, a task notification queued now is what the closed-input wait pumps
+      // into its own, unsolicited turn -- see notification-delivery.engine.test.ts's identical shape.
+      enqueueTaskNotification({ sessionId, value: renderAgentNotification({ taskId: "t1", description: "bg probe", status: "completed" }), taskId: "t1" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await done;
+      await reader;
+      const frames = seen;
+
+      const inits = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as unknown as Array<{
+        model: string;
+        permissionMode: string;
+        tools: string[];
+      }>;
+      // Exactly two: the session's own startup init, and the unsolicited turn's -- no ordinary host
+      // turn (turn 2) gets one of its own.
+      expect(inits).toHaveLength(2);
+      const [firstInit, secondInit] = inits;
+      expect(firstInit!.model).toBe("winter-test/echo");
+      expect(firstInit!.permissionMode).toBe("bypassPermissions");
+      expect(firstInit!.tools).not.toContain(canonicalName);
+
+      expect(secondInit!.model).toBe("winter-test/new-model");
+      expect(secondInit!.permissionMode).toBe("plan");
+      expect(secondInit!.tools).toContain(canonicalName);
+    } finally {
+      unregisterMcpServerTools(SRV);
+      unregisterToolForTest(SELECT_TOOL);
+      clearNotificationQueue(sessionId);
     }
   });
 });
