@@ -43,13 +43,13 @@ function modelFieldDescription(forkEnabled: boolean): string {
   return forkEnabled ? `${base} Ignored for subagent_type: "fork" — forks always inherit the parent model.` : base;
 }
 
-// R-S7: Winter's engine does not hold the turn's result while a background agent runs, so the
-// FOREGROUND default is real and load-bearing, not a wording choice -- this text describes Winter's
-// OWN actual default, and DELIBERATELY does not use claude's "Agents run in the background by
-// default..." sentence (research §A2's own verbatim claude text), because that sentence would be
-// false for Winter's own behavior. See R-S7 in the scope file for the full ruling.
+// SDK 0.0.16 Lane N: claude's own text, verbatim (a short field description -- R-S10), because it is
+// now TRUE of Winter. R-S7 withheld it for one concrete reason: Winter's engine never told the model
+// about a background completion, so "you will be notified when one completes" would have been a false
+// promise. The notification channel (`subagents/notification-queue.ts`) is what makes the sentence
+// accurate, and `subagents/policy.ts` is where the matching default lives.
 const RUN_IN_BACKGROUND_DESCRIPTION =
-  'Whether to run this agent in the background instead of waiting for its result. Defaults to false: the call blocks until the agent finishes, and its result comes back as this tool call\'s own output. Set to true to launch it asynchronously instead — you get a task id and a notification when it completes, and can do other useful work in the meantime. Prefer leaving this false when your very next action depends on the result and nothing else could usefully happen while you wait.';
+  "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.";
 
 // research §A2: kept verbatim -- this text names no claude-specific product or env var, so there is
 // nothing in it that needs a Winter substitution (scope item 5: "Keep isolation enum [...] with

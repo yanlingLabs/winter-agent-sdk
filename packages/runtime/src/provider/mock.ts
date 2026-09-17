@@ -574,7 +574,12 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (alreadySpawned) return { kind: "text", text: "parent finished" };
           return {
             kind: "tool_use",
-            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "equivalence probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+            // SDK 0.0.16 Lane N: `run_in_background: false` is now EXPLICIT on every scripted spawn in
+            // this file. The DEFAULT flipped to background (claude's own), and every consumer of these
+            // providers -- the transport-equivalence legs, the messaging scenarios, the frozen
+            // differential traces -- pins a FOREGROUND round on purpose: a background spawn's result
+            // arrives on its own schedule, which is exactly what those comparisons cannot pin.
+            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "equivalence probe", prompt: SUBAGENT_CHILD_PROBE_TEXT, run_in_background: false } }],
           };
         },
       };
@@ -615,7 +620,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (calls.includes("Agent")) return { kind: "text", text: "parent finished" };
           return {
             kind: "tool_use",
-            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "permission probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "permission probe", prompt: SUBAGENT_CHILD_PROBE_TEXT, run_in_background: false } }],
           };
         },
       };
@@ -641,7 +646,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (!assistantCalls.includes("Agent")) {
             return {
               kind: "tool_use",
-              calls: [{ id: "agent-call-1", name: "Agent", input: { description: "message target", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+              calls: [{ id: "agent-call-1", name: "Agent", input: { description: "message target", prompt: SUBAGENT_CHILD_PROBE_TEXT, run_in_background: false } }],
             };
           }
           if (!assistantCalls.includes("SendMessage")) {

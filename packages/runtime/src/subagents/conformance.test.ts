@@ -257,13 +257,16 @@ const ROWS: ConformanceRow[] = [
   {
     id: "WS10-18",
     spec: "WS-10 §16 / §5",
-    bullet: "the fg/bg policy chain states (never a hardcoded 'omitted means foreground')",
+    bullet: "the fg/bg policy chain states (the kill switch and the invocation's own flag decide; SDK 0.0.16's default is background, as in claude)",
     status: "covered",
     citations: [
       { file: "./policy.test.ts", testName: "WINTER_DISABLE_BACKGROUND_TASKS forces foreground no matter what else is set" },
       { file: "./policy.test.ts", testName: "AgentDefinition.background:true forces background, overriding an explicit invocation false" },
-      { file: "./policy.test.ts", testName: "an explicit invocation request wins over the fork-mode default" },
-      { file: "./policy.test.ts", testName: "the SDK (non-fork) default with nothing else specified is foreground -- never a hardcoded independen" },
+      { file: "./policy.test.ts", testName: "an explicit invocation request decides an ordinary spawn, either way" },
+      // SDK 0.0.16 Lane N: the DEFAULT moved to background (claude's own), so this row's bullet is now
+      // "never a hardcoded default independent of the kill switch and the invocation's own flag".
+      { file: "./policy.test.ts", testName: "with nothing specified at all the default is BACKGROUND (SDK 0.0.16, as in claude)" },
+      { file: "./policy.test.ts", testName: "the host kill switch still wins over everything, including a fork" },
     ],
   },
   {

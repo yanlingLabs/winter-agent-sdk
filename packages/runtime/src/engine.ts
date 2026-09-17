@@ -4140,6 +4140,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     flushHeldResults();
     output.write({ type: "data", message: { ...message, ...costFields() } });
   };
+  /**
+   * EVERY exit from a turn goes through this. Releasing the claim here (rather than at the top of the
+   * next iteration) is what lets a notification that arrived DURING the turn start its own turn now --
+   * one per turn, in queue order. BOTH exits call it: the ordinary one and the `/compact` built-in,
+   * which `continue`s past the terminal-result block entirely (a turn claim left set there would stall
+   * a closed-input session's wind-down forever, since it waits for `turnActive` to clear).
+   */
+  const endTurn = (): void => {
+    turnActive = false;
+    turnStartedByNotification = false;
+    turnsCompleted++;
+    pumpNotifications();
+    signalBackgroundWait();
+    // claude's `Lu`: a session whose input is still OPEN is idle the moment its turn ends. With the
+    // input closed the authoritative `idle` waits for the held flush and the wind-down, which is what
+    // the pin's own doc comment on this frame calls "the authoritative turn-over signal".
+    if (!inputClosed && !turnActive) emitSessionState("idle");
+  };
   /** Set when a turn ends interrupted -- claude's `Fu` reads it to decide whether to stop background agents. */
   let lastTurnInterrupted = false;
   /**
@@ -5992,6 +6010,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const compactOutcome = await runManualCompaction(builtinCommand.args);
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, permission_denials: [] } });
       await flushStore();
+      endTurn();
       continue;
     }
 
@@ -6876,18 +6895,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // interrupted turn otherwise waited for the next completed turn, or for the 12-hour expiry.
     fireFacetIdle();
     await flushStore();
-    // Lane N: the turn is over. Releasing the claim here (rather than at the top of the next
-    // iteration) is what lets a notification that arrived DURING this turn start its own turn now --
-    // one per turn, in queue order.
-    turnActive = false;
-    turnStartedByNotification = false;
-    turnsCompleted++;
-    pumpNotifications();
-    signalBackgroundWait();
-    // claude's `Lu`: a session whose input is still OPEN is idle the moment its turn ends. With the
-    // input closed the authoritative `idle` waits for the held flush and the wind-down (below), which
-    // is what the pin's own doc comment on this frame calls "the authoritative turn-over signal".
-    if (!inputClosed && !turnActive) emitSessionState("idle");
+    endTurn();
   }
 
   // SDK 0.0.16 Lane N: the turn loop has drained, so the wait (if any) is over -- flush what was held.
