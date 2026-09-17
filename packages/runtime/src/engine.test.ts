@@ -3255,6 +3255,81 @@ describe("C2: the unsolicited turn's own system/init reports live state, not the
       clearNotificationQueue(sessionId);
     }
   });
+
+  // C2 continued (scoped re-review): the first test above proves `tools` is live on the second
+  // init; `mcp_servers` and `agents` were left as plain `const`s computed once at startup and
+  // reused verbatim by `buildSdkInitMessage` for EVERY later emission, so a mid-session MCP
+  // connect (the real path: `handleMcpToggle`/`handleMcpReconnect`/`handleMcpSetServers` mutate
+  // `effectiveMcpStateSource`, simulated here directly on the SAME fake state source those
+  // handlers would mutate in production) and a newly-arrived agent definition (the real path:
+  // `sessionAvailableAgentDefinitions()` re-scans `<winterHome>/agents/*.md` on disk, same
+  // mechanism the "arrived between turns" P16-6 precedent above exercises for the listing text)
+  // must both surface on the unsolicited turn's own init, never only on the session's startup one.
+  test("a mid-session MCP server connect and a newly-arrived agent definition are both reflected in the unsolicited turn's own init, never the startup one", async () => {
+    const sessionId = "c2-second-init-mcp-agents";
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-c2-mcp-agents-"));
+    const stateSource = createFakeMcpServerStateSource([{ name: "gh0", state: "connected", toolNames: [] }]);
+    try {
+      clearNotificationQueue(sessionId);
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "text", text: "turn one done" },
+        { kind: "text", text: "unsolicited reply" },
+      ]);
+      const done = runEngine({
+        config: baseConfig({ sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, winterHome }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        mcpServerStateSource: stateSource,
+      });
+      const seen: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) seen.push(f);
+      })();
+      const results = (): number => seen.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+
+      // Turn 1: ordinary, no tool calls -- just enough for the session to have a startup init and
+      // a completed turn before the mid-session mutations below.
+      host.output.write({ type: "user", text: "go" });
+      for (let n = 0; n < 600 && results() < 1; n++) await new Promise((r) => setTimeout(r, 5));
+
+      // Between turns: a second MCP server connects on the SAME state source `system/init` reads,
+      // and a new user-tier agent definition lands on disk.
+      stateSource.transition("gh1", "connected", { toolNames: [] });
+      mkdirSync(join(winterHome, "agents"), { recursive: true });
+      writeFileSync(join(winterHome, "agents", "late-helper.md"), "---\nname: late-helper\ndescription: arrived mid-session\n---\nBody.");
+
+      // With the host caught up, a task notification queued now is what the closed-input wait
+      // pumps into its own, unsolicited turn -- see notification-delivery.engine.test.ts's
+      // identical shape, and the sibling C2 test just above.
+      enqueueTaskNotification({ sessionId, value: renderAgentNotification({ taskId: "t1", description: "bg probe", status: "completed" }), taskId: "t1" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await done;
+      await reader;
+      const frames = seen;
+
+      const inits = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as unknown as Array<{
+        mcp_servers?: Array<{ name: string; status: string }>;
+        agents?: string[];
+      }>;
+      // Exactly two: the session's own startup init, and the unsolicited turn's -- no ordinary
+      // host turn gets one of its own.
+      expect(inits).toHaveLength(2);
+      const [firstInit, secondInit] = inits;
+      expect(firstInit!.mcp_servers).toEqual([{ name: "gh0", status: "connected" }]);
+      expect(firstInit!.agents).not.toContain("late-helper");
+
+      expect(secondInit!.mcp_servers).toEqual([
+        { name: "gh0", status: "connected" },
+        { name: "gh1", status: "connected" },
+      ]);
+      expect(secondInit!.agents).toContain("late-helper");
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      clearNotificationQueue(sessionId);
+    }
+  });
 });
 
 // ==================================================================================================

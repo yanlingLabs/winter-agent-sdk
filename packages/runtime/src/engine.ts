@@ -4189,6 +4189,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // omitted the key entirely. (A caller-supplied state source always reports, even when its snapshot
   // is empty: that is a host declaring it owns the MCP stack.)
   const mcpServersWire = sessionHasMcp() && effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
+  // C2 continued (scoped re-review): the SAME staleness bug `liveAdvertisedToolNames` above was
+  // fixed for, in the identical shape -- `mcpServersWire` is a plain `const`, computed ONCE here at
+  // startup from `effectiveMcpStateSource.snapshot()`, so it goes stale the moment
+  // `handleMcpToggle`/`handleMcpReconnect`/`handleMcpSetServers` (dispatched off a `control_request`,
+  // mutating this SAME state source) change server state mid-session. `sessionHasMcp()` is already a
+  // live read; only the STRUCT built from it was frozen. `buildSdkInitMessage`'s own `mcp_servers`
+  // field calls this, never the frozen constant -- the frozen `mcpServersWire` above stays exactly as
+  // it was for the ONE immediate `type: "init"` write a few lines below, which by construction cannot
+  // itself go stale (nothing has run yet).
+  const liveMcpServersWire = (): ReturnType<typeof mcpServerStatesToWire> | undefined =>
+    sessionHasMcp() && effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
   // Spawn-surface parity (research §A3, scope item 4): `system/init.agents` -- the per-session
   // `subagent_type` names, present only when the `Agent` tool is itself advertised (a session that
   // cannot spawn has nothing to list; matches `mcp_servers`' own conditional-presence convention on
@@ -4199,6 +4210,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // resolution actually accepts. `AGENT_TOOL_CANONICAL_NAME` is imported already (provider/slots.ts,
   // line 95) for the per-turn model-slot render just below this block.
   const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAvailableAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
+  // C2 continued: the same staleness fix as `liveMcpServersWire` immediately above, for the agents
+  // list -- `sessionAvailableAgentDefinitions()` is already a live re-scan (a user/project `agents/
+  // *.md` file that arrives mid-session, or a rules change that lifts/adds an `Agent(type)` deny,
+  // is picked up on every call), but `initAgentNames` only ever CALLED it once, at startup, and the
+  // gate itself (`advertisedToolNames.includes(...)`) read the equally-frozen tool list. Gated on
+  // `liveAdvertisedToolNames()` for the same reason `buildSdkInitMessage`'s own `tools` field is.
+  const liveInitAgentNames = (): string[] | undefined =>
+    liveAdvertisedToolNames().includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAvailableAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -4243,47 +4262,53 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the engine's own live bindings every time. At the FIRST call (session start, before any turn can
   // have moved anything) `currentModel === config.model` and `currentProviderIdentity === providerIdentity`
   // by construction, so this is byte-identical to the old frozen object for every existing golden.
-  const buildSdkInitMessage = () => ({
-    message: {
-      type: "system",
-      subtype: "init",
-      session_id: config.sessionId,
-      cwd: config.cwd,
-      // C2: the LIVE model -- `set_model`/resolution/resume reassign `currentModel`, while
-      // `config.model` stays the session's original value for its whole run (`resolveChildModel`'s
-      // own header comment, a few hundred lines up, states the identical distinction).
-      model: currentModel,
-      permissionMode: policyStateStore.getState().mode,
-      tools: liveAdvertisedToolNames(),
-      // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
-      // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
-      // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
-      apiKeySource: apiKeySource ?? "none",
-      // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
-      // the live model string, because the goldens byte-compare the FIRST emission and this reads
-      // identically to the old frozen value there. C2: re-derived from `currentProviderIdentity` (the
-      // LIVE binding a switch reassigns), not the frozen startup `providerIdentity` -- the same
-      // staleness bug in the same shape, fixed alongside the three named above rather than left half
-      // corrected. Absent for a session with no resolved identity (a scripted double, every pre-P6
-      // session), so nothing fabricates a provider row.
-      ...(currentProviderIdentity !== undefined
-        ? {
-            winter_provider: {
-              providerId: currentProviderIdentity.providerId,
-              modelKey: currentProviderIdentity.modelKey,
-              ...(currentProviderIdentity.adapterId !== undefined ? { adapterId: currentProviderIdentity.adapterId } : {}),
-              ...(currentProviderIdentity.adapterVersion !== undefined ? { adapterVersion: currentProviderIdentity.adapterVersion } : {}),
-              ...(currentProviderIdentity.catalogVersion !== undefined ? { catalogVersion: currentProviderIdentity.catalogVersion } : {}),
-              ...(currentProviderIdentity.continuationDomain !== undefined ? { continuationDomain: currentProviderIdentity.continuationDomain } : {}),
-              ...(currentProviderIdentity.authRefKind !== undefined ? { authRefKind: currentProviderIdentity.authRefKind } : {}),
-            },
-          }
-        : {}),
-      ...initLoadedSurface,
-      ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
-      ...(initAgentNames !== undefined ? { agents: initAgentNames } : {}),
-    },
-  });
+  const buildSdkInitMessage = () => {
+    // C2 continued: computed once per call (not per conditional-spread reference below) so a live
+    // read of a mutating state source is consistent within one emitted frame.
+    const mcpServersWireNow = liveMcpServersWire();
+    const initAgentNamesNow = liveInitAgentNames();
+    return {
+      message: {
+        type: "system",
+        subtype: "init",
+        session_id: config.sessionId,
+        cwd: config.cwd,
+        // C2: the LIVE model -- `set_model`/resolution/resume reassign `currentModel`, while
+        // `config.model` stays the session's original value for its whole run (`resolveChildModel`'s
+        // own header comment, a few hundred lines up, states the identical distinction).
+        model: currentModel,
+        permissionMode: policyStateStore.getState().mode,
+        tools: liveAdvertisedToolNames(),
+        // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
+        // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
+        // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
+        apiKeySource: apiKeySource ?? "none",
+        // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
+        // the live model string, because the goldens byte-compare the FIRST emission and this reads
+        // identically to the old frozen value there. C2: re-derived from `currentProviderIdentity` (the
+        // LIVE binding a switch reassigns), not the frozen startup `providerIdentity` -- the same
+        // staleness bug in the same shape, fixed alongside the three named above rather than left half
+        // corrected. Absent for a session with no resolved identity (a scripted double, every pre-P6
+        // session), so nothing fabricates a provider row.
+        ...(currentProviderIdentity !== undefined
+          ? {
+              winter_provider: {
+                providerId: currentProviderIdentity.providerId,
+                modelKey: currentProviderIdentity.modelKey,
+                ...(currentProviderIdentity.adapterId !== undefined ? { adapterId: currentProviderIdentity.adapterId } : {}),
+                ...(currentProviderIdentity.adapterVersion !== undefined ? { adapterVersion: currentProviderIdentity.adapterVersion } : {}),
+                ...(currentProviderIdentity.catalogVersion !== undefined ? { catalogVersion: currentProviderIdentity.catalogVersion } : {}),
+                ...(currentProviderIdentity.continuationDomain !== undefined ? { continuationDomain: currentProviderIdentity.continuationDomain } : {}),
+                ...(currentProviderIdentity.authRefKind !== undefined ? { authRefKind: currentProviderIdentity.authRefKind } : {}),
+              },
+            }
+          : {}),
+        ...initLoadedSurface,
+        ...(mcpServersWireNow !== undefined ? { mcp_servers: mcpServersWireNow } : {}),
+        ...(initAgentNamesNow !== undefined ? { agents: initAgentNamesNow } : {}),
+      },
+    };
+  };
   const writeSdkInit = (): void => {
     output.write({ type: "data", ...buildSdkInitMessage() } as Parameters<typeof output.write>[0]);
   };
