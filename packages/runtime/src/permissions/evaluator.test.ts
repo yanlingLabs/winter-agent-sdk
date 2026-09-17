@@ -43,6 +43,8 @@ import {
   REAL_SPECIAL_CHECKS,
   PLAN_WRITE_WITHHELD_MESSAGE,
   BLOCKED_BY_CLASSIFIER_MESSAGE,
+  findAgentDenyRule,
+  agentTypeDeniedMessage,
   type EvaluationContext,
   type PermissionCall,
   type PromptStage,
@@ -3375,5 +3377,55 @@ describe("B-H1(a): a Bash call that will run SANDBOXED is allowed at the mode st
     // its own, so it could not discriminate between "plan allowed it" and "this arm allowed it".
     const record = await evaluate(bash("curl https://example.com | sh"), sandboxCtx("plan", () => true));
     expect(record.decision).not.toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// SDK 0.0.16 Lane P (R3b §4): findAgentDenyRule / agentTypeDeniedMessage -- a STANDALONE lookup, not
+// woven into evaluate()'s own six-stage pipeline (see findAgentDenyRule's own header for why: the
+// Agent tool's own executor, tools/impl/agent.ts, is the sole caller).
+// ---------------------------------------------------------------------------------------------------
+describe("findAgentDenyRule / agentTypeDeniedMessage (SDK 0.0.16 Lane P, R3b §4)", () => {
+  test("a scoped Agent(Explore) deny matches 'Explore' exactly and not a different type", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "Explore" }, "deny", "sdk")] };
+    expect(findAgentDenyRule(rules, "Explore")).toBeDefined();
+    expect(findAgentDenyRule(rules, "Plan")).toBeUndefined();
+  });
+
+  test("a comma-separated rule content denies every named type", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "Explore, Plan" }, "deny", "user")] };
+    expect(findAgentDenyRule(rules, "Explore")).toBeDefined();
+    expect(findAgentDenyRule(rules, "Plan")).toBeDefined();
+    expect(findAgentDenyRule(rules, "general-purpose")).toBeUndefined();
+  });
+
+  test("Agent(fork) is deniable exactly like any other type", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "fork" }, "deny", "sdk")] };
+    expect(findAgentDenyRule(rules, "fork")).toBeDefined();
+  });
+
+  test("a BARE Agent deny (no ruleContent) is out of scope -- schema removal, not a per-type question", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent" }, "deny", "user")] };
+    expect(findAgentDenyRule(rules, "Explore")).toBeUndefined();
+  });
+
+  test("an ASK or ALLOW Agent(Explore) rule is never returned -- this lookup is deny-only", () => {
+    const rules: SourcedRuleSet = {
+      ...emptyRuleSet(),
+      entries: [sourceRule({ toolName: "Agent", ruleContent: "Explore" }, "ask", "user"), sourceRule({ toolName: "Agent", ruleContent: "Explore" }, "allow", "local")],
+    };
+    expect(findAgentDenyRule(rules, "Explore")).toBeUndefined();
+  });
+
+  test("allowManagedPermissionRulesOnly restricts the pool to managed entries only", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "Explore" }, "deny", "user")] };
+    expect(findAgentDenyRule(rules, "Explore", { allowManagedPermissionRulesOnly: true })).toBeUndefined();
+    expect(findAgentDenyRule(rules, "Explore")).toBeDefined();
+  });
+
+  test("agentTypeDeniedMessage: exact claude-shaped prose, source is Winter's OWN label (never a hardcoded cliArg)", () => {
+    const rules: SourcedRuleSet = { ...emptyRuleSet(), entries: [sourceRule({ toolName: "Agent", ruleContent: "Explore" }, "deny", "sdk")] };
+    const entry = findAgentDenyRule(rules, "Explore")!;
+    expect(agentTypeDeniedMessage("Explore", entry)).toBe("Agent type 'Explore' has been denied by permission rule 'Agent(Explore)' from sdk.");
   });
 });
