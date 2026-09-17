@@ -486,12 +486,16 @@ export const agentExecutor: ToolExecutor = {
     if (subagentType === "web-fetch") resolvedIsolation = undefined;
 
     // WS-10 §5: run_in_background is an invocation REQUEST, not the whole rule -- resolveForegroundBackground
-    // owns the full chain. R-S7: Winter keeps its FOREGROUND default (it has no held-back turn result
-    // for a background agent), with the fork gate on as well.
+    // owns the full chain. SDK 0.0.16 (superseding R-S7): the default is BACKGROUND, matching claude
+    // -- the engine now tells the model about a background completion (`subagents/notification-queue.ts`),
+    // which is what R-S7 was withheld for. I4 (fix wave): `ctx.backgroundByDefault` is this session's
+    // resolved opt-out (RuntimeConfig field, else the env fallback), threaded through exactly like
+    // `forkEnabled` two lines up.
     const fgbg = resolveForegroundBackground({
       ...(runInBackgroundInput !== undefined ? { invocationRequest: runInBackgroundInput } : {}),
       ...(definition?.background !== undefined ? { definitionBackground: definition.background } : {}),
       isFork,
+      ...(ctx.backgroundByDefault !== undefined ? { backgroundByDefault: ctx.backgroundByDefault } : {}),
       env,
       brand: agentsBrand,
     });

@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, OMITTED_TYPE_SENTENCE_AVAILABLE, OMITTED_TYPE_SENTENCE_UNAVAILABLE } from "./agent.ts";
+import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, OMITTED_TYPE_SENTENCE_AVAILABLE, OMITTED_TYPE_SENTENCE_UNAVAILABLE, type AgentToolGateState } from "./agent.ts";
 import { getRegisteredTool } from "../registry.ts";
+import { resolveForegroundBackground, resolveBackgroundTasksDisabled, resolveBackgroundByDefaultEnabled } from "../../subagents/policy.ts";
 import "./agent.ts"; // self-sufficiency: guarantee the static registration ran
 
 describe("agentInputSchemaFor (research §A2, scope item 5)", () => {
@@ -76,17 +77,81 @@ describe("renderAgentToolDescription (research §A3, scope item 5)", () => {
     expect(text).toContain('subagent_type: "fork"');
   });
 
-  test("background paragraph appears only when run_in_background is actually advertised", () => {
-    const on = renderAgentToolDescription(AGENT_TOOL_GATE_DEFAULTS);
-    expect(on).toContain("FOREGROUND");
-    const off = renderAgentToolDescription({ forkEnabled: true, backgroundDisabled: false, generalPurposeAvailable: true });
-    expect(off).not.toContain("FOREGROUND");
+  // C1 (fix wave, whole-branch review): these two tests used to pin the OLD, now-wrong claim that
+  // foreground is the default and that Winter "never describes" a background default (R-S7). SDK
+  // 0.0.16 supersedes R-S7 -- `subagents/policy.ts`'s own stage 5 default is background, and the
+  // engine now tells the model about a background completion, which is what made the old claim
+  // false. See the "agrees with policy.ts's actual default" block below for the exhaustive matrix.
+  test("gate defaults (background-by-default) -> the paragraph says BACKGROUND, never claims foreground is the default", () => {
+    const text = renderAgentToolDescription(AGENT_TOOL_GATE_DEFAULTS);
+    expect(text).toContain("BACKGROUND");
+    expect(text).not.toContain("By default, an agent you launch runs in the FOREGROUND");
   });
 
-  test("never describes claude's own 'background by default' behavior (R-S7)", () => {
-    const text = renderAgentToolDescription(AGENT_TOOL_GATE_DEFAULTS);
-    expect(text).not.toContain("Agents run in the background by default");
+  test("a host that opted out (backgroundByDefault: false) gets the FOREGROUND paragraph instead", () => {
+    const text = renderAgentToolDescription({ forkEnabled: false, backgroundDisabled: false, generalPurposeAvailable: true, backgroundByDefault: false });
+    expect(text).toContain("FOREGROUND");
+    expect(text).not.toContain("runs in the BACKGROUND");
   });
+
+  test("fork enabled -> no run_in_background override, but the ordinary (non-fork) default is still named accurately", () => {
+    const withBg = renderAgentToolDescription({ forkEnabled: true, backgroundDisabled: false, generalPurposeAvailable: true, backgroundByDefault: true });
+    expect(withBg).toContain("no run_in_background override");
+    expect(withBg).toContain("background by default");
+    const withoutBg = renderAgentToolDescription({ forkEnabled: true, backgroundDisabled: false, generalPurposeAvailable: true, backgroundByDefault: false });
+    expect(withoutBg).toContain("no run_in_background override");
+    expect(withoutBg).toContain("foreground by default");
+  });
+
+  test("background disabled (kill switch) -> unconditional foreground, no flag mentioned", () => {
+    const text = renderAgentToolDescription({ forkEnabled: false, backgroundDisabled: true, generalPurposeAvailable: true });
+    expect(text).toContain("disabled background subagents entirely");
+    expect(text).not.toContain("run_in_background");
+  });
+});
+
+// C1 (fix wave): the description (both the schema field and the body paragraph) must never disagree
+// with what `subagents/policy.ts`'s `resolveForegroundBackground` actually decides for an ordinary,
+// unflagged spawn -- exercised as a real matrix over the kill switch and the I4 opt-out, in both
+// directions, so a future edit to either side trips this test rather than shipping a lie.
+describe("C1/I4: the description agrees with policy.ts's actual default (kill switch x backgroundByDefault)", () => {
+  const CASES: Array<{ label: string; env: Record<string, string | undefined> }> = [
+    { label: "kill switch off, knob unset -> background", env: {} },
+    { label: "kill switch off, knob explicitly on -> background", env: { WINTER_BACKGROUND_BY_DEFAULT: "true" } },
+    { label: "kill switch off, knob off -> foreground", env: { WINTER_BACKGROUND_BY_DEFAULT: "false" } },
+    { label: "kill switch on, knob unset -> foreground (the kill switch wins)", env: { WINTER_DISABLE_BACKGROUND_TASKS: "1" } },
+    { label: "kill switch on, knob explicitly on -> still foreground (the kill switch wins)", env: { WINTER_DISABLE_BACKGROUND_TASKS: "1", WINTER_BACKGROUND_BY_DEFAULT: "true" } },
+  ];
+
+  for (const { label, env } of CASES) {
+    test(label, () => {
+      const backgroundDisabled = resolveBackgroundTasksDisabled(env);
+      const backgroundByDefault = resolveBackgroundByDefaultEnabled(env);
+      const decision = resolveForegroundBackground({ isFork: false, env, backgroundByDefault });
+      const gates: AgentToolGateState = { forkEnabled: false, backgroundDisabled, generalPurposeAvailable: true, backgroundByDefault };
+
+      const schema = agentInputSchemaFor(gates);
+      const field = schema.properties?.["run_in_background"] as { description?: string } | undefined;
+      const text = renderAgentToolDescription(gates);
+
+      if (backgroundDisabled) {
+        // The kill switch drops the field from the schema entirely -- nothing left to agree or disagree.
+        expect(field).toBeUndefined();
+        expect(decision.background).toBe(false);
+        expect(text.toLowerCase()).toContain("foreground");
+        return;
+      }
+      expect(field).toBeDefined();
+      expect(decision.background).toBe(backgroundByDefault);
+      if (decision.background) {
+        expect(field!.description).toContain("background by default");
+        expect(text).toContain("BACKGROUND");
+      } else {
+        expect(field!.description?.toLowerCase()).toContain("foreground");
+        expect(text).toContain("FOREGROUND");
+      }
+    });
+  }
 });
 
 describe("the static registration (gate-off defaults, byte-identical shape to the pre-parity descriptor's spirit)", () => {

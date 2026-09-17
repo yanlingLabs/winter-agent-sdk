@@ -452,6 +452,13 @@ export interface RuntimeConfig {
    * a forked worker may not fork again (claude's own refusal). Never set by `query()`.
    */
   insideFork?: boolean;
+  /**
+   * I4 (fix wave): mirrors `Options.backgroundByDefault` exactly -- see that field's own comment.
+   * `subagents/policy.ts`'s `resolveForegroundBackground` reads it at its own stage 5, AFTER the
+   * `WINTER_DISABLE_BACKGROUND_TASKS` kill switch (stage 2, unrelated and unaffected) and the
+   * invocation's own explicit `run_in_background` (stage 4, always wins when given).
+   */
+  backgroundByDefault?: boolean;
 
   // --- Phase 5 Task 2 (WS-11): the P5 session options' wire mirrors --------------------------------
   //

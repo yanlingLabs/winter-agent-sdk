@@ -662,6 +662,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.agents !== undefined ? { agents: options.agents } : {}),
     ...(options.forwardSubagentText !== undefined ? { forwardSubagentText: options.forwardSubagentText } : {}),
     ...(options.forkSubagent !== undefined ? { forkSubagent: options.forkSubagent } : {}),
+    ...(options.backgroundByDefault !== undefined ? { backgroundByDefault: options.backgroundByDefault } : {}),
     // Phase 5 Task 2 (WS-11): same pure-passthrough convention as every field above -- query.ts
     // never interprets these itself (options.ts's own comment on each field names the real consumer,
     // and why the four defaulted ones are resolved runtime-side rather than baked in here).

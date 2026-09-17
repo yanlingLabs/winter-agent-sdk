@@ -184,7 +184,7 @@ import { createAgentDefinitionRejectionReporter, loadAgentDefinitions, toAgentIn
 import { availableAgentNames, isBuiltinAllToolsDenied } from "./subagents/availability.ts";
 import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
 import { ForkRequestLayoutUnavailableError } from "./subagents/fork.ts";
-import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
+import { resolveBackgroundTasksDisabled, resolveBackgroundByDefaultEnabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
 import type { AgentListingEntry } from "./context/agent-listing.ts";
 import { attachmentMessage, dateChangeAnnounced, localDateString, skillListingResumeSeed, type AttachmentPayload, type DateChangeAttachment, type SkillListingAttachment } from "./context/attachments.ts";
@@ -1908,6 +1908,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // Spawn-surface parity (R-S5): the fork gate, resolved once per run -- the RuntimeConfig field
   // wins in either direction, the env var is the fallback, and absent-and-unset is off.
   const forkSubagentEnabled = config.forkSubagent ?? resolveForkSubagentEnabled(engineEnv ?? process.env, sessionBrand);
+  // I4 (fix wave): the background-by-default opt-out, resolved once per run the same way -- the
+  // RuntimeConfig field wins in either direction, the env var is the fallback, and absent-and-unset
+  // keeps the 0.0.16 default (background).
+  const backgroundByDefault = config.backgroundByDefault ?? resolveBackgroundByDefaultEnabled(engineEnv ?? process.env, sessionBrand);
   const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
@@ -3490,6 +3494,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // engine is itself a fork, and the live advertised set (the Agent tool's launch result reads it).
       env: engineEnv ?? process.env,
       forkSubagentEnabled: forkSubagentEnabled,
+      // I4 (fix wave): the resolved background-by-default opt-out, mirroring forkSubagentEnabled.
+      backgroundByDefault: backgroundByDefault,
       ...(config.insideFork === true ? { insideFork: true } : {}),
       advertisedToolNames: () => currentAdvertisedCanonicalNames,
       // Review r2 finding 2: `tools/impl/agent.ts`'s own `loadAgentDefinitions` call reads this off
@@ -5922,6 +5928,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     forkEnabled: forkSubagentEnabled,
     backgroundDisabled: resolveBackgroundTasksDisabled(engineEnv ?? process.env, sessionBrand),
     generalPurposeAvailable: (latestAgentDefinitions ?? sessionAvailableAgentDefinitions()).has("general-purpose"),
+    // I4 (fix wave): the resolved opt-out -- the tool description's own "by default" sentence must
+    // follow the SAME effective default `subagents/policy.ts`'s stage 5 actually applies.
+    backgroundByDefault: backgroundByDefault,
   });
 
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
@@ -5929,7 +5938,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
     }
     const gates = agentToolGates();
-    const gated = gates.forkEnabled !== AGENT_TOOL_GATE_DEFAULTS.forkEnabled || gates.backgroundDisabled !== AGENT_TOOL_GATE_DEFAULTS.backgroundDisabled || gates.generalPurposeAvailable !== AGENT_TOOL_GATE_DEFAULTS.generalPurposeAvailable;
+    const gated =
+      gates.forkEnabled !== AGENT_TOOL_GATE_DEFAULTS.forkEnabled ||
+      gates.backgroundDisabled !== AGENT_TOOL_GATE_DEFAULTS.backgroundDisabled ||
+      gates.generalPurposeAvailable !== AGENT_TOOL_GATE_DEFAULTS.generalPurposeAvailable ||
+      gates.backgroundByDefault !== (AGENT_TOOL_GATE_DEFAULTS.backgroundByDefault ?? true);
     if (gated) descriptor = { ...descriptor, description: renderAgentToolDescription(gates) + AGENT_MODEL_SLOTS_BLOCK, inputSchema: agentInputSchemaFor(gates) };
     const render = currentAgentModelRender();
     // An EMPTY enum is not a render: a session with no effective model to derive a family from

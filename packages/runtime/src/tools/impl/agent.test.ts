@@ -63,6 +63,8 @@ interface CtxOptions {
   /** P7a fix wave (item 10, N-1): the SESSION's brand, which is what decides the agents directory this tool reads. */
   brand?: BrandProfile;
   spawnChild?: (req: SpawnChildRequest) => Promise<ChildHandle>;
+  /** I4 (fix wave): mirrors ToolExecutionContext.backgroundByDefault -- this session's resolved background-by-default opt-out. */
+  backgroundByDefault?: boolean;
 }
 
 function makeCtx(opts: CtxOptions = {}): { ctx: ToolExecutionContext; frames: unknown[] } {
@@ -79,6 +81,7 @@ function makeCtx(opts: CtxOptions = {}): { ctx: ToolExecutionContext; frames: un
     tempDir: "/tmp/winter-agent-test-temp",
     sandboxSettings: {},
     ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
+    ...(opts.backgroundByDefault !== undefined ? { backgroundByDefault: opts.backgroundByDefault } : {}),
     session: {
       setCwd() {},
       addBoundedRoot() {},
@@ -716,6 +719,39 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
       },
     });
     const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "bg-forced", run_in_background: false }, ctx);
+    expect(capturedReq?.runInBackground).toBe(true);
+    const parsed = JSON.parse(result.output);
+    expect(parsed.status).toBe("async_launched");
+  });
+
+  // I4 (fix wave): ctx.backgroundByDefault is this session's resolved opt-out, threaded straight
+  // into resolveForegroundBackground's own stage 5 -- an OMITTED run_in_background follows it.
+  test("ctx.backgroundByDefault: false restores the foreground default for an omitted run_in_background", async () => {
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({
+      backgroundByDefault: false,
+      spawnChild: async (req) => {
+        capturedReq = req;
+        return fakeHandle(Promise.resolve({ status: "completed", content: "done", resolvedModel: "m", totalToolUseCount: 0, totalDurationMs: 1 }));
+      },
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    expect(capturedReq?.runInBackground).toBe(false);
+    const parsed = JSON.parse(result.output);
+    // A foreground result is the WS-10 §1.4 shape, never the async_launched envelope.
+    expect(parsed.status).not.toBe("async_launched");
+  });
+
+  test("ctx.backgroundByDefault: false is still overridden by an explicit run_in_background: true", async () => {
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({
+      backgroundByDefault: false,
+      spawnChild: async (req) => {
+        capturedReq = req;
+        return fakeHandle(new Promise(() => {})); // never resolves within this test -- proves we did NOT await it
+      },
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: true }, ctx);
     expect(capturedReq?.runInBackground).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.status).toBe("async_launched");

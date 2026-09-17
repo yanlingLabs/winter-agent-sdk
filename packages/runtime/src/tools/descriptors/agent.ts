@@ -28,10 +28,19 @@ export interface AgentToolGateState {
   backgroundDisabled: boolean;
   /** research §A3: is the `general-purpose` built-in actually available this session (R-S6's `allBuiltinsDisabled` kill switch off, or a same-named override present)? Governs the omitted-`subagent_type` sentence. */
   generalPurposeAvailable: boolean;
+  /**
+   * I4 (fix wave): the EFFECTIVE default `subagents/policy.ts`'s `resolveForegroundBackground`
+   * actually applies at its own stage 5, when `run_in_background` is advertised at all (i.e. neither
+   * `forkEnabled` nor `backgroundDisabled` is true -- see `agentInputSchemaFor` below). `true` (SDK
+   * 0.0.16, matching claude) unless a host opted out via `RuntimeConfig.backgroundByDefault` / the
+   * `WINTER_BACKGROUND_BY_DEFAULT` env fallback. Optional (default `true`) so every pre-I4 gate
+   * object literal in this file's own tests keeps typechecking unchanged.
+   */
+  backgroundByDefault?: boolean;
 }
 
-/** The gate-OFF defaults the static registration below uses -- byte-identical to this descriptor's pre-parity shape wherever every gate reads as it always has (fork off, background on, general-purpose present). */
-export const AGENT_TOOL_GATE_DEFAULTS: AgentToolGateState = { forkEnabled: false, backgroundDisabled: false, generalPurposeAvailable: true };
+/** The gate-OFF defaults the static registration below uses -- byte-identical to this descriptor's pre-parity shape wherever every gate reads as it always has (fork off, background on and the default, general-purpose present). */
+export const AGENT_TOOL_GATE_DEFAULTS: AgentToolGateState = { forkEnabled: false, backgroundDisabled: false, generalPurposeAvailable: true, backgroundByDefault: true };
 
 function modelFieldDescription(forkEnabled: boolean): string {
   // research §A2, adapted per R-S9: the FOUR-MEMBER FAMILY-SLOT ENUM stays Winter's own (a user
@@ -50,6 +59,15 @@ function modelFieldDescription(forkEnabled: boolean): string {
 // accurate, and `subagents/policy.ts` is where the matching default lives.
 const RUN_IN_BACKGROUND_DESCRIPTION =
   "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.";
+
+// I4 (fix wave): Winter's OWN text, for the one state `RUN_IN_BACKGROUND_DESCRIPTION` above cannot
+// honestly describe -- a session where a host opted out of the 0.0.16 background default
+// (`RuntimeConfig.backgroundByDefault: false` / `WINTER_BACKGROUND_BY_DEFAULT`). That constant's own
+// FIRST SENTENCE is a factual claim ("Agents run in the background by default"), and it stays
+// byte-identical for the sessions it is still true of (the M1 restriction on rewording it) -- this is
+// a SECOND, separate constant, selected instead of it, never a rewrite of it.
+const RUN_IN_BACKGROUND_DESCRIPTION_FOREGROUND_DEFAULT =
+  "This session's host has turned off the background default: agents run in the foreground unless you set this to true. Set it to true to launch one asynchronously instead — you get a task id and a notification when it completes, and can do other useful work while it runs.";
 
 // research §A2: kept verbatim -- this text names no claude-specific product or env var, so there is
 // nothing in it that needs a Winter substitution (scope item 5: "Keep isolation enum [...] with
@@ -90,7 +108,14 @@ export function agentInputSchemaFor(gates: AgentToolGateState = AGENT_TOOL_GATE_
   };
   // research §A2: "DROPPED from the schema when background tasks are disabled... or fork is on."
   if (!gates.forkEnabled && !gates.backgroundDisabled) {
-    properties["run_in_background"] = { type: "boolean", description: RUN_IN_BACKGROUND_DESCRIPTION };
+    // I4 (fix wave): the field's own description must agree with the EFFECTIVE default -- a host
+    // that opted out (`backgroundByDefault: false`) still gets `run_in_background` on the schema
+    // (this knob never touches that; only the kill switch/fork gate do), but the text describing
+    // what happens when it is omitted must say foreground, not the SDK 0.0.16 background claim.
+    properties["run_in_background"] = {
+      type: "boolean",
+      description: (gates.backgroundByDefault ?? true) ? RUN_IN_BACKGROUND_DESCRIPTION : RUN_IN_BACKGROUND_DESCRIPTION_FOREGROUND_DEFAULT,
+    };
   }
   return { type: "object", properties, required: ["description", "prompt"] };
 }
@@ -110,6 +135,39 @@ const FORK_SECTION = [
 ].join("\n");
 
 /**
+ * C1 (fix wave) / I4: the one paragraph in the description that must never contradict
+ * `subagents/policy.ts`'s `resolveForegroundBackground` -- broken out of `renderAgentToolDescription`
+ * so each of its four reachable states (schema-advertised x background-by-default, or not-advertised
+ * x which of the two reasons withheld it) gets its OWN accurate sentence, never a claim inferred by
+ * omission. `undefined` is itself a valid answer (the pre-existing "kill switch + fork both off is
+ * the only advertised state" case never needed one, and still doesn't).
+ */
+function backgroundSection(gates: AgentToolGateState): string | undefined {
+  const backgroundByDefault = gates.backgroundByDefault ?? true;
+  if (!gates.forkEnabled && !gates.backgroundDisabled) {
+    // The ordinary, advertised case: `run_in_background` is on the schema, and its own field
+    // description (RUN_IN_BACKGROUND_DESCRIPTION / _FOREGROUND_DEFAULT) already states the default
+    // in claude's own short form -- this paragraph restates it at description length, with the
+    // mechanics (task id, notification, inline result) the field description has no room for.
+    return backgroundByDefault
+      ? "By default, an agent you launch runs in the BACKGROUND: this call returns right away with a task id, not the agent's own output, and you are notified later — as a task notification — when it finishes. Set run_in_background: false when your very next action depends on this agent's result and nothing else could usefully happen while it runs; that runs it in the foreground instead, so this call does not return until it finishes and its result comes back as this call's own output."
+      : "This session's host has turned off the background default: by default, an agent you launch runs in the FOREGROUND, and this call does not return until it finishes, its result coming back as this call's own output. Set run_in_background: true to launch it asynchronously instead — you get a task id and a notification when it completes, and can do other useful work while it runs.";
+  }
+  if (gates.backgroundDisabled) {
+    // The kill switch (stage 2) outranks everything, including a fork -- foreground, unconditionally,
+    // with no flag to change it (the schema carries no `run_in_background` in this state at all).
+    return "This host has disabled background subagents entirely: every agent you launch here runs in the foreground, and this call does not return until it finishes, its result coming back as this call's own output.";
+  }
+  // Fork is enabled and the kill switch is not: `run_in_background` is still withheld from the
+  // schema (research §A2's own claude-matching rule), but the underlying default is UNCHANGED for an
+  // ORDINARY (non-fork) spawn -- only an actual fork is forced to the background unconditionally
+  // (stage 3, ahead of this knob). Both facts stated, so neither is a claim the resolver could refute.
+  return backgroundByDefault
+    ? "There is no run_in_background override in this session: an ordinary agent you launch runs in the background by default, the same as anywhere else. A fork (see below) always runs in the background regardless."
+    : "There is no run_in_background override in this session: an ordinary agent you launch runs in the foreground by default. A fork (see below) always runs in the background regardless.";
+}
+
+/**
  * research §A3's own structure, Winter-worded, gate-aware.
  *
  * R-S10 (whole-branch review r2 finding 3, controller ruling): a tool DESCRIPTION is multi-sentence
@@ -126,7 +184,6 @@ const FORK_SECTION = [
  * the category the ruling exempts.
  */
 export function renderAgentToolDescription(gates: AgentToolGateState = AGENT_TOOL_GATE_DEFAULTS): string {
-  const backgroundAdvertised = !gates.forkEnabled && !gates.backgroundDisabled;
   const parts = [
     "Spawn a subagent to carry a self-contained piece of a task on your behalf; each agent type brings its own specialization and its own tool access.",
     "The agent types available to you right now are announced in a runtime-injected reminder earlier in this conversation.",
@@ -143,15 +200,16 @@ export function renderAgentToolDescription(gates: AgentToolGateState = AGENT_TOO
       '- Say what "done" looks like, including the form you want the answer back in.',
       "- Do not ask a specialized agent type to do something outside its own specialization (for example, a read-only agent to make an edit) — pick a different type instead.",
     ].join("\n"),
-    backgroundAdvertised
-      ? [
-          "By default, an agent you launch runs in the FOREGROUND: this call does not return until it finishes, and its result comes back as this call's own output. Set run_in_background: true to launch it asynchronously instead — you get a task id and a notification when it completes, and can do other useful work while it runs.",
-        ].join("\n")
-      : undefined,
+    // C1 (fix wave): rewritten for the SDK 0.0.16 background default (`subagents/policy.ts`'s own
+    // stage 5) -- the old text claimed foreground was the default, which stopped being true once
+    // Lane N wired a background completion back to the model as a task notification. `backgroundByDefault`
+    // (I4) is the host's own opt-out of that default, and the paragraph must state whichever is
+    // actually true for THIS session, never a claim `resolveForegroundBackground` would contradict.
+    backgroundSection(gates),
     [
       "When NOT to use the Agent tool:",
       "- For something you can finish yourself in one or two tool calls — delegating adds a round trip for no benefit.",
-      "- When you need the result immediately and there is nothing else useful to do while waiting — prefer the foreground for that, not avoiding the tool.",
+      "- When you need the result immediately and there is nothing else useful to do while waiting — that's what running it in the foreground is for, not a reason to skip the tool.",
       "- To avoid doing the work yourself; a subagent is how you parallelize or offload genuinely separable work, not a way to skip it.",
     ].join("\n"),
     gates.forkEnabled ? FORK_SECTION : undefined,

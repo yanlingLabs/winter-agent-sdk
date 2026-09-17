@@ -342,6 +342,8 @@ export interface ToolExecutionContext {
   env?: Readonly<Record<string, string | undefined>>;
   /** Spawn-surface parity (R-S5): this session's resolved fork gate (RuntimeConfig.forkSubagent, else the env fallback). Absent = resolve from `env`. */
   forkSubagentEnabled?: boolean;
+  /** I4 (fix wave): this session's resolved background-by-default opt-out (RuntimeConfig.backgroundByDefault, else the env fallback). Absent = resolve from `env` (`subagents/policy.ts`'s `resolveBackgroundByDefaultEnabled`). */
+  backgroundByDefault?: boolean;
   /** Spawn-surface parity (R-S5): this engine is itself a forked worker (RuntimeConfig.insideFork) -- a fork may not fork again. */
   insideFork?: boolean;
   /**
@@ -1482,6 +1484,8 @@ export interface RegistryToolExecutorDeps {
   // Spawn-surface parity: mirrors the four ToolExecutionContext fields of the same names.
   env?: Readonly<Record<string, string | undefined>>;
   forkSubagentEnabled?: boolean;
+  // I4 (fix wave): mirrors ToolExecutionContext.backgroundByDefault exactly.
+  backgroundByDefault?: boolean;
   insideFork?: boolean;
   advertisedToolNames?: () => readonly string[];
   // Review r2 finding 2: mirrors ToolExecutionContext.onAgentDefinitionRejected exactly.
@@ -1565,6 +1569,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.agents !== undefined ? { agents: deps.agents } : {}),
         ...(deps.env !== undefined ? { env: deps.env } : {}),
         ...(deps.forkSubagentEnabled !== undefined ? { forkSubagentEnabled: deps.forkSubagentEnabled } : {}),
+        ...(deps.backgroundByDefault !== undefined ? { backgroundByDefault: deps.backgroundByDefault } : {}),
         ...(deps.insideFork !== undefined ? { insideFork: deps.insideFork } : {}),
         ...(deps.advertisedToolNames !== undefined ? { advertisedToolNames: deps.advertisedToolNames } : {}),
         ...(deps.onAgentDefinitionRejected !== undefined ? { onAgentDefinitionRejected: deps.onAgentDefinitionRejected } : {}),
