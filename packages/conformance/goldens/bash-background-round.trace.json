@@ -80,8 +80,10 @@
       "type": "system",
       "subtype": "task_started",
       "task_id": "TASKID",
+      "tool_use_id": "bash-bg-call-1",
       "description": "sleep 10",
-      "is_backgrounded": true
+      "is_backgrounded": true,
+      "task_type": "local_bash"
     }
   },
   {
@@ -94,7 +96,7 @@
       "tasks": [
         {
           "task_id": "TASKID",
-          "task_type": "bash",
+          "task_type": "local_bash",
           "description": "sleep 10"
         }
       ]
