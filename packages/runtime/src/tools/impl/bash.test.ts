@@ -618,6 +618,85 @@ describe("Bash executor (real sandboxed spawn)", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Task-frames parity (2026-09-17 contract §3): the NEW foreground registration/termination path.
+// A command still running past FOREGROUND_REGISTER_MS (2000ms) is registered (task_started,
+// is_backgrounded:false) and reachable by TaskStop; finishing removes the row (no task_updated) and
+// notifies with output_file:"" and summary = the description. A command finishing under 2000ms
+// touches the registry not at all -- proven directly here rather than assumed from the ordinary
+// (sub-2000ms) fixtures throughout this file, none of which ever captured frames at all.
+// ---------------------------------------------------------------------------------------------
+describe("foreground: task-frames parity (contract §3)", () => {
+  beforeEach(() => resetBackgroundTaskRuntimeForTest());
+  afterEach(() => resetBackgroundTaskRuntimeForTest());
+
+  t("a command finishing under 2000ms emits no task frames at all", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+    await bash()({ command: "echo hi" }, ctx);
+    expect(frames).toHaveLength(0);
+  });
+
+  t(
+    "a command still running past 2000ms is registered, then removed and notified on finish -- output_file:'', summary is the description, no usage, no task_updated, no background_tasks_changed",
+    async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), toolUseId: "call-fg" });
+      const res = await bash()({ command: "sleep 2.5" }, ctx);
+      expect(res.isError).toBeFalsy();
+
+      expect(frames).toHaveLength(2);
+      const started = frames[0] as { subtype: string; task_id: string; tool_use_id?: string; description: string; is_backgrounded: boolean; task_type: string };
+      expect(started.subtype).toBe("task_started");
+      expect(started.tool_use_id).toBe("call-fg");
+      expect(started.description).toBe("sleep 2.5");
+      expect(started.is_backgrounded).toBe(false);
+      expect(started.task_type).toBe("local_bash");
+
+      const notif = frames[1] as { subtype: string; task_id: string; tool_use_id?: string; status: string; output_file: string; summary: string; usage?: unknown };
+      expect(notif.subtype).toBe("task_notification");
+      expect(notif.task_id).toBe(started.task_id);
+      expect(notif.tool_use_id).toBe("call-fg");
+      expect(notif.status).toBe("completed");
+      expect(notif.output_file).toBe("");
+      expect(notif.summary).toBe("sleep 2.5");
+      expect(notif.usage).toBeUndefined();
+
+      // The row is REMOVED, not updated -- unlike every other kind's own foreground/background
+      // termination, this is the one remove-without-task_updated path (§3).
+      expect(getTask(started.task_id)).toBeUndefined();
+    },
+    10_000,
+  );
+
+  t(
+    "a command still running past 2000ms that exits non-zero notifies status:failed",
+    async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      await bash()({ command: "sleep 2.5; exit 1" }, ctx);
+      const notif = frames.find((f) => f.subtype === "task_notification") as { status: string };
+      expect(notif.status).toBe("failed");
+    },
+    10_000,
+  );
+
+  t(
+    "an aborted foreground command (still past 2000ms) notifies status:stopped",
+    async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const controller = new AbortController();
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), signal: controller.signal });
+      const promise = bash()({ command: "sleep 10" }, ctx);
+      setTimeout(() => controller.abort(), 2200);
+      await promise;
+      const notif = frames.find((f) => f.subtype === "task_notification") as { status: string };
+      expect(notif.status).toBe("stopped");
+    },
+    15_000,
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
 // Phase 6 Task 3 (R6-6, P4 carry): `ctx.signal` kills the in-flight process GROUP.
 //
 // `runCommand` already had every piece of this -- `detached: true` makes the child its own group
