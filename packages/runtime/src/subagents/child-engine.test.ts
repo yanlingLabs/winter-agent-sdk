@@ -15,7 +15,7 @@ import { runEngine, createContextAccountant, type Provider } from "../engine.ts"
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
-import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest, type ChildInheritance } from "./child-handle.ts";
+import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest, type ChildInheritance, type ChildTaskProgress } from "./child-handle.ts";
 // Phase 5 Task 8: the two child threads with no fixture of their own until now.
 import { createStructuredOutputSeam } from "../structured/ajv-seam.ts";
 import { SkillIndex } from "../skills/store.ts";
@@ -2508,6 +2508,95 @@ describe("child-engine.ts: P5-J -- a child's spend rolls up into the owning sess
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ==================================================================================================
+// Task-frames parity (2026-09-17 contract §4): `SpawnChildRequest.onProgress`'s own counting math,
+// end to end through a REAL child engine (never a fake ChildHandle) -- the same P5-J precedent
+// (a hand-written child Provider whose `generate()` scripts `usage` per turn) applied to the NEW
+// per-turn progress counter rather than the pre-existing cumulative-spend one.
+// ==================================================================================================
+describe("child-engine.ts: task-frames parity §4 -- onProgress usage/tool_uses math, and ChildResult.usage at settle", () => {
+  test("two tool_use turns accumulate {total_tokens, tool_uses} correctly per call; a trailing text-only turn never fires onProgress but IS included in ChildResult.usage at settle", async () => {
+    const PROGRESS_PROBE = "t_taskframes_progress_probe";
+    const progressCalls: ChildTaskProgress[] = [];
+    registerTool({
+      descriptor: {
+        canonicalName: PROGRESS_PROBE,
+        advertisedName: PROGRESS_PROBE,
+        source: "builtin",
+        inputSchema: { type: "object" },
+        description: "spawns a child with onProgress wired, returns the settled result's usage",
+        exposure: "eager",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx: ToolExecutionContext) {
+          if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+          const req: SpawnChildRequest = { ...(input as SpawnChildRequest), onProgress: (p) => progressCalls.push(p) };
+          const handle = await ctx.session.spawnChild(req);
+          const result = await handle.result();
+          return { output: JSON.stringify({ status: result.status, content: result.content, usage: result.usage }) };
+        },
+      },
+    });
+    cleanupToolNames.push(PROGRESS_PROBE);
+
+    // Turn 1: tool_use, usage {input:100, output:20} -- no cache fields (absent reads as 0, per the
+    // contract's own counting formula).
+    // Turn 2: tool_use, usage {input:150, output:30, cacheRead:10, cacheWrite:5}.
+    // Turn 3: text only (settles the child) -- usage {input:200, output:15}, never seen by
+    // onProgress (no tool_use block), but must still land in ChildResult.usage at settle.
+    let childTurn = 0;
+    const childProvider: Provider = {
+      async generate() {
+        childTurn++;
+        if (childTurn === 1) return { kind: "tool_use", calls: [{ id: "c1", name: "ReadNotifications", input: {} }], usage: { inputTokens: 100, outputTokens: 20 } };
+        if (childTurn === 2) return { kind: "tool_use", calls: [{ id: "c2", name: "ScheduleWakeup", input: {} }], usage: { inputTokens: 150, outputTokens: 30, cacheReadTokens: 10, cacheWriteTokens: 5 } };
+        return { kind: "text", text: "child finished", usage: { inputTokens: 200, outputTokens: 15 } };
+      },
+    };
+
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "go", runInBackground: false };
+    const { code, frames } = await driveParent(
+      { provider: childProvider },
+      baseConfig({ permissions: { allow: [PROGRESS_PROBE, "ReadNotifications", "ScheduleWakeup"] } }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: PROGRESS_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(childTurn, "the child really ran three generations").toBe(3);
+
+    // --- onProgress: fired exactly twice, once per tool_use-bearing turn ------------------------
+    expect(progressCalls).toHaveLength(2);
+
+    // Turn 1's own progress: total_tokens = latest turn's (input + cacheWrite + cacheRead) + SUM of
+    // every turn's output so far = (100 + 0 + 0) + 20 = 120. tool_uses = 1 (cumulative so far).
+    expect(progressCalls[0]).toMatchObject({ toolUses: 1, totalTokens: 120, lastToolName: "ReadNotifications" });
+    expect(progressCalls[0]!.durationMs).toBeGreaterThanOrEqual(0);
+
+    // Turn 2's own progress: total_tokens = latest turn's (150 + 5 + 10) + SUM of output so far
+    // (20 + 30 = 50) = 165 + 50 = 215. tool_uses = 2 (cumulative).
+    expect(progressCalls[1]).toMatchObject({ toolUses: 2, totalTokens: 215, lastToolName: "ScheduleWakeup" });
+    expect(progressCalls[1]!.durationMs).toBeGreaterThanOrEqual(progressCalls[0]!.durationMs);
+
+    // --- ChildResult.usage at settle: includes the TRAILING text-only turn, which onProgress never
+    // saw at all -- total_tokens = turn 3's own (200 + 0 + 0) + SUM of every turn's output
+    // (20 + 30 + 15 = 65) = 200 + 65 = 265. tool_uses stays 2 (the text turn adds no tool_use block).
+    // Every "user" message, not just the first -- the child's OWN tool_result frames (for its
+    // "ReadNotifications"/"ScheduleWakeup" calls) are forwarded to the parent stream unconditionally
+    // (WS-10 §4: tool_use/tool_result always forward, independent of forwardSubagentText), so
+    // PROGRESS_PROBE's own "call-1" result is not necessarily the FIRST "user" frame.
+    const userMsgs = dataMessages(frames).filter((m) => m.type === "user") as unknown as Array<{ message: { content: Array<{ tool_use_id: string; content: string }> } }>;
+    const block = userMsgs.flatMap((m) => m.message.content).find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(block.content) as { status: string; content: string; usage: { totalTokens: number; toolUses: number; durationMs: number } };
+    expect(parsed.status).toBe("completed");
+    expect(parsed.content).toBe("child finished");
+    expect(parsed.usage).toEqual({ totalTokens: 265, toolUses: 2, durationMs: parsed.usage.durationMs });
+    expect(parsed.usage.durationMs).toBeGreaterThanOrEqual(progressCalls[1]!.durationMs);
   });
 });
 
