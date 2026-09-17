@@ -1021,3 +1021,122 @@ describe("Agent tool: review r1 regressions", () => {
     expect(listTasks()).toHaveLength(0);
   });
 });
+
+// ================================================================================================
+// SDK 0.0.16 Lane P (R3b §4): ctx.agentAvailability -- the seam engine.ts wires from
+// permissions/evaluator.ts's findAgentDenyRule + subagents/availability.ts, exercised here
+// standalone (constructed by hand, exactly like `forkSubagentEnabled`/`insideFork` above) so this
+// file's own resolution-region logic is proven independent of a full engine/query() setup.
+// ================================================================================================
+describe("Agent tool: agentAvailability (SDK 0.0.16 Lane P, R3b §4)", () => {
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-avail-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+
+  function capturing(): { ctx: ToolExecutionContext; reqs: SpawnChildRequest[] } {
+    const reqs: SpawnChildRequest[] = [];
+    const home = mkTempDir("winter-agent-test-avail-home-");
+    const { ctx } = makeCtx({ home, spawnChild: async (req) => (reqs.push(req), fakeHandle(Promise.resolve({ status: "completed", content: "ok" }))) });
+    return { ctx, reqs };
+  }
+
+  test("a denied type refuses with claude's exact text and never spawns, even when it still resolves by name", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Plan", "claude", "general-purpose"],
+      unavailableMessage: (t) => (t === "Explore" ? "Agent type 'Explore' has been denied by permission rule 'Agent(Explore)' from sdk." : undefined),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'Explore' has been denied by permission rule 'Agent(Explore)' from sdk.", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("Agent(fork) is deniable exactly like any other type -- fork gate ON, but denied", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan", "claude", "general-purpose"],
+      unavailableMessage: (t) => (t === "fork" ? "Agent type 'fork' has been denied by permission rule 'Agent(fork)' from user." : undefined),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: true, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'fork' has been denied by permission rule 'Agent(fork)' from user.", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("a type excluded by allowedAgentTypes reuses the plain not-found shape, listing ONLY the allowed names", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan"],
+      unavailableMessage: () => undefined,
+    });
+    // "claude" genuinely EXISTS (it is a default-on built-in) but is not in the allowed set.
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "claude" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'claude' not found. Available agents: Explore, Plan", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("omitted subagent_type with general-purpose excluded from availableNames -> the required-type refusal, listing only what IS available", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan", "claude"],
+      unavailableMessage: () => undefined,
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "subagent_type is required: the general-purpose agent is not available in this session. Available agents: Explore, Plan, claude", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("omitted subagent_type WITH general-purpose available -- unaffected by an unrelated restriction", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "general-purpose"],
+      unavailableMessage: () => undefined,
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, { ...ctx, agentAvailability: avail });
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.definition?.tools).toEqual(["*"]);
+  });
+
+  test("all-tools-denied: its own exact text, distinct from a per-type deny rule's wording", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan", "general-purpose"],
+      unavailableMessage: (t) => (t === "claude" ? "Agent type 'claude' is unavailable because every tool it may use is denied by the current permission settings." : undefined),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "claude" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'claude' is unavailable because every tool it may use is denied by the current permission settings.", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("no agentAvailability wired at all -- byte-identical to the pre-existing unrestricted behavior", async () => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.definition?.omitProjectContext).toBe(true);
+  });
+
+  test("builtinAgentType is stamped on the request ONLY for a resolved built-in, never a same-named filesystem override", async () => {
+    const home = mkTempDir("winter-agent-test-avail-home2-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "explore-override.md"), "---\nname: Explore\ndescription: a user's own Explore\n---\nYou are a custom explorer.");
+    const reqs: SpawnChildRequest[] = [];
+    const { ctx } = makeCtx({ home, spawnChild: async (req) => (reqs.push(req), fakeHandle(Promise.resolve({ status: "completed", content: "ok" }))) });
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, ctx);
+    expect(reqs[0]?.builtinAgentType).toBeUndefined();
+    expect(reqs[0]?.definition?.description).toBe("a user's own Explore");
+  });
+
+  test("builtinAgentType IS stamped for the real built-in Explore", async () => {
+    const { ctx, reqs } = capturing();
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, ctx);
+    expect(reqs[0]?.builtinAgentType).toBe("Explore");
+  });
+});
