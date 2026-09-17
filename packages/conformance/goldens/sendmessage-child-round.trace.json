@@ -71,7 +71,8 @@
             "name": "Agent",
             "input": {
               "description": "message target",
-              "prompt": "child probe text"
+              "prompt": "child probe text",
+              "run_in_background": false
             }
           }
         ]
