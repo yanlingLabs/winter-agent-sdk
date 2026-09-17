@@ -19,10 +19,10 @@
 // produce -- an assembler that returns the right string and an engine that drops it look identical
 // from the assembler's own tests.
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import type { AgentListingEntry } from "./agent-listing.ts";
+import type { ContextEntry } from "./request-layout.ts";
 
-// RULING R5-17 (pre-flight scan T5<->T6): Lane S produces this listing, Lane C consumes it through
-// `SystemPromptInput.skillListing`, and neither lane may define it -- it lives here, in the spine,
+// RULING R5-17 (pre-flight scan T5<->T6): Lane S produces this listing, Lane C consumes it (SDK 0.0.16:
+// as the engine's persisted `skill_listing` attachment, context/attachments.ts), and neither lane may define it -- it lives here, in the spine,
 // so the two sides cannot drift. `source` distinguishes where a skill was discovered, which is what
 // makes the listing gate-able (project-sourced skills are settings-SOURCE-gated per P5-A, not
 // trust-gated) and orderable.
@@ -53,9 +53,10 @@ export type OutputStyle = string;
  * an assembler is trivially testable from a literal, and the engine can compute this once per
  * envelope and reuse it for every provider call in that turn without re-reading the world mid-turn.
  *
- * `env`/`platform`/`osVersion`/`shell`/`date`/`gitSummary` are the "dynamic section" inputs (R5-9);
- * whether they land in `system` or move into the first user-context block is `excludeDynamicSections`'
- * job, which lives inside `config.systemPrompt`'s preset arm, not here.
+ * `env`/`platform`/`osVersion`/`shell`/`model` feed the `# Environment` section; `date` feeds the
+ * userContext `currentDate` entry (SDK 0.0.16). Whether the environment and auto-memory sections land
+ * in `system` or move into the index-0 userContext is `excludeDynamicSections`' job, which lives inside
+ * `config.systemPrompt`'s preset arm, not here.
  */
 export interface SystemPromptInput {
   config: RuntimeConfig;
@@ -64,10 +65,13 @@ export interface SystemPromptInput {
   platform: string;
   osVersion: string;
   shell: string;
+  /** The session's LOCAL calendar date, `YYYY-MM-DD` (claude's `currentDate`). */
   date: string;
-  gitSummary?: string;
+  /** SDK 0.0.16: the model id this session generates with, for the `# Environment` model line. */
+  model?: string;
+  /** SDK 0.0.16: the model's display name, when the host's catalog knows one. */
+  modelDisplayName?: string;
   memoryDir?: string;
-  skillListing?: SkillListing;
   outputStyle?: OutputStyle;
   planMode: boolean;
   hostPlanBody?: string;
@@ -84,34 +88,12 @@ export interface SystemPromptInput {
    */
   agentPrompt?: string;
   /**
-   * Spawn-surface parity (research §A3, scope item 3): the `Agent`-tool listing block -- "Available
-   * agent types for the Agent tool:" plus later-turn deltas. Absent (every pre-existing caller, and
-   * any turn where the `Agent` tool is not advertised at all) contributes nothing to
-   * `userContextBlocks`; the assembler makes NO capability decision of its own about whether `Agent`
-   * is advertised -- `entries` arriving empty vs. this field arriving absent are the two different
-   * facts "the Agent tool is on but has zero agents" and "the Agent tool is off" respectively, and
-   * only the CALLER (engine.ts, which alone knows this turn's real advertised tool set) can tell them
-   * apart. `entries` is presumed ALREADY FILTERED to what this particular child may see (depth-gating,
-   * a required-MCP-server filter, a deny-rule filter -- research §A3's own three filters; R-S8 defers
-   * the latter two) -- this seam does no filtering.
-   *
-   * `priorAgentTypes` mirrors the seam's own "plain data snapshot, no session-mutable state" rule
-   * (this file's own header): the CALLER holds the cross-turn state (which agentTypes were listed
-   * last time) and hands it in fresh each call, exactly like every other per-turn input here. Omitted
-   * = this session's first listing. The FULL listing renders every turn (these blocks are never
-   * persisted, so a first-turn-only listing would vanish on turn two); a `priorAgentTypes` that
-   * differs from `entries` additionally renders the added/removed delta block.
-   */
-  agentListing?: { entries: AgentListingEntry[]; priorAgentTypes?: readonly string[] };
-  /**
    * Spawn-surface parity (research §A1's `Explore`/`Plan` field table: "`omitClaudeMd: true`;
    * context also drops gitStatus", mirrored on `RuntimeAgentDefinition.omitProjectContext`). When
-   * true, this render OMITS the discovered project-instructions blocks (`discoverWinterMd`'s own
-   * user+project WINTER.md-equivalent files) from `userContextBlocks`, AND omits `gitSummary` from
-   * the dynamic section, even when the caller supplied one. Everything else (the memory index, the
-   * skill listing, the agent listing, the dynamic section's non-git fields) is UNAFFECTED -- claude's
-   * own two dropped things are the instructions file and git status specifically, never the whole
-   * context surface. Absent/false = every pre-existing caller, byte-identical.
+   * true, the index-0 userContext carries NO `claudeMd` entry at all (claude's `omitClaudeMd` drops the
+   * whole value -- the auto-memory index is one of its entries, so it goes too) and the systemContext
+   * `gitStatus` is not produced (`systemContextPlacement: "none"`). Everything else -- the date, the
+   * environment and auto-memory sections, the listings -- is unaffected.
    */
   omitProjectContext?: boolean;
 }
@@ -119,58 +101,51 @@ export interface SystemPromptInput {
 /**
  * What the assembler produces.
  *
- * `system` goes on `ProviderRequest.system` verbatim.
+ * `system` goes on `ProviderRequest.system` (with the systemContext appended by the engine).
  *
- * `userContextBlocks` are prepended to THIS TURN'S user message on the live request only -- never
- * pushed into the engine's own message history and never persisted (Ruling P1-B keeps the engine
- * storage-agnostic, and a block that entered history would be re-sent, re-summarized and
- * re-persisted on every later turn). They are re-attached every turn, which is what "always injected
- * as user-context, never system text" (R5-9) means operationally for WINTER.md and the memory index.
+ * SDK 0.0.16 (P16-5): NOTHING IS ATTACHED TO THE TURN'S USER MESSAGE ANY MORE. The instructions
+ * files and the memory index are the index-0 userContext (`SystemPromptAssembler.userContext`,
+ * memoized per session by the engine); the listings are persisted attachments
+ * (context/attachments.ts). `userContextBlocks` is gone.
  *
  * `presetVersion` is the version stamp of whichever authored prompt produced `system`, for
- * conformance/diagnostics.
- *
- * RIDER 14 (seam-doc correction). This used to read "Absent when no preset was involved", and Lane C
- * ships something stricter than that wording allows: the MINIMAL arm is stamped too
- * (`winter_minimal@1`), even though R5-9 calls it an "authored minimal prompt" rather than a preset.
- * RATIFIED, and the reason is the field's own stated purpose -- leaving the DEFAULT arm unstamped
- * would make the most common session in existence the one you cannot identify from the assembled
- * result. P5-G's companion clause says the same ("the minimal default prompt is versioned too,
- * `winter_minimal@<n>`").
- *
- * The rule the field actually follows, stated so a future reader does not have to infer it from two
- * implementations: **absent exactly when WINTER AUTHORED NOTHING**. The caller-supplied `string` and
- * `string[]` arms are correctly unstamped; `undefined` and the preset arm are stamped.
+ * conformance/diagnostics -- absent exactly when WINTER AUTHORED NOTHING (the caller-supplied
+ * `string` and `string[]` arms), stamped for `undefined` (`winter_minimal@<n>`) and the preset arm.
  */
 export interface AssembledPrompt {
   system: string;
-  userContextBlocks: string[];
+  /**
+   * SDK 0.0.16: `system` before it was joined -- the static (cacheable) half, the dynamic half, and
+   * whether the region has a dynamic boundary at all. The engine turns these into claude's cache
+   * blocks (`buildSystemBlocks`). Absent (a test double) = `system` is one uncached-scope block and the
+   * request carries no `systemBlocks`.
+   */
+  systemParts?: { staticParts: string[]; dynamicParts: string[]; hasBoundary: boolean };
+  /**
+   * SDK 0.0.16: where the engine puts the systemContext `gitStatus` snapshot -- `system` (the last
+   * system part, the default layout), `userContext` (the FIRST index-0 entry, under
+   * `excludeDynamicSections`), or `none` (a caller-supplied prompt, an `omitProjectContext` agent,
+   * the kill switch, `includeGitInstructions: false`). Absent = `none`.
+   */
+  systemContextPlacement?: "system" | "userContext" | "none";
   presetVersion?: string;
   /**
    * Phase 5 Task 8 (rider 22, RULING P5-G): TRUE when a PROJECT-tier output style asked to replace
    * Winter's authored prompt (`keep-coding-instructions: false`) and the assembler downgraded it to
-   * an append because the host has not declared workspace trust.
-   *
-   * P5-G says the downgrade "is observable". Before this field it was observable only on
-   * `resolveOutputStyle`'s own return value -- a function no host calls and no wire frame carries --
-   * so the ruling held inside `context/output-styles.ts` and nowhere a caller could see it. A
-   * checked-in style silently doing less than it says is exactly the kind of thing an operator needs
-   * told; ABSENT (never `false`) when nothing was downgraded, so a session with no project style is
-   * byte-identical to one from before this field existed.
+   * an append because the host has not declared workspace trust. ABSENT (never `false`) otherwise.
    */
   replacementDowngraded?: boolean;
-  /**
-   * Spawn-surface parity: present exactly when `SystemPromptInput.agentListing` was given -- the
-   * sorted agentType set THIS render saw (`renderAgentListing`'s own return), so the caller can hand
-   * it back as next turn's `agentListing.priorAgentTypes` without re-deriving the sort/dedupe itself.
-   * Absent when `agentListing` was absent, matching every other field on this shape's own "absent
-   * means the input didn't ask for it" convention.
-   */
-  agentListingTypes?: string[];
 }
 
 export interface SystemPromptAssembler {
   assemble(input: SystemPromptInput): AssembledPrompt;
+  /**
+   * SDK 0.0.16 (P16-5): the session's userContext entries, in claude's key order -- `claudeMd`, then
+   * `currentDate` (then, under `excludeDynamicSections`, `Environment` and `auto memory`). The ENGINE
+   * memoizes the result per session and clears it on compaction, so this reads the filesystem once
+   * per session context rather than once per turn. Absent = no index-0 message.
+   */
+  userContext?(input: SystemPromptInput): ContextEntry[];
 }
 
 /**
@@ -182,7 +157,8 @@ export interface SystemPromptAssembler {
  */
 export function fakeSystemPromptAssembler(opts?: {
   system?: string;
-  userContextBlocks?: string[];
+  /** SDK 0.0.16: the userContext entries the fake answers (absent = none, so no index-0 message). */
+  userContext?: ContextEntry[];
   presetVersion?: string;
   /** Records every input the engine handed over, in call order -- the "was it called per turn, with what?" assertion. */
   calls?: SystemPromptInput[];
@@ -193,9 +169,9 @@ export function fakeSystemPromptAssembler(opts?: {
       const system = opts?.system ?? `[fake-assembler] cwd=${input.cwd} platform=${input.platform} planMode=${input.planMode}${input.agentPrompt !== undefined ? ` agentPrompt=${input.agentPrompt}` : ""}`;
       return {
         system,
-        userContextBlocks: opts?.userContextBlocks ?? [],
         ...(opts?.presetVersion !== undefined ? { presetVersion: opts.presetVersion } : {}),
       };
     },
+    ...(opts?.userContext !== undefined ? { userContext: () => [...opts.userContext!] } : {}),
   };
 }

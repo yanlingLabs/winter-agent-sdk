@@ -260,6 +260,60 @@ export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "
     .filter((entry) => entry.content.length > 0);
 }
 
+// --- prompt caching (0.0.16 request layout) -------------------------------------------------------
+//
+// claude 0.3.250 marks prompt-cache breakpoints in two places, and this adapter mirrors both:
+//   - SYSTEM: the prompt goes as text blocks, and every block whose cache scope is not `null` carries
+//     `cache_control: {type: "ephemeral"}`.
+//   - MESSAGES: the LAST message's LAST content block carries the same marker (claude's
+//     `addCacheBreakpoints` on the final message), so the byte-stable conversation prefix -- the
+//     index-0 context, the persisted attachments, every earlier turn -- is read from cache.
+//
+// `scope: "global"` is NOT sent. claude adds it only when its own first-party global-cache beta is
+// negotiated (its `Tce()` gate); without that beta the pinned binary itself sends a plain
+// `{type: "ephemeral"}` on both blocks (captured against a loopback endpoint), which is what this
+// adapter sends. Disclosed deviation: Winter does not negotiate that beta.
+//
+// OPT-IN BY SHAPE: only a request carrying `systemBlocks` (the engine's 0.0.16 layout) is marked,
+// AND only for a model whose row DECLARES `promptCaching: true`.
+//
+// Fix wave (I3, whole-branch review): this used to read `descriptor?.promptCaching?.value !== false`,
+// which treats an UNDECLARED row (`descriptor` absent entirely, or present with no `promptCaching`
+// evidence at all) the same as an explicit `true` -- opt-OUT by shape, not opt-in. That is wrong for
+// every one of the Anthropic-DIALECT sibling providers (a proxy/reseller that never ran the evidence
+// capture this catalog field requires) and for `allowUnlisted` passthrough, both of which reach this
+// adapter with `descriptor` undefined or promptCaching-silent and got array-shaped, `cache_control`-
+// marked `system` blocks they never declared support for. `=== true` requires the row to say so.
+export function promptCachingLayout(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): boolean {
+  if (req.systemBlocks === undefined) return false;
+  return descriptor?.promptCaching?.value === true;
+}
+
+const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" } as const;
+
+/** `systemBlocks` -> the wire `system` array, cache-marked per block scope. Empty blocks are dropped (claude's `filter(Boolean)`). */
+export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: "global" | "org" | null }[]): Record<string, unknown>[] {
+  return blocks
+    .filter((block) => block.text.length > 0)
+    .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...EPHEMERAL_CACHE_CONTROL } } : {}) }));
+}
+
+/** The message-level breakpoint: a copy of `messages` whose last message's last block carries the marker. */
+export function withMessageCacheMarker(messages: Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }>): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
+  if (messages.length === 0) return messages;
+  const out = messages.slice();
+  const last = out[out.length - 1]!;
+  if (last.content.length === 0) return out;
+  const content = last.content.slice();
+  const tail = content[content.length - 1]!;
+  // An in-dialect thinking block cannot carry a cache marker; claude never ends a request on one
+  // either (the final message is the user's), so this only guards a host-supplied history.
+  if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return out;
+  content[content.length - 1] = { ...tail, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
+  out[out.length - 1] = { ...last, content };
+  return out;
+}
+
 // --- capability resolution ------------------------------------------------------------------------
 
 /** Looks a descriptor up by provider + the id/alias/key the request named. `undefined` for an `allowUnlisted` passthrough, which is a FACT the checks below fail closed on. */
@@ -446,12 +500,14 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     throw capabilityRefusal(`thinking budget ${budget} does not fit inside max_tokens ${maxTokens}; the budget must be strictly smaller`);
   }
 
+  const caching = promptCachingLayout(req, descriptor);
+  const wireMessages = toWireMessages(req.messages);
   return {
     model: req.model,
     max_tokens: maxTokens,
-    messages: toWireMessages(req.messages),
+    messages: caching ? withMessageCacheMarker(wireMessages) : wireMessages,
     stream: true,
-    ...(req.system !== undefined ? { system: req.system } : {}),
+    ...(caching && req.systemBlocks !== undefined ? { system: toWireSystemBlocks(req.systemBlocks) } : req.system !== undefined ? { system: req.system } : {}),
     ...(req.tools !== undefined && req.tools.length > 0
       ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) }
       : {}),

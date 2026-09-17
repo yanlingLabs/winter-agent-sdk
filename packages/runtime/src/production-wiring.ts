@@ -89,7 +89,7 @@ import { rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
  * something to ask for.
  */
 const LISTING_PROBE_SLOT_NAME = "probe";
-import type { PricedUsage, ProviderUsage, ResolveModelSwitch } from "./engine.ts";
+import type { EngineOptions, PricedUsage, ProviderUsage, ResolveModelSwitch } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -432,6 +432,8 @@ export interface ProductionWiring {
     initPlugins: readonly InitPluginInfo[];
     initOutputStyle: string;
     skillListing: SkillListing;
+    /** SDK 0.0.16: the catalog's model display names for the `# Environment` model line. */
+    describeModel: NonNullable<EngineOptions["describeModel"]>;
   };
   /**
    * Mirrors handed to `registerDefaultChildEngineFactory`, so a CHILD engine gets the same context
@@ -455,7 +457,7 @@ export interface ProductionWiring {
   childFactoryOptions: Required<
     Pick<
       DefaultChildEngineFactoryOptions,
-      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider"
+      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel"
     >
   >;
   /**
@@ -897,6 +899,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
   const slotCatalog = providerWiring.catalog;
 
+  // SDK 0.0.16: the `# Environment` model line names the model the way the catalog does. A key, a
+  // provider-local id or an alias all resolve; an unlisted model (the reserved test namespace
+  // included) keeps the bare-id line.
+  const describeModel = (model: string): { displayName?: string } | undefined => {
+    const row = slotCatalog.models.find((m) => m.key === model || m.upstreamId === model || m.aliases.includes(model));
+    return row !== undefined && row.displayName.length > 0 ? { displayName: row.displayName } : undefined;
+  };
+
   /**
    * WHETHER THIS SESSION HAS A SLOT SURFACE AT ALL.
    *
@@ -1262,6 +1272,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       initPlugins,
       initOutputStyle,
       skillListing,
+      // SDK 0.0.16: the `# Environment` model line names the model the way the catalog does. A key,
+      // a provider-local id or an alias all resolve; an unlisted model (the reserved test namespace
+      // included) keeps the bare-id line.
+      describeModel,
     },
     childFactoryOptions: {
       systemPromptAssembler,
@@ -1272,6 +1286,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // job -- `register-default-factory.ts` had to name it too, or the spread dropped it silently;
       // see that file's own note.)
       skillListing,
+      describeModel,
       // NEW-4: the settings seed. Everything else in this object is a mirror of what the parent got;
       // this was the one whose absence was a security boundary rather than a context difference.
       settingsRules,

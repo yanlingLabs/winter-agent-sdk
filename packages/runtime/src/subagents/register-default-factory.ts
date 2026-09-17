@@ -34,7 +34,7 @@ import type { SkillSessionRuntime } from "../skills/runtime.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
 import type { SourcedHookEntry } from "../hooks/registry.ts";
 import type { CompactionController } from "../compaction/seam.ts";
-import type { EngineSettingsRuleSeed } from "../engine.ts";
+import type { EngineOptions, EngineSettingsRuleSeed } from "../engine.ts";
 import type { SkillListing } from "../context/seam.ts";
 
 export interface DefaultChildEngineFactoryOptions {
@@ -96,6 +96,8 @@ export interface DefaultChildEngineFactoryOptions {
    * for why the `getParentRules` mirror is the wrong vehicle for it.
    */
   settingsRules?: EngineSettingsRuleSeed;
+  /** SDK 0.0.16: the catalog's model display names, for a child's own `# Environment` line. */
+  describeModel?: EngineOptions["describeModel"];
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -167,6 +169,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       // Residual round: the two that were declared upstream and never arrived (see this interface).
       ...(opts.skillListing !== undefined ? { skillListing: opts.skillListing } : {}),
       ...(opts.settingsRules !== undefined ? { settingsRules: opts.settingsRules } : {}),
+      ...(opts.describeModel !== undefined ? { describeModel: opts.describeModel } : {}),
     }),
   );
 }

@@ -342,6 +342,8 @@ export interface ToolExecutionContext {
   env?: Readonly<Record<string, string | undefined>>;
   /** Spawn-surface parity (R-S5): this session's resolved fork gate (RuntimeConfig.forkSubagent, else the env fallback). Absent = resolve from `env`. */
   forkSubagentEnabled?: boolean;
+  /** I4 (fix wave): this session's resolved background-by-default opt-out (RuntimeConfig.backgroundByDefault, else the env fallback). Absent = resolve from `env` (`subagents/policy.ts`'s `resolveBackgroundByDefaultEnabled`). */
+  backgroundByDefault?: boolean;
   /** Spawn-surface parity (R-S5): this engine is itself a forked worker (RuntimeConfig.insideFork) -- a fork may not fork again. */
   insideFork?: boolean;
   /**
@@ -358,6 +360,31 @@ export interface ToolExecutionContext {
    * read the task's output file at all (`Read`/`Bash` present). A getter: the set can move mid-run.
    */
   advertisedToolNames?: () => readonly string[];
+  /**
+   * SDK 0.0.16 Lane P (R3b §4): this session's live Agent-type availability -- `Agent(type)` deny
+   * rules, `allowedAgentTypes`, and "every tool it may use is denied" -- built fresh per call
+   * (never cached) so a live rule/settings change is reflected without a restart, mirroring
+   * `probeReadAccess`'s own "cheap, side-effect-free, re-derived per call" precedent.
+   * `tools/impl/agent.ts` is the one consumer: it resolves a requested `subagent_type` against the
+   * FULL definitions map (a denied/not-allowed type still names itself in the refusal, never a bare
+   * "not found"), then asks this closure whether the resolved name is available right now and why
+   * not. Structurally typed (no `SourcedRuleEntry`/evaluator.ts import here, matching this
+   * interface's own `onAgentDefinitionRejected` precedent immediately above) -- engine.ts builds
+   * both the name list and the per-type message from its own `permissions/evaluator.ts` +
+   * `subagents/availability.ts` imports, and hands this seam only the already-formatted result.
+   */
+  agentAvailability?: () => {
+    /** Names available right now -- deny rules, allowedAgentTypes and all-tools-denied already applied. Used for "Available agents: ..." refusal text and the omitted-type default's own availability check. */
+    availableNames: readonly string[];
+    /**
+     * Exact refusal prose for a type that EXISTS in the full definitions map but is refused for a
+     * reason OTHER than `allowedAgentTypes` (a per-type deny rule, or "every tool it may use is
+     * denied") -- `undefined` when neither applies (including when the type does not exist at all,
+     * or is merely excluded by `allowedAgentTypes` -- claude reuses the plain not-found shape for
+     * that case, built by the caller from `availableNames` above).
+     */
+    unavailableMessage: (agentType: string) => string | undefined;
+  };
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
@@ -1457,10 +1484,14 @@ export interface RegistryToolExecutorDeps {
   // Spawn-surface parity: mirrors the four ToolExecutionContext fields of the same names.
   env?: Readonly<Record<string, string | undefined>>;
   forkSubagentEnabled?: boolean;
+  // I4 (fix wave): mirrors ToolExecutionContext.backgroundByDefault exactly.
+  backgroundByDefault?: boolean;
   insideFork?: boolean;
   advertisedToolNames?: () => readonly string[];
   // Review r2 finding 2: mirrors ToolExecutionContext.onAgentDefinitionRejected exactly.
   onAgentDefinitionRejected?: (rejection: { source: "user" | "project" | "plugin"; filePath: string; reason: string }) => void;
+  // SDK 0.0.16 Lane P: mirrors ToolExecutionContext.agentAvailability exactly -- see that field's own comment.
+  agentAvailability?: () => { availableNames: readonly string[]; unavailableMessage: (agentType: string) => string | undefined };
   // Phase 4 Task 8 (rider 27): the session's own availability inputs, so this adapter can enforce
   // `isAvailable` AT DISPATCH rather than only at advertisement. Rationale, from Lane C's own I3
   // finding: `AskUserQuestion`'s `availability: { insideSubagent: false }` excluded it from a child's
@@ -1538,9 +1569,11 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.agents !== undefined ? { agents: deps.agents } : {}),
         ...(deps.env !== undefined ? { env: deps.env } : {}),
         ...(deps.forkSubagentEnabled !== undefined ? { forkSubagentEnabled: deps.forkSubagentEnabled } : {}),
+        ...(deps.backgroundByDefault !== undefined ? { backgroundByDefault: deps.backgroundByDefault } : {}),
         ...(deps.insideFork !== undefined ? { insideFork: deps.insideFork } : {}),
         ...(deps.advertisedToolNames !== undefined ? { advertisedToolNames: deps.advertisedToolNames } : {}),
         ...(deps.onAgentDefinitionRejected !== undefined ? { onAgentDefinitionRejected: deps.onAgentDefinitionRejected } : {}),
+        ...(deps.agentAvailability !== undefined ? { agentAvailability: deps.agentAvailability } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);

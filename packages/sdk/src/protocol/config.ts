@@ -316,6 +316,14 @@ export interface RuntimeAgentDefinition {
    * every pre-existing definition's context, unchanged.
    */
   omitProjectContext?: boolean;
+  /**
+   * SDK 0.0.16 Lane P (R3b §5): claude's `whenToUseLean` -- used in place of `description` in the
+   * Agent-tool listing when the session's own model takes the lean prompt (`leanModel`, computed
+   * by `context/agent-listing.ts`'s own caller). Set only on Winter's built-in Explore; every other
+   * definition (Winter's own, or a filesystem/programmatic one) has none, and the listing falls
+   * back to `description` exactly as it always has.
+   */
+  whenToUseLean?: string;
 }
 
 export interface RuntimeConfig {
@@ -408,6 +416,16 @@ export interface RuntimeConfig {
   toolAliases?: Record<string, string>;
   agents?: Record<string, RuntimeAgentDefinition>;
   forwardSubagentText?: boolean;
+  /**
+   * SDK 0.0.16 Lane P (R3b §4): the RUNNING agent's own `Agent(a, b)` restriction, parsed from its
+   * `AgentDefinition.tools` entries by `subagents/definitions.ts`'s own `allowedAgentTypesFromTools`
+   * and threaded onto a CHILD's own RuntimeConfig at spawn (`child-engine.ts`) -- so a session
+   * spawned from a definition with `tools: ["*", "Agent(Explore, Plan)"]` sees only [Explore, Plan]
+   * in ITS OWN listing / `init.agents` / Agent-tool resolution, never the full universe of types
+   * this session could otherwise reach. Absent = unrestricted, the pre-existing behaviour every
+   * session before this field existed keeps. Pure passthrough; query.ts never interprets it.
+   */
+  allowedAgentTypes?: string[];
   // Phase 4 Task 3 (WS-10 §7/§9, WS-07 §11): set ONLY on a CHILD engine's own RuntimeConfig -- a
   // child is, per R4-4, an in-process `runEngine` instance built by Lane C's own ChildEngineDeps.spawn
   // implementation from the spine's `buildChildInheritance`; these two fields are what let that child
@@ -434,6 +452,13 @@ export interface RuntimeConfig {
    * a forked worker may not fork again (claude's own refusal). Never set by `query()`.
    */
   insideFork?: boolean;
+  /**
+   * I4 (fix wave): mirrors `Options.backgroundByDefault` exactly -- see that field's own comment.
+   * `subagents/policy.ts`'s `resolveForegroundBackground` reads it at its own stage 5, AFTER the
+   * `WINTER_DISABLE_BACKGROUND_TASKS` kill switch (stage 2, unrelated and unaffected) and the
+   * invocation's own explicit `run_in_background` (stage 4, always wins when given).
+   */
+  backgroundByDefault?: boolean;
 
   // --- Phase 5 Task 2 (WS-11): the P5 session options' wire mirrors --------------------------------
   //

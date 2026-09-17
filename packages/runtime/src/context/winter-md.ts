@@ -6,11 +6,18 @@
 //
 // The instructions file is INJECTED CONTEXT, never system text. The distinction is the whole point of §6.4:
 // system text is the cacheable, session-stable prefix, while a project's instructions are file
-// content that changes with the repository and must sit where the conversation can see it, be
-// compacted like conversation, and be re-attached rather than baked in. So everything here
-// produces `AssembledPrompt.userContextBlocks` entries and nothing here can reach `system` --
-// which is also why the seam's own doc names the instructions file and the memory index as what "always
-// injected as user-context" means operationally.
+// content that changes with the repository. SDK 0.0.16 (P16-5): everything here feeds ONE value --
+// claude's `claudeMd` userContext entry (`renderInstructionsContext`), sent as the index-0 message of
+// every request and nothing here can reach `system`.
+//
+// DELIBERATE BEHAVIOUR CHANGE (0.0.16). The files used to be RE-READ ON EVERY TURN and re-attached
+// to that turn's user message. The engine now builds the userContext once per session context and
+// rebuilds it only after a compaction (or an explicit `reloadSessionContext`), exactly as claude
+// does: an edit to an instructions file is seen after the next compaction or in a new session.
+//
+// THE LOCAL TIER IS NEW IN 0.0.16. Each directory of the walk also contributes its private
+// `<name>.local.md` (claude's `CLAUDE.local.md`), gated on the `local` setting source. This widens
+// WS-01 §2.4's "one project instructions file" reading, at the 0.0.16 brief's direction.
 //
 // TWO GIT ROOTS, AND THEY ARE NOT THE SAME ROOT. memory-key.ts scopes memory by
 // `--git-common-dir`, deliberately, so linked worktrees SHARE one memory directory. The
@@ -29,7 +36,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { readCapped, systemReminder } from "./injection.ts";
+import { neutralizeReminderTags, readCapped } from "./injection.ts";
 
 /**
  * Winter's OWN instructions basename, derived from the default profile rather than spelled.
@@ -40,18 +47,28 @@ import { readCapped, systemReminder } from "./injection.ts";
 export const WINTER_MD_BASENAME = WINTER_BRAND.instructionsFile;
 
 /**
- * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): a block
- * re-attached to every turn needs a ceiling or one large checked-in file costs the session its
- * window on every request. 32 KB is Norma's shipped instructions cap, carried over.
+ * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): content that
+ * rides every request of a session needs a ceiling or one large checked-in file costs the session
+ * its window on every request. 32 KB is Norma's shipped instructions cap, carried over.
  */
 export const WINTER_MD_MAX_BYTES = 32 * 1024;
 
 export interface WinterMdBlock {
   /** Absolute path of the file this block came from. */
   path: string;
-  scope: "user" | "project";
-  /** The finished, wrapped, injection-safe block -- ready to be a `userContextBlocks` entry. */
+  /** `local` is the per-directory `<name>.local.md` (claude's `CLAUDE.local.md`), gated on the `local` source. */
+  scope: "user" | "project" | "local";
+  /**
+   * SDK 0.0.16: the file's CONTENT (capped, a literal `<system-reminder>` tag neutralised) --
+   * unwrapped, since it now renders as one entry of the index-0 userContext's `claudeMd` value
+   * (`renderInstructionsContext`) rather than as its own reminder block.
+   */
   text: string;
+}
+
+/** `<name>.md` -> `<name>.local.md`: claude's `CLAUDE.local.md` convention with the session's own basename. */
+export function localInstructionsBasename(instructionsFile: string): string {
+  return instructionsFile.toLowerCase().endsWith(".md") ? `${instructionsFile.slice(0, -3)}.local.md` : `${instructionsFile}.local`;
 }
 
 // Memoised `resolved cwd -> worktree toplevel (or null)`. Same reasoning as memory-key.ts's cache:
@@ -158,27 +175,57 @@ export interface WinterMdInput {
 export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
   const sources = input.settingSources ?? (["user", "project", "local"] as const);
   const basename = (input.brand ?? WINTER_BRAND).instructionsFile;
+  const localBasename = localInstructionsBasename(basename);
   const blocks: WinterMdBlock[] = [];
-
-  if (sources.includes("user")) {
-    const path = join(input.home, basename);
+  const read = (path: string, scope: WinterMdBlock["scope"]): void => {
     const body = readCapped(path, WINTER_MD_MAX_BYTES);
-    if (body !== null) {
-      blocks.push({ path, scope: "user", text: systemReminder(`User instructions, auto-loaded from ${path}. These are standing preferences, not something the user typed this turn.`, body) });
-    }
-  }
+    if (body !== null) blocks.push({ path, scope, text: neutralizeReminderTags(body) });
+  };
 
-  // `local` is deliberately NOT a second instructions tier: WS-01 §2.4 gives the project exactly one
-  // instructions file, and `settings.local.json` is the local tier's whole surface.
-  if (sources.includes("project")) {
+  if (sources.includes("user")) read(join(input.home, basename), "user");
+
+  // SDK 0.0.16: each directory of the walk contributes its checked-in file (the `project` source)
+  // and then its private `<name>.local.md` (the `local` source) -- claude's per-directory order,
+  // `CLAUDE.md` before `CLAUDE.local.md`.
+  const includeProject = sources.includes("project");
+  const includeLocal = sources.includes("local");
+  if (includeProject || includeLocal) {
     for (const dir of instructionDirectories(input.cwd)) {
-      const path = join(dir, basename);
-      const body = readCapped(path, WINTER_MD_MAX_BYTES);
-      if (body !== null) {
-        blocks.push({ path, scope: "project", text: systemReminder(`Project instructions, auto-loaded from ${path}. These are checked in with the repository, not something the user typed this turn.`, body) });
-      }
+      if (includeProject) read(join(dir, basename), "project");
+      if (includeLocal) read(join(dir, localBasename), "local");
     }
   }
 
   return blocks;
+}
+
+// --- the claudeMd value (SDK 0.0.16, P16-5) ----------------------------------------------------------
+//
+// claude 0.3.250's `THt`, ported: the fixed header, then one `Contents of <path><label>:` entry per
+// file (content trimmed), joined by blank lines. The header and the labels are claude's own strings
+// (the brief's ruling); the paths are Winter's own files.
+
+export const INSTRUCTIONS_CONTEXT_HEADER =
+  "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.";
+
+export type InstructionsContextKind = WinterMdBlock["scope"] | "auto-memory";
+
+const INSTRUCTIONS_CONTEXT_LABELS: Record<InstructionsContextKind, string> = {
+  project: " (project instructions, checked into the codebase)",
+  local: " (user's private project instructions, not checked in)",
+  "auto-memory": " (user's auto-memory, persists across conversations)",
+  user: " (user's private global instructions for all projects)",
+};
+
+export interface InstructionsContextFile {
+  path: string;
+  kind: InstructionsContextKind;
+  content: string;
+}
+
+/** The `claudeMd` userContext value, or `undefined` when no file has content (the key is then omitted). */
+export function renderInstructionsContext(files: readonly InstructionsContextFile[]): string | undefined {
+  const entries = files.filter((f) => f.content.length > 0).map((f) => `Contents of ${f.path}${INSTRUCTIONS_CONTEXT_LABELS[f.kind]}:\n\n${f.content.trim()}`);
+  if (entries.length === 0) return undefined;
+  return `${INSTRUCTIONS_CONTEXT_HEADER}\n\n${entries.join("\n\n")}`;
 }

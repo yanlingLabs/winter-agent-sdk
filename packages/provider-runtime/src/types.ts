@@ -145,11 +145,39 @@ export interface ProviderMessageLike {
   nativeState?: ProviderNativeState;
   /** A Winter-authored annotation shown to the model (a handoff note, a foreign-reasoning summary) — carried plainly, never dressed as signed thinking (R6-8). */
   decoration?: { text: string; door: "tag" | "thinking-channel" };
+  /**
+   * 0.0.16 request layout: a PERSISTED attachment (claude's `type: "attachment"` transcript entry).
+   * The message's `content` is the attachment's rendered, `<system-reminder>`-wrapped text; this
+   * field carries the attachment payload itself. Bookkeeping only -- no adapter reads it.
+   */
+  meta?: { attachment: { type: string; [k: string]: unknown } };
+  /** 0.0.16 request layout: the per-request userContext message at index 0 (never persisted). Bookkeeping only. */
+  isMeta?: true;
+}
+
+/**
+ * 0.0.16 request layout: one system-prompt block and the cache scope claude assigns it.
+ *
+ * `global` is the cross-session static prefix, `org` the session-specific rest (including the
+ * systemContext lines), `null` a block that is never cache-marked. An adapter with a native
+ * block-level cache marker maps the scope onto it; every other adapter sends `TurnRequest.system`,
+ * which is always these texts joined by a blank line.
+ */
+export interface SystemPromptBlock {
+  text: string;
+  cacheScope: "global" | "org" | null;
 }
 
 export interface TurnRequest {
   model: string;
   system?: string;
+  /**
+   * 0.0.16 request layout: `system` split into claude's cache blocks. When present, `system` is
+   * exactly `systemBlocks.map(b => b.text).join("\n\n")` -- an adapter that has no block-level cache
+   * marker ignores this field and sends `system`. Its presence is also the request layout's opt-in
+   * to message-level prompt-cache markers (see the Anthropic adapter).
+   */
+  systemBlocks?: SystemPromptBlock[];
   messages: ProviderMessageLike[];
   tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   toolChoice?: { type: "auto" } | { type: "any" } | { type: "tool"; name: string };

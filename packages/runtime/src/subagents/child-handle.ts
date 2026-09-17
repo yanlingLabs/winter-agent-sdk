@@ -17,6 +17,7 @@ import type { McpServerStateSource } from "../mcp/state.ts"; // type-only -- see
 import type { McpControlSeam } from "../mcp/control-seam.ts"; // type-only
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
 import type { ProviderMessage } from "../engine.ts"; // type-only -- see this file's own header; no runtime cycle (Bun/tsc erase `import type` entirely)
+import type { SessionRequestLayout } from "../context/request-layout.ts"; // type-only -- same no-cycle reasoning as ProviderMessage above
 import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging"; // type-only; the messaging contract is published (R-7b-4), so this is an ordinary one-way import now
 
 // --- Lane C implements; Lane D consumes ONLY these (verbatim from the brief's Interfaces block) ---
@@ -143,6 +144,19 @@ export interface SpawnChildRequest {
   runInBackground: boolean;
   isolation?: "worktree";
   name?: string;
+  /**
+   * SDK 0.0.16 Lane P (R3b §5): the RESOLVED `subagent_type`, set ONLY when the definition
+   * `tools/impl/agent.ts` resolved came from `_source === "builtin"` -- i.e. Winter's own shipped
+   * definition, never a same-named user/project/plugin/programmatic override that merely shadows
+   * one. `SourcedAgentDefinition._source` (subagents/definitions.ts) does not survive onto
+   * `ResolvedAgentDefinition`/`RuntimeAgentDefinition` (a wire shape with no such field), so this is
+   * the one channel by which engine.ts's own `resolveChildModel` -- which sees only this request,
+   * never the definitions map -- can tell "this child IS the built-in Explore" from "this child is
+   * merely named 'Explore'" for the Explore model cap (R3b §5). Absent for every fork, every
+   * non-built-in definition, and every hand-built request in a test fixture that predates this
+   * field -- byte-identical to before it existed.
+   */
+  builtinAgentType?: string;
   // Phase 5 Task 3 (R5-10): the child's own structured-output contract. Set by Lane W's `agent({schema})`
   // so a workflow-spawned agent rides the IDENTICAL StructuredOutput path the top-level session uses
   // -- registration, validation, the retry counter and the exhaustion result are all the engine's,
@@ -248,6 +262,21 @@ export interface ChildInheritance {
    * child whose model came from `AgentDefinition.model` host-side rather than from the tool).
    */
   slot?: { family: string; name: string; source: ActiveSlotSet["source"] };
+  /**
+   * SDK 0.0.16 (P16-7, R3a §2): a FORK's exact inherited request layout -- the parent's LAST rendered
+   * system prompt/blocks, its exact advertised tool specs (names/order/schemas), and its userContext
+   * entries, all captured verbatim from `context/request-layout.ts`'s own per-session memo
+   * (`getSessionRequestLayout`) at the moment this fork was spawned. `subagents/child-engine.ts`
+   * hands this straight to the child's own `runEngine()` as `EngineOptions.exactRequestLayout`, which
+   * bypasses that engine's OWN system-prompt assembly, tool-spec rendering and userContext build
+   * entirely -- the byte-exactness WS-10 §3.5 ("inherits... system prompt... tool pool... verbatim")
+   * needs cannot survive a second independent render, however faithful.
+   *
+   * Fork-only, mirroring `messages` above -- never set for a definition-backed or bare child, which
+   * render their own system prompt/tools normally (WS-10 §2's own per-child restriction concept has
+   * no equivalent for "send the parent's exact bytes").
+   */
+  requestLayout?: SessionRequestLayout;
 }
 
 // engine.ts's own spawn seam: Lane C supplies the implementation via a registered factory (below);

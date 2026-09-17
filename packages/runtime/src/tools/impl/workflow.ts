@@ -17,6 +17,7 @@ import { isAbsolute, join } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/workflow.ts"; // self-sufficiency: the "Workflow" stub must be registered before replaceExecutor runs
 import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { renderWorkflowNotification } from "../../subagents/notification-queue.ts";
 import { createBackgroundTask, wireTaskType } from "../background-tasks.ts";
 import { getWorkflowSession, type WorkflowSessionRuntime } from "../../workflows/host-registry.ts";
 import { WorkflowRuntime, WorkflowRuntimeError, type WorkflowRuntimeDeps, type WorkflowLaunchResult } from "../../workflows/runtime.ts";
@@ -142,7 +143,18 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           // terminal status here would flip an already-terminal row and emit a stray task_updated
           // for no reason (the notification itself is already claimed once either way).
           if (getTask(taskId)?.status === "running") {
-            updateTask(taskId, { status: "completed", endTime: Date.now(), notification: { summary: renderSummary(result) } });
+            updateTask(taskId, {
+              status: "completed",
+              endTime: Date.now(),
+              notification: {
+                summary: renderSummary(result),
+                // SDK 0.0.16 Lane N: the MODEL-facing document. The pin's workflow shape --
+                // `Dynamic workflow "<name>" completed`, the FULL result in `<result>` (the frame's
+                // own summary is a 500-char preview), and a `<usage>` block that leads with
+                // `<agent_count>`.
+                modelNotification: renderWorkflowNotification({ taskId, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), outputFile: outputPath, status: "completed", name: description, result: renderResultText(result) }),
+              },
+            });
           }
           emitBackgroundTasksChanged(ctx);
         },
@@ -158,7 +170,15 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           // and truncating it into a 500-char preview is how a debuggable error becomes an opaque one.
           writeTaskOutput(outputPath, error);
           if (getTask(taskId)?.status === "running") {
-            updateTask(taskId, { status, endTime: Date.now(), notification: { summary: error } });
+            updateTask(taskId, {
+              status,
+              endTime: Date.now(),
+              notification: {
+                summary: error,
+                // Lane N: `failed: <error>` / `was stopped`, per the pin's own two failure wordings.
+                modelNotification: renderWorkflowNotification({ taskId, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), outputFile: outputPath, status, name: description, ...(status === "failed" ? { error } : {}) }),
+              },
+            });
           }
           emitBackgroundTasksChanged(ctx);
         },

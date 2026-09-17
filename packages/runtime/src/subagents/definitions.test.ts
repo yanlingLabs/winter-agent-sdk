@@ -12,6 +12,7 @@ import {
   formatAgentNotFound,
   formatAgentAmbiguous,
   toAgentInfoList,
+  allowedAgentTypesFromTools,
   type AgentDefinitionRejection,
   type SourcedAgentDefinition,
 } from "./definitions.ts";
@@ -400,5 +401,36 @@ describe("validateAgentDefinition (WS-10 §2 Skill-tool requirement, validation 
 
   test("skills set with tools entirely omitted (implicit 'all tools') still warns -- Skill must be explicit", () => {
     expect(validateAgentDefinition({ description: "d", prompt: "p", skills: ["a"] }).length).toBe(1);
+  });
+});
+
+describe("allowedAgentTypesFromTools (SDK 0.0.16 Lane P, R3b §4)", () => {
+  test("undefined tools -> unrestricted", () => {
+    expect(allowedAgentTypesFromTools(undefined)).toBeUndefined();
+  });
+
+  test("no Agent(...) entry at all -> unrestricted, whether wildcard or an explicit ordinary list", () => {
+    expect(allowedAgentTypesFromTools(["*"])).toBeUndefined();
+    expect(allowedAgentTypesFromTools(["Bash", "Read"])).toBeUndefined();
+  });
+
+  test('tools: ["*", "Agent(Explore, Plan)"] restricts to [Explore, Plan] -- every other tool entry is untouched by this function', () => {
+    expect(allowedAgentTypesFromTools(["*", "Agent(Explore, Plan)"])).toEqual(["Explore", "Plan"]);
+  });
+
+  test("a single-name Agent(a) entry restricts to just that one name", () => {
+    expect(allowedAgentTypesFromTools(["Bash", "Agent(general-purpose)"])).toEqual(["general-purpose"]);
+  });
+
+  test("whitespace around each comma-separated name is trimmed", () => {
+    expect(allowedAgentTypesFromTools(["Agent( Explore ,  Plan )"])).toEqual(["Explore", "Plan"]);
+  });
+
+  test("several Agent(...) entries union their names", () => {
+    expect(allowedAgentTypesFromTools(["Agent(Explore)", "Agent(Plan)"])).toEqual(["Explore", "Plan"]);
+  });
+
+  test("fork is an ordinary name like any other", () => {
+    expect(allowedAgentTypesFromTools(["*", "Agent(fork)"])).toEqual(["fork"]);
   });
 });

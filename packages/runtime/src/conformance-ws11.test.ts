@@ -346,11 +346,11 @@ const WS11_10: ConformanceRow[] = [
   {
     id: "WS11-07b",
     spec: "WS-11 §10",
-    bullet: "system prompt: `excludeDynamicSections` moves dynamic content to the FIRST user block",
+    bullet: "system prompt: `excludeDynamicSections` moves dynamic content to the FIRST user block (SDK 0.0.16: the index-0 userContext, under claude's section-heading keys)",
     status: "covered",
     citations: [
-      { file: "./context/assembler.test.ts", testName: `true MOVES the dynamic block out of \`system\` and makes it the FIRST user-context block` },
-      { file: "./context/assembler.test.ts", testName: `false / absent keeps the dynamic block in \`system\`` },
+      { file: "./context/assembler.test.ts", testName: `true MOVES the machine half of the environment and the auto-memory guidance into the userContext, keyed by heading` },
+      { file: "./context/assembler.test.ts", testName: `false / absent keeps both sections in the system prompt's dynamic half` },
       { file: "./context/assembler.test.ts", testName: `it is INERT for a string prompt` },
     ],
   },
@@ -360,7 +360,7 @@ const WS11_10: ConformanceRow[] = [
     bullet: "system prompt: `WINTER.md` arrives as CONTEXT, never as system-prompt concatenation",
     status: "covered",
     citations: [
-      { file: "./context/assembler.test.ts", testName: `WINTER.md never reaches \`system\`, and the pinned order is dynamic (if moved) -> user -> project -> memory` },
+      { file: "./context/assembler.test.ts", testName: `WINTER.md and the memory index never reach \`system\`; claudeMd is user -> project -> memory under claude's header and labels` },
       { file: "./context/winter-md.test.ts", testName: `the walk collects every WINTER.md from the repo root down to the cwd, OUTERMOST FIRST` },
       { file: "./context/winter-md.test.ts", testName: `a WINTER.md ABOVE the repo root is never read -- the walk stops at the toplevel` },
     ],
@@ -666,7 +666,7 @@ const WS11_10: ConformanceRow[] = [
     status: "deferred",
     owningPhase: "T3 + Lane C (the declaration is the contract Winter builds to; `memory_paths` is the one with a P5 consumer)",
     note:
-      "`analytics_disabled`, `product_feedback_disabled`, `memory_paths`, `messaging_socket_path`. A declaration-driven Winter init frame omits all four SILENTLY. `memory_paths` is directly load-bearing for §3/§6.3 -- Winter does surface the memory directory, but in the DYNAMIC SECTIONS and the auto-memory user-context block rather than on a wire field, which is a different contract for a host that reads init.",
+      "`analytics_disabled`, `product_feedback_disabled`, `memory_paths`, `messaging_socket_path`. A declaration-driven Winter init frame omits all four SILENTLY. `memory_paths` is directly load-bearing for §3/§6.3 -- Winter does surface the memory directory, but in the system prompt's `# auto memory` section (SDK 0.0.16) rather than on a wire field, which is a different contract for a host that reads init.",
   },
   {
     id: "WS11-R2f",

@@ -87,6 +87,47 @@ describe("Anthropic Messages: the live request", () => {
     );
   });
 
+  test("0.0.16 request layout: systemBlocks go as cache-marked system blocks and the last message block carries the breakpoint", async () => {
+    // claude 0.3.250's placement, read off the LIVE request: `system` is an array of text blocks,
+    // each non-null scope marked `{type:"ephemeral"}` (no `scope` -- Winter does not negotiate the
+    // global-cache beta), and the final message's final block is the message-level breakpoint.
+    const adapter = createAnthropicMessagesAdapter({ catalog: testAnthropicCatalog() });
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: ANTHROPIC_MODELS.main,
+          system: "static\n\ndynamic",
+          systemBlocks: [
+            { text: "static", cacheScope: "global" },
+            { text: "dynamic", cacheScope: "org" },
+          ],
+          messages: [{ role: "user", content: [{ type: "text", text: "<system-reminder>\nctx\n</system-reminder>\n\n" }, { type: "text", text: "hello" }] }],
+        },
+        testContext(fake.url),
+      );
+      const body = anthropicBody(fake.requests[0]!);
+      expect(body["system"]).toEqual([
+        { type: "text", text: "static", cache_control: { type: "ephemeral" } },
+        { type: "text", text: "dynamic", cache_control: { type: "ephemeral" } },
+      ]);
+      expect(messageBlocks(fake.requests[0]!, 0)).toEqual([
+        { type: "text", text: "<system-reminder>\nctx\n</system-reminder>\n\n" },
+        { type: "text", text: "hello", cache_control: { type: "ephemeral" } },
+      ]);
+    });
+  });
+
+  test("0.0.16 request layout: a request WITHOUT systemBlocks keeps the plain string system and no cache markers", async () => {
+    const adapter = createAnthropicMessagesAdapter({ catalog: testAnthropicCatalog() });
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, system: "plain", messages: [{ role: "user", content: "hello" }] }, testContext(fake.url));
+      const body = anthropicBody(fake.requests[0]!);
+      expect(body["system"]).toBe("plain");
+      expect(fake.requests[0]!.body).not.toContain("cache_control");
+    });
+  });
+
   test("`anthropic-beta` rides as a PROTOCOL header, and a tool role becomes a user message", async () => {
     const adapter = testAnthropicAdapter({ betas: ["fake-beta-1", "fake-beta-2"] });
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {

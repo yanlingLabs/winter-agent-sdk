@@ -4,9 +4,11 @@ import { WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-ag
 //
 //   agent-team constraints
 //     -> WINTER_DISABLE_BACKGROUND_TASKS
-//       -> fork mode (interactive default: on -> background; SDK default: off)
+//       -> a fork (always background)
 //         -> the invocation's run_in_background
 //           -> whether the result is immediately needed
+//             -> backgroundByDefault (I4, fix wave: a host's own opt-out of the 0.0.16 default)
+//               -> background (SDK 0.0.16's default, as in claude)
 //
 // Read as a chain of overrides (highest-priority first), not a "first non-empty wins" precedence
 // list the way the model chain (WS-10 §3.1) is: each stage can still be overridden by a LATER one
@@ -27,10 +29,11 @@ import { WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-ag
 //   4. The fork-mode default establishes a BASE answer; the invocation's own explicit request (when
 //      given) overrides that base -- "an invocation request, not the whole rule" reads naturally as
 //      "the model's own ask wins over an ambient default," never the reverse.
-//   5. With NO explicit invocation request, "is the result needed immediately" is consulted as the
-//      deciding tie-break -- this is the one case WS-10 explicitly forbids hard-coding a fixed
-//      answer for ("Winter MUST NOT hard-code 'omitted means foreground' or 'omitted means
-//      background' independent of mode and settings").
+//   5. With NO explicit invocation request, "is the result needed immediately" is consulted first (no
+//      caller supplies it today), and the final answer is BACKGROUND -- SDK 0.0.16, matching claude,
+//      whose own formula is "background unless run_in_background is explicitly false". WS-10's
+//      "MUST NOT hard-code ... independent of mode and settings" is satisfied by the two things that
+//      still decide it: the host kill switch (stage 2) and the invocation's own flag (stage 4).
 export type ForegroundBackgroundDecision = { background: boolean; reason: string };
 
 export interface ResolveForegroundBackgroundInput {
@@ -53,6 +56,15 @@ export interface ResolveForegroundBackgroundInput {
   // sees either way) -- this parameter exists as a real decision point for a future non-tool caller
   // whose own control flow could genuinely differ.
   resultNeededImmediately?: boolean;
+  /**
+   * I4 (fix wave): the CALLER's own already-resolved `RuntimeConfig.backgroundByDefault` (never
+   * re-derived here from `env` a second time -- `resolveBackgroundByDefaultEnabled` below is the one
+   * place that env fallback lives, exactly like `resolveBackgroundTasksDisabled` is for stage 2).
+   * `false` restores the 0.0.15 default (foreground) at stage 5 alone; it never touches the kill
+   * switch, a definition's own force, a fork, or the invocation's own explicit request -- all of
+   * which still win outright, exactly as before this knob existed.
+   */
+  backgroundByDefault?: boolean;
   env?: Record<string, string | undefined>;
   /** P7a (D19): the session's brand -- the background kill switch's env NAME. Omitted = `WINTER_BRAND`. */
   brand?: Pick<BrandProfile, "envPrefix">;
@@ -60,6 +72,21 @@ export interface ResolveForegroundBackgroundInput {
 
 function isTruthyEnv(v: string | undefined): boolean {
   return v === "1" || v === "true";
+}
+
+/**
+ * Spawn-surface parity (I4, fix wave): the STAGE 5 opt-out alone, exported -- mirrors
+ * `resolveBackgroundTasksDisabled`'s own precedent (the one place its env read lives, so
+ * `tools/descriptors/agent.ts`'s schema/description functions and `tools/impl/agent.ts` never
+ * re-derive it). Falsy values ("0"/"false"/"no"/"off", case/whitespace-insensitive) restore the
+ * 0.0.15 default (foreground); anything else, INCLUDING ABSENT, keeps the 0.0.16 default
+ * (background) -- the opposite polarity from every other env flag in this module, because the
+ * thing being toggled here is itself already the default, not an opt-in feature.
+ */
+export function resolveBackgroundByDefaultEnabled(env: Record<string, string | undefined> = process.env, brand?: Pick<BrandProfile, "envPrefix">): boolean {
+  const raw = env[envName(brand ?? WINTER_BRAND, "BACKGROUND_BY_DEFAULT")]?.trim().toLowerCase();
+  if (raw === undefined || raw.length === 0) return true;
+  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
 }
 
 // RULING R4-7: a project `agents/*.md` loads only in a TRUSTED workspace (a checked-in definition is
@@ -118,19 +145,45 @@ export function resolveForegroundBackground(input: ResolveForegroundBackgroundIn
     return { background: true, reason: "AgentDefinition.background" };
   }
 
-  // Stage 3: fork-mode base default.
-  const forkDefault = input.isFork && input.interactiveDefault === true;
+  // Stage 3: a FORK always runs in the background (R3a §2: the pin's fork definition forces it, and a
+  // fork inherits the parent's live conversation precisely so the parent can carry on meanwhile).
+  // Ranked here, above the invocation's own request, for the same "force" reading as
+  // `definitionBackground` above it.
+  if (input.isFork) {
+    return { background: true, reason: "fork" };
+  }
 
-  // Stage 4: the invocation's own explicit choice overrides the base default.
+  // Stage 4: the invocation's own explicit choice.
   if (input.invocationRequest !== undefined) {
     return { background: input.invocationRequest, reason: "invocation run_in_background" };
   }
 
-  // Stage 5: no explicit request -- consult "is the result needed immediately" rather than
-  // defaulting silently.
+  // Stage 5: no explicit request -- a caller that can say whether it needs the result immediately is
+  // still asked (no Winter caller does today; kept as the seam it has always been).
   if (input.resultNeededImmediately !== undefined) {
     return { background: !input.resultNeededImmediately, reason: "result-needed" };
   }
 
-  return { background: forkDefault, reason: input.isFork ? "fork mode default" : "SDK default (foreground)" };
+  // I4 (fix wave): a host's own programmatic opt-out of the 0.0.16 default, BELOW every real
+  // override above (a definition's own force, a fork, and the invocation's own explicit request all
+  // still win outright) -- this stage decides only the TERMINAL fallback two hosts could otherwise
+  // disagree about. `resolveBackgroundByDefaultEnabled` is the one place its own env fallback lives;
+  // `input.backgroundByDefault` is the caller's already-merged (config ?? env) verdict.
+  const backgroundByDefault = input.backgroundByDefault ?? resolveBackgroundByDefaultEnabled(env, input.brand);
+  if (!backgroundByDefault) {
+    return { background: false, reason: envName(input.brand ?? WINTER_BRAND, "BACKGROUND_BY_DEFAULT") };
+  }
+
+  // SDK 0.0.16 Lane N: BACKGROUND IS THE DEFAULT, as in claude -- whose own formula reduces to
+  // "background unless `run_in_background: false`" once past its kill switch (spawn-surface research
+  // §A2's `background default` line). This was blocked by R-S7 for one concrete reason, now gone: the
+  // engine never told the model about a background completion, so an un-flagged spawn would have been
+  // fire-and-forget. It now does -- mid-turn after a tool round, or as its own turn -- and a
+  // closed-input session holds its `result` until that has happened
+  // (`subagents/notification-queue.ts`, `engine.ts`'s own wind-down).
+  //
+  // `WINTER_DISABLE_BACKGROUND_TASKS` (stage 2) remains the kill switch that restores the old
+  // behaviour wholesale, and an explicit `run_in_background: false` still runs one spawn in the
+  // foreground.
+  return { background: true, reason: "SDK default (background)" };
 }

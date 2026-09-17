@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { homedir, release as osRelease } from "node:os";
+import { homedir, release as osRelease, type as osType } from "node:os";
 // Phase 5 fix wave, I1: `buildBaselineDenyRules` compares the resolved winter root against the
 // literal default, so it needs path resolution.
 import { join, resolve } from "node:path";
@@ -73,7 +73,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 // types can live down there while `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay up here.
 // `TurnRequest` is imported for its `toolChoice`/`effort`/`thinking` member types, so the engine's
 // request and an adapter's request cannot drift apart on the three fields they share.
-import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
 import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
@@ -129,7 +129,7 @@ import { getChildEngineFactory, transformChildFrame, type ChildHandle, type Chil
 import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-adapter.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
-import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
+import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
@@ -147,6 +147,10 @@ import {
   // Phase 5 Task 3 (R5-11): the SAME write-path extraction the permission layer uses -- see the
   // checkpoint call site for why a second extraction would be a correctness bug, not a duplication nit.
   extractCandidateWritePaths,
+  // SDK 0.0.16 Lane P (R3b §4): the STANDALONE Agent(type) deny-rule lookup -- see its own header
+  // for why it is never woven into evaluate()'s stage-2 deny lookup above.
+  findAgentDenyRule,
+  agentTypeDeniedMessage,
   type PermissionCall,
   type EvaluationContext,
 } from "./permissions/evaluator.ts";
@@ -175,10 +179,33 @@ const SKILL_TOOL_ADVERTISED_NAME = "Skill";
 import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-registry.ts";
 import { resolveProjectDirName } from "./paths/project-dir-name.ts";
 import { createAgentDefinitionRejectionReporter, loadAgentDefinitions, toAgentInfoList, type PluginAgentDefinition, type SourcedAgentDefinition } from "./subagents/definitions.ts";
+// SDK 0.0.16 Lane P (R3b §4): the pure listing filters -- see availability.ts's own header for why
+// `isEnabled` (a required-MCP-server check) has no production implementation here.
+import { availableAgentNames, isBuiltinAllToolsDenied } from "./subagents/availability.ts";
 import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
-import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
+import { ForkRequestLayoutUnavailableError } from "./subagents/fork.ts";
+import { resolveBackgroundTasksDisabled, resolveBackgroundByDefaultEnabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
 import type { AgentListingEntry } from "./context/agent-listing.ts";
+import { attachmentMessage, dateChangeAnnounced, localDateString, skillListingResumeSeed, type AttachmentPayload, type DateChangeAttachment, type SkillListingAttachment } from "./context/attachments.ts";
+import { notificationQueueFor, clearNotificationQueue, taskNotificationAttachment, withNotificationPreamble, type SessionNotificationQueue } from "./subagents/notification-queue.ts";
+import { computeAgentListingDelta } from "./context/agent-listing.ts";
+import {
+  buildRequestMessages,
+  buildSystemBlocks,
+  clearSessionRequestLayout,
+  getSessionRequestLayout,
+  joinSystemBlocks,
+  recordSessionRequestLayout,
+  registerSessionContextReload,
+  renderSystemContext,
+  renderUserContext,
+  unregisterSessionContextReload,
+  type ContextEntry,
+  type SessionRequestLayout,
+} from "./context/request-layout.ts";
+import { computeGitStatus } from "./context/git-status.ts";
+import { renderSkillListingContent } from "./skills/listing.ts";
 import { getPluginAgents } from "./subagents/plugin-agents.ts";
 import { getSkillSessionRuntime } from "./skills/runtime.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
@@ -250,7 +277,7 @@ import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
 // task's own notification apart from a background one -- see the `emitFrame` closure below for why.
-import { getTask, stopSessionShellTasks, listRunningTasks, toBackgroundTasksChangedEntry } from "./tools/impl/background-task-runtime.ts";
+import { getTask, stopSessionShellTasks, listSessionRunningTasks, sweepSessionBackgroundTasks, listRunningTasks, toBackgroundTasksChangedEntry } from "./tools/impl/background-task-runtime.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
@@ -359,6 +386,21 @@ export interface ProviderMessage {
    * `thinking` block with a fabricated signature.
    */
   decoration?: { text: string; door: "tag" | "thinking-channel" };
+  /**
+   * 0.0.16 request layout (P16-5/P16-6): a PERSISTED ATTACHMENT -- claude's `type: "attachment"`
+   * transcript entry. The message is a `user`-role entry in the engine's history whose `content` is
+   * the attachment's rendered, `<system-reminder>`-wrapped text; `attachment` is the payload the
+   * transcript stores and the history folds read back (context/attachments.ts). It is placed right
+   * after the user prompt or tool results that triggered it, persisted through
+   * `SessionPersistence.recordAttachmentEntry`, and survives resume.
+   */
+  meta?: { attachment: AttachmentPayload };
+  /**
+   * 0.0.16 request layout: the per-request userContext message (claude's `mbt`) at INDEX 0 of the
+   * live request. Never in the engine's history and never persisted; it only appears on an outbound
+   * request whose first history message it could not be merged into (context/request-layout.ts).
+   */
+  isMeta?: true;
 }
 
 // M6 (fix wave, P3 close-out): the advisor's own TranscriptSource wants plain {role, text} entries
@@ -433,6 +475,13 @@ export interface ProviderRequest {
    * host supplied no system prompt", never as an error.
    */
   system?: string;
+  /**
+   * 0.0.16 request layout (P16-5): `system` as claude's ordered cache blocks -- the static prefix
+   * (`global`), then the session-specific rest with the systemContext lines appended LAST (`org`).
+   * When present, `system` equals the texts joined by a blank line, so a provider that only reads
+   * `system` sees the same prompt.
+   */
+  systemBlocks?: SystemPromptBlock[];
   // --- Phase 6 Task 3 (R6-3): everything a REAL adapter needs, all optional, all additive ----------
   /**
    * The session's ADVERTISED tool set with real JSON Schemas -- what an adapter puts in the request's
@@ -817,8 +866,36 @@ export interface ToolExecutor {
 // recordUserEntry (the dialect has only user/assistant roles — the "tool" role above is internal to
 // this engine's own history, never persisted as such); assistant text/tool_use both route through
 // recordAssistantEntry as content blocks. Entirely optional — the engine runs fine without a store.
+/**
+ * SDK 0.0.16: one extra attachment producer (`EngineOptions.attachmentProducers`). `messages` is the
+ * engine's live history -- after a compaction, claude's post-boundary slice -- for folds to read.
+ */
+export type AttachmentProducer = (ctx: {
+  phase: "turn-start" | "tool-round" | "compaction";
+  messages: readonly ProviderMessage[];
+  sessionId: string;
+  agentId?: string;
+}) => AttachmentPayload[] | Promise<AttachmentPayload[]>;
+
+/**
+ * SDK 0.0.16 Lane N: what marks a user entry as one the RUNTIME wrote rather than the human. claude's
+ * own transcript shape: `isMeta: true` plus an `origin` naming why the turn exists (today only
+ * `{kind: "task-notification"}`). Optional on both sides -- a store that ignores it records exactly
+ * what it recorded before.
+ */
+export interface UserEntryMeta {
+  isMeta?: boolean;
+  origin?: { kind: string; [k: string]: unknown };
+}
+
 export interface SessionPersistence {
-  recordUserEntry(content: string | ContentBlock[]): void | Promise<void>;
+  recordUserEntry(content: string | ContentBlock[], opts?: UserEntryMeta): void | Promise<void>;
+  /**
+   * SDK 0.0.16 (P16-5/P16-6): one persisted attachment -- claude's `{type: "attachment", attachment}`
+   * transcript entry, chained like any other. Optional: a store without it keeps the attachment in
+   * this run's memory only (a resumed session then re-announces it).
+   */
+  recordAttachmentEntry?(attachment: AttachmentPayload): void | Promise<void>;
   /**
    * Phase 6 Task 3 (R6-7): `opts.uuid` PRE-ALLOCATES the entry's own dialect uuid.
    *
@@ -1027,11 +1104,26 @@ export interface EngineOptions {
 
   /**
    * R5-16: prompt assembly (Lane C). Called once per user envelope; its `system` goes on the live
-   * `ProviderRequest`, its `userContextBlocks` are prepended to that envelope's own user message on
-   * the request only. ABSENT => the engine sends `agentSystemPrompt` (or nothing) and authors no
-   * text of its own -- see context/seam.ts.
+   * `ProviderRequest`. SDK 0.0.16: its `userContext()` builds the index-0 context message, memoized
+   * per session (context/request-layout.ts). ABSENT => the engine sends `agentSystemPrompt` (or
+   * nothing), no index-0 message, and authors no text of its own -- see context/seam.ts.
    */
   systemPromptAssembler?: SystemPromptAssembler;
+  /**
+   * SDK 0.0.16 (P16-5/P16-6): extra PERSISTED-ATTACHMENT producers, run by the attachment scan at the
+   * start of every turn, after every tool round and after a compaction -- after the built-in ones
+   * (agent listing, skill listing, date change). Whatever they return is appended to the history as
+   * attachment messages (context/attachments.ts), persisted, and sent in claude's positions. The
+   * reusable door for other lanes' attachments (task notifications, plan-mode reminders).
+   */
+  attachmentProducers?: readonly AttachmentProducer[];
+  /**
+   * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
+   * knows one (production wiring answers from the catalog). Absent => the bare-id line.
+   */
+  describeModel?: (model: string) => { displayName?: string } | undefined;
+  /** SDK 0.0.16: the engine's clock for the `currentDate` entry and the `date_change` fold. Tests only; absent => `new Date()`. */
+  now?: () => Date;
   /**
    * R5-3 / P4-J retirement: the child persona a subagent runs with (`AgentDefinition.prompt`
    * composed over any inherited base). Reaches the assembler as `SystemPromptInput.agentPrompt`, and
@@ -1046,6 +1138,19 @@ export interface EngineOptions {
    * summary for this run. Never set by a top-level host.
    */
   omitProjectContext?: boolean;
+  /**
+   * SDK 0.0.16 (P16-7, R3a §2): a FORK child's exact inherited request layout -- set ONLY by
+   * `subagents/child-engine.ts`'s own fork branch, from `ChildInheritance.requestLayout`, never by a
+   * top-level host. When present, this run's system prompt, tool specs and userContext are sent
+   * EXACTLY as captured (`assemblePrompt`/`ensureSessionContext`/`requestSystem`/`providerToolSpecs`
+   * below all short-circuit to it) -- never re-rendered, however faithfully, because WS-10 §3.5's
+   * "inherits... system prompt... tool pool... verbatim" cannot survive a second independent render
+   * (a different registry snapshot, a different git status, a different local clock all touch the
+   * SAME bytes claude's own fork keeps frozen). `systemPromptAssembler`/`agentSystemPrompt` are never
+   * consulted while this is set -- not even to build the FIRST-turn input, which a fork never needs
+   * one for (its own directive rides `initialMessages`, not `agentSystemPrompt`).
+   */
+  exactRequestLayout?: SessionRequestLayout;
   /**
    * R5-14: slash-command resolution (Lane S owns the filesystem half; the engine owns the built-ins
    * and the ordering between them). Consulted BEFORE the model sees a prompt. ABSENT => only the
@@ -1133,8 +1238,12 @@ export interface EngineOptions {
    * gap exactly -- a listing tells the model to "call the `Skill` tool", and a session with a
    * restricted `tools` list would be instructed to call a tool it does not have. `Skill` is in the
    * pinned default 24 (capture (g)), so the default path is unaffected.
+   *
+   * SDK 0.0.16: rendered as claude's persisted `skill_listing` attachment -- once, then only the
+   * skills not yet sent (session state, seeded on resume, kept across compaction). A GETTER is read
+   * afresh at every attachment scan, which is how a skill added mid-session reaches the model.
    */
-  skillListing?: SkillListing;
+  skillListing?: SkillListing | (() => SkillListing);
   /**
    * Phase 5 fix wave, C1: the settings-file `permissions` block, per tier.
    *
@@ -1667,6 +1776,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     systemPromptAssembler,
     agentSystemPrompt,
     omitProjectContext,
+    exactRequestLayout,
+    attachmentProducers,
+    describeModel,
+    now: engineClock,
     commandResolver,
     compactionController,
     structuredOutput,
@@ -1795,6 +1908,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // Spawn-surface parity (R-S5): the fork gate, resolved once per run -- the RuntimeConfig field
   // wins in either direction, the env var is the fallback, and absent-and-unset is off.
   const forkSubagentEnabled = config.forkSubagent ?? resolveForkSubagentEnabled(engineEnv ?? process.env, sessionBrand);
+  // I4 (fix wave): the background-by-default opt-out, resolved once per run the same way -- the
+  // RuntimeConfig field wins in either direction, the env var is the fallback, and absent-and-unset
+  // keeps the 0.0.16 default (background).
+  const backgroundByDefault = config.backgroundByDefault ?? resolveBackgroundByDefaultEnabled(engineEnv ?? process.env, sessionBrand);
   const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
@@ -2560,10 +2677,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // this just swallows; a future WS-03 §11/WS-16 mirror-layer task is expected to route the catch
   // body to that event (T8 fix-wave: this comment previously, and now stale-ly, said "Task 8 is
   // expected to" — Task 8 shipped without adding it; re-pointed at its real future owner).
-  const recordUser = async (content: string | ContentBlock[]): Promise<void> => {
+  const recordUser = async (content: string | ContentBlock[], opts?: UserEntryMeta): Promise<void> => {
     if (!store) return;
     try {
-      await store.recordUserEntry(content);
+      await store.recordUserEntry(content, opts);
     } catch {
       /* auxiliary — see comment above */
     }
@@ -2721,6 +2838,106 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return cachedSessionTempPaths;
   }
 
+  // SDK 0.0.16 Lane P: matches the established `v === "1" || v === "true"` convention every other
+  // env-gated boolean kill switch in this codebase already uses (`subagents/builtin-agents.ts`'s own
+  // `isTruthyEnv`, `tools/impl/agent.ts`'s own `isTruthyEnv`) -- a small, local copy rather than an
+  // import from either (neither module is otherwise a dependency of this one section).
+  function isTruthyEnvValue(v: string | undefined): boolean {
+    return v === "1" || v === "true";
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // SDK 0.0.16 Lane P (R3b §5): two small "which Claude tier is this model" helpers, both traced
+  // from the pinned 0.3.250 binary and both reused for two DIFFERENT purposes below -- the Explore
+  // model cap (`resolveChildModel`, immediately after this block) and the Agent-listing's lean/
+  // normal `whenToUse` choice (`scanAttachments`'s own `computeAgentListingDelta` call site).
+  //
+  // TRACED (python, latin-1 decode, grep around "whenToUseLean"/"leanPrompt"): claude's `D8`:
+  //   function D8(e,t){ if (e.agentType!=="Explore"||e.source!=="built-in") return e.model;
+  //     if (a.CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP) return "inherit";
+  //     return _Ut(t) ? "opus" : "inherit" }
+  //   function _Ut(e){ if (Me()!=="firstParty") return false;
+  //     let t=["haiku","sonnet","opus"]; return !OBt(e,t) }
+  // `Me()` reports the pin's own `AccountInfo.apiProvider` ("firstParty" = direct Anthropic API key
+  // or claude.ai/Console OAuth, never Bedrock/Vertex/Foundry/a gateway -- `session-provider.ts`'s
+  // own `API_PROVIDER_BY_PROVIDER_ID` mirrors the identical partition). `OBt(model, tiers)` checks
+  // membership; `_Ut` is therefore "first-party AND the model's tier is NOT haiku/sonnet/opus" --
+  // i.e. Fable, the one tier above Opus in Winter's own four-tier Claude family.
+  //
+  // WINTER MAPPING (recorded deviation from the research file's own "{anthropic, console, cc}"
+  // first-party set): this repo's own catalog (packages/provider-catalog) carries EXACTLY ONE
+  // Anthropic-family provider id, "anthropic" (`authKinds: ["api-key","oauth-approved"]` on one
+  // row -- verified directly in the compiled overlay, not assumed). claude's own "console"/"cc" arms
+  // belong to a DIFFERENT engine entirely (Anthropic's own `claude` binary via
+  // `@anthropic-ai/claude-agent-sdk`, CLAUDE.md's "official leg") -- they never appear as a
+  // `currentProviderIdentity.providerId` value in THIS package's own engine, so "first-party" here
+  // is simply `providerId === "anthropic"`.
+  //
+  // "which tier is modelKey" is answered by REVERSE-CHECKING `resolveSlot` (already used below for
+  // real slot-name requests): resolving a tier NAME in modelKey's own context and comparing the
+  // result's `modelKey` against `modelKey` itself tells us whether modelKey already IS that tier,
+  // on the SAME provider -- no separate catalog import needed (`resolveSlot` is the one catalog-
+  // aware dependency this closure already holds).
+  function claudeTierMatches(modelKey: string, tier: "haiku" | "sonnet" | "opus"): boolean {
+    if (resolveSlot === undefined) return false;
+    const resolution = resolveSlot(tier, modelKey);
+    return resolution.ok && resolution.modelKey === modelKey;
+  }
+
+  /** Shared by `sessionLeanModel` and `exploreModelCap`: is `modelKey` at or below the Opus tier (haiku/sonnet/opus), as opposed to Fable, the one tier above it? */
+  function isAtOrBelowOpusTier(modelKey: string): boolean {
+    return claudeTierMatches(modelKey, "haiku") || claudeTierMatches(modelKey, "sonnet") || claudeTierMatches(modelKey, "opus");
+  }
+
+  /**
+   * claude's `whenToUseLean` gate (`Iu(mz(model))`, traced): `Iu(e){return d().leanPrompt(e)}` calls
+   * a memoized `B(e)`:
+   *   function B(e){ if(!e)return false; if(env-force-on)return true; if(env-force-off)return false;
+   *     if(!w(e))return true; if(flag)return true; return L("simple_system_prompt",Ye(e)) }
+   *   function w(e){ if(xee(e))return false; let o=Ye(e);
+   *     if(hg(o,"lean_prompt")||o==="claude-mythos-5")return false;
+   *     if(o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")||`five dated Opus 4.x
+   *     builds`)return true; return !qs() }
+   *
+   * READ CAREFULLY -- `leanPrompt = !w(e)` for the deterministic branch, which INVERTS the naive
+   * reading: `w(e)` is TRUE (ordinary/small-and-known tiers -- haiku, sonnet, claude-3-x, five
+   * dated Opus 4.x builds) means `!w(e)` is FALSE, so THOSE models are NOT unconditionally lean --
+   * they fall through to a default-off feature flag and then a REMOTE, statsig-gated experiment
+   * (`L("simple_system_prompt", ...)`) this repo cannot reproduce from a static binary. `w(e)` is
+   * FALSE only for a model tagged `hg(o,"lean_prompt")` (a per-model catalog attribute Winter's own
+   * catalog does not carry) OR the LITERAL id `"claude-mythos-5"` -- one tier ABOVE the five listed
+   * Opus 4.x builds, i.e. the same "beyond Opus" boundary `_Ut` (the Explore cap, immediately below)
+   * already draws as "Fable." For THOSE, `!w(e)` is TRUE and `B` returns lean UNCONDITIONALLY, no
+   * fallback needed. Confirmed against ground truth: D2's own differential captures ran
+   * `OFFICIAL_MODEL = "claude-haiku-4-5"`, and the official side's captured listing renders
+   * Explore's FULL (non-lean) `whenToUse` -- haiku is not lean.
+   *
+   * DISCLOSED SIMPLIFICATION: Winter reproduces only the deterministic Fable-tier branch, mapped
+   * onto its own four-tier Claude family -- lean for Fable on the "anthropic" provider; normal (the
+   * fuller, safer text) for haiku/sonnet/opus, any non-Claude-family model, or when the tier can't
+   * be determined -- rather than guessing at an unreproducible remote experiment's outcome for
+   * every other model. `hg(o,"lean_prompt")`'s own per-model catalog flag has no Winter analogue
+   * either (disclosed, same reason).
+   */
+  function sessionLeanModel(modelKey: string): boolean {
+    if (currentProviderIdentity?.providerId !== "anthropic") return false;
+    return !isAtOrBelowOpusTier(modelKey);
+  }
+
+  /**
+   * claude's `_Ut`, reused verbatim per the trace above: first-party Anthropic AND modelKey's own
+   * tier is NOT haiku/sonnet/opus (i.e. Fable). `WINTER_DISABLE_EXPLORE_INHERIT_CAP` (env, read
+   * fresh per call -- brand-gate rules 9/10) opts out unconditionally, mirroring
+   * `CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP`'s own "return inherit" branch in `D8`.
+   */
+  function exploreModelCap(parentModel: string): string | undefined {
+    const env = engineEnv ?? process.env;
+    if (isTruthyEnvValue(env[envName(sessionBrand, "DISABLE_EXPLORE_INHERIT_CAP")])) return undefined;
+    if (currentProviderIdentity?.providerId !== "anthropic") return undefined;
+    if (isAtOrBelowOpusTier(parentModel)) return undefined;
+    return "opus"; // resolveChildSlot (the caller's caller) resolves this slot name on the SAME provider
+  }
+
   // Phase 4 Task 3 (MUST 5, WS-10 §3.1/§3.5): the STRUCTURAL model precedence chain --
   // <PREFIX>SUBAGENT_MODEL -> per-invocation -> definition -> session, "inherit" meaning "continue
   // resolving," a fork ignoring an override BY CONTRACT. Real alias resolution against a provider
@@ -2731,7 +2948,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // re-derive the identical chain with real alias resolution layered on top without this function
   // needing to know about that layer at all).
   function resolveChildModel(req: SpawnChildRequest): string {
-    if (req.fork === true) return config.model; // WS-10 §3.5: fork ignores a model override by contract
+    // WS-10 §3.5: fork ignores a model override by contract -- and "inherits... model" means the
+    // parent's CURRENT model, not its startup one: `currentModel` is the live, mutable binding
+    // `set_model`/resolution/resume reassign (`let currentModel = config.model` above), while
+    // `config.model` stays the session's original value for its whole run. A fork spawned after a
+    // `set_model` landed must run on the model the parent is actually generating with right now --
+    // using `config.model` here would send a fork's first request on a model the parent stopped using
+    // turns ago, while `currentAgentModelRender()` (below) and the parent's own last real request both
+    // already key off `currentModel`. SDK 0.0.16 (P16-7) fix -- fork-only; the non-fork chain below is
+    // untouched (its own `config.model` fallback is a different, non-fork-specific question).
+    if (req.fork === true) return currentModel;
     // P7a (D19): the env NAME derives from the session's prefix and is read HERE, per spawn -- never
     // spelled and never at module load (brand-gate rules 9 and 10).
     const envModel = (engineEnv ?? process.env)[envName(sessionBrand, "SUBAGENT_MODEL")];
@@ -2739,6 +2965,26 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (req.model !== undefined && req.model !== "inherit") return req.model;
     const defModel = req.definition?.model;
     if (defModel !== undefined && defModel !== "inherit") return defModel;
+    // SDK 0.0.16 Lane P (R3b §5): the Explore built-in's own model cap -- claude's `D8`, position
+    // matches the trace exactly (env -> invocation override -> definition-step, THEN the cap, THEN
+    // plain inherit): every real override layer above has already had its say and found nothing, so
+    // only an ACTUAL "inherit" resolution is ever capped. `req.builtinAgentType` is set by
+    // `tools/impl/agent.ts` ONLY when the resolved definition's own `_source === "builtin"` -- a
+    // same-named user/project/plugin/programmatic "Explore" that merely shadows the built-in never
+    // reaches this branch (see that field's own header on `SpawnChildRequest`).
+    if (req.builtinAgentType === "Explore") {
+      // M3 (fix wave): the LIVE model, not the session's startup one -- `config.model` never moves
+      // once a `set_model` lands, so an Explore spawned afterward was capped (or not) against a tier
+      // the parent stopped running on turns ago. Same expression `sessionLeanModel`'s own caller
+      // uses (line ~5822) to read "what is this session actually generating with right now".
+      const capped = exploreModelCap(currentProviderIdentity?.modelKey ?? currentModel);
+      if (capped !== undefined) return capped;
+    }
+    // Disclosed, deliberately UNCHANGED (M3, fix wave): this plain "inherit" fallback stays keyed on
+    // `config.model`, not `currentModel` -- the SAME question the fork-only fix immediately above
+    // (P16-7, this function's own header comment) already answered differently for a fork vs. every
+    // other spawn, and widening it here is a separate, non-fork-specific question this fix wave does
+    // not decide.
     return config.model;
   }
 
@@ -2771,9 +3017,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // either be refused outright or run on a different bill. WS-13c §3 is explicit that
     // `AgentInput.model` is slot names only -- everything else keeps the semantics it had.
     //
-    // (a) inheriting the PARENT's own model is not a slot request, whatever that string looks like
-    //     (this also covers `req.fork`, whose model is `config.model` by contract);
-    if (requested === config.model) return { model: requested };
+    // (a) inheriting the PARENT's own model is not a slot request, whatever that string looks like.
+    //     `req.fork === true` is checked EXPLICITLY, never folded into the `requested === config.model`
+    //     comparison alone: SDK 0.0.16 (P16-7) made `resolveChildModel` return the LIVE `currentModel`
+    //     for a fork (WS-10 §3.5's "inherits... model" means the parent's CURRENT model, not its
+    //     startup one -- see that function's own comment), so a fork spawned after a `set_model` has
+    //     `requested === currentModel`, which can legitimately differ from `config.model`. Without
+    //     this disjunct such a fork would fall PAST this guard into `resolveSlot`, the exact "a model
+    //     override" WS-10 §3.5 says a fork ignores by contract -- inheriting the parent's own live
+    //     model is definitionally not a slot request, by construction, regardless of what `config.model`
+    //     happens to be.
+    if (requested === config.model || req.fork === true) return { model: requested };
     const resolution = resolveSlot?.(requested, currentProviderIdentity?.modelKey ?? currentModel);
     if (resolution === undefined) return { model: requested };
     // (b) a BARE id that the resolver did not recognise as a slot name (a canonical id, an alias, a
@@ -2807,7 +3061,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const childSlot = resolveChildSlot(req);
     const parentState = policyStateStore.getState();
     const requestedMode = req.definition?.permissionMode;
-    const validMode = requestedMode !== undefined && isPermissionMode(requestedMode) ? requestedMode : undefined;
+    // SDK 0.0.16 (P16-7): "bubble" (claude's own fork agent, `permissionMode:"bubble"`) is an
+    // EXPLICIT alias for "no override" -- excluded here BEFORE `isPermissionMode` gets a look, so it
+    // can never collide with a genuine future addition to `PERMISSION_MODES` and reads, at this call
+    // site, as the deliberate value it is rather than as an accident of falling through the "not a
+    // known mode" branch below. See permissions/policy-state.ts's own header on `BUBBLE_PERMISSION_MODE`
+    // for why the child keeping the parent's mode is already everything "bubble" means.
+    const validMode = requestedMode !== undefined && requestedMode !== BUBBLE_PERMISSION_MODE && isPermissionMode(requestedMode) ? requestedMode : undefined;
     // RULING P2-M (permissions/auto/inheritance.ts): computeChildPolicy needs no per-axis change of
     // its own for this call site -- WS-07 §11's forced-mode table is a fixed set-membership check,
     // not a "which is stricter" comparison; the per-axis comparator only matters at RESUME
@@ -2903,6 +3163,28 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // that rebuilt each element as `{role, content}` would strip exactly the annotations that tell
       // the child which provider produced the history it inherited, and it would do so silently.
       ...(req.fork === true ? { messages: [...messages] } : {}),
+      // SDK 0.0.16 (P16-7, R3a §2): the parent's own exact request layout -- its last rendered system
+      // prompt/blocks, tool specs and userContext entries, captured verbatim by
+      // `context/request-layout.ts`'s per-session memo at the moment this fork's own tool_use was
+      // sent (`recordSessionRequestLayout`, this file's own round loop, a few thousand lines down).
+      // `child-engine.ts` hands this straight to the child's own `runEngine()` as
+      // `EngineOptions.exactRequestLayout`, bypassing its system-prompt assembly, tool-spec render and
+      // userContext build entirely -- see that field's own doc for why a second render, however
+      // faithful, cannot be byte-exact.
+      //
+      // THROWN, never omitted, when nothing is recorded yet (`ForkRequestLayoutUnavailableError`,
+      // fork.ts) -- structurally unreachable in production (a fork's own tool_use can only exist
+      // after the model's own turn already sent at least one real request), so this is a defensive
+      // refusal, not a silent "fork with no exact layout" degrade path.
+      ...(req.fork === true
+        ? {
+            requestLayout: (() => {
+              const layout = getSessionRequestLayout(config.sessionId, config.agentId);
+              if (layout === undefined) throw new ForkRequestLayoutUnavailableError();
+              return layout;
+            })(),
+          }
+        : {}),
       // Phase 6 Task 3 (R6-17): the parent's RESOLVED provider identity and its EFFECTIVE reasoning
       // configuration. `model`/`effort`/`thinking` above are the REQUESTED values (a definition's own
       // override, or the placeholder base); these are what a bare child model id resolves against and
@@ -3212,11 +3494,34 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // engine is itself a fork, and the live advertised set (the Agent tool's launch result reads it).
       env: engineEnv ?? process.env,
       forkSubagentEnabled: forkSubagentEnabled,
+      // I4 (fix wave): the resolved background-by-default opt-out, mirroring forkSubagentEnabled.
+      backgroundByDefault: backgroundByDefault,
       ...(config.insideFork === true ? { insideFork: true } : {}),
       advertisedToolNames: () => currentAdvertisedCanonicalNames,
       // Review r2 finding 2: `tools/impl/agent.ts`'s own `loadAgentDefinitions` call reads this off
       // `ctx.onAgentDefinitionRejected` and passes it straight through as `onReject`.
       onAgentDefinitionRejected: reportAgentDefinitionRejection,
+      // SDK 0.0.16 Lane P (R3b §4): `tools/impl/agent.ts`'s own name-resolution refusals read this
+      // -- see ToolExecutionContext.agentAvailability's own comment (registry.ts). Built fresh per
+      // call (never cached), exactly like `getAvailabilityInputs` below.
+      agentAvailability: () => {
+        const defs = sessionAgentDefinitions();
+        const evalCtx = makeEvalCtx();
+        const denyOpts = evalCtx.allowManagedPermissionRulesOnly !== undefined ? { allowManagedPermissionRulesOnly: evalCtx.allowManagedPermissionRulesOnly } : undefined;
+        return {
+          availableNames: sessionAgentAvailableNames(defs),
+          unavailableMessage: (agentType: string): string | undefined => {
+            const def = defs.get(agentType);
+            if (def === undefined) return undefined;
+            const denyEntry = findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts);
+            if (denyEntry !== undefined) return agentTypeDeniedMessage(agentType, denyEntry);
+            if (isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames)) {
+              return `Agent type '${agentType}' is unavailable because every tool it may use is denied by the current permission settings.`;
+            }
+            return undefined;
+          },
+        };
+      },
       // Phase 4 Task 8 (rider 27): dispatch-time availability enforcement. A FUNCTION, not a
       // snapshot, for two independent reasons: (1) `advertisedCfg` (below) is assigned AFTER this
       // one runs -- the same "declared later, read at call time" closure binding `emitToolReference`
@@ -3563,6 +3868,34 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     });
   }
 
+  // SDK 0.0.16 Lane P (R3b §4): the deny-rule lookup composed against THIS run's own live policy
+  // snapshot -- `makeEvalCtx()` (declared earlier in this closure) is called fresh here, never
+  // cached, so a live rule/settings change is reflected without a restart.
+  function sessionAgentAvailableNames(defs: Map<string, SourcedAgentDefinition>): string[] {
+    const evalCtx = makeEvalCtx();
+    const denyOpts = evalCtx.allowManagedPermissionRulesOnly !== undefined ? { allowManagedPermissionRulesOnly: evalCtx.allowManagedPermissionRulesOnly } : undefined;
+    return availableAgentNames(defs, {
+      isDenied: (agentType) => findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts) !== undefined,
+      ...(config.allowedAgentTypes !== undefined ? { allowedAgentTypes: config.allowedAgentTypes } : {}),
+      isAllToolsDenied: (def) => isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames),
+    });
+  }
+
+  /**
+   * `sessionAgentDefinitions()` filtered through claude's three listing filters -- Agent(type) deny
+   * rules, `allowedAgentTypes` (the running/child agent's own `tools` restriction) and
+   * all-tools-denied (R3b §4). `system/init.agents`, `list_agents`'s own `AgentInfo[]` and the
+   * Agent-tool listing block (`agentListingEntries` below) all read THIS, never the raw
+   * `sessionAgentDefinitions()`, so a denied/not-allowed/all-tools-denied type can never appear in
+   * one without the other two agreeing -- the SAME "one producer" precedent `sessionAgentDefinitions`
+   * itself documents for the unfiltered set, one level up.
+   */
+  function sessionAvailableAgentDefinitions(at: { cwd?: string; trustedWorkspace?: boolean } = {}): Map<string, SourcedAgentDefinition> {
+    const defs = sessionAgentDefinitions(at);
+    const names = new Set(sessionAgentAvailableNames(defs));
+    return new Map([...defs].filter(([name]) => names.has(name)));
+  }
+
   const workflowWinterHome = structuredOutput !== undefined ? (wiredWinterHome ?? config.winterHome) : undefined;
   // I5: held so teardown withdraws THIS registration and not whichever one is current.
   let disposeWorkflowSession: (() => void) | undefined;
@@ -3832,6 +4165,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     ...advertisedPartition.eager.map((d) => d.advertisedName),
     ...advertisedPartition.deferred.filter((d) => loadedNames.has(d.canonicalName)).map((d) => d.advertisedName),
   ];
+  // C2 (fix wave): the SAME composition as `advertisedToolNames` immediately above, re-run fresh at
+  // CALL time -- `advertisedToolNames` itself is a plain `const`, computed ONCE here at startup, so
+  // it goes stale the moment a `ToolSearch` selection loads a deferred tool mid-session.
+  // `buildSdkInitMessage`'s own `tools` field calls this, never the frozen constant.
+  const liveAdvertisedToolNames = (): string[] => {
+    const loaded = new Set(loadedToolSet.snapshot());
+    return [...advertisedPartition.eager.map((d) => d.advertisedName), ...advertisedPartition.deferred.filter((d) => loaded.has(d.canonicalName)).map((d) => d.advertisedName)];
+  };
   // WS-09 §2.1/§3: the live MCP server connection-state snapshot, wire-mapped (T1's Open Question 5
   // spelling: needsAuth -> 'needs-auth'). Conditionally present -- absent whenever no state source
   // is configured for this run (every session before Lane A's own real transports exist, and every
@@ -3848,6 +4189,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // omitted the key entirely. (A caller-supplied state source always reports, even when its snapshot
   // is empty: that is a host declaring it owns the MCP stack.)
   const mcpServersWire = sessionHasMcp() && effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
+  // C2 continued (scoped re-review): the SAME staleness bug `liveAdvertisedToolNames` above was
+  // fixed for, in the identical shape -- `mcpServersWire` is a plain `const`, computed ONCE here at
+  // startup from `effectiveMcpStateSource.snapshot()`, so it goes stale the moment
+  // `handleMcpToggle`/`handleMcpReconnect`/`handleMcpSetServers` (dispatched off a `control_request`,
+  // mutating this SAME state source) change server state mid-session. `sessionHasMcp()` is already a
+  // live read; only the STRUCT built from it was frozen. `buildSdkInitMessage`'s own `mcp_servers`
+  // field calls this, never the frozen constant -- the frozen `mcpServersWire` above stays exactly as
+  // it was for the ONE immediate `type: "init"` write a few lines below, which by construction cannot
+  // itself go stale (nothing has run yet).
+  const liveMcpServersWire = (): ReturnType<typeof mcpServerStatesToWire> | undefined =>
+    sessionHasMcp() && effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
   // Spawn-surface parity (research §A3, scope item 4): `system/init.agents` -- the per-session
   // `subagent_type` names, present only when the `Agent` tool is itself advertised (a session that
   // cannot spawn has nothing to list; matches `mcp_servers`' own conditional-presence convention on
@@ -3857,7 +4209,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // never a second, independently-derived list that could disagree with what `subagent_type`
   // resolution actually accepts. `AGENT_TOOL_CANONICAL_NAME` is imported already (provider/slots.ts,
   // line 95) for the per-turn model-slot render just below this block.
-  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
+  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAvailableAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
+  // C2 continued: the same staleness fix as `liveMcpServersWire` immediately above, for the agents
+  // list -- `sessionAvailableAgentDefinitions()` is already a live re-scan (a user/project `agents/
+  // *.md` file that arrives mid-session, or a rules change that lifts/adds an `Agent(type)` deny,
+  // is picked up on every call), but `initAgentNames` only ever CALLED it once, at startup, and the
+  // gate itself (`advertisedToolNames.includes(...)`) read the equally-frozen tool list. Gated on
+  // `liveAdvertisedToolNames()` for the same reason `buildSdkInitMessage`'s own `tools` field is.
+  const liveInitAgentNames = (): string[] | undefined =>
+    liveAdvertisedToolNames().includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAvailableAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -3889,44 +4249,341 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     skills: initSkills !== undefined ? [...initSkills] : ([] as string[]),
     plugins: initPlugins !== undefined ? [...initPlugins] : ([] as InitPluginInfo[]),
   };
-  output.write({
-    type: "data",
-    message: {
-      type: "system",
-      subtype: "init",
-      session_id: config.sessionId,
-      cwd: config.cwd,
-      model: config.model,
-      permissionMode: policyStateStore.getState().mode,
-      tools: advertisedToolNames,
-      // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
-      // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
-      // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
-      apiKeySource: apiKeySource ?? "none",
-      // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
-      // the pinned bare string the caller passed, because the goldens byte-compare it. Absent for a
-      // session with no resolved identity (a scripted double, every pre-P6 session), so nothing
-      // fabricates a provider row.
-      ...(providerIdentity !== undefined
-        ? {
-            winter_provider: {
-              providerId: providerIdentity.providerId,
-              modelKey: providerIdentity.modelKey,
-              ...(providerIdentity.adapterId !== undefined ? { adapterId: providerIdentity.adapterId } : {}),
-              ...(providerIdentity.adapterVersion !== undefined ? { adapterVersion: providerIdentity.adapterVersion } : {}),
-              ...(providerIdentity.catalogVersion !== undefined ? { catalogVersion: providerIdentity.catalogVersion } : {}),
-              ...(providerIdentity.continuationDomain !== undefined ? { continuationDomain: providerIdentity.continuationDomain } : {}),
-              ...(providerIdentity.authRefKind !== undefined ? { authRefKind: providerIdentity.authRefKind } : {}),
-            },
-          }
-        : {}),
-      ...initLoadedSurface,
-      ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
-      ...(initAgentNames !== undefined ? { agents: initAgentNames } : {}),
-    },
-  });
+  // SDK 0.0.16 Lane N: EMITTED A SECOND TIME -- captured from the pinned binary 2026-09-17, an
+  // unsolicited (task-notification) turn opens with its own `system/init` frame, then its assistant
+  // stream, then its own `result`.
+  //
+  // C2 (fix wave, whole-branch review): this used to be a plain `const sdkInitMessage = {...}`, built
+  // ONCE at startup and re-emitted VERBATIM for that second frame -- so an unsolicited turn reached
+  // after a `set_model`, a permission-mode change, or a ToolSearch load reported the SESSION'S
+  // STARTUP `model`/`permissionMode`/`tools`, not what the session was actually running with by then.
+  // Now a function, called fresh at each of the two emission sites: `model`/`permissionMode`/`tools`
+  // (and `winter_provider`, the same live-vs-frozen bug in the identical shape) are re-derived from
+  // the engine's own live bindings every time. At the FIRST call (session start, before any turn can
+  // have moved anything) `currentModel === config.model` and `currentProviderIdentity === providerIdentity`
+  // by construction, so this is byte-identical to the old frozen object for every existing golden.
+  const buildSdkInitMessage = () => {
+    // C2 continued: computed once per call (not per conditional-spread reference below) so a live
+    // read of a mutating state source is consistent within one emitted frame.
+    const mcpServersWireNow = liveMcpServersWire();
+    const initAgentNamesNow = liveInitAgentNames();
+    return {
+      message: {
+        type: "system",
+        subtype: "init",
+        session_id: config.sessionId,
+        cwd: config.cwd,
+        // C2: the LIVE model -- `set_model`/resolution/resume reassign `currentModel`, while
+        // `config.model` stays the session's original value for its whole run (`resolveChildModel`'s
+        // own header comment, a few hundred lines up, states the identical distinction).
+        model: currentModel,
+        permissionMode: policyStateStore.getState().mode,
+        tools: liveAdvertisedToolNames(),
+        // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
+        // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
+        // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
+        apiKeySource: apiKeySource ?? "none",
+        // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
+        // the live model string, because the goldens byte-compare the FIRST emission and this reads
+        // identically to the old frozen value there. C2: re-derived from `currentProviderIdentity` (the
+        // LIVE binding a switch reassigns), not the frozen startup `providerIdentity` -- the same
+        // staleness bug in the same shape, fixed alongside the three named above rather than left half
+        // corrected. Absent for a session with no resolved identity (a scripted double, every pre-P6
+        // session), so nothing fabricates a provider row.
+        ...(currentProviderIdentity !== undefined
+          ? {
+              winter_provider: {
+                providerId: currentProviderIdentity.providerId,
+                modelKey: currentProviderIdentity.modelKey,
+                ...(currentProviderIdentity.adapterId !== undefined ? { adapterId: currentProviderIdentity.adapterId } : {}),
+                ...(currentProviderIdentity.adapterVersion !== undefined ? { adapterVersion: currentProviderIdentity.adapterVersion } : {}),
+                ...(currentProviderIdentity.catalogVersion !== undefined ? { catalogVersion: currentProviderIdentity.catalogVersion } : {}),
+                ...(currentProviderIdentity.continuationDomain !== undefined ? { continuationDomain: currentProviderIdentity.continuationDomain } : {}),
+                ...(currentProviderIdentity.authRefKind !== undefined ? { authRefKind: currentProviderIdentity.authRefKind } : {}),
+              },
+            }
+          : {}),
+        ...initLoadedSurface,
+        ...(mcpServersWireNow !== undefined ? { mcp_servers: mcpServersWireNow } : {}),
+        ...(initAgentNamesNow !== undefined ? { agents: initAgentNamesNow } : {}),
+      },
+    };
+  };
+  const writeSdkInit = (): void => {
+    output.write({ type: "data", ...buildSdkInitMessage() } as Parameters<typeof output.write>[0]);
+  };
+  writeSdkInit();
 
   const userFrames = new Queue<UserFrame>();
+
+  // --- SDK 0.0.16 Lane N: background completions reaching the MODEL ------------------------------
+  //
+  // `subagents/notification-queue.ts` holds this session's queue; every background producer enqueues
+  // into it and this engine is its consumer. Two delivery shapes, and they are the pin's:
+  //
+  //   * MID-TURN -- `scanAttachments("tool-round")` drains the commands addressed to THIS engine's
+  //     own agent id and appends them to the tool results (Lane C's attachment machinery).
+  //   * BETWEEN TURNS -- `pumpNotifications` takes ONE command and writes it into `userFrames` as a
+  //     synthetic envelope, so the turn loop below runs it exactly like a host turn: its own
+  //     `system/init`, its own assistant stream, its own `result`.
+  //
+  // ONLY THE TOP-LEVEL ENGINE starts unsolicited turns (`config.agentId === undefined`). A child
+  // engine is torn down by `child-engine.ts`'s own `settle()` the moment it produces a result -- a
+  // second turn there would run inside an engine its wrapper has already finished with. A child still
+  // gets its notifications MID-TURN, and anything left over when its endpoint is withdrawn is
+  // re-addressed to the main thread (the queue's own `Loe` behaviour). Recorded deviation: claude can
+  // re-wake a completed agent, Winter routes to the parent instead.
+  const notifications: SessionNotificationQueue = notificationQueueFor(config.sessionId);
+  /** True from the moment a turn's envelope is claimed until its terminal result has been written. */
+  let turnActive = false;
+  /** True while the RUNNING turn is one a task notification started (no host input produced it). */
+  let turnStartedByNotification = false;
+  /** Set at the one place `userFrames.end()` is called -- nothing may be written after it. */
+  let userFramesEnded = false;
+  const endUserFrames = (): void => {
+    if (userFramesEnded) return;
+    userFramesEnded = true;
+    userFrames.end();
+  };
+  function pumpNotifications(): void {
+    if (turnActive || userFramesEnded || config.agentId !== undefined) return;
+    const [next] = notifications.drainFor(undefined, { limit: 1 });
+    if (next === undefined) return;
+    // PRE-CLAIMED: a second enqueue landing before the loop picks this frame up must not write a
+    // second envelope. The loop sets it again at the top of the turn; the terminal result clears it.
+    turnActive = true;
+    userFrames.write({
+      type: "user",
+      text: withNotificationPreamble(next.value),
+      // Winter-defined envelope marks, read by the turn loop below (and by nothing on the wire).
+      taskNotification: true,
+      ...(next.taskId !== undefined ? { taskNotificationTaskId: next.taskId } : {}),
+    });
+  }
+  const disposeNotificationEndpoint = notifications.registerEndpoint(config.agentId, () => {
+    pumpNotifications();
+    signalBackgroundWait();
+  });
+  /** True once the host has closed its input (`end_input`, or the pump reaching EOF). */
+  let inputClosed = false;
+  /**
+   * SDK 0.0.16 Lane N, the INPUT-CLOSED HOLD (R3a §1, ruling P16-3's second half).
+   *
+   * A streaming-input host (the daemon) never holds anything: every turn's `result` goes out the
+   * moment the turn ends, and a later completion arrives as its own unsolicited turn. A `-p`-style
+   * host has no later -- it closes its input with the prompt, so the instant the turn ends there is
+   * nowhere for a background completion to go. claude's answer, ported here:
+   *
+   *   * the turn's `result` is HELD while a background agent or workflow is still running, or while a
+   *     notification is still queued (`holdBackActive`, the pin's `xu`/`Qo`);
+   *   * `userFrames` does NOT end -- `runBackgroundWait` keeps the turn loop alive, so each queued
+   *     notification still gets its own turn, with its own held result;
+   *   * a ceiling (default 600 s, `0` = wait forever) then a 5 s grace then a SWEEP kills what is left
+   *     and notifies the model that it was stopped;
+   *   * the held results flush after the loop, re-stamped with the session's totals, and only then
+   *     does teardown run.
+   */
+  // `Extract<SdkMessage, {type:"result"}>` carries an index signature, which makes `Omit<…>` over it
+  // collapse every named property -- so `finalResult`'s own type cannot be spread into this shape
+  // without a cast at the two call sites. The cast is honest: the object IS this message.
+  type TurnResultMessage = Extract<SdkMessage, { type: "result" }>;
+  const heldResults: TurnResultMessage[] = [];
+  /** claude's `ia`: the grace between arming the wind-down and actually sweeping. */
+  const BG_WAIT_GRACE_MS = 5_000;
+  /** claude's `Vp`. `0` means "wait indefinitely". */
+  const BG_WAIT_CEILING_DEFAULT_MS = 600_000;
+  const BG_WAIT_POLL_MS = 100;
+  const backgroundWaitCeilingMs = (): number => {
+    const raw = (engineEnv ?? process.env)[envName(sessionBrand, "PRINT_BG_WAIT_CEILING_MS")];
+    if (raw === undefined || raw.trim() === "") return BG_WAIT_CEILING_DEFAULT_MS;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : BG_WAIT_CEILING_DEFAULT_MS;
+  };
+  const sessionOwner = (): { sessionId: string; agentId?: string } => ({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
+  /** Every background row this session is still waiting on (ambient ws monitors excluded -- see the registry). */
+  const runningBackgroundTasks = (): readonly { kind: string }[] => listSessionRunningTasks(sessionOwner());
+  /**
+   * claude's `xM`: the kinds whose completion is worth HOLDING a result for. A background shell does
+   * not hold one (the model was told where its output file is); an agent or a workflow does, because
+   * its whole result is the notification that has not been delivered yet.
+   */
+  const holdingTasksRunning = (): boolean => runningBackgroundTasks().some((t) => t.kind === "agent" || t.kind === "workflow");
+  /**
+   * claude's `xu` OR `Qo`. The second disjunct is "a terminal agent notification has not been
+   * delivered": in Winter the enqueue is SYNCHRONOUS with the terminal transition, so a pending queue
+   * entry is exactly that condition and the pin's 60 s "terminal but never enqueued" expiry has
+   * nothing to guard (named simplification).
+   */
+  const holdBackActive = (): boolean => inputClosed && config.agentId === undefined && (holdingTasksRunning() || notifications.peekMain() !== undefined);
+  const flushHeldResults = (): void => {
+    if (heldResults.length === 0) return;
+    // Re-stamped at FLUSH with `costFields()`, which is the session-cumulative ledger -- the pin
+    // re-stamps a held result with the session's own totals for the same reason: by the time it goes
+    // out, "this turn's cost" is no longer what the caller is being told.
+    for (const message of heldResults.splice(0)) output.write({ type: "data", message: { ...message, ...costFields() } });
+  };
+  /** claude's `hl`: a result that is NOT held flushes everything held before it, then itself. */
+  const writeTurnResult = (message: TurnResultMessage): void => {
+    if (holdBackActive()) {
+      heldResults.push(message);
+      return;
+    }
+    flushHeldResults();
+    output.write({ type: "data", message: { ...message, ...costFields() } });
+  };
+  /**
+   * EVERY exit from a turn goes through this. Releasing the claim here (rather than at the top of the
+   * next iteration) is what lets a notification that arrived DURING the turn start its own turn now --
+   * one per turn, in queue order. BOTH exits call it: the ordinary one and the `/compact` built-in,
+   * which `continue`s past the terminal-result block entirely (a turn claim left set there would stall
+   * a closed-input session's wind-down forever, since it waits for `turnActive` to clear).
+   */
+  const endTurn = (): void => {
+    turnActive = false;
+    turnStartedByNotification = false;
+    turnsCompleted++;
+    pumpNotifications();
+    signalBackgroundWait();
+    // claude's `Lu`: a session whose input is still OPEN is idle the moment its turn ends. With the
+    // input closed the authoritative `idle` waits for the held flush and the wind-down, which is what
+    // the pin's own doc comment on this frame calls "the authoritative turn-over signal".
+    if (!inputClosed && !turnActive) emitSessionState("idle");
+  };
+  /**
+   * The SESSION-level abort, claude's `Qe.signal.aborted`: set when a turn ends interrupted AND when an
+   * `interrupt` arrives while the wind-down is the only thing still running. Both matter, and the
+   * second is why this is not simply "the last turn was interrupted": with the input closed and no
+   * turn active, `interruptCurrentTurn.current` is null, so an interrupt would otherwise be a silent
+   * no-op and a session waiting on a background agent under `…_CEILING_MS=0` would never return.
+   * `runBackgroundWait` breaks on it; the post-loop flush reads it to decide whether to stop the
+   * background children first (claude's `Fu`).
+   */
+  let sessionAborted = false;
+  /**
+   * SDK 0.0.16 Lane N, `session_state_changed` (frames.ts's own `SDKSessionStateChangedMessage`).
+   * ENV-GATED exactly as the pin gates it (`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`): a default
+   * session's frame stream does not change at all, which is also what keeps every golden and every
+   * differential frame-sequence comparison byte-identical.
+   */
+  // Same truthiness rule every other Winter env gate in this repo uses (`1`/`true`, nothing else).
+  const sessionStateEnv = (engineEnv ?? process.env)[envName(sessionBrand, "EMIT_SESSION_STATE_EVENTS")];
+  const sessionStateEventsEnabled = sessionStateEnv === "1" || sessionStateEnv === "true";
+  let sessionStateReported: "idle" | "running" = "idle";
+  const emitSessionState = (state: "idle" | "running"): void => {
+    if (!sessionStateEventsEnabled || sessionStateReported === state) return;
+    sessionStateReported = state;
+    try {
+      output.write({ type: "data", message: { type: "system", subtype: "session_state_changed", state, uuid: randomUUID(), session_id: config.sessionId } });
+    } catch {
+      /* a closed sink must never fail a state transition */
+    }
+  };
+  /** Counts completed turns, so the ceiling clock can restart whenever the wait actually made progress. */
+  let turnsCompleted = 0;
+  let backgroundWaitRunning = false;
+  /** The `turnsCompleted` value the ceiling clock was last reset at (claude resets `Be` whenever a command ran). */
+  let ceilingClockTurns = 0;
+  /**
+   * Wakes the wait loop out of its poll sleep. The pin polls at a flat 100 ms because ITS loop is the
+   * turn runner and therefore observes a turn ending directly; Winter's wait is a separate loop beside
+   * the turn loop, so without this signal "the last turn just ended and nothing is running" would cost
+   * a full poll interval of pure latency on EVERY closed-input session -- teardown would get slower for
+   * every host, to no one's benefit.
+   */
+  let wakeBackgroundWait: (() => void) | undefined;
+  const signalBackgroundWait = (): void => {
+    const wake = wakeBackgroundWait;
+    wakeBackgroundWait = undefined;
+    wake?.();
+  };
+
+  /**
+   * The wait loop (claude's print-mode do/while). Runs ONLY on the top-level engine: a child engine is
+   * torn down by its wrapper the moment it produces a result, so deferring its `userFrames.end()`
+   * would strand the engine and the parent call awaiting it.
+   */
+  async function runBackgroundWait(): Promise<void> {
+    if (backgroundWaitRunning) return;
+    backgroundWaitRunning = true;
+    let swept = false;
+    let sweepDeadline: number | null = null;
+    let ceilingClockStartedAt: number | null = null;
+    let ceilingAnnounced = false;
+    try {
+      for (;;) {
+        pumpNotifications();
+        // An interrupted turn stops the wait outright (the pin's own `!aborted` guard on the wait
+        // branch): the caller asked for the session to end, not for more background work.
+        if (sessionAborted) break;
+        const running = runningBackgroundTasks();
+        const queued = notifications.peekMain() !== undefined;
+        if (!turnActive && !queued && running.length === 0) break;
+        const now = Date.now();
+        const ceiling = backgroundWaitCeilingMs();
+        // claude's `Be`: the clock runs only while the wait is making no progress -- a turn that ran,
+        // or a command still queued, restarts it.
+        const progressing = turnActive || queued || turnsCompleted !== ceilingClockTurns;
+        if (progressing) {
+          ceilingClockStartedAt = null;
+          ceilingClockTurns = turnsCompleted;
+        } else if (ceilingClockStartedAt === null) {
+          ceilingClockStartedAt = now;
+        }
+        const ceilingExceeded = ceiling > 0 && ceilingClockStartedAt !== null && now - ceilingClockStartedAt >= ceiling;
+        // claude's `ju`: the wind-down arms only when nothing model-facing is pending -- either the
+        // ceiling blew, or the only thing left running is work whose result the model does not need.
+        const armed = !queued && running.length > 0 && (ceilingExceeded || !holdingTasksRunning());
+        if (!armed) sweepDeadline = null;
+        else if (sweepDeadline === null) sweepDeadline = ceilingExceeded ? now : now + BG_WAIT_GRACE_MS;
+        if (armed && !swept && sweepDeadline !== null && now >= sweepDeadline) {
+          if (ceilingExceeded && !ceilingAnnounced) {
+            ceilingAnnounced = true;
+            try {
+              process.stderr.write(`Background tasks still running after ${Math.round(ceiling / 1000)}s; terminating. Set ${envName(sessionBrand, "PRINT_BG_WAIT_CEILING_MS")}=0 to wait indefinitely.\n`);
+            } catch {
+              /* a closed stderr must never fail the wind-down */
+            }
+          }
+          swept = true;
+          // The sweep's own notifications are queued, so the loop runs once more and delivers them as
+          // a final turn -- the pin's `ae` stays true for exactly that reason.
+          sweepSessionBackgroundTasks(sessionOwner());
+          try {
+            output.write({ type: "data", message: { type: "system", subtype: "background_tasks_changed", tasks: listRunningTasks().map(toBackgroundTasksChangedEntry), uuid: randomUUID(), session_id: config.sessionId } });
+          } catch {
+            /* a closed sink during wind-down is not an error */
+          }
+          continue;
+        }
+        await new Promise<void>((resolve) => {
+          wakeBackgroundWait = resolve;
+          const timer = setTimeout(resolve, BG_WAIT_POLL_MS);
+          if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as { unref: () => void }).unref();
+        });
+      }
+    } finally {
+      backgroundWaitRunning = false;
+      endUserFrames();
+    }
+  }
+
+  /**
+   * The ONE door "no more host envelopes" goes through. Ending `userFrames` immediately is the wrong
+   * answer for a closed-input session with background work still running: the turn loop would exit,
+   * teardown would sweep the children, and their completions would never reach the model.
+   */
+  function requestInputEnd(): void {
+    if (inputClosed) return;
+    inputClosed = true;
+    // A child engine never waits (see `runBackgroundWait`), and a session with nothing running has
+    // nothing to wait for -- both end their input exactly as before this lane.
+    if (config.agentId !== undefined) {
+      endUserFrames();
+      return;
+    }
+    void runBackgroundWait();
+  }
+
   // Non-null exactly while a turn is turn_active; the pump calls it (a no-op while idle) when an
   // `interrupt` control request arrives. Kept as a plain callback rather than an AbortController
   // because Provider/ToolExecutor take no signal at P1 (see raceInterrupt above). A ref OBJECT
@@ -4078,12 +4735,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // Ruling P2-B: "no more USER envelopes," NOT "stop reading frames" — see this const's
             // own header. `continue`, never `break`: the pump keeps pumping past this point.
             facetInputEnded = true; // M6: a write past this point is silently dropped -- the self-peer must stop reporting "idle"
-            userFrames.end();
+            requestInputEnd();
             continue;
           }
           if (cf.subtype === "interrupt") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
             interruptCurrentTurn.current?.(); // no-op while idle: nothing active to abort
+            // Lane N: ...and "nothing active to abort" is exactly the case the wind-down has to hear
+            // about. With the input closed and no turn running, the only thing still holding this
+            // session open is the background wait -- an interrupt there means "stop waiting", which
+            // nothing else in this branch would have told it.
+            if (inputClosed && !turnActive) {
+              sessionAborted = true;
+              signalBackgroundWait();
+            }
             // Phase 6 Task 3 (R6-I): an interrupt ENDS the turn, so the quiescent boundary a parked
             // `set_model` was waiting for has arrived early -- apply it now rather than leaving the
             // session on a model the host has already asked it to leave.
@@ -4158,7 +4823,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               type: "control_response",
               requestId: cf.requestId,
               ok: true,
-              payload: currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME) ? toAgentInfoList(sessionAgentDefinitions()) : [],
+              payload: currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME) ? toAgentInfoList(sessionAvailableAgentDefinitions()) : [],
             });
             continue;
           }
@@ -4480,7 +5145,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       }
     } finally {
       facetInputEnded = true; // M6, the pump's own teardown -- see the `end_input` site
-      userFrames.end();
+      requestInputEnd();
       // Deliberately NOT calling iterator.return() here: at the moment the pump is cancelled via
       // stopSignal, the LOSING `iterator.next()` call is typically still pending, with the
       // underlying generator (a real stdin read, or the in-memory Queue's own generator) suspended
@@ -4795,12 +5460,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // --- Phase 5 Task 3 (R5-9/R5-16): system-prompt assembly, ONE producer -----------------------------
   //
-  // Called once per USER ENVELOPE (never once per run, never once per provider call): R5-9's dynamic
-  // sections include the date and a git summary, which a long-lived streaming session must not freeze
-  // at connect time, and `planMode` can change mid-session through set_permission_mode. Called once
-  // per envelope rather than per provider call because the result must be STABLE across a turn's tool
-  // rounds -- a system prompt that changed between rounds of the same turn would invalidate provider
-  // prompt caching and make the turn's own history internally inconsistent.
+  // Called once per USER ENVELOPE (never once per run, never once per provider call): `planMode` can
+  // change mid-session through set_permission_mode and settings stay live. Called once per envelope
+  // rather than per provider call because the result must be STABLE across a turn's tool rounds -- a
+  // system prompt that changed between rounds of the same turn would invalidate provider prompt
+  // caching and make the turn's own history internally inconsistent. SDK 0.0.16: the date and the
+  // git snapshot are no longer part of it -- they are the session context, memoized below
+  // (`ensureSessionContext`), exactly as claude 0.3.250 keeps them.
   //
   // R5-16: with no assembler registered this returns the caller's `agentSystemPrompt` (a child's
   // persona, R5-3) or an EMPTY prompt. No authored text lives here, deliberately -- the only authored
@@ -4945,6 +5611,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // model can no longer see evidence of having loaded must not stay silently callable.
     onCompaction(loadedToolSet, result.evidencedToolNames);
 
+    // SDK 0.0.16 (P16-5/P16-6): claude's post-compaction context. The userContext/systemContext memo
+    // is dropped (the instructions files, the memory index and the git snapshot are re-read for the
+    // next request), and the attachment scan runs over the compacted history at once -- the folds no
+    // longer see the dropped listing, so it is re-announced as an INITIAL listing right after the
+    // summary. The skill listing's sent-names state is deliberately kept (claude keeps it too).
+    clearSessionContext();
+    await scanAttachments("compaction");
+
     return { ok: true, summary: result.summary, retainedCount: result.retained.length };
   };
 
@@ -4965,88 +5639,288 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     await performCompaction("auto", null);
   };
 
-  // Spawn-surface parity (research §A3): the Agent-tool listing block. `priorAgentTypes` is this
-  // SESSION's (this run's) memory of the set the previous turn listed, so a changed set also renders
-  // the "now available / no longer available" delta; `latestAgentDefinitions` is the set the current
-  // turn resolved, read by the Agent tool's description gates in `toolSpecFor` below.
-  let priorAgentTypes: string[] | undefined;
+  // --- SDK 0.0.16 (P16-5/P16-6): the request layout and the persisted attachments -----------------
+  //
+  // `latestAgentDefinitions` is the set the last listing scan resolved, read by the Agent tool's
+  // description gates in `toolSpecFor` below.
   let latestAgentDefinitions: Map<string, SourcedAgentDefinition> | undefined;
-  const agentListingInput = (): SystemPromptInput["agentListing"] | undefined => {
-    // A session (or a child) without the Agent tool gets no listing -- a depth-limited child has had
-    // `Agent` removed from its own pool (child-engine.ts), so this is also the depth filter.
+  /**
+   * The agent types this session may list right now, or `undefined` when the Agent tool is not
+   * advertised (claude's `s1t` then produces nothing at all). A child without `Agent` in its pool
+   * (child-engine.ts's depth gate) gets `undefined` here, which is also the depth filter.
+   */
+  const agentListingEntries = (): AgentListingEntry[] | undefined => {
     if (!currentAdvertisedCanonicalNames.includes(AGENT_TOOL_CANONICAL_NAME)) return undefined;
-    const defs = sessionAgentDefinitions();
+    // SDK 0.0.16 Lane P (R3b §4): the FILTERED set -- a denied/not-allowed/all-tools-denied type
+    // never reaches the listing. `latestAgentDefinitions` (below) is now the filtered map too, which
+    // is what makes `generalPurposeAvailable` (this file's own gate for the Agent tool's
+    // omitted-subagent_type sentence, further down) correctly read false for a denied/not-allowed
+    // general-purpose without a second, independent check.
+    const defs = sessionAvailableAgentDefinitions();
     latestAgentDefinitions = defs;
-    const entries: AgentListingEntry[] = [...defs.entries()].map(([agentType, def]) => ({
+    return [...defs.entries()].map(([agentType, def]) => ({
       agentType,
       // Review r2 finding 11: capped for every non-builtin source (project/user/plugin/
       // programmatic) -- see capAgentListingWhenToUse's own header for why 1,000 chars.
       whenToUse: capAgentListingWhenToUse(def.description, def._source),
+      // SDK 0.0.16 Lane P (R3b §5): claude's `whenToUseLean` -- set only on Winter's built-in
+      // Explore. Used instead of `whenToUse` by `renderAgentListingLine` when `leanModel` is true
+      // (the call site below).
+      ...(def.whenToUseLean !== undefined ? { whenToUseLean: def.whenToUseLean } : {}),
       ...(def.tools !== undefined ? { tools: def.tools } : {}),
       ...(def.disallowedTools !== undefined ? { disallowedTools: def.disallowedTools } : {}),
     }));
-    return { entries, ...(priorAgentTypes !== undefined ? { priorAgentTypes } : {}) };
   };
 
-  const assemblePrompt = (): AssembledPrompt => {
-    const agentListing = agentListingInput();
-    const base: SystemPromptInput = {
+  const clock = (): Date => engineClock?.() ?? new Date();
+
+  const promptInput = (): SystemPromptInput => {
+    const env = engineEnv ?? process.env;
+    const modelDisplayName = currentModel !== undefined ? describeModel?.(currentModel)?.displayName : undefined;
+    return {
       config,
       cwd: config.cwd,
-      env: engineEnv ?? process.env,
+      env,
       platform: process.platform,
-      osVersion: osRelease(),
-      shell: (engineEnv ?? process.env)["SHELL"] ?? "",
-      date: new Date().toISOString().slice(0, 10),
+      // claude's `OS Version: <type> <release>`.
+      osVersion: `${osType()} ${osRelease()}`,
+      shell: env["SHELL"] ?? "",
+      date: localDateString(clock()),
+      ...(currentModel !== undefined ? { model: currentModel } : {}),
+      ...(modelDisplayName !== undefined ? { modelDisplayName } : {}),
       planMode: policyStateStore.getState().mode === "plan",
       ...(agentSystemPrompt !== undefined ? { agentPrompt: agentSystemPrompt } : {}),
-      // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing for why the engine
-      // rather than either lane owns this check.
-      ...(skillListing !== undefined && skillListing.length > 0 && advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME) ? { skillListing } : {}),
-      ...(agentListing !== undefined ? { agentListing } : {}),
       ...(omitProjectContext === true ? { omitProjectContext: true } : {}),
     };
-    if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "", userContextBlocks: [] };
-    const assembled = systemPromptAssembler.assemble(base);
-    if (assembled.agentListingTypes !== undefined) priorAgentTypes = assembled.agentListingTypes;
-    return assembled;
   };
 
-  // Builds the LIVE request's message list: the engine's own history, with this envelope's
-  // user-context blocks prepended to a user message in it.
+  const assemblePrompt = (input: SystemPromptInput): AssembledPrompt => {
+    // SDK 0.0.16 (P16-7): a fork's own EXACT layout makes this call's whole result unused --
+    // `requestSystem`/`ensureSessionContext` below both short-circuit to `exactRequestLayout`
+    // directly and never read `assembled`. Short-circuited HERE too (never calling the assembler at
+    // all) rather than merely ignoring its result: the assembler reads project instructions files,
+    // the memory index and settings, none of which a fork -- whose whole point is to send the
+    // PARENT's own bytes, not a fresh render of its own cwd/settings -- has any business triggering.
+    if (exactRequestLayout !== undefined) return { system: "" };
+    if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "" };
+    return systemPromptAssembler.assemble(input);
+  };
+
+  // --- the session context (claude's userContext + systemContext memos) ---------------------------
   //
-  // Applied to a COPY, never to `messages` -- Ruling P1-B keeps persistence and history free of
-  // presentation concerns, and a block that entered history would be re-sent on every later turn,
-  // re-persisted, and eventually summarized into a compaction as if the model had said it. The
-  // blocks are re-attached each turn instead, which is what R5-9's "always injected as user-context"
-  // means operationally.
-  //
-  // RULING P5-F (fix round 1, M2): THE ATTACHMENT POINT IS RECOMPUTED FROM THE REBUILT MESSAGE LIST
-  // ON EVERY PROVIDER CALL -- never a cached index. The first version captured
-  // `turnUserIndex = messages.length - 1` once per envelope, which a MID-TURN COMPACTION strands: the
-  // engine replaces `messages` wholesale with `[summary, ...retained]`, so with `retained: []` index
-  // 0 is the SUMMARY and the WINTER.md/memory blocks were prepended INSIDE the summary text, and with
-  // any other retention count the index pointed at an unrelated message or past the end and the
-  // blocks were silently dropped for the rest of that turn.
-  //
-  // "The LAST user-role message" is the correct anchor after re-anchoring: it is this envelope's own
-  // prompt when nothing has compacted, and the summary-anchored first user message when everything
-  // was summarized away (the summary is pushed as a `user` message, and the envelope's prompt is
-  // inside it) -- in both cases the newest thing the model is being asked about. Searching from the
-  // END also makes it correct on a resumed session, whose FIRST user message belongs to an earlier
-  // run.
-  const requestMessages = (blocks: string[]): ProviderMessage[] => {
-    const copy = messages.map((m) => ({ ...m }));
-    if (blocks.length === 0) return copy;
-    for (let i = copy.length - 1; i >= 0; i--) {
-      const target = copy[i];
-      if (target === undefined || target.role !== "user" || typeof target.content !== "string") continue;
-      target.content = `${blocks.join("\n\n")}\n\n${target.content}`;
-      return copy;
+  // DELIBERATE BEHAVIOUR CHANGE (SDK 0.0.16, P16-5). Until 0.0.15 the instructions files and the
+  // memory index were RE-READ ON EVERY TURN and prepended to that turn's user message. claude builds
+  // its userContext (`claudeMd`, `currentDate`) and its systemContext (`gitStatus`) ONCE per session,
+  // memoized, and rebuilds them only after a compaction (or an explicit reload); Winter now does the
+  // same. Consequence: an edit to WINTER.md or MEMORY.md is seen after the next compaction or in a new
+  // session -- exactly as in claude -- while SETTINGS stay live (the assembler reads them per envelope;
+  // the no-restart rule is about settings, not file contents). The payoff is a byte-stable index-0
+  // message, which is what makes the conversation prefix cacheable at all.
+  interface SessionContext {
+    userContext: ContextEntry[];
+    userContextText: string | undefined;
+    systemContextText: string | undefined;
+    /** The date the `currentDate` entry was built with; `undefined` when there is no such entry. */
+    date: string | undefined;
+  }
+  let sessionContext: SessionContext | undefined;
+  /** Cleared by a compaction and by `reloadSessionContext`; the next request rebuilds it. */
+  const clearSessionContext = (): void => {
+    sessionContext = undefined;
+  };
+  const ensureSessionContext = async (assembled: AssembledPrompt, input: SystemPromptInput): Promise<SessionContext> => {
+    if (sessionContext !== undefined) return sessionContext;
+    // SDK 0.0.16 (P16-7): a fork's own exact userContext -- the PARENT's captured entries, rendered
+    // through the SAME `renderUserContext` the parent's own request used, so the text is
+    // byte-identical without needing to capture the rendered string itself (a pure function of the
+    // entries). Never `computeGitStatus(config.cwd)` (this fork may be running in an isolated
+    // worktree; its OWN git status would differ from the parent's captured one, and gitStatus already
+    // rides inside `exactRequestLayout.system`/`systemBlocks` for the `"system"` placement claude uses
+    // -- recomputing it here would be a second, possibly-divergent copy) and never the assembler's own
+    // `userContext()` (same reasoning as `assemblePrompt` above).
+    //
+    // `date` is left `undefined` deliberately, not copied from a captured `currentDate` entry: it
+    // exists only to drive `dateChangeAttachment`'s own "has the local date rolled since this context
+    // was built" fold, and a fork is a one-shot worker (WS-10 §3.5's own "report back once") that has
+    // no business re-announcing a date change mid-run -- `undefined` makes that fold a permanent no-op
+    // for this session, the simplest correct answer, rather than seeding a real date that could fire a
+    // spurious `date_change` attachment the parent's own captured bytes never anticipated.
+    if (exactRequestLayout !== undefined) {
+      sessionContext = { userContext: exactRequestLayout.userContext, userContextText: renderUserContext(exactRequestLayout.userContext), systemContextText: undefined, date: undefined };
+      return sessionContext;
     }
-    // No string-content user message anywhere (a tool-result-only history): nothing to attach to, and
-    // inventing a message would put context in the transcript the model never asked for.
-    return copy;
+    const placement = assembled.systemContextPlacement ?? "none";
+    const gitStatus = placement !== "none" ? await computeGitStatus(config.cwd) : undefined;
+    let userContext: ContextEntry[] = systemPromptAssembler?.userContext?.(input) ?? [];
+    // `excludeDynamicSections`: claude's `{...systemContext, ...userContext, ...dynamic}` -- git FIRST.
+    if (placement === "userContext" && gitStatus !== undefined) userContext = [["gitStatus", gitStatus], ...userContext];
+    const dated = userContext.find(([key]) => key === "currentDate");
+    sessionContext = {
+      userContext,
+      userContextText: renderUserContext(userContext),
+      systemContextText: placement === "system" && gitStatus !== undefined ? renderSystemContext([["gitStatus", gitStatus]]) : undefined,
+      date: dated !== undefined ? input.date : undefined,
+    };
+    return sessionContext;
+  };
+  registerSessionContextReload(config.sessionId, config.agentId, clearSessionContext);
+  facetDisposers.push(() => {
+    unregisterSessionContextReload(config.sessionId, config.agentId);
+    clearSessionRequestLayout(config.sessionId, config.agentId);
+  });
+
+  /**
+   * The provider request's system prompt for one generation: claude's cache blocks (the static
+   * prefix, then the dynamic half with the systemContext appended last) and their join. A test
+   * double that reports no `systemParts` keeps the plain `system` string and sends no blocks.
+   */
+  const requestSystem = (assembled: AssembledPrompt, context: SessionContext): { system: string; systemBlocks?: SystemPromptBlock[] } => {
+    // SDK 0.0.16 (P16-7): a fork's own exact system prompt -- the PARENT's captured `system`/
+    // `systemBlocks` verbatim. `context.systemContextText` is ALWAYS `undefined` here (the
+    // `ensureSessionContext` exact branch above never sets it), so there is no risk of
+    // double-appending the parent's own gitStatus line: it already rode inside `exactRequestLayout`'s
+    // captured blocks (the pin's own placement -- systemContext appended to the LAST/dynamic block,
+    // `context/request-layout.ts`'s `buildSystemBlocks` header) the moment they were captured.
+    if (exactRequestLayout !== undefined) {
+      return { system: exactRequestLayout.system ?? "", ...(exactRequestLayout.systemBlocks.length > 0 ? { systemBlocks: exactRequestLayout.systemBlocks } : {}) };
+    }
+    if (assembled.systemParts === undefined) {
+      return { system: [assembled.system, context.systemContextText].filter((p): p is string => p !== undefined && p.length > 0).join("\n\n") };
+    }
+    const systemBlocks = buildSystemBlocks({ ...assembled.systemParts, ...(context.systemContextText !== undefined ? { systemContext: context.systemContextText } : {}) });
+    return { system: joinSystemBlocks(systemBlocks), systemBlocks };
+  };
+
+  // Builds the LIVE request's message list (context/request-layout.ts): a COPY of the history with
+  // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
+  // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
+  // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
+  const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText);
+
+  // --- the skill listing's session state (claude's `sentSkillNames`) -------------------------------
+  //
+  // NOT a fold: a set of names already sent, seeded on resume from the persisted `skill_listing`
+  // entries (claude's `vlr`), and NOT reset by a compaction (claude clears it only on /clear or a
+  // skills reload, neither of which Winter has).
+  const sentSkillNames = new Set<string>();
+  let skillResumeSeed: Set<string> | null = null;
+  let suppressNextSkillListing = false;
+  {
+    const seed = skillListingResumeSeed(messages);
+    if (seed.names.length > 0) skillResumeSeed = new Set(seed.names);
+    if (seed.suppressNext) suppressNextSkillListing = true;
+  }
+  const currentSkillListing = (): SkillListing => (typeof skillListing === "function" ? skillListing() : (skillListing ?? []));
+  /** claude's `Urn` + `rwt`: the `skill_listing` attachment for the skills not yet sent, or `undefined`. */
+  const skillListingAttachment = (): SkillListingAttachment | undefined => {
+    // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing.
+    if (!advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME)) return undefined;
+    const listing = currentSkillListing();
+    if (skillResumeSeed !== null) {
+      for (const entry of listing) if (skillResumeSeed.has(entry.name)) sentSkillNames.add(entry.name);
+      skillResumeSeed = null;
+    }
+    if (suppressNextSkillListing) {
+      suppressNextSkillListing = false;
+      for (const entry of listing) sentSkillNames.add(entry.name);
+      return undefined;
+    }
+    const fresh = listing.filter((entry) => !sentSkillNames.has(entry.name));
+    if (fresh.length === 0) return undefined;
+    const isInitial = sentSkillNames.size === 0;
+    for (const entry of fresh) sentSkillNames.add(entry.name);
+    return { type: "skill_listing", content: renderSkillListingContent(fresh), skillCount: fresh.length, isInitial, names: fresh.map((e) => e.name) };
+  };
+
+  /** claude's `alr`: a `date_change` once the local date moved past the one the session context was built with. */
+  const dateChangeAttachment = (): DateChangeAttachment | undefined => {
+    const contextDate = sessionContext?.date;
+    if (contextDate === undefined) return undefined;
+    const today = localDateString(clock());
+    if (today === contextDate || dateChangeAnnounced(messages, today)) return undefined;
+    return { type: "date_change", newDate: today };
+  };
+
+  const recordAttachment = async (attachment: AttachmentPayload): Promise<void> => {
+    if (store?.recordAttachmentEntry === undefined) return;
+    try {
+      await store.recordAttachmentEntry(attachment);
+    } catch {
+      /* auxiliary, exactly like recordUser/recordAssistant -- a store failure is never turn-fatal */
+    }
+  };
+
+  /**
+   * THE ATTACHMENT SCAN (claude's `nlr`): at the start of every turn, after every tool round that
+   * continues the turn, and after a compaction. Each attachment is appended to the history right
+   * after what triggered it (the user prompt, the tool results, the summary) and persisted; the
+   * request builder then places it where claude does. Order: the agent listing, the skill listing,
+   * the date change, then any host/lane producers.
+   */
+  const scanAttachments = async (phase: "turn-start" | "tool-round" | "compaction"): Promise<void> => {
+    const produced: AttachmentPayload[] = [];
+    // R5-16: the built-in attachments are AUTHORED text (context/*), so they ride only when an
+    // assembler is registered -- with none, the engine authors nothing, exactly as before (0.0.15's
+    // listing lived in the assembler for the same reason). Host/lane producers run regardless.
+    //
+    // SDK 0.0.16 (P16-7): NEVER for a fork in exact mode, even though `systemPromptAssembler` is
+    // still set on a fork child's own config (child-engine.ts passes it through unconditionally, for
+    // the non-exact fallback path other child types use). A fork's OWN advertised agent listing
+    // genuinely differs from what its inherited history last announced -- `insideFork` withholds
+    // `fork` itself, so `computeAgentListingDelta` sees a real removal and would announce it -- but
+    // claude's own fork never re-announces one on its first turn (the differential oracle's own
+    // "official" capture: the fork's directive tail carries no such notice); the fork's whole point
+    // is the parent's frozen state, not this run's own fresh negotiation of it. Left uncaught, that
+    // delta attachment BUBBLES UP (`reorderAttachments`, claude's own `SJn`) to land immediately
+    // after the placeholder tool_result and FOLDS INTO its string content
+    // (`joinAttachmentBlocks`/`foldTextIntoToolResult`) -- silently corrupting
+    // `FORK_PLACEHOLDER_TOOL_RESULT` into "Fork started — processing in background\n\n<system-
+    // reminder>...", exactly the class of leak this lane's own report was told to watch for.
+    if (systemPromptAssembler !== undefined && exactRequestLayout === undefined) {
+      const entries = agentListingEntries();
+      if (entries !== undefined) {
+        // SDK 0.0.16 Lane P (R3b §5): `leanModel` -- see `sessionLeanModel`'s own header for the
+        // traced rule and Winter's disclosed mapping onto its own Claude-family tiers.
+        const delta = computeAgentListingDelta(entries, messages, { leanModel: sessionLeanModel(currentProviderIdentity?.modelKey ?? currentModel) });
+        if (delta !== undefined) produced.push(delta);
+      }
+      const skills = skillListingAttachment();
+      if (skills !== undefined) produced.push(skills);
+      const date = dateChangeAttachment();
+      if (date !== undefined) produced.push(date);
+    }
+    // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
+    // `next`-priority notifications addressed to ITS OWN agent id and appends them to the tool
+    // results -- `buildRequestMessages` then folds a text-only attachment INTO the last `tool_result`,
+    // which is where the pin puts its own `queued_command` attachments. Turn-start and compaction
+    // scans deliberately do NOT drain: a notification that arrives while the engine is idle starts
+    // its own turn (`pumpNotifications`), and draining it at turn start instead would silently
+    // attach it to whatever the host asked next.
+    if (phase === "tool-round") {
+      // `inHumanTurn` is what picks between claude's two anti-injection preambles: inside a turn the
+      // HOST started, the user's own message is real input and the preamble says so; inside a turn a
+      // notification itself started, it is not.
+      //
+      // M3 (fix wave, whole-branch review): `!turnStartedByNotification` alone is TRUE for every one
+      // of a CHILD's own turns that a notification did not start -- its initial spawn prompt, and
+      // every SendMessage resume -- neither of which is the end user's own message. Only the
+      // TOP-LEVEL engine's own turn (`config.agentId === undefined`) can genuinely have been started
+      // by the host/user; a child's turn is always parent- or spawn-driven, so its mid-turn
+      // notification must never claim "the user's own message in this turn is real input".
+      const attachment = taskNotificationAttachment(notifications.drainFor(config.agentId, { maxPriority: "next" }), {
+        inHumanTurn: config.agentId === undefined && !turnStartedByNotification,
+      });
+      if (attachment !== undefined) produced.push(attachment);
+    }
+    for (const producer of attachmentProducers ?? []) {
+      produced.push(...(await producer({ phase, messages, sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) })));
+    }
+    for (const attachment of produced) {
+      const message = attachmentMessage(attachment);
+      if (message === undefined) continue;
+      messages.push(message);
+      await recordAttachment(attachment);
+    }
   };
 
   // --- Phase 6 Task 3: the provider request's own inputs ------------------------------------------
@@ -5100,7 +5974,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const agentToolGates = (): AgentToolGateState => ({
     forkEnabled: forkSubagentEnabled,
     backgroundDisabled: resolveBackgroundTasksDisabled(engineEnv ?? process.env, sessionBrand),
-    generalPurposeAvailable: (latestAgentDefinitions ?? sessionAgentDefinitions()).has("general-purpose"),
+    generalPurposeAvailable: (latestAgentDefinitions ?? sessionAvailableAgentDefinitions()).has("general-purpose"),
+    // I4 (fix wave): the resolved opt-out -- the tool description's own "by default" sentence must
+    // follow the SAME effective default `subagents/policy.ts`'s stage 5 actually applies.
+    backgroundByDefault: backgroundByDefault,
   });
 
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
@@ -5108,7 +5985,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
     }
     const gates = agentToolGates();
-    const gated = gates.forkEnabled !== AGENT_TOOL_GATE_DEFAULTS.forkEnabled || gates.backgroundDisabled !== AGENT_TOOL_GATE_DEFAULTS.backgroundDisabled || gates.generalPurposeAvailable !== AGENT_TOOL_GATE_DEFAULTS.generalPurposeAvailable;
+    const gated =
+      gates.forkEnabled !== AGENT_TOOL_GATE_DEFAULTS.forkEnabled ||
+      gates.backgroundDisabled !== AGENT_TOOL_GATE_DEFAULTS.backgroundDisabled ||
+      gates.generalPurposeAvailable !== AGENT_TOOL_GATE_DEFAULTS.generalPurposeAvailable ||
+      gates.backgroundByDefault !== (AGENT_TOOL_GATE_DEFAULTS.backgroundByDefault ?? true);
     if (gated) descriptor = { ...descriptor, description: renderAgentToolDescription(gates) + AGENT_MODEL_SLOTS_BLOCK, inputSchema: agentInputSchemaFor(gates) };
     const render = currentAgentModelRender();
     // An EMPTY enum is not a render: a session with no effective model to derive a family from
@@ -5126,6 +6007,23 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
 
   const providerToolSpecs = (): ProviderToolSpec[] => {
+    // SDK 0.0.16 (P16-7): a fork's own exact tool pool -- the PARENT's last advertised specs
+    // verbatim (names, order AND schemas), never this run's own `advertisedPartition`/gate render.
+    // This is what fixes d2-report.md's own "AskUserQuestion missing from the re-rendered pool" RED:
+    // a fresh render here gates the Agent tool's own description/schema on THIS run's `insideFork`
+    // (the fork itself), which differs from what the PARENT actually advertised.
+    //
+    // A fork that later ToolSearch-loads a deferred tool of its own still gets fresh specs appended
+    // for THAT (loadedToolSet changes are a real, later event this exact snapshot cannot have
+    // anticipated) -- see the loop below, reached only past this early return on the FIRST call; a
+    // later call re-enters this same short-circuit and returns the frozen list again, so a
+    // newly-loaded deferred tool from THIS run never actually reaches the wire under exact mode. That
+    // is a deliberate choice, not an oversight: the alternative (appending fresh specs after the exact
+    // ones) would make request 2 differ in SHAPE from request 1 by the appended count, and this run
+    // has no way to know whether the PARENT would render an identical spec for the same tool anyway
+    // (a fork's own `insideFork` gates differ from the parent's). A fork that needs a deferred tool it
+    // was not already using at fork time is the disclosed edge of this design.
+    if (exactRequestLayout !== undefined) return exactRequestLayout.tools;
     const specs: ProviderToolSpec[] = [];
     for (const descriptor of advertisedPartition.eager) {
       specs.push(toolSpecFor(descriptor));
@@ -5425,6 +6323,28 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   for await (const userFrame of userFrames) {
+    // SDK 0.0.16 Lane N. `turnActive` gates `pumpNotifications` (one notification turn at a time, and
+    // never one that would race a host turn); `turnStartedByNotification` is what makes this an
+    // UNSOLICITED turn rather than a host one -- it decides the second `system/init` frame below, the
+    // meta flag on the persisted envelope, and which anti-injection preamble a MID-turn notification
+    // gets (`scanAttachments`).
+    turnActive = true;
+    emitSessionState("running");
+    turnStartedByNotification = (userFrame as { taskNotification?: unknown }).taskNotification === true;
+    // I1 (fix wave, whole-branch review): a REAL host envelope starting a turn clears the
+    // session-level abort flag. Before this, ONE interrupted turn set `sessionAborted = true` for the
+    // rest of the session's whole life -- every closed-input hold/ceiling/sweep after it was skipped
+    // outright (`runBackgroundWait`'s own `if (sessionAborted) break`), even once the host went on to
+    // start and complete an entirely ordinary later turn. A task-notification envelope deliberately
+    // does NOT reset it: it is not the host asking for another turn, and resetting there would
+    // silently un-abort a session whose end the host already asked for.
+    if (!turnStartedByNotification) sessionAborted = false;
+    if (turnStartedByNotification) {
+      // Captured from the pinned binary: an unsolicited turn opens with its own `system/init`, then
+      // the assistant stream, then its own `result`. A host that renders turns off this stream needs
+      // that frame -- it is the only thing announcing a turn nothing asked for.
+      writeSdkInit();
+    }
     // Set BEFORE any await this turn (including recordUser below) so the entire turn — from the
     // moment its envelope is accepted — is interruptible (WS-04 §5).
     let interruptResolve!: () => void;
@@ -5498,6 +6418,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const compactOutcome = await runManualCompaction(builtinCommand.args);
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, permission_denials: [] } });
       await flushStore();
+      endTurn();
       continue;
     }
 
@@ -5519,11 +6440,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // Carried for a capture.
     const userText = resolvedPromptText;
     messages.push({ role: "user", content: userText });
-    await recordUser(userText);
+    // Lane N: a notification envelope is persisted META-FLAGGED with its origin, exactly as claude
+    // writes one (`isMeta: true`, `origin: {kind: "task-notification"}`) -- so a transcript reader, a
+    // resumed session and the daemon's projector can all tell a turn the runtime started from one the
+    // human typed. The provider history is identical either way: the text IS the turn's input.
+    await recordUser(userText, turnStartedByNotification ? { isMeta: true, origin: { kind: "task-notification" } } : undefined);
 
     // Phase 5 Task 3: assembled AFTER the envelope is recorded (so a store failure never leaves an
     // assembled-but-unrecorded turn) and BEFORE the first provider call of the turn.
-    const assembled = assemblePrompt();
+    const envelopeInput = promptInput();
+    const assembled = assemblePrompt(envelopeInput);
+    // SDK 0.0.16: the session context is built (once, memoized) BEFORE the scan, so the date fold
+    // compares against the date the index-0 context actually carries.
+    await ensureSessionContext(assembled, envelopeInput);
+    await scanAttachments("turn-start");
 
     // R5-10: the attempt budget is PER ENVELOPE, not per run. Each user envelope is expected to
     // produce its own structured result, so a run-wide counter would let one envelope's failures
@@ -5583,11 +6513,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
       let turn: ProviderTurn;
       try {
-        const outboundMessages = requestMessages(assembled.userContextBlocks);
+        // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
+        const context = await ensureSessionContext(assembled, envelopeInput);
+        const outboundMessages = requestMessages(context);
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
         const toolSpecs = providerToolSpecs();
+        const outboundSystem = requestSystem(assembled, context);
+        // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
+        recordSessionRequestLayout(config.sessionId, config.agentId, {
+          ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
+          systemBlocks: outboundSystem.systemBlocks ?? [],
+          userContext: context.userContext,
+          tools: toolSpecs,
+        });
         const raced = await raceInterrupt(
           activeProvider.generate({
             messages: outboundMessages,
@@ -5595,7 +6535,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // than sending `system: ""`. The two are equivalent to a provider ("this host supplied no
             // system prompt" -- ProviderRequest's own contract), and omitting keeps every
             // pre-P5 consumer, fixture and recorded trace byte-identical to before this task.
-            ...(assembled.system.length > 0 ? { system: assembled.system } : {}),
+            ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
+            // SDK 0.0.16: claude's cache blocks, only when the assembler reported its halves.
+            ...(outboundSystem.systemBlocks !== undefined && outboundSystem.systemBlocks.length > 0 ? { systemBlocks: outboundSystem.systemBlocks } : {}),
             // --- Phase 6 Task 3 (R6-3): the real adapter's inputs ----------------------------------
             //
             // Every one is CONDITIONALLY SPREAD, so a session that configures none sends the exact
@@ -6305,6 +7247,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
       if (finalResult) break roundLoop; // relocated below the emit/push/record (Ruling P1-H) — see comment above
       if (interrupted) break roundLoop;
+      // SDK 0.0.16 (P16-6): claude's scan after every tool round -- a mid-turn change (a new agent
+      // definition, a new skill, midnight) is announced right after these tool results, and the
+      // request builder folds it into them.
+      await scanAttachments("tool-round");
       // loop back for the next provider.generate() call
     }
 
@@ -6339,13 +7285,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // so the envelope's terminal result is the one place the id can travel. CONDITIONAL on
       // checkpointing being enabled, so every pre-P5 golden trace stays byte-identical. Disclosed as
       // a Winter-defined discovery channel.
-      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}), ...costFields() } });
+      // Lane N: the ONE terminal-result door. `costFields()` is stamped INSIDE it -- at write time, not
+      // here -- because a HELD result is re-stamped with the session totals when it finally flushes.
+      writeTurnResult({ ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } as TurnResultMessage);
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials, ...costFields() } });
+      sessionAborted = true;
+      writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials });
     }
     // Fix r1 (M1): the messaging facet's own quiescent boundary, fired on BOTH branches. It used to
     // sit inside the success arm beside `emitNotification("idle", ...)`, which is also success-only --
@@ -6354,7 +7303,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // interrupted turn otherwise waited for the next completed turn, or for the 12-hour expiry.
     fireFacetIdle();
     await flushStore();
+    endTurn();
   }
+
+  // SDK 0.0.16 Lane N: the turn loop has drained, so the wait (if any) is over -- flush what was held.
+  //
+  // ORDER: stop background agents FIRST when the wait ended on an INTERRUPT with results still held
+  // (claude's `Fu` -> `SV`): the caller asked for the session to end, and a background child that
+  // outlived it would keep burning tokens with nobody reading its result. Then the held results go
+  // out, re-stamped with the session's totals, and only then does the ordinary teardown below run --
+  // which is what makes "the model was told about its background work" true before the sweep.
+  if (heldResults.length > 0 && sessionAborted) {
+    await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+  }
+  flushHeldResults();
+  emitSessionState("idle");
 
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "teardown" — fired HERE, after the turn loop has
   // fully drained but strictly BEFORE `stopReading()` below, so the pump (still alive at this exact
@@ -6427,6 +7390,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       /* a closed sink at teardown is not an error */
     }
   }
+  // Lane N: withdraw this engine as the queue's endpoint BEFORE the roster/session teardown below --
+  // for a SUBAGENT engine that withdrawal re-addresses whatever it never drained to the main thread
+  // (and wakes it), which is the only way a child's leftover completion still reaches the model.
+  disposeNotificationEndpoint();
+  // The top-level engine owns the session's queue; a child engine shares its parent's and must not
+  // drop it. Singleton hygiene, matching `clearSessionRequestLayout`.
+  if (config.agentId === undefined) clearNotificationQueue(config.sessionId);
   removeChildRosterSource();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
   // the roster contribution above -- the messaging runtime is PROCESS-level and outlives the run, so

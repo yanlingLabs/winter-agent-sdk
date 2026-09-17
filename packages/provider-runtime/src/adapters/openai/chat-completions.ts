@@ -118,7 +118,17 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
       // Responses mapper turned the same input into a user message (Lane A r3 carry). It cannot be a
       // `tool` message here, because this surface requires a `tool_call_id` and there is no result to
       // take one from; so it becomes what Responses already makes it, and the content survives.
-      if (!rendered) out.push({ role: "user", content: userContentParts(blocks, toolPrefix).content });
+      if (!rendered) {
+        out.push({ role: "user", content: userContentParts(blocks, toolPrefix).content });
+        continue;
+      }
+      // 0.0.16 request layout: TEXT AFTER THE TOOL RESULTS in one user turn (a persisted attachment
+      // or a queued notification the engine merged onto this tool message, claude's own wire shape).
+      // It used to be DROPPED here -- the loop above renders only the results. It becomes a
+      // FOLLOW-ON `user` message after every `tool` reply, which is the one position this surface
+      // accepts: nothing may sit between an assistant's `tool_calls` and its `tool` replies.
+      const trailing = blocks.filter((b) => b.type !== "tool_result");
+      if (trailing.length > 0) out.push({ role: "user", content: userContentParts(trailing).content });
       continue;
     }
 

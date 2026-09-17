@@ -9,14 +9,14 @@
 // other. The minimal prompt carries none of it (R5-9 caps it at tool-calling guidance), which is
 // the other reason this block cannot be preset-only: a default session has auto-memory too.
 //
-// WHY A USER-CONTEXT BLOCK AND NOT SYSTEM TEXT. `AssembledPrompt.userContextBlocks`' own doc names
-// WINTER.md and the memory index as what R5-9's "always injected as user-context" means
-// operationally. It is also the only correct position mechanically: the index is file content that
-// changes between turns, so baking it into `system` would either poison prompt caching or -- worse
-// -- go stale for the rest of a long session.
+// SDK 0.0.16 Lane C (P16-5): WHERE EACH HALF GOES NOW, as in claude 0.3.250. The GUIDANCE (with the
+// directory) is the system prompt's `# auto memory` section, in the dynamic half; the INDEX is one
+// entry of the index-0 userContext's `claudeMd` value, labelled as auto-memory
+// (context/assembler.ts). Both are built once per session context: an edit to MEMORY.md is seen after
+// the next compaction or in a new session, which is claude's behaviour too.
 import { join } from "node:path";
 import { WINTER_BRAND, type Settings } from "@yanlinglabs/winter-agent-sdk";
-import { readCappedLinesAndBytes, systemReminder } from "./injection.ts";
+import { readCappedLinesAndBytes } from "./injection.ts";
 
 export const MEMORY_INDEX_BASENAME = "MEMORY.md";
 
@@ -57,36 +57,28 @@ function memoryGuidance(memoryDir: string, instructionsFile: string): string {
   const indexPath = join(memoryDir, MEMORY_INDEX_BASENAME);
   return [
     `Auto-memory for this project lives at ${memoryDir}. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.`,
-    `${indexPath} is the INDEX, and only its first ${MEMORY_INDEX_MAX_LINES} lines / ${Math.round(MEMORY_INDEX_MAX_BYTES / 1024)} KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.`,
+    `${indexPath} is the INDEX, and only its first ${MEMORY_INDEX_MAX_LINES} lines / ${Math.round(MEMORY_INDEX_MAX_BYTES / 1024)} KB are loaded into a session's context, when the session starts. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.`,
     `To record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own \`<slug>.md\` in that directory and add a one-line pointer to the index: \`- [<slug>](<slug>.md) — <one-line summary>\`.`,
     "Revise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.",
     `Do not record what the repository already records. Code, configuration, documentation and ${instructionsFile} are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.`,
   ].join("\n\n");
 }
 
+/** claude's section heading for the auto-memory guidance. */
+export const AUTO_MEMORY_HEADING = "# auto memory";
+
 /**
- * The whole memory user-context block: guidance always, plus the index when there is one.
- *
- * ONE BLOCK, not two. The index is only meaningful next to the rules for maintaining it, and
- * splitting them would put a pinned ordering decision between two halves of one idea.
- *
- * The guidance is injected even with no `MEMORY.md` on disk. A fresh project has nothing to recall
- * but every reason to know it CAN save something -- gating the mechanism on the existence of its
- * own output is how a memory directory stays empty forever.
+ * The system prompt's `# auto memory` section: the heading, a blank line, Winter's own guidance
+ * (which names the directory). Injected even with no `MEMORY.md` on disk -- a fresh project has
+ * nothing to recall but every reason to know it CAN save something.
  */
-export function renderMemoryBlock(memoryDir: string, instructionsFile: string = WINTER_BRAND.instructionsFile): string {
-  // P7a fix wave (item 5, M-1): the instructions file is named IN PROSE SENT TO THE MODEL, and prose
-  // outside a quote-anchored literal is exactly what the brand gate could not see. A rebranded
-  // session told the model that Winter's own instructions file is durable on its own is being told
-  // about a file its
-  // product does not have -- and it is guidance about what NOT to write down, so the cost is memory
-  // the session should have recorded and did not. Defaulted rather than required so every existing
-  // fixture keeps today's text byte for byte.
-  const index = loadMemoryIndex(memoryDir);
-  const label = "Auto-memory (injected by the runtime, not typed by the user):";
-  if (index === null) return systemReminder(label, memoryGuidance(memoryDir, instructionsFile));
-  return systemReminder(
-    label,
-    `${memoryGuidance(memoryDir, instructionsFile)}\n\nThe current index, auto-loaded from ${join(memoryDir, MEMORY_INDEX_BASENAME)}:\n\n${index}`,
-  );
+export function renderAutoMemorySection(memoryDir: string, instructionsFile: string = WINTER_BRAND.instructionsFile): string {
+  // P7a fix wave (item 5, M-1): the instructions file is named IN PROSE SENT TO THE MODEL, so the
+  // session's own brand supplies it.
+  return `${AUTO_MEMORY_HEADING}\n\n${memoryGuidance(memoryDir, instructionsFile)}`;
+}
+
+/** `excludeDynamicSections`: the same guidance as the userContext value under the key `auto memory` (claude's `jEe` strips the heading). */
+export function renderAutoMemoryContextValue(memoryDir: string, instructionsFile: string = WINTER_BRAND.instructionsFile): string {
+  return memoryGuidance(memoryDir, instructionsFile);
 }

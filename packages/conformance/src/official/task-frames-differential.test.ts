@@ -21,8 +21,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hasBunRuntime } from "../bun-required.ts";
-import { fetchAndVerifyUpstream } from "./fetch.ts";
+import { resolvePinnedClaudeBinary } from "./differential-harness.ts";
 import {
   TOOL_USE_BG,
   TOOL_USE_FG,
@@ -66,41 +65,11 @@ const OFFICIAL_MODEL = "claude-haiku-4-5";
 // "(1) The reserved namespace" step. A descriptive name here is for a reader of a log line only.
 const WINTER_TEST_MODEL = "winter-test/task-frames-differential";
 
-/**
- * Resolves (fetching + installing on first use, into a CACHED prefix reused across runs) the pinned
- * claude binary. Returns `undefined` -- never throws -- for every reason it might be unavailable.
- * Copied from resume-conformance.test.ts's own identical resolver (same cache key, same shape) --
- * not factored into a shared helper because that file's own header explains why this whole family
- * keeps its gate logic local rather than adding a shared-module seam for an eleven-line function.
- */
-async function resolvePinnedClaudeBinary(): Promise<{ binaryPath: string } | { reason: string }> {
-  if (process.env.RUN_OFFICIAL_CAPTURE !== "1") {
-    return { reason: 'RUN_OFFICIAL_CAPTURE is not set to "1" -- this suite never fetches the pinned binary or touches the network by default' };
-  }
-  if (!hasBunRuntime()) {
-    return { reason: "this suite needs Bun.spawn/Bun.serve to drive the pinned binary" };
-  }
-  try {
-    const cacheRoot = join(tmpdir(), "winter-conformance-cache", `claude-${CLAUDE_VERSION}`);
-    mkdirSync(cacheRoot, { recursive: true });
-    const { tarballPath } = await fetchAndVerifyUpstream({ cacheDir: join(cacheRoot, "tarball") });
-    const npmPrefix = join(cacheRoot, "npm-prefix");
-    mkdirSync(npmPrefix, { recursive: true });
-    const binaryPath = join(npmPrefix, "node_modules", "@anthropic-ai", "claude-agent-sdk-darwin-arm64", "claude");
-    if (!(await Bun.file(binaryPath).exists())) {
-      const install = Bun.spawn(["npm", "install", "--no-save", "--ignore-scripts", "--prefix", npmPrefix, tarballPath], { stdout: "pipe", stderr: "pipe" });
-      const out = (await new Response(install.stdout).text()) + (await new Response(install.stderr).text());
-      if ((await install.exited) !== 0) return { reason: `npm install into the cached prefix failed:\n${out.slice(0, 2000)}` };
-    }
-    if (!(await Bun.file(binaryPath).exists())) {
-      return { reason: `installed the wrapper but found no darwin-arm64 binary at ${binaryPath} -- wrong platform, most likely` };
-    }
-    return { binaryPath };
-  } catch (err) {
-    return { reason: `could not fetch/install the pinned binary: ${err instanceof Error ? err.message : String(err)}` };
-  }
-}
-
+// The binary resolver used to be a local copy (same cache key, same shape as
+// resume-conformance.test.ts's own) on the theory that duplicating an eleven-line function was
+// cheaper than a shared-module seam. Lane D2 (2026-09-17) added five more call sites needing the
+// identical resolver, which flips that trade -- `resolvePinnedClaudeBinary` now lives in
+// `differential-harness.ts`, imported here unchanged.
 const resolved = await resolvePinnedClaudeBinary();
 const skipReason = "reason" in resolved ? resolved.reason : undefined;
 

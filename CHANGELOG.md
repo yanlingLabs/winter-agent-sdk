@@ -4,6 +4,70 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.16
+
+Request/response parity with the pinned `claude` 0.3.250 for everything that is on by default in a headless
+session: the request layout, the agent listing, background completions reaching the model, byte-exact forks,
+and per-agent-type permission rules.
+
+### BREAKING
+
+- **Subagents now run in the background by default.** `Agent` without `run_in_background` launches
+  asynchronously and returns a task id; the child's completion reaches the model later as a
+  `<task-notification>` document — folded into the next tool round, or as its own turn. Pass
+  `run_in_background: false` for the previous behaviour, `Options.backgroundByDefault: false` (or
+  `WINTER_BACKGROUND_BY_DEFAULT=0`) to keep the foreground default for a whole session, or
+  `WINTER_DISABLE_BACKGROUND_TASKS=1` to disable background tasks entirely (this also withholds
+  `run_in_background` from the advertised schema).
+- **A session can start a turn nobody asked for.** When a background task completes while the session is
+  idle, the runtime opens an *unsolicited turn*: a second `system/init`, the assistant stream, and its own
+  `result`. There is **no `user` frame** — that second `init` is the only signal a turn started. Hosts that
+  count turns, arm idle timers, or treat `init` as session identity must be updated before upgrading.
+- **The Anthropic-dialect adapter sends `system` as an array of cache-marked text blocks** (plus a
+  prompt-cache breakpoint on the last message block) for providers that declare prompt caching. A request
+  without the 0.0.16 layout, or a provider that does not declare caching, keeps the plain string `system`.
+- **Instruction files are read once per session** (and again after compaction), as in the pinned runtime,
+  instead of on every turn.
+
+### Added
+
+- Request layout parity: the system prompt as cache-scoped blocks with the git status appended last; the
+  per-session context (instruction files, memory index, current date) as one `isMeta` user message at index 0
+  of every request, byte-stable across turns.
+- Persisted `attachment` transcript entries, replayed on resume: the agent-type listing (announced once,
+  deltas on change, re-announced after compaction), the skill listing, a date-change notice, and task
+  notifications. The agent and skill listings are no longer part of the system prompt.
+- Background completions reach the model: a per-session notification queue, `<task-notification>` documents
+  per task kind inside an anti-injection preamble, and, for `-p`-style hosts, the input-closed hold (held
+  `result`, wait loop with a ceiling, grace period, sweep).
+- `system/session_state_changed`, emitted only under `WINTER_EMIT_SESSION_STATE_EVENTS`.
+- Byte-exact forks: a fork replays the parent's system blocks, tool specs and context verbatim; its history is
+  the parent's minus unanswered `tool_use`, plus a clone carrying only its own `tool_use`, a placeholder
+  `tool_result` and the fork directive. `permissionMode: "bubble"`, forced background, `maxTurns: 200`, and a
+  worktree note when isolated.
+- `Agent(<type>)` permission rules (deny is enforced at the spawn with the pinned refusal wording),
+  `Options.allowedAgentTypes` — also derived from a definition's `Agent(a, b)` tool entries — agent-listing
+  filters, the Explore first-party model cap (`WINTER_DISABLE_EXPLORE_INHERIT_CAP` opts out), and
+  `RuntimeAgentDefinition.whenToUseLean`.
+- `Settings.includeGitInstructions` (default `true`) and `WINTER_DISABLE_GIT_INSTRUCTIONS`.
+
+### Fixed
+
+- The OpenAI Chat Completions adapter dropped any text that followed tool results in one user turn; it now
+  becomes a follow-on `user` message.
+- An interrupt no longer disables the input-closed wait for the rest of the session.
+- A fork's own listing/skill/date attachments could fold into the inherited placeholder tool result and
+  corrupt it.
+- `/compact` could leave a turn claim held, which would stall a closed-input wind-down indefinitely; an
+  interrupt arriving during that wind-down was a silent no-op.
+
+### New environment variables
+
+`WINTER_BACKGROUND_BY_DEFAULT`, `WINTER_PRINT_BG_WAIT_CEILING_MS` (default 600000; `0` waits indefinitely),
+`WINTER_EMIT_SESSION_STATE_EVENTS`, `WINTER_DISABLE_GIT_INSTRUCTIONS`, `WINTER_DISABLE_EXPLORE_INHERIT_CAP`.
+`WINTER_DISABLE_BACKGROUND_TASKS` also restores the foreground spawn default. All of them, and the new
+options and settings, are documented in `packages/sdk/README.md`.
+
 ## 0.0.15
 
 - `runtime`: background-task frames now match the pinned Claude Agent SDK runtime for Bash, Agent, Monitor,

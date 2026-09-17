@@ -25,6 +25,7 @@ import { createBackgroundTask } from "../background-tasks.ts";
 import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailableError } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
 import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
+import { createMonitorEventRelay } from "../../subagents/notification-queue.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -513,11 +514,22 @@ export async function connectMonitorWs(
   const { taskId, outputPath } = createBackgroundTask("monitor_ws");
   const outStream = createWriteStream(outputPath, { flags: "a" });
   const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
+  // SDK 0.0.16 Lane N: the MODEL-facing stream relay (claude's `TD`). A monitor exists to tell the
+  // model that something happened on this socket, and before this the model could only learn that by
+  // reading the `.output` file: every message went to disk and nowhere else. Now each coalesced batch
+  // becomes a `Monitor event: "<description>"` notification addressed to whoever started the monitor.
+  // The COMMAND half deliberately keeps its file-only stream (its stdout is what `TaskOutput` reads,
+  // and the pin's own command half is registered as a plain background shell) -- recorded deviation.
+  const eventRelay = createMonitorEventRelay({ sessionId: ctx.sessionId, taskId, description, ...(ctx.agentId !== undefined ? { agentId: ctx.agentId } : {}) });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   function finalize(status: "completed" | "failed" | "stopped", summary: string): void {
     if (timer) clearTimeout(timer);
+    // Deliver whatever the socket said last, THEN stop relaying: the terminal notification below is
+    // this task's last word, and an event delivered after it would arrive out of order.
+    eventRelay.flush();
+    eventRelay.dispose();
     outStream.end();
     if (getTask(taskId)?.status !== "running") return; // TaskStop already recorded a terminal status
     updateTask(taskId, { status, endTime: Date.now(), notification: { summary } });
@@ -573,6 +585,7 @@ export async function connectMonitorWs(
         return;
       }
       outStream.write(`${data}\n`);
+      eventRelay.onData(`${data}\n`);
     } else {
       // binaryType "arraybuffer" -- a binary frame arrives as an ArrayBuffer, never a Blob.
       const byteLength = data instanceof ArrayBuffer ? data.byteLength : (data as ArrayBufferView).byteLength;

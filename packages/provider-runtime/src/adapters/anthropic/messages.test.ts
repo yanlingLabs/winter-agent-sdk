@@ -7,9 +7,10 @@
 // vocabulary, the capability read, and the endpoint-policy refusals that happen before a URL exists.
 import { describe, expect, test } from "bun:test";
 import { createAnthropicMessagesAdapter, mapAnthropicEffort, toWireMessages } from "./index.ts";
+import { promptCachingLayout } from "./messages.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext } from "../../types.ts";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
+import { loadCatalog, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
 const evidence = <T>(value: T) => ({ value, source: "upstream-static" as const, confidence: "inferred" as const });
 
@@ -136,6 +137,59 @@ describe("mapEffort", () => {
     const model = descriptor({ reasoning: { supported: evidence(true), efforts: ["medium"], continuation: "none" } });
     expect(adapter.mapEffort("medium", model)).toEqual(mapAnthropicEffort("medium", model) as { ok: true; value: unknown });
     expect(adapter.mapEffort("max", model)).toMatchObject({ ok: false });
+  });
+});
+
+describe("promptCachingLayout (I3, fix wave)", () => {
+  // A request that never carries the 0.0.16 block layout is never marked, regardless of the
+  // descriptor -- `systemBlocks === undefined` short-circuits before the descriptor is even read.
+  const req = { model: "anthropic/claude-sonnet-5", messages: [], systemBlocks: [{ text: "s", cacheScope: "org" as const }] };
+
+  test("declared true -> marked (array system blocks with cache_control)", () => {
+    const model = descriptor({ promptCaching: evidence(true) });
+    expect(promptCachingLayout(req, model)).toBe(true);
+  });
+
+  test("declared false -> not marked (plain string system)", () => {
+    const model = descriptor({ promptCaching: evidence(false) });
+    expect(promptCachingLayout(req, model)).toBe(false);
+  });
+
+  test("no promptCaching evidence on an otherwise-real descriptor -> not marked", () => {
+    const model = descriptor();
+    expect(model.promptCaching).toBeUndefined();
+    expect(promptCachingLayout(req, model)).toBe(false);
+  });
+
+  test("no descriptor at all (an allowUnlisted passthrough) -> not marked", () => {
+    expect(promptCachingLayout(req, undefined)).toBe(false);
+  });
+
+  test("systemBlocks absent -> never marked even when the row declares true", () => {
+    const model = descriptor({ promptCaching: evidence(true) });
+    expect(promptCachingLayout({ model: "m", messages: [] }, model)).toBe(false);
+  });
+
+  // Regression tripwire (scoped re-review, fix 3): I3's `=== true` requirement is correct, but it
+  // turned "no evidence recorded" into a silent cost regression for every Claude row the catalog's
+  // own overlay authors had not yet gotten to -- 8 of 12 `anthropic` rows and 8 of 12 `console` rows
+  // lost prompt caching the moment this file shipped, with no test failing anywhere. This probes the
+  // REAL generated catalog (not a hand-built fixture, which cannot see a data-only regression) so the
+  // next upstream re-sync that lands a new promptCaching-silent Claude row fails HERE, not in a bill.
+  describe("real catalog: every anthropic/console Claude row is caching-eligible (regression tripwire)", () => {
+    const claudeRows = loadCatalog().models.filter((m) => (m.providerId === "anthropic" || m.providerId === "console") && m.key.includes("claude"));
+
+    test("the probe has real rows to examine (a vacuous pass is not a pass)", () => {
+      expect(claudeRows.length).toBeGreaterThanOrEqual(12);
+    });
+
+    test.each(claudeRows.map((m) => [m.key] as const))("%s declares promptCaching at official-doc/declared, and promptCachingLayout marks it", (key) => {
+      const row = claudeRows.find((m) => m.key === key)!;
+      expect([key, row.promptCaching?.value]).toEqual([key, true]);
+      expect([key, row.promptCaching?.source]).toEqual([key, "official-doc"]);
+      expect([key, row.promptCaching?.confidence]).toEqual([key, "declared"]);
+      expect([key, promptCachingLayout(req, row)]).toEqual([key, true]);
+    });
   });
 });
 

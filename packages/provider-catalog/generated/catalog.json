@@ -8400,6 +8400,13 @@
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [
         "temperature",
         "top_p",
@@ -8656,6 +8663,13 @@
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "claude-haiku-4.5",
@@ -8708,6 +8722,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -8762,6 +8783,13 @@
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "claude-opus-4.6",
@@ -8814,6 +8842,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [
         "temperature",
@@ -8871,6 +8906,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [
         "temperature",
@@ -9078,6 +9120,13 @@
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "claude-sonnet-4.5",
@@ -9130,6 +9179,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -16019,6 +16075,13 @@
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [
         "temperature",
         "top_p",
@@ -16275,6 +16338,13 @@
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "claude-haiku-4.5",
@@ -16327,6 +16397,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -16381,6 +16458,13 @@
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "claude-opus-4.6",
@@ -16433,6 +16517,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [
         "temperature",
@@ -16490,6 +16581,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [
         "temperature",
@@ -16697,6 +16795,13 @@
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "claude-sonnet-4.5",
@@ -16749,6 +16854,13 @@
         "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
         "observedAt": "2026-09-16T00:00:00Z",
         "confidence": "unknown"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — \"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\" (retrieved 2026-09-07) — applied per anthropic/claude-fable-5-1's own already-admitted evidence: a Messages API mechanic (cache_control markers) stated for the Claude model line generally, not a per-model pricing-page confirmation like the sibling rows' own citations.",
+        "confidence": "declared",
+        "observedAt": "2026-09-17T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",

@@ -67,8 +67,16 @@ function scrubPreservedUuids(entries: ConformanceTraceEntry[]): ConformanceTrace
   });
 }
 
+// SDK 0.0.16 (P16-5): the index-0 userContext carries claude's `currentDate` entry, and the echo
+// doubles put the live request's user message -- that context included -- back on the wire. The
+// date is the one value in it that moves by itself, so it is scrubbed here, by its exact
+// `Today's date is <YYYY-MM-DD>.` sentence (never a bare date pattern, which could eat a meaningful
+// literal).
+const FIXTURE_CURRENT_DATE_SENTENCE = "Today's date is <FIXTURE-DATE>.";
+
 function scrubWinterHome(entries: ConformanceTraceEntry[], winterHome: string): ConformanceTraceEntry[] {
-  return JSON.parse(JSON.stringify(entries).split(winterHome).join(FIXTURE_WINTER_HOME)) as ConformanceTraceEntry[];
+  const json = JSON.stringify(entries).split(winterHome).join(FIXTURE_WINTER_HOME).replace(/Today's date is \d{4}-\d{2}-\d{2}\./g, FIXTURE_CURRENT_DATE_SENTENCE);
+  return JSON.parse(json) as ConformanceTraceEntry[];
 }
 
 function kindOf(msg: { type: string; subtype?: string }): string {

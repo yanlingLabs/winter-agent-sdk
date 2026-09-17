@@ -632,14 +632,16 @@ describe("P1-N: recorded project dir name (record + apply half)", () => {
       const jsonlPath = join(home, "projects", "custom-name", `${sessionId}.jsonl`);
       const loaded = await new WinterCompatibilitySessionStore({ winterHome: home }).load({ projectKey: "custom-name", sessionId });
       expect(existsSync(jsonlPath)).toBe(true);
-      expect(loaded!.length).toBe(4); // 2 entries per envelope (user + assistant) x 2 runs
+      // 2 entries per envelope (user + assistant) x 2 runs, plus the FIRST run's agent-listing
+      // attachment -- the resumed run folds it back and does not re-announce (SDK 0.0.16, P16-6).
+      expect(loaded!.length).toBe(5);
 
       const defaultProjectKey = compatibilityKeys(cwd).transcriptProjectKey;
       const wrongPath = join(home, "projects", defaultProjectKey, `${sessionId}.jsonl`);
       expect(existsSync(wrongPath)).toBe(false);
 
       const summaries = await new WinterCompatibilitySessionStore({ winterHome: home }).listSessionSummaries!("custom-name");
-      expect(summaries[0]).toMatchObject({ projectDirName: "custom-name", entryCount: 4 });
+      expect(summaries[0]).toMatchObject({ projectDirName: "custom-name", entryCount: 5 });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -665,14 +667,14 @@ describe("P1-N: recorded project dir name (record + apply half)", () => {
       const originalPath = join(home, "projects", "custom-name-original", `${sessionId}.jsonl`);
       const loaded = await new WinterCompatibilitySessionStore({ winterHome: home }).load({ projectKey: "custom-name-original", sessionId });
       expect(existsSync(originalPath)).toBe(true);
-      expect(loaded!.length).toBe(4);
+      expect(loaded!.length).toBe(5); // + the first run's listing attachment, never re-announced
 
       // never lands under the NEW override name either
       const newOverridePath = join(home, "projects", "totally-different-name", `${sessionId}.jsonl`);
       expect(existsSync(newOverridePath)).toBe(false);
 
       const summaries = await new WinterCompatibilitySessionStore({ winterHome: home }).listSessionSummaries!("custom-name-original");
-      expect(summaries[0]).toMatchObject({ projectDirName: "custom-name-original", entryCount: 4 });
+      expect(summaries[0]).toMatchObject({ projectDirName: "custom-name-original", entryCount: 5 });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -698,8 +700,10 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       await runOneEnvelope({ sessionId: randomUUID(), cwd, model: "winter-test/echo", continue: true }, home, {});
 
       const after = await store.load({ projectKey, sessionId: firstId });
-      expect(after!.length).toBe(4); // 2 envelopes x (user + assistant)
-      expect(after![2]!.parentUuid).toBe(lastUuidBeforeResume);
+      // 2 envelopes x (user + assistant) + the first run's listing attachment (not re-announced on resume)
+      expect(after!.length).toBe(5);
+      expect(after!.filter((e) => e.type === "attachment")).toHaveLength(1);
+      expect(after![3]!.parentUuid).toBe(lastUuidBeforeResume);
       // full-chain continuity from the very first entry to the very last
       expect(after![0]!.parentUuid).toBeNull();
       for (let i = 1; i < after!.length; i++) expect(after![i]!.parentUuid).toBe(after![i - 1]!.uuid);
@@ -921,12 +925,13 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       // original untouched
       expect(readFileSync(originalPath).equals(originalBytesBefore)).toBe(true);
       const originalEntries = await store.load({ projectKey, sessionId: originalId });
-      expect(originalEntries!.length).toBe(2); // unchanged: just its own first envelope
+      expect(originalEntries!.length).toBe(3); // unchanged: just its own first envelope (user, listing attachment, assistant)
 
-      // the fork has the copied history PLUS the new turn appended after it
+      // the fork has the copied history PLUS the new turn appended after it -- and the copied listing
+      // attachment means the fork does not re-announce it
       const forkedEntries = await store.load({ projectKey, sessionId: forkedId });
-      expect(forkedEntries!.length).toBe(4);
-      expect(forkedEntries![2]!.parentUuid).toBe(forkedEntries![1]!.uuid);
+      expect(forkedEntries!.length).toBe(5);
+      expect(forkedEntries![3]!.parentUuid).toBe(forkedEntries![2]!.uuid);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -951,7 +956,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       })();
 
       const before = await store.load({ projectKey, sessionId });
-      expect(before!.length).toBe(4);
+      expect(before!.length).toBe(5); // user, listing attachment, assistant, user, assistant
       const atUuid = before![0]!.uuid!; // truncate back to right after the FIRST user entry — always set by this engine's own producer
 
       await runOneEnvelope(
@@ -961,9 +966,10 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       );
 
       const after = await store.load({ projectKey, sessionId });
-      // original tail (entries 1..3) is still ON DISK — resumeSessionAt never deletes; the graph
-      // just grows a new branch off atUuid.
-      expect(after!.length).toBe(6);
+      // original tail (entries 1..4) is still ON DISK — resumeSessionAt never deletes; the graph
+      // just grows a new branch off atUuid. The truncation dropped the listing attachment with the
+      // tail, so the new branch re-announces it: user, attachment, assistant.
+      expect(after!.length).toBe(8);
       const newBranchEntries = after!.filter((e) => e.parentUuid === atUuid);
       expect(newBranchEntries.length).toBe(2); // the original next entry AND the new branch's first entry
     } finally {

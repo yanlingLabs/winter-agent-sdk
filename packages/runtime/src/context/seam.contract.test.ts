@@ -59,10 +59,9 @@ async function runOneTurn(opts: { assembler?: SystemPromptAssembler; agentSystem
 
 describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engine consumes)", () => {
   test("the interface is structural: any object with assemble() satisfies it, no base class, no registration", () => {
-    const inline: SystemPromptAssembler = { assemble: (): AssembledPrompt => ({ system: "s", userContextBlocks: [] }) };
+    const inline: SystemPromptAssembler = { assemble: (): AssembledPrompt => ({ system: "s" }) };
     expect(inline.assemble({ config: baseConfig(), cwd: "/x", env: {}, platform: "darwin", osVersion: "26", shell: "/bin/zsh", date: "2026-09-04", planMode: false })).toEqual({
       system: "s",
-      userContextBlocks: [],
     });
   });
 
@@ -133,24 +132,46 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
     expect(calls.map((c) => c.planMode)).toEqual([true, false]);
   });
 
-  test("userContextBlocks are prepended to THIS TURN's user message on the live request -- and never enter the engine's own history", async () => {
-    const requests = await runOneTurn({ assembler: fakeSystemPromptAssembler({ system: "S", userContextBlocks: ["BLOCK-A", "BLOCK-B"] }), turns: 2, text: "go" });
-    // Turn 1's request: the single user message carries both blocks ahead of the prompt text.
+  test("SDK 0.0.16: the userContext is ONE index-0 message, merged ahead of the prompt, identical on every request, and never in history", async () => {
+    const CTX = [["claudeMd", "RULES"], ["currentDate", "Today's date is 2026-09-04."]] as const;
+    const requests = await runOneTurn({ assembler: fakeSystemPromptAssembler({ system: "S", userContext: [...CTX] }), turns: 2, text: "go" });
+    const ctxText = "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# claudeMd\nRULES\n# currentDate\nToday's date is 2026-09-04.\n\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n";
     const first = requests[0]!;
     expect(first.messages).toHaveLength(1);
-    expect(first.messages[0]!.content).toBe("BLOCK-A\n\nBLOCK-B\n\ngo");
-    // Turn 2's request: history contains turn 1's user message WITHOUT the blocks (they never
-    // entered `messages`), and only turn 2's own user message carries them.
+    // The Agent tool is advertised here, so the persisted agent listing leads the message (claude's
+    // reorder puts attachments above the index-0 context); the context and the prompt follow.
+    const blocks = first.messages[0]!.content as Array<{ type: string; text: string }>;
+    expect(blocks[0]!.text.startsWith("<system-reminder>\nAvailable agent types for the Agent tool:")).toBe(true);
+    expect(blocks.slice(1)).toEqual([{ type: "text", text: `${ctxText}\n` }, { type: "text", text: "go" }]);
+    // Turn 2 repeats turn 1's message byte for byte, and the new prompt carries NOTHING extra.
     const second = requests[1]!;
-    const userContents = second.messages.filter((m) => m.role === "user").map((m) => m.content);
-    expect(userContents[0]).toBe("go");
-    expect(userContents[userContents.length - 1]).toBe("BLOCK-A\n\nBLOCK-B\n\ngo-1");
+    expect(second.messages[0]).toEqual(first.messages[0]);
+    expect(second.messages.at(-1)).toEqual({ role: "user", content: "go-1" });
   });
 
-  test("an assembler returning NO blocks leaves the user message byte-identical to the un-assembled one", async () => {
-    const withAssembler = await runOneTurn({ assembler: fakeSystemPromptAssembler({ system: "S", userContextBlocks: [] }) });
+  test("the userContext is built ONCE per session context (memoized), not once per turn", async () => {
+    let built = 0;
+    const assembler: SystemPromptAssembler = {
+      assemble: () => ({ system: "S" }),
+      userContext: () => {
+        built++;
+        return [["currentDate", "d"]];
+      },
+    };
+    await runOneTurn({ assembler, turns: 3 });
+    expect(built).toBe(1);
+  });
+
+  test("an assembler with NO userContext prepends no index-0 context; with NO assembler the message is untouched (R5-16)", async () => {
+    const withAssembler = await runOneTurn({ assembler: fakeSystemPromptAssembler({ system: "S" }) });
+    const texts = JSON.stringify(withAssembler[0]!.messages);
+    expect(texts).not.toContain("As you answer the user's questions");
+    // The only thing ahead of the prompt is the persisted agent listing (an assembler is registered).
+    const blocks = withAssembler[0]!.messages[0]!.content as Array<{ text: string }>;
+    expect(blocks.at(-1)!.text).toBe("go");
+    expect(blocks.slice(0, -1).every((b) => b.text.startsWith("<system-reminder>\nAvailable agent types"))).toBe(true);
     const without = await runOneTurn({});
-    expect(withAssembler[0]!.messages[0]!.content).toBe(without[0]!.messages[0]!.content);
+    expect(without[0]!.messages).toEqual([{ role: "user", content: "go" }]);
   });
 
   test("R5-3/P4-J: `agentPrompt` reaches the assembler, and with NO assembler it IS the system prompt (the engine forwards, never authors)", async () => {
@@ -162,24 +183,31 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
     expect(noAssembler[0]!.system).toBe("you are the reviewer");
   });
 
-  // RULING P5-F (fix round 1, M2). The attachment point is recomputed from the REBUILT message list on
-  // every provider call. The first version cached `turnUserIndex` once per envelope, which a mid-turn
-  // compaction strands: the engine replaces `messages` with `[summary, ...retained]`.
-  describe("RULING P5-F: user-context blocks survive a MID-TURN compaction", () => {
-    async function withCompaction(keep: number): Promise<ProviderRequest[]> {
+  // SDK 0.0.16 retires RULING P5-F's re-anchoring (nothing rides the last user message any more); what
+  // replaces it is claude's: a compaction CLEARS the session context memo, and the next request
+  // rebuilds the index-0 message from scratch -- ahead of the summary, exactly once.
+  describe("a MID-TURN compaction rebuilds the index-0 context", () => {
+    async function withCompaction(keep: number): Promise<{ requests: ProviderRequest[]; built: number }> {
       const { host, runtime } = createInMemoryChannel();
       const { provider, requests } = recordingProvider(["done", "done"]);
       let compacted = false;
+      let built = 0;
       const done = runEngine({
         config: baseConfig(),
         input: runtime.input,
         output: runtime.output,
         provider,
         tools: stubExecutor,
-        systemPromptAssembler: fakeSystemPromptAssembler({ system: "S", userContextBlocks: ["WINTER-MD-BLOCK"] }),
+        systemPromptAssembler: {
+          assemble: () => ({ system: "S" }),
+          userContext: () => {
+            built++;
+            return [["claudeMd", `WINTER-MD-BLOCK-${built}`]];
+          },
+        },
         compactionController: {
           // Compacts exactly once, on the SECOND envelope, so request 1 is the un-compacted control
-          // and request 2 is the post-re-anchor case.
+          // and request 2 is the post-compaction case.
           shouldCompact: () => {
             if (compacted) return false;
             return requests.length > 0;
@@ -195,49 +223,28 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
       host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
       await drain(host.input);
       await done;
-      return requests;
+      return { requests, built };
     }
 
-    test("retained: [] -- the blocks attach to the summary-anchored user message, ONCE, without being folded into the summary's own text", async () => {
-      // A-9 (fix wave / whole-branch N3): the old title said "NEVER prepended inside the summary
-      // text", which overstates P5-F. With `retained: []` the summary IS the message the blocks
-      // attach to -- that is the ruling ("with nothing retained they attach to the summary-anchored
-      // first user message"), not a case P5-F eliminates. What the defect actually did, and what
-      // this pins, is attaching them ONCE at the front of that message rather than repeatedly or
-      // interleaved: the summary's own text survives intact behind them.
-      const requests = await withCompaction(0);
+    test("retained: [] -- the rebuilt context leads the summary, once, and the summary text is intact", async () => {
+      const { requests, built } = await withCompaction(0);
       expect(requests).toHaveLength(2);
-      // Turn 1 (no compaction yet): the ordinary case.
-      expect(requests[0]!.messages.at(-1)!.content).toBe("WINTER-MD-BLOCK\n\nfirst");
-      // Turn 2 (compacted to the summary alone): the blocks are still present exactly once, and the
-      // summary text itself is intact -- the defect prepended them INSIDE the summary.
+      expect(built).toBe(2);
       const post = requests[1]!.messages;
-      const joined = post.map((m) => String(m.content)).join("\n---\n");
-      expect(joined).toContain("WINTER-MD-BLOCK");
-      expect(joined.match(/WINTER-MD-BLOCK/g)).toHaveLength(1);
-      expect(post.at(-1)!.content).toBe("WINTER-MD-BLOCK\n\nTHE SUMMARY");
+      expect(post).toHaveLength(1);
+      const blocks = post[0]!.content as Array<{ type: string; text: string }>;
+      // [the re-announced agent listing, the rebuilt context, the summary]
+      expect(blocks.map((b) => b.text.includes("WINTER-MD-BLOCK-2"))).toEqual([false, true, false]);
+      expect(blocks[0]!.text).toContain("Available agent types for the Agent tool:");
+      expect(blocks[2]!.text).toBe("THE SUMMARY");
+      expect(JSON.stringify(post)).not.toContain("WINTER-MD-BLOCK-1");
     });
 
-    test("retained: N -- an index shift no longer DROPS the blocks", async () => {
-      // A-7 (fix wave / whole-branch N1): `withCompaction(1)`, not `(2)`. The ledger's own measurement
-      // is that at keep=2 the cached index the P5-F defect used still landed inside the rebuilt list,
-      // so the fixture passed with the defect reinstated and measured nothing; keep=1 puts the index
-      // PAST the end, which is the shape that silently dropped the blocks for the rest of the turn.
-      //
-      // HONEST NOTE ON MY OWN PROBE: reinstating an APPROXIMATION of the defect (anchoring at the
-      // FIRST user message rather than the last) fails at BOTH keeps, so it does not independently
-      // discriminate them -- reproducing the exact per-envelope `turnUserIndex = messages.length - 1`
-      // capture would. The change is adopted on the ledger's evidence plus a standing argument that
-      // costs nothing: fewer retained messages is strictly more likely to put a stale index out of
-      // range, so keep=1 is the strictly stronger fixture either way.
-      const requests = await withCompaction(1);
-      expect(requests).toHaveLength(2);
-      const post = requests[1]!.messages;
-      const joined = post.map((m) => String(m.content)).join("\n---\n");
-      // The defect's signature here was ZERO occurrences: the cached index pointed past the end of
-      // the rebuilt list, so the blocks were silently dropped for the rest of the turn.
-      expect(joined.match(/WINTER-MD-BLOCK/g)).toHaveLength(1);
-      expect(String(post.at(-1)!.content).startsWith("WINTER-MD-BLOCK\n\n")).toBe(true);
+    test("retained: N -- the context is still present exactly once, at the front", async () => {
+      const { requests } = await withCompaction(1);
+      const joined = JSON.stringify(requests[1]!.messages);
+      expect(joined.match(/WINTER-MD-BLOCK-2/g)).toHaveLength(1);
+      expect(joined.indexOf("WINTER-MD-BLOCK-2")).toBeLessThan(joined.indexOf("THE SUMMARY"));
     });
   });
 

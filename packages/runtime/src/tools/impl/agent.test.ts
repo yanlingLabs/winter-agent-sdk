@@ -63,6 +63,8 @@ interface CtxOptions {
   /** P7a fix wave (item 10, N-1): the SESSION's brand, which is what decides the agents directory this tool reads. */
   brand?: BrandProfile;
   spawnChild?: (req: SpawnChildRequest) => Promise<ChildHandle>;
+  /** I4 (fix wave): mirrors ToolExecutionContext.backgroundByDefault -- this session's resolved background-by-default opt-out. */
+  backgroundByDefault?: boolean;
 }
 
 function makeCtx(opts: CtxOptions = {}): { ctx: ToolExecutionContext; frames: unknown[] } {
@@ -79,6 +81,7 @@ function makeCtx(opts: CtxOptions = {}): { ctx: ToolExecutionContext; frames: un
     tempDir: "/tmp/winter-agent-test-temp",
     sandboxSettings: {},
     ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
+    ...(opts.backgroundByDefault !== undefined ? { backgroundByDefault: opts.backgroundByDefault } : {}),
     session: {
       setCwd() {},
       addBoundedRoot() {},
@@ -115,7 +118,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
   test("missing description -> legible error, spawnChild never called", async () => {
     let called = false;
     const { ctx } = makeCtx({ spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ prompt: "do the thing" }, ctx);
+    const result = await agentExecutor.execute({ prompt: "do the thing", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toContain("description");
     expect(called).toBe(false);
@@ -124,7 +127,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
   test("missing prompt -> legible error, spawnChild never called", async () => {
     let called = false;
     const { ctx } = makeCtx({ spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ description: "task" }, ctx);
+    const result = await agentExecutor.execute({ description: "task", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toContain("prompt");
     expect(called).toBe(false);
@@ -137,7 +140,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
     Bun.spawnSync(["git", "init", "-q", repo]);
     let capturedReq: SpawnChildRequest | undefined;
     const { ctx } = makeCtx({ cwd: repo, spawnChild: async (req) => ((capturedReq = req), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", isolation: "remote" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", isolation: "remote", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     expect(capturedReq?.isolation).toBe("worktree");
   });
@@ -146,7 +149,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
     const plain = mkTempDir("winter-agent-test-nogit-");
     let capturedReq: SpawnChildRequest | undefined;
     const { ctx } = makeCtx({ cwd: plain, spawnChild: async (req) => ((capturedReq = req), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", isolation: "remote" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", isolation: "remote", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     expect(capturedReq).toBeDefined();
     expect(capturedReq?.isolation).toBeUndefined();
@@ -154,7 +157,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
 
   test("no spawnChild capability configured -> a legible, non-crashing error", async () => {
     const { ctx } = makeCtx({}); // spawnChild omitted entirely
-    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toBe("no spawnChild capability configured");
   });
@@ -163,7 +166,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
     let called = false;
     const home = mkTempDir("winter-agent-test-home-");
     const { ctx } = makeCtx({ home, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toBe("Agent type 'nonexistent' not found. Available agents: Explore, Plan, claude, general-purpose");
     expect(called).toBe(false);
@@ -175,7 +178,7 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
         throw new Error("winter: subagent spawn refused -- depth exceeded");
       },
     });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     // R-S4: claude's shape -- the thrown message itself, no wrapper prefix.
     expect(result.output).toBe("winter: subagent spawn refused -- depth exceeded");
@@ -196,7 +199,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
         return fakeHandle(Promise.resolve({ status: "completed", content: "reviewed" }));
       },
     });
-    const result = await agentExecutor.execute({ description: "review", prompt: "review this diff", subagent_type: "reviewer" }, ctx);
+    const result = await agentExecutor.execute({ description: "review", prompt: "review this diff", subagent_type: "reviewer", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     expect(capturedReq?.definition?.description).toBe("reviews code");
     expect(capturedReq?.definition?.tools).toEqual(["Read", "Grep"]);
@@ -219,7 +222,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
       spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "reviewed" })),
     });
     const result = await agentExecutor.execute(
-      { description: "review", prompt: "review this diff", subagent_type: "reviewer" },
+      { description: "review", prompt: "review this diff", subagent_type: "reviewer", run_in_background: false },
       { ...ctx, onAgentDefinitionRejected: (r) => rejections.push(r) },
     );
     expect(result.isError).toBeUndefined();
@@ -261,7 +264,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
         return fakeHandle(Promise.resolve({ status: "completed", content: "reviewed" }));
       },
     });
-    const result = await agentExecutor.execute({ description: "review", prompt: "p", subagent_type: "reviewer" }, ctx);
+    const result = await agentExecutor.execute({ description: "review", prompt: "p", subagent_type: "reviewer", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     expect(capturedReq?.definition?.description).toBe("the ACME reviewer");
     expect(capturedReq?.definition?.prompt).toBe("Acme body.");
@@ -278,7 +281,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     writeFileSync(join(home, ".winter", "agents", "winter-decoy.md"), "---\nname: winter-decoy\ndescription: decoy\n---\nBody.");
     let called = false;
     const { ctx } = makeCtx({ home, brand: ACME, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toContain("acme-helper");
     expect(result.output).not.toContain("winter-decoy");
@@ -294,7 +297,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
 
     let called = false;
     const { ctx } = makeCtx({ home, cwd, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "local-only" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "local-only", run_in_background: false }, ctx);
     expect(called).toBe(false);
     expect(result.isError).toBe(true);
     expect(result.output).toStartWith("Agent type 'local-only' not found.");
@@ -317,19 +320,22 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
       cwd,
       spawnChild: async (req) => ((capturedReq = req), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))),
     });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "local-only" }, { ...ctx, trustedWorkspace: true });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "local-only", run_in_background: false }, { ...ctx, trustedWorkspace: true });
     expect(result.isError).toBeUndefined();
     expect(capturedReq?.definition?.description).toBe("project-local");
   });
 });
 
-describe("Agent tool: foreground spawn (default; run_in_background omitted)", () => {
+// SDK 0.0.16 Lane N: `run_in_background: false` is now EXPLICIT throughout this file -- the DEFAULT is
+// background (as in claude), so a test that means "the foreground shape" has to say so. Each call here
+// therefore names the shape it is testing instead of inheriting it.
+describe("Agent tool: foreground spawn (run_in_background: false)", () => {
   test("a completed child maps to the WS-10 §1.4 result shape, keyed on the REAL prompt text", async () => {
     const { ctx } = makeCtx({
       spawnChild: async () =>
         fakeHandle(Promise.resolve({ status: "completed", content: "the answer", resolvedModel: "claude-sonnet-4-5", totalToolUseCount: 3, totalDurationMs: 250 })),
     });
-    const result = await agentExecutor.execute({ description: "short label", prompt: "what is 2+2" }, ctx);
+    const result = await agentExecutor.execute({ description: "short label", prompt: "what is 2+2", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.output);
     expect(parsed).toEqual({
@@ -349,21 +355,21 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
     writeFileSync(join(home, ".winter", "agents", "explorer.md"), "---\nname: explorer\ndescription: explores\n---\nBody.");
     const { ctx } = makeCtx({ home, spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "done" })) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "explorer" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "explorer", run_in_background: false }, ctx);
     const parsed = JSON.parse(result.output);
     expect(parsed.agentType).toBe("explorer");
   });
 
   test("a failed child surfaces as Error: subagent <id> failed: <content>, isError:true", async () => {
     const { ctx } = makeCtx({ spawnChild: async () => fakeHandle(Promise.resolve({ status: "failed", content: "boom: model returned an error" })) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toBe("Error: subagent child-1 failed: boom: model returned an error");
   });
 
   test("a stopped child surfaces the SAME error shape, never treated as success", async () => {
     const { ctx } = makeCtx({ spawnChild: async () => fakeHandle(Promise.resolve({ status: "stopped", content: "stopped by request" })) });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toBe("Error: subagent child-1 stopped: stopped by request");
   });
@@ -376,7 +382,7 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
         return fakeHandle(Promise.resolve({ status: "completed", content: "x" }));
       },
     });
-    await agentExecutor.execute({ description: "d", prompt: "p", model: "opus", isolation: "worktree", name: "helper" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", model: "opus", isolation: "worktree", name: "helper", run_in_background: false }, ctx);
     expect(capturedReq?.model).toBe("opus");
     expect(capturedReq?.isolation).toBe("worktree");
     expect(capturedReq?.name).toBe("helper");
@@ -391,7 +397,7 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
         return fakeHandle(Promise.resolve({ status: "completed", content: "x" }));
       },
     });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", team_name: "ignored", mode: "plan" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", team_name: "ignored", mode: "plan", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     expect(capturedReq?.runInBackground).toBe(false);
   });
@@ -404,8 +410,8 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
         return fakeHandle(Promise.resolve({ status: "completed", content: "x" }));
       },
     });
-    await agentExecutor.execute({ description: "d", prompt: "p1" }, ctx);
-    await agentExecutor.execute({ description: "d", prompt: "p2" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p1", run_in_background: false }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p2", run_in_background: false }, ctx);
     expect(seen).toHaveLength(2);
     expect(seen[0]).not.toBe(seen[1]);
     expect(seen[0]!.length).toBeGreaterThan(10);
@@ -434,7 +440,7 @@ describe("Agent tool: task-frames parity -- foreground registration and terminat
     const { ctx, frames } = makeCtx({
       spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "done" }), { spawnDepth: 1 }),
     });
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(frames.some((f) => (f as { subtype: string }).subtype === "background_tasks_changed")).toBe(false);
     const started = frames.find((f) => (f as { subtype: string }).subtype === "task_started") as {
       is_backgrounded: boolean;
@@ -455,7 +461,7 @@ describe("Agent tool: task-frames parity -- foreground registration and terminat
     const { ctx, frames } = makeCtx({
       spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "the child's final report", usage: { totalTokens: 42, toolUses: 2, durationMs: 500 } })),
     });
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
 
     const started = frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { task_id: string };
     const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { task_id: string; patch: { status?: string; end_time?: number } };
@@ -485,7 +491,7 @@ describe("Agent tool: task-frames parity -- foreground registration and terminat
     const { ctx, frames } = makeCtx({
       spawnChild: async () => fakeHandle(Promise.resolve({ status: "failed", content: "boom: model returned an error", usage: { totalTokens: 5, toolUses: 0, durationMs: 10 } })),
     });
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
 
     const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { patch: { status?: string; error?: string } };
     expect(updated.patch.status).toBe("failed");
@@ -500,7 +506,7 @@ describe("Agent tool: task-frames parity -- foreground registration and terminat
     const { ctx, frames } = makeCtx({
       spawnChild: async () => fakeHandle(Promise.resolve({ status: "stopped", content: "stopped by request" })),
     });
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
 
     const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { patch: { status?: string } };
     expect(updated.patch.status).toBe("killed"); // §1: Winter's internal "stopped" patches as "killed"
@@ -520,7 +526,7 @@ describe("Agent tool: task-frames parity -- foreground registration and terminat
         return fakeHandle(resultPromise);
       },
     });
-    const execPromise = agentExecutor.execute({ description: "explore the repo", prompt: "p", subagent_type: undefined }, ctx);
+    const execPromise = agentExecutor.execute({ description: "explore the repo", prompt: "p", subagent_type: undefined, run_in_background: false }, ctx);
     await new Promise((r) => setTimeout(r, 10)); // let registration (and thus taskId assignment) land before onProgress fires
     expect(capturedOnProgress).toBeDefined();
     capturedOnProgress!({ toolUses: 3, totalTokens: 111, durationMs: 250, lastToolName: "Grep" });
@@ -546,7 +552,7 @@ describe("Agent tool: task-frames parity -- foreground registration and terminat
     // triggers the frame." A foreground agent held open (never resolving) plus a SEPARATE background
     // agent starting is exactly the scenario that would leak it.
     const { ctx: fgCtx } = makeCtx({ spawnChild: async () => fakeHandle(new Promise(() => {})) }); // never resolves
-    void agentExecutor.execute({ description: "hanging foreground", prompt: "p" }, fgCtx);
+    void agentExecutor.execute({ description: "hanging foreground", prompt: "p", run_in_background: false }, fgCtx);
     await new Promise((r) => setTimeout(r, 10)); // let the foreground registration land
 
     const { ctx: bgCtx, frames: bgFrames } = makeCtx({ spawnChild: async () => fakeHandle(new Promise(() => {})) });
@@ -587,6 +593,33 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
   afterEach(() => {
     resetBackgroundTaskRootForTest();
     resetBackgroundTaskRuntimeForTest();
+  });
+
+  // SDK 0.0.16 Lane N: the DEFAULT, which is the whole point of the flip.
+  test("run_in_background OMITTED now launches in the background -- claude's own default", async () => {
+    const requests: SpawnChildRequest[] = [];
+    const { ctx } = makeCtx({
+      spawnChild: async (req) => {
+        requests.push(req);
+        return fakeHandle(new Promise<ChildResult>(() => {}));
+      },
+    });
+    const result = await agentExecutor.execute({ description: "unflagged", prompt: "p" }, ctx);
+    expect(JSON.parse(result.output).status).toBe("async_launched");
+    expect(requests[0]?.runInBackground).toBe(true);
+  });
+
+  test("the host kill switch restores the old foreground default wholesale", async () => {
+    const requests: SpawnChildRequest[] = [];
+    const { ctx } = makeCtx({
+      spawnChild: async (req) => {
+        requests.push(req);
+        return fakeHandle(Promise.resolve({ status: "completed", content: "the answer" }));
+      },
+    });
+    const result = await agentExecutor.execute({ description: "unflagged", prompt: "p" }, { ...ctx, env: { WINTER_DISABLE_BACKGROUND_TASKS: "1" } });
+    expect(JSON.parse(result.output).content).toEqual([{ type: "text", text: "the answer" }]);
+    expect(requests[0]?.runInBackground).toBe(false);
   });
 
   test("returns async_launched immediately, without awaiting the child's own result()", async () => {
@@ -685,7 +718,40 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
         return fakeHandle(new Promise(() => {})); // never resolves within this test -- proves we did NOT await it
       },
     });
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "bg-forced" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "bg-forced", run_in_background: false }, ctx);
+    expect(capturedReq?.runInBackground).toBe(true);
+    const parsed = JSON.parse(result.output);
+    expect(parsed.status).toBe("async_launched");
+  });
+
+  // I4 (fix wave): ctx.backgroundByDefault is this session's resolved opt-out, threaded straight
+  // into resolveForegroundBackground's own stage 5 -- an OMITTED run_in_background follows it.
+  test("ctx.backgroundByDefault: false restores the foreground default for an omitted run_in_background", async () => {
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({
+      backgroundByDefault: false,
+      spawnChild: async (req) => {
+        capturedReq = req;
+        return fakeHandle(Promise.resolve({ status: "completed", content: "done", resolvedModel: "m", totalToolUseCount: 0, totalDurationMs: 1 }));
+      },
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    expect(capturedReq?.runInBackground).toBe(false);
+    const parsed = JSON.parse(result.output);
+    // A foreground result is the WS-10 §1.4 shape, never the async_launched envelope.
+    expect(parsed.status).not.toBe("async_launched");
+  });
+
+  test("ctx.backgroundByDefault: false is still overridden by an explicit run_in_background: true", async () => {
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({
+      backgroundByDefault: false,
+      spawnChild: async (req) => {
+        capturedReq = req;
+        return fakeHandle(new Promise(() => {})); // never resolves within this test -- proves we did NOT await it
+      },
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: true }, ctx);
     expect(capturedReq?.runInBackground).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.status).toBe("async_launched");
@@ -795,7 +861,7 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
   for (const guess of ["general", "explorer"]) {
     test(`"${guess}" does NOT resolve (normalization is not prefix matching): claude's not-found text with the list`, async () => {
       const { ctx, reqs } = capturing();
-      const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: guess }, ctx);
+      const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: guess, run_in_background: false }, ctx);
       expect(result).toEqual({ output: `Agent type '${guess}' not found. Available agents: Explore, Plan, claude, general-purpose`, isError: true });
       expect(reqs).toHaveLength(0);
     });
@@ -803,7 +869,7 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test('"explore" resolves to the Explore built-in, and the frames carry the RESOLVED name', async () => {
     const { ctx, frames, reqs } = capturing();
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "explore" }, ctx);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "explore", run_in_background: false }, ctx);
     expect(result.isError).toBeUndefined();
     expect(reqs[0]?.definition?.omitProjectContext).toBe(true);
     expect((frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { subagent_type?: string }).subagent_type).toBe("Explore");
@@ -814,14 +880,14 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
     const home = mkTempDir("winter-agent-test-home-");
     const { ctx } = makeCtx({ home, spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "x" })) });
     const agents = { "my-helper": { description: "a", prompt: "a" }, my_helper: { description: "b", prompt: "b" } };
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "MyHelper" }, { ...ctx, agents });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "MyHelper", run_in_background: false }, { ...ctx, agents });
     expect(result.isError).toBe(true);
     expect(result.output).toBe("Agent type 'MyHelper' is ambiguous — matches my-helper, my_helper. Use the exact name: my-helper or my_helper.");
   });
 
   test("omitted subagent_type -> the general-purpose definition, and every frame says so", async () => {
     const { ctx, frames, reqs } = capturing();
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(reqs[0]?.definition?.tools).toEqual(["*"]);
     const withType = frames.filter((f) => ["task_started", "task_progress"].includes((f as { subtype: string }).subtype));
     expect(withType.length).toBeGreaterThan(0);
@@ -830,14 +896,14 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test("omitted subagent_type with every built-in disabled -> the required-type refusal naming the available agents", async () => {
     const { ctx, reqs } = capturing();
-    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, { ...ctx, env: { WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "1" } });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, { ...ctx, env: { WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "1" } });
     expect(result).toEqual({ output: "subagent_type is required: the general-purpose agent is not available in this session. Available agents: none", isError: true });
     expect(reqs).toHaveLength(0);
   });
 
   test("fork gate OFF: subagent_type 'fork' is an unknown agent", async () => {
     const { ctx, reqs } = capturing();
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: false });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", run_in_background: false }, { ...ctx, forkSubagentEnabled: false });
     expect(result.isError).toBe(true);
     expect(result.output).toStartWith("Agent type 'fork' not found.");
     expect(reqs).toHaveLength(0);
@@ -845,7 +911,7 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test("fork gate ON: 'fork' sets SpawnChildRequest.fork, uses the fork definition, and IGNORES model", async () => {
     const { ctx, reqs } = capturing();
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", model: "opus" }, { ...ctx, forkSubagentEnabled: true, env: {} });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", model: "opus", run_in_background: false }, { ...ctx, forkSubagentEnabled: true, env: {} });
     expect(result.isError).toBeUndefined();
     expect(reqs[0]?.fork).toBe(true);
     expect(reqs[0]?.model).toBeUndefined();
@@ -854,7 +920,7 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test("fork gate ON via the session env fallback when the ctx carries no resolved gate", async () => {
     const { ctx, reqs } = capturing();
-    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, env: { WINTER_FORK_SUBAGENT: "1" } });
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", run_in_background: false }, { ...ctx, env: { WINTER_FORK_SUBAGENT: "1" } });
     expect(reqs[0]?.fork).toBe(true);
   });
 
@@ -866,7 +932,7 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
   // failed. "fork" and "Fork" must behave identically.
   test.each(["fork", "Fork"])("fork gate ON: subagent_type %p resolves to the fork definition byte-identically to 'fork'", async (requestedType) => {
     const { ctx, reqs } = capturing();
-    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, model: "opus" }, { ...ctx, forkSubagentEnabled: true, env: {} });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, model: "opus", run_in_background: false }, { ...ctx, forkSubagentEnabled: true, env: {} });
     expect(result.isError).toBeUndefined();
     expect(reqs[0]?.fork).toBe(true);
     expect(reqs[0]?.model).toBeUndefined();
@@ -875,9 +941,9 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test.each(["fork", "Fork"])("fork refusals fire for subagent_type %p (case must not bypass them)", async (requestedType) => {
     const { ctx, reqs } = capturing();
-    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
+    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, run_in_background: false }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
     expect(inside).toEqual({ output: "Fork is not available inside a forked worker. Complete your task directly using your tools.", isError: true });
-    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, isolation: "remote" }, { ...ctx, forkSubagentEnabled: true });
+    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, isolation: "remote", run_in_background: false }, { ...ctx, forkSubagentEnabled: true });
     expect(remote.isError).toBe(true);
     expect(remote.output).toStartWith('Fork cannot use isolation: "remote" — ');
     expect(reqs).toHaveLength(0);
@@ -885,9 +951,9 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test("fork refusals: a fork inside a fork, and a fork with isolation:remote -- claude's wording, nothing spawned", async () => {
     const { ctx, reqs } = capturing();
-    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
+    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", run_in_background: false }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
     expect(inside).toEqual({ output: "Fork is not available inside a forked worker. Complete your task directly using your tools.", isError: true });
-    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", isolation: "remote" }, { ...ctx, forkSubagentEnabled: true });
+    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", isolation: "remote", run_in_background: false }, { ...ctx, forkSubagentEnabled: true });
     expect(remote.isError).toBe(true);
     expect(remote.output).toStartWith('Fork cannot use isolation: "remote" — ');
     expect(reqs).toHaveLength(0);
@@ -895,7 +961,7 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
 
   test("the web-fetch built-in ignores isolation (gate on)", async () => {
     const { ctx, reqs } = capturing();
-    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "web-fetch", isolation: "worktree" }, { ...ctx, env: { WINTER_WEB_FETCH_AGENT: "1" } });
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "web-fetch", isolation: "worktree", run_in_background: false }, { ...ctx, env: { WINTER_WEB_FETCH_AGENT: "1" } });
     expect(reqs[0]?.isolation).toBeUndefined();
   });
 
@@ -950,7 +1016,7 @@ describe("Agent tool: review r1 regressions", () => {
         return handle;
       },
     });
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     expect(framesAtSpawnReturn).toEqual(["task_started", "task_progress"]);
     expect(subtypes(frames).filter((s) => s === "task_started")).toHaveLength(1); // the post-spawn fallback is a no-op
   });
@@ -958,7 +1024,7 @@ describe("Agent tool: review r1 regressions", () => {
   test("finding 3: a progress callback after the task's notification (a resumed child, a late buffered frame) emits nothing", async () => {
     let onProgress: ((p: ChildTaskProgress) => void) | undefined;
     const { ctx, frames } = makeCtx({ spawnChild: async (req) => ((onProgress = req.onProgress), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
-    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, ctx);
     const before = frames.length;
     onProgress!({ toolUses: 9, totalTokens: 9, durationMs: 9, lastToolName: "Read" });
     expect(frames).toHaveLength(before);
@@ -968,7 +1034,7 @@ describe("Agent tool: review r1 regressions", () => {
     let onProgress: ((p: ChildTaskProgress) => void) | undefined;
     let finish!: (r: ChildResult) => void;
     const { ctx, frames } = makeCtx({ spawnChild: async (req) => ((onProgress = req.onProgress), fakeHandle(new Promise((r) => (finish = r)))) });
-    const running = agentExecutor.execute({ description: "child probe", prompt: "p" }, ctx);
+    const running = agentExecutor.execute({ description: "child probe", prompt: "p", run_in_background: false }, ctx);
     await new Promise((r) => setTimeout(r, 10));
     onProgress!({ toolUses: 1, totalTokens: 1, durationMs: 1, lastToolName: "Bash", activity: "Running echo hi" });
     onProgress!({ toolUses: 2, totalTokens: 2, durationMs: 2, lastToolName: "TodoWrite" });
@@ -997,7 +1063,7 @@ describe("Agent tool: review r1 regressions", () => {
     const handle = fakeHandle(new Promise((r) => (settle = r)));
     handle.stop = async () => settle({ status: "stopped", content: "stopped by request" });
     const { ctx, frames } = makeCtx({ spawnChild: async () => handle });
-    const running = agentExecutor.execute({ description: "fg", prompt: "p" }, ctx);
+    const running = agentExecutor.execute({ description: "fg", prompt: "p", run_in_background: false }, ctx);
     await new Promise((r) => setTimeout(r, 10));
     const taskId = (frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { task_id: string }).task_id;
     await taskStopExecutor.execute({ task_id: taskId }, ctx);
@@ -1014,10 +1080,129 @@ describe("Agent tool: review r1 regressions", () => {
         throw new Error("torn down");
       },
     };
-    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, throwing);
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: false }, throwing);
     expect(result.isError).toBeUndefined();
     expect(listRunningTasks()).toHaveLength(0);
     const { listTasks } = await import("./background-task-runtime.ts");
     expect(listTasks()).toHaveLength(0);
+  });
+});
+
+// ================================================================================================
+// SDK 0.0.16 Lane P (R3b §4): ctx.agentAvailability -- the seam engine.ts wires from
+// permissions/evaluator.ts's findAgentDenyRule + subagents/availability.ts, exercised here
+// standalone (constructed by hand, exactly like `forkSubagentEnabled`/`insideFork` above) so this
+// file's own resolution-region logic is proven independent of a full engine/query() setup.
+// ================================================================================================
+describe("Agent tool: agentAvailability (SDK 0.0.16 Lane P, R3b §4)", () => {
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-avail-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+
+  function capturing(): { ctx: ToolExecutionContext; reqs: SpawnChildRequest[] } {
+    const reqs: SpawnChildRequest[] = [];
+    const home = mkTempDir("winter-agent-test-avail-home-");
+    const { ctx } = makeCtx({ home, spawnChild: async (req) => (reqs.push(req), fakeHandle(Promise.resolve({ status: "completed", content: "ok" }))) });
+    return { ctx, reqs };
+  }
+
+  test("a denied type refuses with claude's exact text and never spawns, even when it still resolves by name", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Plan", "claude", "general-purpose"],
+      unavailableMessage: (t) => (t === "Explore" ? "Agent type 'Explore' has been denied by permission rule 'Agent(Explore)' from sdk." : undefined),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'Explore' has been denied by permission rule 'Agent(Explore)' from sdk.", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("Agent(fork) is deniable exactly like any other type -- fork gate ON, but denied", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan", "claude", "general-purpose"],
+      unavailableMessage: (t) => (t === "fork" ? "Agent type 'fork' has been denied by permission rule 'Agent(fork)' from user." : undefined),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: true, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'fork' has been denied by permission rule 'Agent(fork)' from user.", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("a type excluded by allowedAgentTypes reuses the plain not-found shape, listing ONLY the allowed names", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan"],
+      unavailableMessage: () => undefined,
+    });
+    // "claude" genuinely EXISTS (it is a default-on built-in) but is not in the allowed set.
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "claude" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'claude' not found. Available agents: Explore, Plan", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("omitted subagent_type with general-purpose excluded from availableNames -> the required-type refusal, listing only what IS available", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan", "claude"],
+      unavailableMessage: () => undefined,
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "subagent_type is required: the general-purpose agent is not available in this session. Available agents: Explore, Plan, claude", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("omitted subagent_type WITH general-purpose available -- unaffected by an unrelated restriction", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "general-purpose"],
+      unavailableMessage: () => undefined,
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, { ...ctx, agentAvailability: avail });
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.definition?.tools).toEqual(["*"]);
+  });
+
+  test("all-tools-denied: its own exact text, distinct from a per-type deny rule's wording", async () => {
+    const { ctx, reqs } = capturing();
+    const avail: NonNullable<ToolExecutionContext["agentAvailability"]> = () => ({
+      availableNames: ["Explore", "Plan", "general-purpose"],
+      unavailableMessage: (t) => (t === "claude" ? "Agent type 'claude' is unavailable because every tool it may use is denied by the current permission settings." : undefined),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "claude" }, { ...ctx, agentAvailability: avail });
+    expect(result).toEqual({ output: "Agent type 'claude' is unavailable because every tool it may use is denied by the current permission settings.", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("no agentAvailability wired at all -- byte-identical to the pre-existing unrestricted behavior", async () => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.definition?.omitProjectContext).toBe(true);
+  });
+
+  test("builtinAgentType is stamped on the request ONLY for a resolved built-in, never a same-named filesystem override", async () => {
+    const home = mkTempDir("winter-agent-test-avail-home2-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "explore-override.md"), "---\nname: Explore\ndescription: a user's own Explore\n---\nYou are a custom explorer.");
+    const reqs: SpawnChildRequest[] = [];
+    const { ctx } = makeCtx({ home, spawnChild: async (req) => (reqs.push(req), fakeHandle(Promise.resolve({ status: "completed", content: "ok" }))) });
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, ctx);
+    expect(reqs[0]?.builtinAgentType).toBeUndefined();
+    expect(reqs[0]?.definition?.description).toBe("a user's own Explore");
+  });
+
+  test("builtinAgentType IS stamped for the real built-in Explore", async () => {
+    const { ctx, reqs } = capturing();
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "Explore" }, ctx);
+    expect(reqs[0]?.builtinAgentType).toBe("Explore");
   });
 });

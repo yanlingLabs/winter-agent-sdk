@@ -15,7 +15,8 @@ import type {
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
-import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ProviderToolSpec, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ProviderToolSpec, type ToolExecutor, type SessionPersistence, type ResolveModelSwitch } from "./engine.ts";
+import { enqueueTaskNotification, clearNotificationQueue, renderAgentNotification } from "./subagents/notification-queue.ts";
 // WS-13c §3 (P6.6): the pinned Claude names and the public active-set shape the Agent tool renders from.
 import { CLAUDE_RESERVED_SLOT_NAMES } from "@yanlinglabs/winter-provider-catalog";
 import type { ActiveSlotSet } from "@yanlinglabs/winter-agent-sdk";
@@ -475,7 +476,9 @@ test("Ruling P1-G: interrupt mid-tool-execution leaves a paired synthetic tool_r
   expect(toolUseMsg).toBeDefined(); // no dangling tool_use — it's exactly this message, paired below
   const toolResultMsg = secondCallMessages.find((m) => m.role === "tool");
   expect(toolResultMsg).toBeDefined();
-  expect(toolResultMsg!.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true }]);
+  // SDK 0.0.16: the next prompt directly follows the tool results, so the live request merges it into
+  // the same user turn -- results first, then the text (claude's normalization). History keeps both.
+  expect(toolResultMsg!.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true }, { type: "text", text: "again" }]);
 });
 
 test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, never a dangling tool_use", async () => {
@@ -558,6 +561,8 @@ test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, 
   expect(toolResultHistoryMsg!.content).toEqual([
     { type: "tool_result", tool_use_id: "call1", content: "ok" },
     { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
+    // SDK 0.0.16: the next prompt merges into the same user turn after the results (claude's shape).
+    { type: "text", text: "again" },
   ]);
 });
 
@@ -3141,6 +3146,193 @@ describe("Phase 4 Task 3: ctx.emitToolReference (MUST 6, WS-09 §8.2/§8.3)", ()
 });
 
 // ==================================================================================================
+// C2 (fix wave, whole-branch review): the SECOND system/init frame used to replay a payload built
+// ONCE at session start -- `model`, `permissionMode` and `tools` are re-derived from the engine's own
+// live bindings at every emission now (engine.ts's `buildSdkInitMessage`), never the frozen startup
+// snapshot. Exercises all three staleness axes in one real session: a `set_model` switch, a
+// `set_permission_mode` change, and a deferred tool loaded mid-session (the identical ToolSearch
+// stand-in the deferred-tool suite immediately above already uses).
+// ==================================================================================================
+describe("C2: the unsolicited turn's own system/init reports live state, not the session's startup snapshot", () => {
+  test("a set_model switch, a permission-mode change, and a newly loaded deferred tool are all reflected", async () => {
+    const sessionId = "c2-second-init";
+    const SRV = "c2-second-init-fixture";
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const canonicalName = `mcp__${SRV}__search_docs`;
+    replaceExecutor(canonicalName, { async execute() { return { output: "real result" }; } });
+    const SELECT_TOOL = "__c2_select_stand_in__";
+    registerTool({
+      descriptor: {
+        canonicalName: SELECT_TOOL,
+        advertisedName: SELECT_TOOL,
+        source: "sdk",
+        inputSchema: { type: "object" },
+        description: "test-only stand-in for the ToolSearch executor",
+        exposure: "hidden",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input, ctx) {
+          ctx.emitToolReference?.([canonicalName]);
+          return { output: "selected" };
+        },
+      },
+    });
+    try {
+      clearNotificationQueue(sessionId);
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call-1", name: SELECT_TOOL, input: {} }] }, // turn 1: load the deferred tool
+        { kind: "text", text: "loaded" },
+        { kind: "text", text: "second turn done" }, // turn 2: ordinary, nothing notable
+        { kind: "text", text: "unsolicited reply" }, // the unsolicited (task-notification) turn's own reply
+      ]);
+      const resolveModelSwitch: ResolveModelSwitch = (model) => ({
+        provider,
+        identity: { providerId: "winter-test", modelKey: model, family: "other" },
+        to: { providerId: "winter-test", modelKey: model, family: "other", readableState: "none" },
+      });
+      const done = runEngine({
+        config: baseConfig({ sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+        resolveModelSwitch,
+      });
+      const seen: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) seen.push(f);
+      })();
+      const results = (): number => seen.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+
+      // Turn 1: load the deferred tool. Awaited to completion BEFORE the mode switch below, so the
+      // switch to "plan" cannot land mid-turn and turn its own tool call into a permission prompt
+      // (bypassPermissions covers turn 1; the switch is deliberately a between-turns event, exactly
+      // like a real host's own `set_model`/`set_permission_mode` call between two round trips).
+      host.output.write({ type: "user", text: "search" });
+      for (let n = 0; n < 600 && results() < 1; n++) await new Promise((r) => setTimeout(r, 5));
+
+      host.output.write({ type: "control_request", requestId: "sm", subtype: "set_model", payload: { model: "winter-test/new-model" } });
+      host.output.write({ type: "control_request", requestId: "pm", subtype: "set_permission_mode", payload: "plan" });
+
+      // Turn 2: ordinary, no tool calls -- proves the FIRST init stays untouched and the turn
+      // machinery still works normally with the live model/mode already switched.
+      host.output.write({ type: "user", text: "go" });
+      for (let n = 0; n < 600 && results() < 2; n++) await new Promise((r) => setTimeout(r, 5));
+
+      // With the host caught up, a task notification queued now is what the closed-input wait pumps
+      // into its own, unsolicited turn -- see notification-delivery.engine.test.ts's identical shape.
+      enqueueTaskNotification({ sessionId, value: renderAgentNotification({ taskId: "t1", description: "bg probe", status: "completed" }), taskId: "t1" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await done;
+      await reader;
+      const frames = seen;
+
+      const inits = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as unknown as Array<{
+        model: string;
+        permissionMode: string;
+        tools: string[];
+      }>;
+      // Exactly two: the session's own startup init, and the unsolicited turn's -- no ordinary host
+      // turn (turn 2) gets one of its own.
+      expect(inits).toHaveLength(2);
+      const [firstInit, secondInit] = inits;
+      expect(firstInit!.model).toBe("winter-test/echo");
+      expect(firstInit!.permissionMode).toBe("bypassPermissions");
+      expect(firstInit!.tools).not.toContain(canonicalName);
+
+      expect(secondInit!.model).toBe("winter-test/new-model");
+      expect(secondInit!.permissionMode).toBe("plan");
+      expect(secondInit!.tools).toContain(canonicalName);
+    } finally {
+      unregisterMcpServerTools(SRV);
+      unregisterToolForTest(SELECT_TOOL);
+      clearNotificationQueue(sessionId);
+    }
+  });
+
+  // C2 continued (scoped re-review): the first test above proves `tools` is live on the second
+  // init; `mcp_servers` and `agents` were left as plain `const`s computed once at startup and
+  // reused verbatim by `buildSdkInitMessage` for EVERY later emission, so a mid-session MCP
+  // connect (the real path: `handleMcpToggle`/`handleMcpReconnect`/`handleMcpSetServers` mutate
+  // `effectiveMcpStateSource`, simulated here directly on the SAME fake state source those
+  // handlers would mutate in production) and a newly-arrived agent definition (the real path:
+  // `sessionAvailableAgentDefinitions()` re-scans `<winterHome>/agents/*.md` on disk, same
+  // mechanism the "arrived between turns" P16-6 precedent above exercises for the listing text)
+  // must both surface on the unsolicited turn's own init, never only on the session's startup one.
+  test("a mid-session MCP server connect and a newly-arrived agent definition are both reflected in the unsolicited turn's own init, never the startup one", async () => {
+    const sessionId = "c2-second-init-mcp-agents";
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-c2-mcp-agents-"));
+    const stateSource = createFakeMcpServerStateSource([{ name: "gh0", state: "connected", toolNames: [] }]);
+    try {
+      clearNotificationQueue(sessionId);
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "text", text: "turn one done" },
+        { kind: "text", text: "unsolicited reply" },
+      ]);
+      const done = runEngine({
+        config: baseConfig({ sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, winterHome }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        mcpServerStateSource: stateSource,
+      });
+      const seen: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) seen.push(f);
+      })();
+      const results = (): number => seen.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+
+      // Turn 1: ordinary, no tool calls -- just enough for the session to have a startup init and
+      // a completed turn before the mid-session mutations below.
+      host.output.write({ type: "user", text: "go" });
+      for (let n = 0; n < 600 && results() < 1; n++) await new Promise((r) => setTimeout(r, 5));
+
+      // Between turns: a second MCP server connects on the SAME state source `system/init` reads,
+      // and a new user-tier agent definition lands on disk.
+      stateSource.transition("gh1", "connected", { toolNames: [] });
+      mkdirSync(join(winterHome, "agents"), { recursive: true });
+      writeFileSync(join(winterHome, "agents", "late-helper.md"), "---\nname: late-helper\ndescription: arrived mid-session\n---\nBody.");
+
+      // With the host caught up, a task notification queued now is what the closed-input wait
+      // pumps into its own, unsolicited turn -- see notification-delivery.engine.test.ts's
+      // identical shape, and the sibling C2 test just above.
+      enqueueTaskNotification({ sessionId, value: renderAgentNotification({ taskId: "t1", description: "bg probe", status: "completed" }), taskId: "t1" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await done;
+      await reader;
+      const frames = seen;
+
+      const inits = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as unknown as Array<{
+        mcp_servers?: Array<{ name: string; status: string }>;
+        agents?: string[];
+      }>;
+      // Exactly two: the session's own startup init, and the unsolicited turn's -- no ordinary
+      // host turn gets one of its own.
+      expect(inits).toHaveLength(2);
+      const [firstInit, secondInit] = inits;
+      expect(firstInit!.mcp_servers).toEqual([{ name: "gh0", status: "connected" }]);
+      expect(firstInit!.agents).not.toContain("late-helper");
+
+      expect(secondInit!.mcp_servers).toEqual([
+        { name: "gh0", status: "connected" },
+        { name: "gh1", status: "connected" },
+      ]);
+      expect(secondInit!.agents).toContain("late-helper");
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      clearNotificationQueue(sessionId);
+    }
+  });
+});
+
+// ==================================================================================================
 // Fix round 1, MAJOR item 1: the spawn seam ENGINE-LEVEL proof (WS-10 §1/§3.5, R4-4, MUST 5).
 //
 // The original task-3-report.md claimed "MUST 5 proven in 39b1c44" -- that commit's own tests
@@ -4528,16 +4720,29 @@ describe("Task-frames parity §7: the Notification hook fires only for a backgro
 });
 
 // Review r1 finding 2 (controller ruling): a background shell survives the turn but not the session.
-describe("engine teardown stops this session's background shells (review r1 finding 2)", () => {
-  test.skipIf(process.platform !== "darwin")("a still-running run_in_background command is killed at teardown: task_updated {killed} + the kill-worded notification, before the stream ends", async () => {
+//
+// SDK 0.0.16 Lane N CHANGED WHEN: a CLOSED-INPUT session no longer tears down the instant its turn
+// ends -- it waits for its background work (that is the whole point of the wind-down), so a live
+// background shell is now ended by the WIND-DOWN SWEEP after its 5 s grace rather than by the final
+// teardown a few milliseconds after the result. The frames are the same and in the same order; only
+// the clock moved. This test's own pass used to depend on that race (its `cwd: "/tmp/x"` does not
+// exist, so `sleep 30` failed at spawn and teardown merely got there first, reporting a kill for a
+// command that had already failed) -- hence the real cwd below: with a shell that genuinely runs, the
+// sweep is what ends it, which is what the contract has always claimed.
+describe("a closed-input session ends this session's background shells before it returns (review r1 finding 2)", () => {
+  test.skipIf(process.platform !== "darwin")("a still-running run_in_background command is killed by the wind-down: task_updated {killed} + the kill-worded notification, before the stream ends", async () => {
     resetBackgroundTaskRuntimeForTest();
+    const shellCwd = mkdtempSync(join(tmpdir(), "winter-teardown-shell-"));
     try {
       const { host, runtime } = createInMemoryChannel();
       const provider = scriptedProvider([
         { kind: "tool_use", calls: [{ id: "bg-bash-1", name: "Bash", input: { command: "sleep 30", description: "teardown probe", run_in_background: true } }] },
         { kind: "text", text: "started" },
+        // Lane N: the sweep's own "was stopped" notification reaches the MODEL as an unsolicited turn,
+        // so the wind-down runs one more generation before the session ends.
+        { kind: "text", text: "noted" },
       ]);
-      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const config = baseConfig({ cwd: shellCwd, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
       const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
       host.output.write({ type: "user", text: "go" });
       host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
@@ -4559,6 +4764,7 @@ describe("engine teardown stops this session's background shells (review r1 find
       expect((changed.at(-1)!.m as unknown as { tasks: Array<{ task_id: string }> }).tasks.map((t) => t.task_id)).not.toContain(started!.task_id);
     } finally {
       resetBackgroundTaskRuntimeForTest();
+      rmSync(shellCwd, { recursive: true, force: true });
     }
   }, 20_000);
 });
@@ -4669,15 +4875,12 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
     }
   });
 
-  test("research §A3: the listing rides the first request, stays on every turn, and a changed set adds the delta", async () => {
+  test("P16-6: the listing is sent ONCE (turn 1), stays in place byte-identical on turn 2, and a changed set adds only the delta", async () => {
     const winterHome = mkdtempSync(join(tmpdir(), "winter-l2b-listing-"));
     try {
       const { createSystemPromptAssembler } = await import("./context/assembler.ts");
       const requests: Array<{ messages: ProviderMessage[] }> = [];
-      const lastUserText = (i: number): string => {
-        const users = requests[i]!.messages.filter((m) => m.role === "user" && typeof m.content === "string");
-        return users[users.length - 1]!.content as string;
-      };
+      const blockTexts = (m: ProviderMessage): string[] => (typeof m.content === "string" ? [m.content] : m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])));
       await run({
         config: { winterHome },
         provider: capturingProvider(requests, [
@@ -4691,11 +4894,24 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
         },
         extra: { systemPromptAssembler: createSystemPromptAssembler({ home: winterHome, settings: () => ({}) }), winterHome },
       });
-      expect(lastUserText(0)).toContain("Available agent types for the Agent tool:\n- claude: ");
-      expect(lastUserText(0)).toContain("- general-purpose: ");
-      expect(lastUserText(0)).not.toContain("late-helper");
-      expect(lastUserText(1)).toContain("Available agent types for the Agent tool:");
-      expect(lastUserText(1)).toContain("New agent types are now available for the Agent tool:\n- late-helper: arrived between turns (Tools: All tools)");
+      const first = requests[0]!.messages;
+      expect(first).toHaveLength(1);
+      const listing = blockTexts(first[0]!)[0]!;
+      expect(listing).toContain("Available agent types for the Agent tool:\n- claude: ");
+      expect(listing).toContain("- general-purpose: ");
+      expect(listing).not.toContain("late-helper");
+
+      const second = requests[1]!.messages;
+      // Turn 1's message is repeated byte for byte -- the listing was not re-sent or moved.
+      expect(second[0]).toEqual(first[0]);
+      const all = second.flatMap(blockTexts);
+      expect(all.filter((t) => t.includes("Available agent types for the Agent tool:"))).toHaveLength(1);
+      // The new turn carries ONLY the delta, ahead of its prompt.
+      const last = blockTexts(second.at(-1)!);
+      expect(last).toEqual([
+        "<system-reminder>\nNew agent types are now available for the Agent tool:\n- late-helper: arrived between turns (Tools: All tools)\n</system-reminder>\n",
+        "second",
+      ]);
     } finally {
       rmSync(winterHome, { recursive: true, force: true });
     }
@@ -4718,8 +4934,9 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
         provider: capturingProvider(requests, [{ kind: "text", text: "one" }]),
         extra: { systemPromptAssembler: createSystemPromptAssembler({ home: winterHome, settings: () => ({}) }), winterHome },
       });
-      const users = requests[0]!.messages.filter((m) => m.role === "user" && typeof m.content === "string");
-      const text = users[users.length - 1]!.content as string;
+      // SDK 0.0.16: the listing is the first block of the merged first message.
+      const first = requests[0]!.messages[0]!.content;
+      const text = typeof first === "string" ? first : first.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
       expect(text).toContain(`- verbose: ${"x".repeat(1000)}…`);
       expect(text).not.toContain("x".repeat(1001));
       // A built-in's own whenToUse (well under 1,000 chars either way) is untouched -- no ellipsis

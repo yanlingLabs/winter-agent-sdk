@@ -67,6 +67,11 @@ import { isAutoSuspendedAllowRule, AUTO_MODE_DEFAULT_USE_AUTO_MODE_DURING_PLAN }
 // re-derived -- `skills/permission-rules.ts` is where the alias/argument split is decided, and a
 // second copy here is exactly the producer/consumer drift R4-2 exists to catch.
 import { matchesSkillRule } from "../skills/permission-rules.ts";
+// M2 (fix wave): the ONE type-name fold `findAgentByType` (`subagents/definitions.ts`) resolves a
+// `subagent_type` through -- see `findAgentDenyRule`'s own comment below for why the deny-rule
+// comparison must use the identical fold. No cycle: `definitions.ts` imports only `builtin-agents.ts`
+// (-> `permissions/policy-state.ts`, a sibling of this file, never this file itself).
+import { normalizeAgentTypeName } from "../subagents/definitions.ts";
 const SKILL_RULE_TOOL = "Skill";
 
 export type { AutoModeConfig };
@@ -648,6 +653,70 @@ export function findMatchingRuleEntry(
     if (matchesRuleForCall(entry.rule, call, direction, ctx)) return entry;
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// SDK 0.0.16 Lane P (R3b §4): Agent(<type>) DENY rules -- a STANDALONE lookup, deliberately never
+// woven into matchesRuleForCall/findMatchingRuleEntry above.
+//
+// WHY STANDALONE. Two independent facts point the same way. (1) A stage-2 hit denies the WHOLE
+// Agent tool call BEFORE the executor ever runs, through evaluate()'s own denyCall path
+// (engine.ts), which stamps the tool_result `denied: true` -- never `is_error: true`. claude's own
+// denial of a SPECIFIC subagent_type is a TOOL-THROWN shape instead (bare text, `is_error: true`,
+// no wrapper -- R-S4/d2-report scenario 3's own captured ground truth), carrying Agent-specific
+// prose ("Agent type '<t>' has been denied by permission rule '<ruleRef>' from <source>.") the
+// generic ruleDenialMessage() never produces. (2) Even if the wire shapes matched, `Agent(<type>)`
+// is a single argument-scoped rule, not a whole-call block -- exactly like Bash's own pattern
+// family -- but unlike Bash, claude matches it on EXACT STRING EQUALITY against the subagent_type,
+// never a glob (R3b §4, verbatim). DISCLOSED DEVIATION (M2, fix wave): "exact string equality" is
+// read here as exact AFTER `findAgentByType`'s own case/whitespace/separator fold
+// (`normalizeAgentTypeName`), not byte-for-byte -- type RESOLUTION is already case-insensitive
+// (`Explore`/`explore`/`explore_agent` all resolve to the one built-in), so a deny rule compared
+// byte-for-byte against the RESOLVED, canonically-cased name would let `Agent(explore)` (a
+// differently-cased but unambiguous rule) silently fail to deny the type the model actually
+// reaches. Matching normalization on both sides is what keeps "the rule that removes a type from
+// the listing is the SAME rule that refuses a spawn naming it" (the sentence two paragraphs down)
+// true regardless of which casing either side happens to use.
+// Both are satisfied by making the Agent tool's OWN resolution
+// code (tools/impl/agent.ts) the sole caller of this lookup, answering a denial the way it answers
+// every other thrown error, never through the generic six-stage pipeline.
+//
+// `type` is always the RESOLVED, canonical agent-type name (`findAgentByType`'s own `found.name`,
+// the literal "fork", or "general-purpose") -- the identical value the listing itself keys entries
+// by (subagents/availability.ts's own `availableAgentNames`), so the rule that removes a type from
+// the listing is the SAME rule that refuses a spawn naming it.
+//
+// A rule's own content may name several types, comma-separated -- the identical spelling
+// `allowedAgentTypesFromTools` (subagents/definitions.ts) parses out of a `tools: ["Agent(a, b)"]`
+// entry, so `Agent(Explore, Plan)` as a DENY rule denies both.
+//
+// A BARE `Agent` deny (`ruleValue.ruleContent === undefined`) is the whole-tool schema-removal class
+// (WS-07 §1) -- out of this function's scope; a session with that rule never advertises the Agent
+// tool at all, so no subagent_type-scoped question is ever reached.
+export function findAgentDenyRule(rules: SourcedRuleSet, type: string, opts?: { allowManagedPermissionRulesOnly?: boolean }): SourcedRuleEntry | undefined {
+  const pool = opts?.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
+  for (const entry of pool) {
+    if (entry.behavior !== "deny") continue;
+    if (entry.rule.toolName !== "Agent") continue;
+    const content = entry.ruleValue.ruleContent;
+    if (content === undefined) continue; // bare `Agent` deny -- schema removal, not this function's scope
+    const names = content.split(",").map((s) => normalizeAgentTypeName(s.trim()));
+    if (names.includes(normalizeAgentTypeName(type))) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * R3b §4's own denial prose, verbatim shape (ground truth: d2-report.md scenario 3):
+ * "Agent type '<t>' has been denied by permission rule '<ruleRef>' from <source>." `<source>` is
+ * Winter's OWN rule-source label for wherever the matched entry actually came from (`entry.source`
+ * -- "sdk" for `Options.disallowedTools`, "user"/"project"/"local"/"managed"/"session" for the
+ * others) -- never a hardcoded "cliArg" (that is claude's OWN label for the differential harness's
+ * `--disallowedTools` CLI flag, a mechanism this repo's own tests do not reproduce; the task brief
+ * is explicit that the source label must match Winter's own).
+ */
+export function agentTypeDeniedMessage(type: string, entry: SourcedRuleEntry): string {
+  return `Agent type '${type}' has been denied by permission rule '${formatRuleRef(entry)}' from ${entry.source}.`;
 }
 
 // Task 7 (WS-07 §3.1: "a Read deny also blocks current Edit/Write operations on the same path" —

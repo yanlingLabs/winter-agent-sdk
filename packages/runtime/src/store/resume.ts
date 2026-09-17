@@ -29,6 +29,7 @@ import type { ProviderMessage, ContentBlock } from "../engine.ts";
 // relocated to packages/sdk/src/store/fork-session.ts alongside the store, see this file's own
 // header comment above and task-10-report.md).
 import type { SessionStore, SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import { attachmentMessage } from "../context/attachments.ts";
 
 // Whole-branch review Minor 1 (extends the T9-nit carry, WS-03 §11): official taxonomy-building
 // still needs to check whether the real Anthropic SDK collapses "not_found"/"ambiguous" into one
@@ -187,6 +188,8 @@ export interface DialectEntry {
   // W18-13 (c): claude writes a failed call as a synthetic `isApiErrorMessage: true` assistant entry
   // (probe P6) -- Winter's reader must skip it, never replay it to a provider as a real turn.
   isApiErrorMessage?: boolean;
+  // SDK 0.0.16 (P16-5/P16-6): claude's persisted attachment payload (`type: "attachment"` entries).
+  attachment?: { type: string; [key: string]: unknown };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -214,6 +217,8 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
     const logicalParentUuid = typeof rawLogicalParentUuid === "string" ? rawLogicalParentUuid : undefined;
     const isCompactSummary = (e as { isCompactSummary?: unknown }).isCompactSummary === true;
     const isApiErrorMessage = (e as { isApiErrorMessage?: unknown }).isApiErrorMessage === true;
+    const rawAttachment = (e as { attachment?: unknown }).attachment;
+    const attachment = isRecord(rawAttachment) && typeof rawAttachment.type === "string" ? (rawAttachment as { type: string; [key: string]: unknown }) : undefined;
     result.push({
       type: e.type,
       uuid: e.uuid,
@@ -225,6 +230,7 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
       ...(logicalParentUuid !== undefined ? { logicalParentUuid } : {}),
       ...(isCompactSummary ? { isCompactSummary: true as const } : {}),
       ...(isApiErrorMessage ? { isApiErrorMessage: true as const } : {}),
+      ...(attachment !== undefined ? { attachment } : {}),
     });
   }
   return result;
@@ -444,6 +450,17 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
 
   const messages: ProviderMessage[] = [];
   for (const e of effectiveLineage) {
+    // SDK 0.0.16 (P16-5/P16-6): a persisted ATTACHMENT comes back as the same meta user message the
+    // live engine appended -- rendered from its payload by the one renderer (context/attachments.ts),
+    // so the folds see it and nothing is re-announced. A type Winter has no renderer for (claude's own
+    // `total_tokens_reminder`, say) renders to nothing and is skipped, as before.
+    if (e.type === "attachment") {
+      if (e.attachment !== undefined) {
+        const rebuilt = attachmentMessage(e.attachment);
+        if (rebuilt !== undefined) messages.push(rebuilt);
+      }
+      continue;
+    }
     const message = e.message;
     if (message === undefined) continue; // not a conversational entry — never fed to the provider (chain continuity is computed from the full entry array elsewhere, not from this function's output)
     const content = message.content;

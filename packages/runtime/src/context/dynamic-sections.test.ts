@@ -1,54 +1,49 @@
-// Phase 5 Lane C (task 6) -- the dynamic (machine/session-specific) block (WS-11 §6.3, R5-9).
-import { test, expect, describe } from "bun:test";
-import { DYNAMIC_SECTIONS_HEADING, renderDynamicSections } from "./dynamic-sections.ts";
+// SDK 0.0.16 Lane C: the `# Environment` section, in claude 0.3.250's `env_info_simple` shape (the
+// captured request's section, with Winter's product line in place of claude's).
+import { describe, expect, test } from "bun:test";
+import { renderEnvironmentContextValue, renderEnvironmentSection, renderStaticEnvironmentSection, shellName, WINTER_PRODUCT_LINE } from "./dynamic-sections.ts";
 
-const base = { cwd: "/work/proj", platform: "darwin", osVersion: "25.6.0", shell: "/bin/zsh", date: "2026-09-05" };
+const base = { cwd: "/work/proj", isGitRepo: true, platform: "darwin", shell: "/bin/zsh", osVersion: "Darwin 25.6.0" };
 
-describe("context/dynamic-sections.ts", () => {
-  test("R5-9's whole list is rendered when every input is present", () => {
-    const out = renderDynamicSections({ ...base, gitSummary: "branch main, 2 modified", memoryDir: "/home/projects/k/memory" });
-    expect(out).toContain(DYNAMIC_SECTIONS_HEADING);
-    expect(out).toContain("/work/proj");
-    expect(out).toContain("darwin");
-    expect(out).toContain("25.6.0");
-    expect(out).toContain("/bin/zsh");
-    expect(out).toContain("2026-09-05");
-    expect(out).toContain("branch main, 2 modified");
-    expect(out).toContain("/home/projects/k/memory");
+describe("context/dynamic-sections.ts -- # Environment", () => {
+  test("the captured shape: heading, lead-in (with its trailing space), bullets, model line, product line; no date", () => {
+    expect(renderEnvironmentSection({ ...base, model: "claude-haiku-4-5", modelDisplayName: "Haiku 4.5" })).toBe(
+      [
+        "# Environment",
+        "You have been invoked in the following environment: ",
+        " - Primary working directory: /work/proj",
+        " - Is a git repository: true",
+        " - Platform: darwin",
+        " - Shell: zsh",
+        " - OS Version: Darwin 25.6.0",
+        " - You are powered by the model named Haiku 4.5. The exact model ID is claude-haiku-4-5.",
+        ` - ${WINTER_PRODUCT_LINE}`,
+      ].join("\n"),
+    );
   });
 
-  test("an absent git summary omits its line entirely -- never an empty or 'unknown' one", () => {
-    const out = renderDynamicSections(base);
-    expect(out.toLowerCase()).not.toContain("git");
-    expect(out).not.toContain("undefined");
+  test("no display name: the bare-id model line; no model: no model line", () => {
+    expect(renderEnvironmentSection({ ...base, model: "winter-test/echo" })).toContain(" - You are powered by the model winter-test/echo.\n");
+    expect(renderEnvironmentSection(base)).not.toContain("powered by");
   });
 
-  test("an absent memory directory omits its line -- this is how `autoMemoryEnabled: false` reads here", () => {
-    const out = renderDynamicSections(base);
-    expect(out.toLowerCase()).not.toContain("memory");
+  test("additional working directories nest as `  - ` items; a cutoff adds its line", () => {
+    const out = renderEnvironmentSection({ ...base, isGitRepo: false, additionalDirectories: ["/a", "/b"], model: "m", knowledgeCutoff: "January 2026" });
+    expect(out).toContain(" - Is a git repository: false\n - Additional working directories:\n  - /a\n  - /b\n - Platform: darwin");
+    expect(out).toContain(" - Assistant knowledge cutoff is January 2026.");
   });
 
-  test("empty-string inputs are treated as absent, not rendered as blanks", () => {
-    const out = renderDynamicSections({ ...base, shell: "", osVersion: "", gitSummary: "  ", memoryDir: "" });
-    expect(out).not.toContain("Shell:");
-    expect(out.toLowerCase()).not.toContain("git");
-    expect(out.toLowerCase()).not.toContain("memory");
-    expect(out).toContain("/work/proj");
+  test("the shell is reduced the way claude reduces it", () => {
+    expect(shellName("/opt/homebrew/bin/zsh")).toBe("zsh");
+    expect(shellName("/bin/bash")).toBe("bash");
+    expect(shellName("/usr/bin/fish")).toBe("/usr/bin/fish");
+    expect(shellName("")).toBe("unknown");
   });
 
-  test("a multi-line git summary is indented under its own line rather than breaking the list", () => {
-    const out = renderDynamicSections({ ...base, gitSummary: "branch main\nM src/a.ts\nM src/b.ts" });
-    const lines = out.split("\n");
-    const gitIndex = lines.findIndex((l) => l.includes("branch main"));
-    expect(gitIndex).toBeGreaterThan(0);
-    expect(lines[gitIndex + 1]).toMatch(/^\s+M src\/a\.ts$/);
-  });
-
-  test("the block is stable for identical inputs -- the same envelope's rounds cannot disagree", () => {
-    expect(renderDynamicSections(base)).toBe(renderDynamicSections(base));
-  });
-
-  test("its heading does not collide with the preset's own `## Environment` category", () => {
-    expect(DYNAMIC_SECTIONS_HEADING).not.toBe("## Environment");
+  test("excludeDynamicSections halves: static keeps model + product, the context value keeps the machine facts without the heading", () => {
+    expect(renderStaticEnvironmentSection({ model: "m" })).toBe(`# Environment\n - You are powered by the model m.\n - ${WINTER_PRODUCT_LINE}`);
+    expect(renderEnvironmentContextValue(base)).toBe(
+      "You have been invoked in the following environment: \n - Primary working directory: /work/proj\n - Is a git repository: true\n - Platform: darwin\n - Shell: zsh\n - OS Version: Darwin 25.6.0",
+    );
   });
 });

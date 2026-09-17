@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Provider, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
+import type { Provider, ProviderMessage, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
 import { registerTool } from "../tools/registry.ts";
 
 // --- Phase 5 Task 2 (R5-3): the mock family's half of the provider-seam extension ------------------
@@ -42,6 +42,18 @@ function syntheticUsage(input: ProviderRequest, turn: ProviderTurn): ProviderUsa
   return { inputTokens: Math.max(1, Math.ceil(inputChars / 4)), outputTokens: Math.max(1, Math.ceil(outputChars / 4)) };
 }
 
+/**
+ * SDK 0.0.16: a user message's TEXT. The live request now merges the index-0 context, the persisted
+ * attachments and the prompt into one message of text blocks (claude's wire shape), so a double that
+ * reads "the user's text" joins the text blocks; the prompt is always the LAST block, so the last line
+ * is still the prompt's last line.
+ */
+export function userMessageText(message: ProviderMessage | undefined): string {
+  if (message === undefined) return "";
+  if (typeof message.content === "string") return message.content;
+  return message.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+}
+
 /** Wraps one mock Provider with the two seam obligations above. Applied at every hand-out point in this file. */
 function instrumentMockProvider(provider: Provider): Provider {
   return {
@@ -63,7 +75,7 @@ function instrumentMockProvider(provider: Provider): Provider {
 export const echoProvider: Provider = instrumentMockProvider({
   async generate({ messages }) {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    const text = typeof lastUser?.content === "string" ? lastUser.content : "";
+    const text = userMessageText(lastUser);
     return { kind: "text", text: `echo: ${text}` };
   },
 });
@@ -351,14 +363,14 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     // without touching disk makes the whole scenario vacuous (Lane K's own words). One `Write` to
     // the path the prompt names, plus one `Bash` round that creates a SECOND file, so the scenario
     // can prove the honest scope boundary: the Bash-created file is untouched by a rewind and absent
-    // from `filesChanged`. Same last-line convention `laneb` uses -- the live request's user message
-    // carries this session's user-context blocks ahead of the prompt.
+    // from `filesChanged`. Same last-line convention `laneb` uses -- the live request's first user
+    // message carries the persisted attachments and the index-0 context ahead of the prompt.
     case "p5checkpoint": {
       let step = 0;
       return instrumentMockProvider({
         async generate({ messages }): Promise<ProviderTurn> {
           const lastUser = [...messages].reverse().find((m) => m.role === "user");
-          const raw = typeof lastUser?.content === "string" ? lastUser.content : "";
+          const raw = userMessageText(lastUser);
           const filePath = raw.slice(raw.lastIndexOf("\n") + 1);
           if (step === 0) {
             step++;
@@ -490,12 +502,12 @@ function rawTestProviderByName(name: TestProviderName): Provider {
             step++;
             const lastUser = [...messages].reverse().find((m) => m.role === "user");
             // Phase 5 Task 8: the LAST LINE, not the whole content. With Lane C's assembler wired in
-            // production, the live request's last user message is `<user-context blocks>\n\n<the
-            // prompt>` (R5-9's "always injected as user-context"), so reading the whole content here
+            // production, the live request's first user message is `<attachments>, <index-0 context>,
+            // <the prompt>` (SDK 0.0.16, claude's layout), so reading the whole content here
             // handed `Write` a multi-kilobyte "path" -- observed as a real `ENAMETOOLONG` on both
             // legs, identically. The scenario's own prompt is a single-line absolute path, and the
             // blocks are always separated from it by a blank line, so the last line IS the prompt.
-            const raw = typeof lastUser?.content === "string" ? lastUser.content : "";
+            const raw = userMessageText(lastUser);
             const filePath = raw.slice(raw.lastIndexOf("\n") + 1);
             return { kind: "tool_use", calls: [{ id: "laneb-call-1", name: "Write", input: { file_path: filePath, content: "winter-t8-laneb-fixture-content\n" } }] };
           }
@@ -554,7 +566,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           const firstUser = messages.find((m) => m.role === "user");
-          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const firstText = userMessageText(firstUser);
           if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) return { kind: "text", text: "child finished" };
           const alreadySpawned = messages.some(
             (m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" && b.name === "Agent"),
@@ -562,7 +574,12 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (alreadySpawned) return { kind: "text", text: "parent finished" };
           return {
             kind: "tool_use",
-            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "equivalence probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+            // SDK 0.0.16 Lane N: `run_in_background: false` is now EXPLICIT on every scripted spawn in
+            // this file. The DEFAULT flipped to background (claude's own), and every consumer of these
+            // providers -- the transport-equivalence legs, the messaging scenarios, the frozen
+            // differential traces -- pins a FOREGROUND round on purpose: a background spawn's result
+            // arrives on its own schedule, which is exactly what those comparisons cannot pin.
+            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "equivalence probe", prompt: SUBAGENT_CHILD_PROBE_TEXT, run_in_background: false } }],
           };
         },
       };
@@ -591,7 +608,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           const firstUser = messages.find((m) => m.role === "user");
-          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const firstText = userMessageText(firstUser);
           const calls = messages.flatMap((m) =>
             m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => (b as { name: string }).name) : [],
           );
@@ -603,7 +620,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (calls.includes("Agent")) return { kind: "text", text: "parent finished" };
           return {
             kind: "tool_use",
-            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "permission probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "permission probe", prompt: SUBAGENT_CHILD_PROBE_TEXT, run_in_background: false } }],
           };
         },
       };
@@ -621,7 +638,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           const firstUser = messages.find((m) => m.role === "user");
-          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const firstText = userMessageText(firstUser);
           if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) return { kind: "text", text: "child finished" };
           const assistantCalls = messages.flatMap((m) =>
             m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => (b as { name: string }).name) : [],
@@ -629,7 +646,7 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (!assistantCalls.includes("Agent")) {
             return {
               kind: "tool_use",
-              calls: [{ id: "agent-call-1", name: "Agent", input: { description: "message target", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+              calls: [{ id: "agent-call-1", name: "Agent", input: { description: "message target", prompt: SUBAGENT_CHILD_PROBE_TEXT, run_in_background: false } }],
             };
           }
           if (!assistantCalls.includes("SendMessage")) {

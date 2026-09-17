@@ -363,6 +363,22 @@ export interface Options {
    */
   forkSubagent?: boolean;
 
+  /**
+   * I4 (fix wave): a programmatic opt-out for the Agent tool's own background default (SDK 0.0.16,
+   * `subagents/policy.ts`'s `resolveForegroundBackground` -- "background unless `run_in_background`
+   * is explicitly false"). `false` restores the 0.0.15 default (foreground) for every spawn this
+   * knob's stage of the chain decides; `true` is the 0.0.16 default, spelled out. Omitted = the
+   * runtime reads `WINTER_BACKGROUND_BY_DEFAULT` (falsy -- "0"/"false"/"no"/"off" -- restores
+   * foreground; anything else, including absent, keeps background), the SAME `forkSubagent`
+   * precedent: the field wins in either direction, the env is only the fallback.
+   *
+   * Distinct from `WINTER_DISABLE_BACKGROUND_TASKS` (which keeps its own, unrelated meaning -- a
+   * hard kill switch that ALSO removes `run_in_background` from the advertised schema entirely):
+   * this knob changes only which way an OMITTED `run_in_background` resolves, and the field stays
+   * on the schema either way.
+   */
+  backgroundByDefault?: boolean;
+
   // Phase 4 Task 3 (WS-09 §5; derived-shapes-p4.md item (f) rendering 3): the host-side elicitation
   // callback -- "called when an MCP server requests user input and no [Elicitation] hook handles it."
   // Never serialized into RuntimeConfig, same posture as `canUseTool`/`Options.hooks` above: it is a

@@ -19,6 +19,7 @@ import type { Provider } from "../engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { resetChildEngineFactoryForTest } from "./child-handle.ts";
 import { restoredChildHandle } from "./restore.ts";
+import { userMessageText } from "../provider/mock.ts";
 
 const CHILD_MARKER = "restore-fixture child prompt";
 
@@ -54,7 +55,7 @@ async function runOneEnvelope(config: RuntimeConfig, home: string, provider: Pro
 const spawningProvider: Provider = {
   async generate({ messages }) {
     const firstUser = messages.find((m) => m.role === "user");
-    const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+    const firstText = userMessageText(firstUser);
     if (firstText.includes(CHILD_MARKER)) return { kind: "text", text: "child finished" };
     const alreadySpawned = messages.some((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" && b.name === "Agent"));
     if (alreadySpawned) return { kind: "text", text: "parent finished" };

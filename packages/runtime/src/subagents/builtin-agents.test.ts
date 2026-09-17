@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { resolveBuiltinAgents, resolveBuiltinAgentGates, resolveForkSubagentEnabled, BUILTIN_AGENT_NAMES } from "./builtin-agents.ts";
+import { BUBBLE_PERMISSION_MODE } from "../permissions/policy-state.ts";
 
 describe("resolveBuiltinAgentGates (R-S6 kill switches + R-S5 fork gate)", () => {
   test("every gate defaults off with no env at all", () => {
@@ -68,13 +69,19 @@ describe("resolveBuiltinAgents (R-S1 shipped set, R-S6 gating)", () => {
     expect(defs["web-fetch"]?.omitProjectContext).toBe(true);
   });
 
-  test("WINTER_FORK_SUBAGENT opts fork in, with claude's own maxTurns/tools and no model override", () => {
+  test("WINTER_FORK_SUBAGENT opts fork in, with claude's own maxTurns/tools/permissionMode and no model override", () => {
     const defs = resolveBuiltinAgents({ env: { WINTER_FORK_SUBAGENT: "true" } });
     expect(defs["fork"]).toBeDefined();
     expect(defs["fork"]?.tools).toEqual(["*"]);
     expect(defs["fork"]?.maxTurns).toBe(200);
     expect(defs["fork"]?.model).toBe("inherit");
-    expect(defs["fork"]?.permissionMode).toBeUndefined();
+    // SDK 0.0.16 (P16-7): "bubble" replaces the prior "left unset" deviation -- see
+    // permissions/policy-state.ts's own BUBBLE_PERMISSION_MODE header for what it means.
+    expect(defs["fork"]?.permissionMode).toBe(BUBBLE_PERMISSION_MODE);
+    // SDK 0.0.16 (P16-7, WS-10 §5): forks are always background, forced at the definition level so
+    // `resolveForegroundBackground`'s own force-ranking (subagents/policy.ts, untouched by this lane)
+    // applies without this file needing to touch that chain at all.
+    expect(defs["fork"]?.background).toBe(true);
   });
 
   test("Explore/Plan disallow Agent/Artifact/ExitPlanMode/Edit/Write/NotebookEdit and omit project context", () => {
@@ -118,6 +125,25 @@ describe("resolveBuiltinAgents (R-S1 shipped set, R-S6 gating)", () => {
     for (const name of Object.keys(defs)) {
       expect(defs[name]!.prompt.trim().length).toBeGreaterThan(0);
       expect(defs[name]!.description.trim().length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("Explore's whenToUseLean (SDK 0.0.16 Lane P, R3b §5)", () => {
+  test("Explore carries a distinct whenToUseLean, verbatim claude text, never equal to the normal description", () => {
+    const defs = resolveBuiltinAgents({ env: {} });
+    const lean = defs["Explore"]?.whenToUseLean;
+    expect(lean).toBeDefined();
+    expect(lean).not.toBe(defs["Explore"]?.description);
+    expect(lean).toContain("broad fan-out searches");
+    expect(lean).toContain("very thorough");
+  });
+
+  test("no other built-in carries whenToUseLean", () => {
+    const defs = resolveBuiltinAgents({ env: { WINTER_WEB_FETCH_AGENT: "true", WINTER_FORK_SUBAGENT: "true" } });
+    for (const name of Object.keys(defs)) {
+      if (name === "Explore") continue;
+      expect(defs[name]!.whenToUseLean, `${name} should not have a whenToUseLean`).toBeUndefined();
     }
   });
 });

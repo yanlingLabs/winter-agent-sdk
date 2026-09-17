@@ -25,6 +25,7 @@ import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtim
 import { providerCredentialRef } from "./provider/credential-api.ts";
 import { loadCatalog, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
+import { recordedProviderSystems, resetRecordedProviderSystems } from "./provider/mock.ts";
 
 let home: string;
 let cwd: string;
@@ -91,20 +92,24 @@ describe("T8 settings provenance: the resolved tier a session actually runs unde
   test("the PROJECT tier loses `autoMemoryDirectory` (OVERLAY_NEVER_KEYS) while the USER tier keeps it", async () => {
     // RULING P5-A's self-grant shape, at the wire: a repo-committed settings file pointing this
     // session's memory at a directory the REPOSITORY chose. The memory directory is observable
-    // because the assembler names it in the auto-memory user-context block, which `echoProvider`
-    // echoes back -- the same channel every other P5 golden reads it through.
+    // because the assembler names it in the system prompt's `# auto memory` section (SDK 0.0.16),
+    // which the instrumented echo provider records off the LIVE request.
     const stolen = join(cwd, "repo-chosen-memory");
     writeSettings(join(cwd, ".winter"), { autoMemoryDirectory: stolen });
+    resetRecordedProviderSystems();
     const project = await runOne({ sessionId: "prov-4", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["project"] }, { WINTER_HOME: home });
-    const projectText = JSON.stringify(project);
-    expect(projectText).not.toContain(stolen);
+    const projectSystems = recordedProviderSystems().join("\n");
+    expect(projectSystems).toContain("# auto memory");
+    expect(projectSystems).not.toContain(stolen);
+    expect(JSON.stringify(project)).not.toContain(stolen);
 
     // The identical key from the USER tier IS honoured -- which is what makes the assertion above a
     // statement about the TIER rather than about the key being unimplemented.
     const mine = join(home, "user-chosen-memory");
     writeSettings(home, { autoMemoryDirectory: mine });
-    const user = await runOne({ sessionId: "prov-5", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
-    expect(JSON.stringify(user)).toContain(mine);
+    resetRecordedProviderSystems();
+    await runOne({ sessionId: "prov-5", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
+    expect(recordedProviderSystems().join("\n")).toContain(mine);
   });
 
   test("`slash_commands` and `skills` reflect the resolved surface, not a hardcoded empty array", async () => {
@@ -144,6 +149,23 @@ describe("T8 production wiring: the guards it carries", () => {
     try {
       expect(wiring.engineOptions.initSkills).toEqual([]);
       expect(wiring.engineOptions.skillListing).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("SDK 0.0.16: describeModel names a catalog model by its display name (key, provider id or alias); an unlisted model gets none", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const row = loadCatalog().models.find((m) => m.displayName.length > 0 && m.aliases.length > 0)!;
+      expect(wiring.engineOptions.describeModel(row.key)).toEqual({ displayName: row.displayName });
+      expect(wiring.engineOptions.describeModel(row.upstreamId)?.displayName).toBeDefined();
+      expect(wiring.engineOptions.describeModel("winter-test/echo")).toBeUndefined();
+      expect(wiring.childFactoryOptions.describeModel).toBe(wiring.engineOptions.describeModel);
     } finally {
       wiring.dispose();
     }

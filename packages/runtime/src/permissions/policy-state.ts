@@ -48,6 +48,23 @@ export function isPermissionMode(value: string): value is PermissionMode {
   return (PERMISSION_MODES as ReadonlySet<string>).has(value);
 }
 
+/**
+ * SDK 0.0.16 (P16-7): claude's fork agent (`Ex`) carries `permissionMode: "bubble"` -- NOT a member
+ * of `PERMISSION_MODES` and never widened into one (`PermissionMode` is a closed 6-value union read
+ * exhaustively elsewhere -- `classifyPermissionMode` in particular). "bubble" is an explicit ALIAS
+ * for "no override": the child keeps whatever mode the parent session is CURRENTLY running (never a
+ * fixed mode of its own), and its own approval prompts surface through the parent's approval path.
+ *
+ * The second half needs no new plumbing here -- every child's `PreToolUse`/hook control_requests
+ * already forward up to the real host and are answered there (`child-engine.ts`'s
+ * `registerChildResponseHandler`/`forwardedHostRequestIds`, Phase 4 Task 8 rider 19); "bubble" only
+ * NAMES, deliberately, the mode value that already produces "inherit the parent's live mode" instead
+ * of leaving it an accident of an unrecognized permissionMode string falling through
+ * `isPermissionMode`'s own false case. `engine.ts`'s `buildChildInheritance` treats this constant
+ * (never the general "value is not a known mode" branch) as that alias -- see its own comment.
+ */
+export const BUBBLE_PERMISSION_MODE = "bubble";
+
 // Ruling 8 (phase plan): "an unknown mode in RuntimeConfig at engine start = typed config error (not
 // a parse failure)." Called once, at engine startup, BEFORE the init frame is written — a throw here
 // takes the SAME "exited before init" path a pre-init resolution failure already does (e.g.
