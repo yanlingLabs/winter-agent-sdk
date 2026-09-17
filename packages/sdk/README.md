@@ -68,6 +68,48 @@ plus two canonical standing-server twins, and `@yanlinglabs/winter-runtime-sdk` 
 definitions under Claude's built-in names. Handlers return `{ text, isError? }` for each host to
 wrap in its own result shape.
 
+## Environment variables and settings
+
+The runtime child reads a handful of environment variables at spawn/per-turn, plus a few
+`Options`/`RuntimeConfig` fields. Every variable name below is `WINTER_`-prefixed for Winter's own
+build (`BrandProfile.envPrefix`); a rebranded host reads the identical suffix under its own prefix.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `WINTER_DISABLE_BACKGROUND_TASKS` | off | A hard kill switch with two effects together: it drops `run_in_background` from the Agent tool's own advertised schema entirely, and it forces every subagent spawn to the foreground unconditionally (outranking a definition's own `background: true`, a fork, and an explicit `run_in_background: true` alike). |
+| `WINTER_BACKGROUND_BY_DEFAULT` | on (background) | A softer opt-out than the kill switch above: a falsy value (`0`/`false`/`no`/`off`, case-insensitive) restores the pre-0.0.16 default (an unflagged spawn runs in the FOREGROUND) without removing `run_in_background` from the schema — the model can still ask for either explicitly either way. `Options.backgroundByDefault` (see below) wins over this variable in either direction when both are set. |
+| `WINTER_PRINT_BG_WAIT_CEILING_MS` | `600000` (10 minutes) | How long a closed-input session holds its result for a still-running background agent/workflow before sweeping it as stopped. `0` waits indefinitely. |
+| `WINTER_EMIT_SESSION_STATE_EVENTS` | off | Truthy (`1`/`true`) emits `system/session_state_changed` frames (`running`/`idle`) as a turn starts and ends. Absent, the frame stream is unchanged from before this existed. |
+| `WINTER_DISABLE_GIT_INSTRUCTIONS` | off | Truthy disables the git status/instructions section of the system prompt outright, overriding `Settings.includeGitInstructions` in either direction. A falsy value (`0`/`false`/`no`/`off`) explicitly re-enables it even when the setting says otherwise. |
+| `WINTER_DISABLE_EXPLORE_INHERIT_CAP` | off | Truthy opts a first-party Anthropic session out of the Explore built-in's own model cap (which otherwise caps a Fable-tier session's Explore spawn down to Opus). |
+| `WINTER_FORK_SUBAGENT` | off | Truthy enables `subagent_type: "fork"` for the session (mirrors `CLAUDE_CODE_FORK_SUBAGENT`). `Options.forkSubagent` (below) wins over this variable in either direction. |
+| `WINTER_WEB_FETCH_AGENT` | off | Truthy makes the `web-fetch` built-in agent type available (off by default, like claude's own). |
+| `WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS` | off | Truthy withholds every built-in `subagent_type` (gated or not) for the session. |
+| `WINTER_DISABLE_EXPLORE_PLAN_AGENTS` | off | Truthy withholds the `Explore` and `Plan` built-ins together. |
+| `WINTER_DISABLE_AGENT_VIEW` | off | Truthy withholds the `claude` catch-all built-in (mirrors `CLAUDE_CODE_DISABLE_AGENT_VIEW`). |
+| `WINTER_MAX_SUBAGENT_SPAWN_DEPTH` | `3` | How many levels of subagent nesting are allowed beneath the top-level session before a spawn is refused. |
+| `WINTER_MAX_CONCURRENT_SUBAGENTS` | `20` | How many subagents may run at once (across the whole nesting tree) before a spawn is refused. |
+
+A handful of `Options`/settings fields carry the same weight as their env counterparts, and a
+RuntimeConfig field always wins over its own env fallback in either direction when both are set:
+
+- **`Settings.includeGitInstructions`** (default `true`) — the setting `WINTER_DISABLE_GIT_INSTRUCTIONS` overrides above.
+- **`Options.forkSubagent`** (`boolean`, default unset → env fallback) — the RuntimeConfig field behind `WINTER_FORK_SUBAGENT`.
+- **`Options.backgroundByDefault`** (`boolean`, default unset → env fallback) — the RuntimeConfig field behind `WINTER_BACKGROUND_BY_DEFAULT`, above.
+- **`Options.allowedAgentTypes`** (`string[]`, default unset = unrestricted) — restricts which `subagent_type` values a session (or, threaded onto a child's own RuntimeConfig, that one child) may spawn at all; a name outside the list reads as not-found, the same shape as an unknown type.
+
+### The 0.0.16 background-default change
+
+Before 0.0.16, an Agent tool call with no `run_in_background` ran in the **foreground** (this call
+does not return until the spawned agent finishes). From 0.0.16 on, matching claude, the same
+unflagged call runs in the **background** by default: the call returns immediately with a task id,
+and the model is told about the result later as a task notification (mid-turn, or as its own
+unsolicited turn). `run_in_background: false` still asks for the old, synchronous behavior on any
+one call. A host that wants the *default* itself to stay foreground — without losing the
+`run_in_background` field or forcing every call to name it explicitly — sets
+`Options.backgroundByDefault: false` (or `WINTER_BACKGROUND_BY_DEFAULT=false`); the kill switch,
+`WINTER_DISABLE_BACKGROUND_TASKS`, is unrelated and unaffected by this knob in either direction.
+
 ## License
 
 MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.

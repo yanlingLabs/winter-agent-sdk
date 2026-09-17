@@ -232,15 +232,19 @@ export interface SessionRequestLayout {
 
 const lastLayouts = new Map<string, SessionRequestLayout>();
 
-// M3 (fix wave, whole-branch review): the separator between the two halves is an ACTUAL NUL byte
-// (0x00), not the visually-identical blank a plain space would leave -- verified byte-for-byte
-// against this branch's own starting commit, so this was already true before this fix wave and
-// is called out here only because a NUL renders as nothing in most editors/terminals, which is
-// exactly what makes it collision-safe: neither a session id nor an agent id this codebase ever
-// generates or accepts can contain one, unlike a space (a session id CAN contain a literal
-// space), so the two halves can never be reassembled into a different (sessionId, agentId) pair.
+// M3 (fix wave, whole-branch review): the separator between the two halves is a NUL character
+// (`\u0000`), not the visually-identical blank a plain space would leave -- verified byte-for-byte
+// against this branch's own starting commit, so the SEPARATOR CHOICE was already true before this
+// fix wave; only the SPELLING changed here (a raw embedded NUL byte -> the `\u0000` escape, which
+// produces the identical runtime string), to satisfy this repo's own source-hygiene gate
+// (`scripts/source-hygiene.test.ts`'s "no raw control bytes in source" scan, item 6) rather than
+// leaving a byte no editor renders sitting unescaped in a committed source file. A NUL is
+// collision-safe here for the reason the gate's own suggested fix implies: neither a session id nor
+// an agent id this codebase ever generates or accepts can contain one, unlike a space (a session id
+// CAN contain a literal space), so the two halves can never be reassembled into a different
+// (sessionId, agentId) pair.
 function layoutKey(sessionId: string, agentId: string | undefined): string {
-  return agentId === undefined ? sessionId : `${sessionId} ${agentId}`;
+  return agentId === undefined ? sessionId : `${sessionId}\u0000${agentId}`;
 }
 
 /** Records the layout of the request a session (or one of its agents) just sent. */
