@@ -621,11 +621,11 @@ const WS12_11: ConformanceRow[] = [
         testName: "the override reaches the prompt stage even with a BARE Bash(*) allow rule present — never rule-silenced, never auto-approved by acceptEdits/auto, spec-literal \"under every policy\" including bypass",
       },
       { file: "../permissions/evaluator.test.ts", testName: "a deny rule targeting Bash still wins outright (stage 2 runs before stage 3's mandatory interaction)" },
-      { file: "./impl/bash.test.ts", testName: "a background override call reports override-requested in BOTH the started message and the task_notification summary" },
-      { file: "./impl/bash.test.ts", testName: "an ordinary sandboxed background call reports [sandbox: sandboxed] in both surfaces too" },
+      { file: "./impl/bash.test.ts", testName: "a background override call reports override-requested in the started message; the notification summary follows the pinned wording instead" },
+      { file: "./impl/bash.test.ts", testName: "an ordinary sandboxed background call reports [sandbox: sandboxed] in the started message; the notification summary is the pinned wording" },
     ],
     note:
-      "'Under every permission policy' is proven by a SINGLE mode-parameterized test (template-literal title, one concrete test per mode -- the cited substring is the fixed, non-interpolated portion) rather than six separately-registered tests. 'A deny rule still wins' is the one legitimate exception the RULING P3-J implementation itself preserves (stage 2 precedes stage 3), not a counterexample to 'never silenced' -- a deny is a DENIAL, not a silent bypass of the override's own visibility.",
+      "'Under every permission policy' is proven by a SINGLE mode-parameterized test (template-literal title, one concrete test per mode -- the cited substring is the fixed, non-interpolated portion) rather than six separately-registered tests. 'A deny rule still wins' is the one legitimate exception the RULING P3-J implementation itself preserves (stage 2 precedes stage 3), not a counterexample to 'never silenced' -- a deny is a DENIAL, not a silent bypass of the override's own visibility. Task-frames parity (2026-09-17 contract §4 \"Summary wording\"): the pin's own task_notification.summary carries no sandbox note at all, so the override's visibility now lives on the started-message surface alone -- the two bash.test.ts titles below were renamed to say so; this citation moved with them.",
   },
   {
     id: "WS12-04",
@@ -709,7 +709,7 @@ const WS12_11: ConformanceRow[] = [
       { file: "../sandbox/spawn.test.ts", testName: "matchCommand, not the (possibly wrapped) command, is what excludedCommands matches against" },
       { file: "../sandbox/spawn.test.ts", testName: "negative control: the same wrapped command WITHOUT matchCommand is NOT excluded" },
       { file: "./impl/bash.test.ts", testName: "excludedCommands matches the model's RAW command, not bash.ts's own pwd-capture wrapper" },
-      { file: "./impl/bash.test.ts", testName: "an ordinary sandboxed background call reports [sandbox: sandboxed] in both surfaces too" },
+      { file: "./impl/bash.test.ts", testName: "an ordinary sandboxed background call reports [sandbox: sandboxed] in the started message; the notification summary is the pinned wording" },
     ],
   },
   {
