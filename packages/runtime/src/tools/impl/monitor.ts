@@ -24,7 +24,7 @@ import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type Too
 import { createBackgroundTask } from "../background-tasks.ts";
 import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailableError } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
-import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -210,7 +210,12 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
   // optional and `tasks.set()` is a plain overwrite of the same entry. Contrast the `ws` half a few
   // hundred lines below, which calls startTracking synchronously with no spawn step at all, so it
   // never needed this pattern in the first place.
-  startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command });
+  // Task-frames parity (contract §2/§5): the COMMAND half's wire task_type is `local_bash` -- the
+  // pin registers it as a plain background shell task, indistinguishable from a backgrounded Bash
+  // call. The internal kind stays `"monitor"` (wireTaskType maps it); see background-tasks.ts's own
+  // WIRE_TASK_TYPES table for the ws half's DIFFERENT internal kind and wire spelling.
+  const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
+  startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
 
   let completion: ReturnType<typeof runCommand>;
   try {
@@ -219,7 +224,7 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       command: input.command,
       timeoutMs: effectiveTimeout,
       onSpawned: ({ pid }) => {
-        startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid });
+        startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
       },
       onStdout: (c) => outStream.write(c),
       onStderr: (c) => outStream.write(c),
@@ -236,8 +241,10 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
     type: "system",
     subtype: "task_started",
     task_id: taskId,
+    ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
     description: input.description,
     is_backgrounded: true,
+    task_type: "local_bash",
     uuid: randomUUID(),
     session_id: ctx.sessionId,
   });
@@ -254,52 +261,32 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       outStream.end();
       if (getTask(taskId)?.status !== "running") return; // TaskStop already recorded a terminal status
       const status = result.exitCode === 0 && !result.timedOut ? "completed" : "failed";
-      setTaskStatus(taskId, status);
-      try {
-        ctx.emitFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: taskId,
-          status,
-          output_file: outputPath,
-          // M2 (fix wave, P3 close-out): WS-12 §8's own annotation, previously only on Bash's three
-          // background surfaces.
-          summary: `${input.description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}`,
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-        ctx.emitFrame({
-          type: "system",
-          subtype: "background_tasks_changed",
-          tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-      } catch {
-        /* a torn-down session's emitFrame may throw; the registry's status and .output file are still correct */
-      }
+      updateTask(taskId, {
+        status,
+        endTime: Date.now(),
+        // M2 (fix wave, P3 close-out): WS-12 §8's own annotation, previously only on Bash's three
+        // background surfaces.
+        notification: { summary: `${input.description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}` },
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
     },
     (err) => {
       outStream.end();
       if (getTask(taskId)?.status !== "running") return;
-      setTaskStatus(taskId, "failed");
-      try {
-        ctx.emitFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: taskId,
-          status: "failed",
-          output_file: outputPath,
-          // M2 (fix wave, P3 close-out): no RunCommandResult exists on this branch (runCommand
-          // itself rejected, pre-spawn) -- `decision`, computed at the top of this function, is what
-          // was actually attempted (mirrors bash.ts's own runBackground failure-branch precedent).
-          summary: `${input.description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}`,
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-      } catch {
-        /* see above */
-      }
+      updateTask(taskId, {
+        status: "failed",
+        endTime: Date.now(),
+        // M2 (fix wave, P3 close-out): no RunCommandResult exists on this branch (runCommand
+        // itself rejected, pre-spawn) -- `decision`, computed at the top of this function, is what
+        // was actually attempted (mirrors bash.ts's own runBackground failure-branch precedent).
+        notification: { summary: `${input.description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}` },
+      });
     },
   );
 
@@ -480,8 +467,12 @@ export async function connectMonitorWs(
   }
   socket.binaryType = "arraybuffer";
 
-  const { taskId, outputPath } = createBackgroundTask("monitor");
+  // Task-frames parity (contract §2): the WS half is a DIFFERENT wire task_type (`monitor_ws`, no
+  // `is_backgrounded` field at all) than the command half's `local_bash` -- a separate internal kind
+  // so `wireTaskType` (the one mapping) decides both, with no second "half" parameter to thread.
+  const { taskId, outputPath } = createBackgroundTask("monitor_ws");
   const outStream = createWriteStream(outputPath, { flags: "a" });
+  const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
 
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -489,18 +480,8 @@ export async function connectMonitorWs(
     if (timer) clearTimeout(timer);
     outStream.end();
     if (getTask(taskId)?.status !== "running") return; // TaskStop already recorded a terminal status
-    setTaskStatus(taskId, status);
+    updateTask(taskId, { status, endTime: Date.now(), notification: { summary } });
     try {
-      ctx.emitFrame({
-        type: "system",
-        subtype: "task_notification",
-        task_id: taskId,
-        status,
-        output_file: outputPath,
-        summary,
-        uuid: randomUUID(),
-        session_id: ctx.sessionId,
-      });
       ctx.emitFrame({
         type: "system",
         subtype: "background_tasks_changed",
@@ -513,14 +494,16 @@ export async function connectMonitorWs(
     }
   }
 
-  startTracking({ taskId, kind: "monitor", outputPath, description, stop: () => socket.close() });
+  startTracking({ taskId, kind: "monitor_ws", outputPath, description, stop: () => socket.close(), ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
 
   // ORDERING TRAP (found via a real repro, not assumed): Bun's WebSocket.close() fires the socket's
   // OWN onclose handler SYNCHRONOUSLY, before control returns to whatever called .close(). Every
   // call site below therefore calls finalize() FIRST and socket.close() SECOND -- finalize() sets
-  // the task's status via setTaskStatus before this function's own emitFrame calls, so by the time
-  // the synchronously-triggered onclose handler runs ITS OWN finalize("completed"|"failed", ...)
-  // call, the "already terminal, not \"running\"" guard makes that second call a harmless no-op.
+  // the task's status via updateTask (synchronously, before its own frame emission) before this
+  // function's own emitFrame calls, so by the time the synchronously-triggered onclose handler runs
+  // ITS OWN finalize("completed"|"failed", ...) call, the "already terminal, not \"running\"" guard
+  // makes that second call a harmless no-op (and `emitTaskNotification`'s own once-per-id claim,
+  // background-task-runtime.ts, would suppress a duplicate notification even if it did not).
   // Reversing this order (close-then-finalize) would let onclose's own generic "clean close ->
   // completed" verdict win the race and silently overwrite the SPECIFIC verdict (timeout / oversized
   // message) this code means to report -- exactly the bug this comment exists to prevent recurring.
@@ -573,8 +556,11 @@ export async function connectMonitorWs(
     type: "system",
     subtype: "task_started",
     task_id: taskId,
+    ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
     description,
-    is_backgrounded: true,
+    // §1/§2: `monitor_ws` never carries `is_backgrounded` at all -- the pin's own register() only
+    // puts that flag on a `local_agent`/`local_bash` row.
+    task_type: "monitor_ws",
     uuid: randomUUID(),
     session_id: ctx.sessionId,
   });

@@ -34,7 +34,7 @@ import {
   type RunCommandResult,
 } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, canonicalizePath, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
-import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { startTracking, updateTask, removeTask, emitTaskNotification, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation (no zod/validation library is a dependency of this package -- verified before
@@ -92,6 +92,12 @@ function parseBashInput(input: unknown): BashInput | { error: string } {
 // ---------------------------------------------------------------------------------------------
 const DEFAULT_TIMEOUT_MS = 120_000;
 const CEILING_TIMEOUT_MS = 600_000;
+
+// Task-frames parity (contract §3): a FOREGROUND command running past this mark is registered in
+// the shared task registry (task_started, is_backgrounded:false) -- so it becomes reachable by
+// TaskStop, exactly as the pin's own engine makes it. A command that finishes before this fires
+// emits no task frames at all.
+const FOREGROUND_REGISTER_MS = 2_000;
 
 function resolveTimeout(requested: number | undefined): number {
   if (requested === undefined || !Number.isFinite(requested) || requested <= 0) return DEFAULT_TIMEOUT_MS;
@@ -353,6 +359,45 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   const timeoutMs = resolveTimeout(input.timeout);
   const pwdFile = join(ctx.tempDir, `.bash-cwd-${randomUUID()}`);
 
+  // Task-frames parity (contract §3): a command still running at the 2000ms mark is registered so
+  // TaskStop can reach it, and so the model sees the SAME task_started/task_notification pair the
+  // pin emits for a foreground call -- a command that finishes before this fires never touches the
+  // registry at all. `randomUUID()` directly (never `createBackgroundTask`): a foreground row has no
+  // `.output` file and must not depend on `configureBackgroundTaskRoot` having been called.
+  const description = input.description ?? input.command;
+  let foregroundTaskId: string | undefined;
+  let foregroundPid: number | undefined;
+  const registerTimer = setTimeout(() => {
+    const taskId = randomUUID();
+    foregroundTaskId = taskId;
+    startTracking({
+      taskId,
+      kind: "bash",
+      outputPath: "",
+      description,
+      command: input.command,
+      isBackgrounded: false,
+      ...(foregroundPid !== undefined ? { pid: foregroundPid } : {}),
+      ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
+      emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
+    });
+    try {
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_started",
+        task_id: taskId,
+        ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
+        description,
+        is_backgrounded: false,
+        task_type: "local_bash",
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+    } catch {
+      /* a torn-down session's emitFrame must never crash the timer */
+    }
+  }, FOREGROUND_REGISTER_MS);
+
   let stdout = "";
   let stderr = "";
   let result: RunCommandResult;
@@ -362,6 +407,26 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       command: buildPwdCaptureScript(input.command, pwdFile),
       matchCommand: input.command,
       timeoutMs,
+      onSpawned: ({ pid }) => {
+        foregroundPid = pid;
+        // The timer already fired and registered a row with no pid (the ordering the header comment
+        // above documents as "basically impossible" but not structurally excluded) -- merge the pid
+        // in via startTracking's own "re-register while running" merge, so TaskStop can still reach
+        // this row through the normal killTaskProcessGroup path.
+        if (foregroundTaskId !== undefined) {
+          startTracking({
+            taskId: foregroundTaskId,
+            kind: "bash",
+            outputPath: "",
+            description,
+            command: input.command,
+            isBackgrounded: false,
+            pid,
+            ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
+            emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
+          });
+        }
+      },
       onStdout: (c) => {
         stdout += c.toString("utf8");
       },
@@ -370,16 +435,33 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       },
     });
   } catch (err) {
+    clearTimeout(registerTimer);
     if (err instanceof SandboxUnavailableError || err instanceof SandboxConfigError) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
     throw err;
   }
+  clearTimeout(registerTimer);
 
   carryCwdIfAllowed(pwdFile, ctx);
   cleanupPwdFile(pwdFile);
 
   const success = result.exitCode === 0 && !result.timedOut && !result.aborted;
+
+  // §3's foreground finish: REMOVE the row (no task_updated) and emit task_notification with
+  // output_file:"" and the description as the summary -- never the background surfaces' own
+  // sandbox-annotated wording, which is a background-only convention.
+  if (foregroundTaskId !== undefined) {
+    const removed = removeTask(foregroundTaskId);
+    if (removed !== undefined) {
+      emitTaskNotification(removed, {
+        status: result.aborted ? "stopped" : success ? "completed" : "failed",
+        outputFile: "",
+        summary: description,
+      });
+    }
+  }
+
   const stdoutCapped = capOutput(ctx, "stdout", stdout, success);
   const stderrCapped = capOutput(ctx, "stderr", stderr, success);
 
@@ -460,14 +542,15 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   // (now corrected) belief that it was never actually necessary. startTracking's own `pid?: number`
   // is optional and `tasks.set()` is a plain overwrite, so calling it again from onSpawned with the
   // real pid is a safe, idempotent update of the SAME entry, never a duplicate.
-  startTracking({ taskId, kind: "bash", outputPath, description, command: input.command });
+  const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
+  startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
 
   const completion = runCommand({
     ...runOptions,
     command: input.command,
     timeoutMs,
     onSpawned: ({ pid }) => {
-      startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid });
+      startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}), emitter });
     },
     onStdout: (c) => outStream.write(c),
     onStderr: (c) => outStream.write(c),
@@ -477,8 +560,10 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
     type: "system",
     subtype: "task_started",
     task_id: taskId,
+    ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
     description,
     is_backgrounded: true,
+    task_type: "local_bash",
     uuid: randomUUID(),
     session_id: ctx.sessionId,
   });
@@ -495,55 +580,37 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   // TaskStop if it already recorded a terminal status first (see background-task-runtime.ts's own
   // "single source of truth" status field -- whichever of {natural exit, TaskStop} runs its
   // synchronous status check-and-set first wins; Node's single-threaded event loop means there is
-  // no interleaving WITHIN either branch's own synchronous block).
+  // no interleaving WITHIN either branch's own synchronous block). `updateTask` is the ONE door for
+  // both the terminal `task_updated {status, end_time}` and the once-per-id `task_notification` that
+  // follows it (§1) -- this call site no longer builds either frame literal itself.
   completion.then(
     (result) => {
       outStream.end();
       if (getTask(taskId)?.status !== "running") return; // TaskStop already recorded a terminal status
       const status = result.exitCode === 0 && !result.timedOut ? "completed" : "failed";
-      setTaskStatus(taskId, status);
-      try {
-        ctx.emitFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: taskId,
-          status,
-          output_file: outputPath,
-          summary: `${description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}`,
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-        ctx.emitFrame({
-          type: "system",
-          subtype: "background_tasks_changed",
-          tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-      } catch {
-        /* a torn-down session's emitFrame may throw; the registry's status and the .output file are still correct */
-      }
+      updateTask(taskId, {
+        status,
+        endTime: Date.now(),
+        notification: { summary: `${description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}` },
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
     },
     (err) => {
       outStream.end();
       if (getTask(taskId)?.status !== "running") return;
-      setTaskStatus(taskId, "failed");
-      try {
-        ctx.emitFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: taskId,
-          status: "failed",
-          output_file: outputPath,
-          // No RunCommandResult exists on this branch (runCommand itself rejected, pre-spawn) -- the
-          // pre-flight `decision` computed at the top of this function is what was actually attempted.
-          summary: `${description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}`,
-          uuid: randomUUID(),
-          session_id: ctx.sessionId,
-        });
-      } catch {
-        /* see above */
-      }
+      updateTask(taskId, {
+        status: "failed",
+        endTime: Date.now(),
+        // No RunCommandResult exists on this branch (runCommand itself rejected, pre-spawn) -- the
+        // pre-flight `decision` computed at the top of this function is what was actually attempted.
+        notification: { summary: `${description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}` },
+      });
     },
   );
 

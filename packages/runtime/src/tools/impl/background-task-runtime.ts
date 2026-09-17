@@ -18,12 +18,40 @@
 // registry -- could never reach a background agent task. The two unions being different widths was
 // the mechanical blocker; "workflow" joins for the same reason (P5's own tasks will need it, and a
 // union that is a strict subset of the spine's is a trap waiting for the next kind).
-export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
+//
+// Task-frames parity (contract §2): "monitor" now names ONLY Monitor's command half (wire
+// `task_type: "local_bash"` -- it is registered as a plain background shell task, same as Bash).
+// "monitor_ws" is a FIFTH, separate kind for Monitor's WebSocket half (wire `task_type:
+// "monitor_ws"`, and it never carries `is_backgrounded` at all -- see StartTrackingInput's own
+// comment). The pin genuinely treats the two halves as different task shapes; splitting the kind
+// (rather than threading a second "half" parameter through every call site) keeps `wireTaskType`
+// the one place that decides a wire spelling, with no second axis for a caller to get wrong.
+export type BackgroundTaskKind = "bash" | "monitor" | "monitor_ws" | "workflow" | "agent";
 // Phase 5 Task 3: the internal-kind -> wire-`task_type` mapping lives in the SPINE module
 // (tools/background-tasks.ts), imported rather than re-declared -- two copies of "workflow means
 // local_workflow on the wire" is exactly the drift the single mapping exists to prevent.
+import { randomUUID } from "node:crypto";
+import type {
+  BackgroundTaskMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskUpdatedMessage,
+} from "@yanlinglabs/winter-agent-sdk";
 import { wireTaskType } from "../background-tasks.ts";
+
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped";
+
+// Task-frames parity (contract §1): where task_updated/task_notification for a row are sent. Stored
+// on the handle at `startTracking` time (rather than threaded as a parameter to every update/remove
+// call) so this registry stays the ONE door -- a caller never needs to carry ctx.emitFrame/sessionId
+// alongside a taskId just to report a status change. Absent means "nobody wired an emitter" (every
+// pre-existing hand-built `startTracking` call in this package's own tests): update/remove still
+// mutate the row correctly, they just have nowhere to send a frame, which is a silent no-op here --
+// the SAME "never throw over a torn-down/absent sink" posture every existing emitFrame call site in
+// this codebase already has.
+export interface TaskFrameEmitter {
+  emitFrame: (frame: BackgroundTaskMessage) => void;
+  sessionId: string;
+}
 
 export interface BackgroundTaskHandle {
   taskId: string;
@@ -44,9 +72,31 @@ export interface BackgroundTaskHandle {
   stop?: () => void;
   status: BackgroundTaskStatus;
   startedAt: number;
+  /**
+   * Task-frames parity (contract §1/§2): only meaningful for a `local_agent`/`local_bash` row (the
+   * two wire kinds the pin's own `register()` puts the flag on at all) -- `undefined` for every other
+   * kind (workflow, monitor_ws), which never carry it on `task_started` either. `false` marks a
+   * FOREGROUND row: excluded from `listRunningTasks()`'s own `background_tasks_changed` listing
+   * (§1's `"isBackgrounded" in task && task.isBackgrounded === false` rule), and its terminal
+   * transition goes through `removeTask` + a caller-built notification rather than `updateTask`
+   * (§3/§4's "foreground success removes the row, no task_updated").
+   */
+  isBackgrounded?: boolean;
+  /** The model's own `tool_use` id for the call that created this task, when known -- carried onto this row's own `task_notification`/`task_updated` unless a call overrides it. */
+  toolUseId?: string;
+  endTime?: number;
+  totalPausedMs?: number;
+  error?: string;
+  emitter?: TaskFrameEmitter;
 }
 
 const tasks = new Map<string, BackgroundTaskHandle>();
+// Task-frames parity (contract §1, "Ik"): the once-per-id notification claim. A SEPARATE set from
+// `tasks` itself (rather than a field on the handle) because a claim must survive `removeTask` --
+// the foreground success path removes the row and THEN notifies, and a late duplicate attempt (the
+// process's own natural-exit handler racing a TaskStop that already removed/notified) must still be
+// a no-op with no row left to check it against.
+const notifiedTaskIds = new Set<string>();
 
 export interface StartTrackingInput {
   taskId: string;
@@ -56,11 +106,30 @@ export interface StartTrackingInput {
   command?: string;
   pid?: number;
   stop?: () => void;
+  isBackgrounded?: boolean;
+  toolUseId?: string;
+  emitter?: TaskFrameEmitter;
 }
 
+// §1's register(): "emits task_started unless the id is already registered and non-terminal (a
+// resume/replacement)". This registry does not itself emit `task_started` (every producer builds
+// and emits that frame itself, right after this call -- see bash.ts/agent.ts/monitor.ts/
+// workflow.ts), but the MERGE half of that rule is real and load-bearing here: bash.ts and
+// monitor.ts both call this TWICE for the same taskId (once before spawning, once from `onSpawned`
+// with the real pid) -- a plain overwrite would reset `startedAt`, and silently drop whatever the
+// first call already set (`emitter`/`isBackgrounded`/`toolUseId`) if the second call's own input
+// happened to omit them. Merging into the existing row when it is still "running" keeps both calls
+// idempotent and keeps every field the first call set.
 export function startTracking(input: StartTrackingInput): BackgroundTaskHandle {
+  const existing = tasks.get(input.taskId);
+  if (existing !== undefined && existing.status === "running") {
+    Object.assign(existing, input);
+    notifiedTaskIds.delete(input.taskId); // "registering also clears the terminal-notification claim"
+    return existing;
+  }
   const handle: BackgroundTaskHandle = { ...input, status: "running", startedAt: Date.now() };
   tasks.set(input.taskId, handle);
+  notifiedTaskIds.delete(input.taskId);
   return handle;
 }
 
@@ -77,8 +146,14 @@ export function listTasks(): readonly BackgroundTaskHandle[] {
   return [...tasks.values()];
 }
 
+// Task-frames parity (contract §1/§7): a task is listed iff it is running AND it is not a
+// foreground row (`isBackgrounded === false`) -- `undefined`/`true` both still count as listed. This
+// is the fix for "a running foreground agent is listed whenever anything else triggers the frame":
+// before this, the foreground Agent-tool path tracked its row in this SAME registry (rider 24) with
+// no `isBackgrounded` at all, so it was indistinguishable from a genuine background task the moment
+// any OTHER call triggered `background_tasks_changed`.
 export function listRunningTasks(): readonly BackgroundTaskHandle[] {
-  return listTasks().filter((t) => t.status === "running");
+  return listTasks().filter((t) => t.status === "running" && t.isBackgrounded !== false);
 }
 
 // WS-12 §5.2's identical process-group kill rule, reused for TaskStop: negative-pid SIGKILL targets
@@ -126,9 +201,201 @@ export function toBackgroundTasksChangedEntry(t: BackgroundTaskHandle): { task_i
   return { task_id: t.taskId, task_type: wireTaskType(t.kind), description: t.description };
 }
 
+// --- Task-frames parity §1: the update/notify/remove doors ---------------------------------------
+//
+// "One registry, three doors": register (startTracking, above) / update (updateTask) / remove
+// (removeTask). `updateTask` is where the §1 diff table + the once-per-id terminal notification
+// live -- every producer (bash.ts, monitor.ts, workflow.ts, task-stop.ts, and agent.ts's background
+// path) calls THIS rather than hand-rolling its own `task_updated`/`task_notification` emitFrame
+// literals, so the diff rule and the notification claim exist in exactly one place.
+
+const TERMINAL_STATUSES: ReadonlySet<BackgroundTaskStatus> = new Set(["completed", "failed", "stopped"]);
+
+function isTerminal(status: BackgroundTaskStatus): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
+
+// §1's patch status vocabulary is `pending|running|completed|failed|killed|paused` -- Winter's own
+// internal terminal-by-stop status is spelled `"stopped"` (bash.ts/monitor.ts/task-stop.ts's own
+// established word), and the PATCH spells that same transition `"killed"`; the NOTIFICATION spells
+// it `"stopped"` again. Both wire spellings come from this ONE internal value; nothing upstream of
+// this function ever needs to know the two wire words differ.
+function wirePatchStatus(status: BackgroundTaskStatus): "running" | "completed" | "failed" | "killed" {
+  return status === "stopped" ? "killed" : status;
+}
+
+export interface TaskNotificationInput {
+  summary: string;
+  /** Defaults to `task.outputPath`; a foreground task's own caller passes `""` explicitly (§3/§4: "no output file"). */
+  outputFile?: string;
+  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+  /** Defaults to `task.toolUseId`. */
+  toolUseId?: string;
+  skipTranscript?: boolean;
+  ambient?: boolean;
+}
+
+export interface TaskUpdateChanges {
+  status?: BackgroundTaskStatus;
+  description?: string;
+  endTime?: number;
+  totalPausedMs?: number;
+  error?: string;
+  isBackgrounded?: boolean;
+  /**
+   * Consulted ONLY when this call's own status change crosses non-terminal -> terminal; ignored
+   * otherwise. §1: "same synchronous call, AFTER the task_updated" -- supplying both the state
+   * change and its eventual notification content to ONE call is what makes that true structurally,
+   * rather than relying on the caller to remember to follow up with a second call in the right order.
+   */
+  notification?: TaskNotificationInput;
+}
+
+export interface TaskNotificationEmission {
+  status: "completed" | "failed" | "stopped";
+  outputFile: string;
+  summary: string;
+  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+  toolUseId?: string;
+  skipTranscript?: boolean;
+  ambient?: boolean;
+}
+
+/**
+ * §1's `Ik`: `task_notification` is sent at most once per task id, ever -- a second attempt (the
+ * process's own natural-exit handler racing a TaskStop that already finalized the row, or a
+ * foreground caller notifying after `removeTask`) is a silent no-op. The ONE place every
+ * `task_notification` this package emits goes through, whether reached via `updateTask`'s own
+ * terminal detection below or a foreground remove-then-notify caller (bash.ts/agent.ts) that has
+ * nothing left in the registry to update.
+ */
+export function emitTaskNotification(task: Pick<BackgroundTaskHandle, "taskId" | "emitter" | "toolUseId">, notification: TaskNotificationEmission): void {
+  if (notifiedTaskIds.has(task.taskId)) return;
+  notifiedTaskIds.add(task.taskId);
+  if (!task.emitter) return;
+  // Defaults from the row itself so every caller (updateTask's own terminal path below, AND a
+  // foreground remove-then-notify caller in bash.ts/agent.ts) gets the correlating tool_use id for
+  // free when it registered one at startTracking time, without re-threading it through every call.
+  const toolUseId = notification.toolUseId ?? task.toolUseId;
+  const frame: SDKTaskNotificationMessage = {
+    type: "system",
+    subtype: "task_notification",
+    task_id: task.taskId,
+    ...(toolUseId !== undefined ? { tool_use_id: toolUseId } : {}),
+    status: notification.status,
+    output_file: notification.outputFile,
+    summary: notification.summary,
+    ...(notification.usage !== undefined ? { usage: notification.usage } : {}),
+    ...(notification.skipTranscript !== undefined ? { skip_transcript: notification.skipTranscript } : {}),
+    ...(notification.ambient !== undefined ? { ambient: notification.ambient } : {}),
+    uuid: randomUUID(),
+    session_id: task.emitter.sessionId,
+  };
+  try {
+    task.emitter.emitFrame(frame);
+  } catch {
+    /* a torn-down session's emitFrame must never fail the caller */
+  }
+}
+
+function notifyTerminal(task: BackgroundTaskHandle, notification: TaskNotificationInput): void {
+  // `task.status` is already terminal by the caller's own guard (updateTask, immediately below).
+  const status = task.status as "completed" | "failed" | "stopped";
+  emitTaskNotification(task, {
+    status,
+    outputFile: notification.outputFile ?? task.outputPath,
+    summary: notification.summary,
+    ...(notification.usage !== undefined ? { usage: notification.usage } : {}),
+    ...(notification.toolUseId !== undefined ? { toolUseId: notification.toolUseId } : {}),
+    ...(notification.skipTranscript !== undefined ? { skipTranscript: notification.skipTranscript } : {}),
+    ...(notification.ambient !== undefined ? { ambient: notification.ambient } : {}),
+  });
+}
+
+/**
+ * §1's update(id, fn): applies `changes`, diffs OLD vs NEW on exactly the six pinned fields, and (if
+ * the patch is non-empty) emits `task_updated {task_id, patch}` -- then, if this call's own status
+ * change crossed non-terminal -> terminal, emits `task_notification` (same synchronous call, AFTER
+ * the task_updated), through `emitTaskNotification`'s own once-per-id claim.
+ *
+ * A field counts as "changed" here by the same rule for all six: `changes.<field> !== undefined`
+ * (a caller never means to explicitly unset one of these) AND it differs from the row's current
+ * value -- which already satisfies the table's extra "AND new value is defined" clause on
+ * `error`/`isBackgrounded` for free, since neither is ever applied from an `undefined` input.
+ *
+ * Returns `undefined` for an unknown taskId (never throws) -- the same "no-op on an unknown id"
+ * posture `setTaskStatus` already has.
+ */
+export function updateTask(taskId: string, changes: TaskUpdateChanges): BackgroundTaskHandle | undefined {
+  const task = tasks.get(taskId);
+  if (task === undefined) return undefined;
+  const wasTerminal = isTerminal(task.status);
+
+  const patch: SDKTaskUpdatedMessage["patch"] = {};
+  if (changes.status !== undefined && changes.status !== task.status) {
+    task.status = changes.status;
+    patch.status = wirePatchStatus(task.status);
+  }
+  if (changes.description !== undefined && changes.description !== task.description) {
+    task.description = changes.description;
+    patch.description = task.description;
+  }
+  if (changes.endTime !== undefined && changes.endTime !== task.endTime) {
+    task.endTime = changes.endTime;
+    patch.end_time = task.endTime;
+  }
+  if (changes.totalPausedMs !== undefined && changes.totalPausedMs !== task.totalPausedMs) {
+    task.totalPausedMs = changes.totalPausedMs;
+    patch.total_paused_ms = task.totalPausedMs;
+  }
+  if (changes.error !== undefined && changes.error !== task.error) {
+    task.error = changes.error;
+    patch.error = task.error;
+  }
+  if (changes.isBackgrounded !== undefined && changes.isBackgrounded !== task.isBackgrounded) {
+    task.isBackgrounded = changes.isBackgrounded;
+    patch.is_backgrounded = task.isBackgrounded;
+  }
+
+  if (Object.keys(patch).length > 0 && task.emitter) {
+    const frame: SDKTaskUpdatedMessage = {
+      type: "system",
+      subtype: "task_updated",
+      task_id: taskId,
+      patch,
+      uuid: randomUUID(),
+      session_id: task.emitter.sessionId,
+    };
+    try {
+      task.emitter.emitFrame(frame);
+    } catch {
+      /* a torn-down session's emitFrame must never fail a status update */
+    }
+  }
+
+  if (!wasTerminal && isTerminal(task.status) && changes.notification !== undefined) {
+    notifyTerminal(task, changes.notification);
+  }
+
+  return task;
+}
+
+/**
+ * §1's remove(id): deletes the row, emitting NO `task_updated`. Used for a task that finishes IN
+ * THE FOREGROUND (§3/§4) -- the caller (bash.ts/agent.ts) builds and sends the `task_notification`
+ * itself, through `emitTaskNotification`, using the handle this returns (which still carries
+ * `.emitter`/`.toolUseId` for that call). Returns `undefined` for an unknown taskId, never throws.
+ */
+export function removeTask(taskId: string): BackgroundTaskHandle | undefined {
+  const task = tasks.get(taskId);
+  if (task !== undefined) tasks.delete(taskId);
+  return task;
+}
+
 // Test-only escape hatch, same rationale as background-tasks.ts's own resetBackgroundTaskRootForTest:
 // this module is a process-wide singleton bun's test runner shares across every file in one `bun
 // test` invocation, so every test that mutates it resets in both beforeEach AND afterEach.
 export function resetBackgroundTaskRuntimeForTest(): void {
   tasks.clear();
+  notifiedTaskIds.clear();
 }
