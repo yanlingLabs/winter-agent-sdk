@@ -906,3 +906,15 @@ export function parseSseJson(data: string): Record<string, unknown> | undefined 
     return undefined;
   }
 }
+
+/**
+ * Review r1 finding 5: the OpenAI-family report (a TOTAL prompt count with the cached tokens as a
+ * subset) mapped onto the seam's one convention (types.ts's `usage` event): `inputTokens` is the
+ * non-cached part, `cacheReadTokens` the cached part, so their sum is the prompt, counted once.
+ * Clamped at zero -- a provider reporting more cached than total is not worth a negative count.
+ */
+export function normalizedPromptUsage(promptTokens: number, cachedTokens: number | undefined): { inputTokens: number; cacheReadTokens?: number } {
+  if (cachedTokens === undefined) return { inputTokens: promptTokens };
+  const cached = Math.max(0, Math.min(cachedTokens, promptTokens));
+  return { inputTokens: promptTokens - cached, cacheReadTokens: cached };
+}

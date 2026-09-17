@@ -116,10 +116,19 @@ describe("(i) provider seam: system prompt in, usage out, and the accountant tha
     expect(accountant.contextTokens()).toBe(505); // replaced, never 625
   });
 
-  test("ContextAccountant: cache counters are informational and never enter contextTokens()", () => {
+  // CHANGED by the task-frames parity fix wave (review r1 finding 5). This used to pin "cache counters
+  // never enter contextTokens()", which was only ever right for a family whose `inputTokens` already
+  // CONTAINED its cached tokens (the OpenAI family) and silently under-read every cached Anthropic
+  // prompt. Provider usage now has one convention -- `inputTokens` is the NON-cached prompt, the cache
+  // counters disjoint from it -- so the context reading is the whole prompt, counted once, plus output.
+  test("ContextAccountant: the context reading is the WHOLE prompt (non-cached input + cache write + cache read) plus output", () => {
     const accountant = createContextAccountant();
-    accountant.record({ inputTokens: 10, outputTokens: 1, cacheReadTokens: 9000, cacheWriteTokens: 9000 });
-    expect(accountant.contextTokens()).toBe(11);
+    accountant.record({ inputTokens: 10, outputTokens: 1, cacheReadTokens: 9000, cacheWriteTokens: 500 });
+    expect(accountant.contextTokens()).toBe(9511);
+    expect(accountant.spentTokens()).toBe(9511);
+    accountant.recordDescendantUsage({ inputTokens: 1, outputTokens: 1, cacheReadTokens: 8 });
+    expect(accountant.contextTokens()).toBe(9511); // a descendant never moves the context reading
+    expect(accountant.spentTokens()).toBe(9521);
   });
 
   test("ContextAccountant: limit() defaults to the disclosed 200000 and is configurable per session", () => {
@@ -247,7 +256,10 @@ describe("(ii) onCompaction resets the deferred loaded set to `evidenced` and an
 describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the precedence chain", () => {
   function agentFile(dir: string, name: string, body: string, description: string): void {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${name}.md`), `---\ndescription: ${description}\n---\n${body}\n`);
+    // Spawn-surface parity: filesystem agents now require a frontmatter `name` (definitions.ts) --
+    // this fixture's own `name` argument IS the agent's real name (its filename happens to match,
+    // which is what every call site below relies on for its own `.get(name)` lookups).
+    writeFileSync(join(dir, `${name}.md`), `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`);
   }
 
   const pluginAgent = (plugin: string, prompt: string) => ({ description: `from ${plugin}`, prompt, plugin });
@@ -301,6 +313,7 @@ describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the p
         home,
         trustedWorkspace: false,
         pluginAgents: { alpha: pluginAgent("acme", "a"), beta: pluginAgent("other", "b") },
+        builtinAgents: {}, // isolates this exact-set assertion from R-S1's own default-on built-in tier
       });
       expect([...defs.keys()].sort()).toEqual(["alpha", "beta"]);
       expect(defs.get("beta")?._plugin).toBe("other");
@@ -310,7 +323,7 @@ describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the p
   test("omitting pluginAgents entirely is byte-identical to the pre-P5 behaviour", () => {
     withTempTree(({ cwd, home }) => {
       agentFile(join(home, ".winter", "agents"), "reviewer", "user body", "user");
-      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false });
+      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, builtinAgents: {} });
       expect([...defs.keys()]).toEqual(["reviewer"]);
       expect(defs.get("reviewer")?._source).toBe("user");
       expect(defs.get("reviewer")).not.toHaveProperty("_plugin");

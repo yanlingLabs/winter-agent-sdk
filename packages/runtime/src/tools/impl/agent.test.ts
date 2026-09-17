@@ -13,12 +13,12 @@ import { AGENT_TOOL_NAME, agentExecutor } from "./agent.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared registry TaskStop/TaskOutput are implemented against, and
 // those two REAL executors -- driven by task id here, never by calling their internals.
-import { getTask } from "./background-task-runtime.ts";
+import { getTask, listRunningTasks, toBackgroundTasksChangedEntry, startTracking } from "./background-task-runtime.ts";
 import { taskStopExecutor } from "./task-stop.ts";
 import { taskOutputExecutor } from "./task-output.ts";
 import { resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
-import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
+import type { ChildHandle, ChildResult, ChildSessionRecord, ChildTaskProgress, SpawnChildRequest } from "../../subagents/child-handle.ts";
 import { resolveBrand, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 function fakeRecord(overrides: Partial<ChildSessionRecord> = {}): ChildSessionRecord {
@@ -130,14 +130,26 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
     expect(called).toBe(false);
   });
 
-  test('isolation:"remote" -> a typed unsupported-capability error (WS-10 §8), spawnChild never called', async () => {
-    let called = false;
-    const { ctx } = makeCtx({ spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
+  // Spawn-surface parity (research §A5, gap 8): claude's SILENT remote fallback -- no error, a
+  // worktree when the session root is inside git, else a plain local agent.
+  test('isolation:"remote" inside a git repository falls back SILENTLY to a worktree', async () => {
+    const repo = mkTempDir("winter-agent-test-git-");
+    Bun.spawnSync(["git", "init", "-q", repo]);
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({ cwd: repo, spawnChild: async (req) => ((capturedReq = req), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
     const result = await agentExecutor.execute({ description: "d", prompt: "p", isolation: "remote" }, ctx);
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('isolation:"remote"');
-    expect(result.output).toContain("not available");
-    expect(called).toBe(false);
+    expect(result.isError).toBeUndefined();
+    expect(capturedReq?.isolation).toBe("worktree");
+  });
+
+  test('isolation:"remote" outside any git repository falls back SILENTLY to a plain local agent', async () => {
+    const plain = mkTempDir("winter-agent-test-nogit-");
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({ cwd: plain, spawnChild: async (req) => ((capturedReq = req), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", isolation: "remote" }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(capturedReq).toBeDefined();
+    expect(capturedReq?.isolation).toBeUndefined();
   });
 
   test("no spawnChild capability configured -> a legible, non-crashing error", async () => {
@@ -147,13 +159,13 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
     expect(result.output).toBe("no spawnChild capability configured");
   });
 
-  test("unknown subagent_type -> a legible error naming what was checked, spawnChild never called", async () => {
+  test("unknown subagent_type -> claude's not-found text with the available list, spawnChild never called", async () => {
     let called = false;
     const home = mkTempDir("winter-agent-test-home-");
     const { ctx } = makeCtx({ home, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
     const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent" }, ctx);
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('unknown subagent_type "nonexistent"');
+    expect(result.output).toBe("Agent type 'nonexistent' not found. Available agents: Explore, Plan, claude, general-purpose");
     expect(called).toBe(false);
   });
 
@@ -165,8 +177,8 @@ describe("Agent tool: input validation (cheap, before any spawn work)", () => {
     });
     const result = await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("subagent spawn failed");
-    expect(result.output).toContain("depth exceeded");
+    // R-S4: claude's shape -- the thrown message itself, no wrapper prefix.
+    expect(result.output).toBe("winter: subagent spawn refused -- depth exceeded");
   });
 });
 
@@ -174,7 +186,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
   test("a ~/.winter/agents/*.md definition resolves and is attached to the SpawnChildRequest", async () => {
     const home = mkTempDir("winter-agent-test-home-");
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\ndescription: reviews code\ntools: [Read, Grep]\n---\nYou are a careful reviewer.");
+    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: reviews code\ntools: [Read, Grep]\n---\nYou are a careful reviewer.");
 
     let capturedReq: SpawnChildRequest | undefined;
     const { ctx } = makeCtx({
@@ -189,6 +201,31 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     expect(capturedReq?.definition?.description).toBe("reviews code");
     expect(capturedReq?.definition?.tools).toEqual(["Read", "Grep"]);
     expect(capturedReq?.definition?.prompt).toBe("You are a careful reviewer.");
+  });
+
+  // Review r2 finding 2: `ctx.onAgentDefinitionRejected` (threaded from engine.ts's shared reporter
+  // in production) reaches `loadAgentDefinitions`' own `onReject` from THIS call site -- before this
+  // fix, the Agent tool executor passed no `onReject` at all, so a rejected sibling file in the same
+  // directory as a valid one vanished with no report anywhere.
+  test("a rejected sibling agent file is reported through ctx.onAgentDefinitionRejected, and the valid one still resolves", async () => {
+    const home = mkTempDir("winter-agent-test-home-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: reviews code\n---\nYou are a careful reviewer.");
+    writeFileSync(join(home, ".winter", "agents", "broken.md"), "---\ndescription: has no name\n---\nBody.");
+
+    const rejections: Array<{ source: string; filePath: string; reason: string }> = [];
+    const { ctx } = makeCtx({
+      home,
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "reviewed" })),
+    });
+    const result = await agentExecutor.execute(
+      { description: "review", prompt: "review this diff", subagent_type: "reviewer" },
+      { ...ctx, onAgentDefinitionRejected: (r) => rejections.push(r) },
+    );
+    expect(result.isError).toBeUndefined();
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]?.filePath).toEndWith(join("agents", "broken.md"));
+    expect(rejections[0]?.reason).toContain('"name"');
   });
 
   // --- P7a fix wave (item 10, N-1): the BRANDED directory read ------------------------------------
@@ -211,9 +248,9 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     // silently succeeds against the wrong product's directory -- so the DECOY is what makes this
     // test able to fail.
     mkdirSync(join(home, ".acme", "agents"), { recursive: true });
-    writeFileSync(join(home, ".acme", "agents", "reviewer.md"), "---\ndescription: the ACME reviewer\n---\nAcme body.");
+    writeFileSync(join(home, ".acme", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: the ACME reviewer\n---\nAcme body.");
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\ndescription: the WINTER decoy\n---\nWinter body.");
+    writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: the WINTER decoy\n---\nWinter body.");
 
     let capturedReq: SpawnChildRequest | undefined;
     const { ctx } = makeCtx({
@@ -230,17 +267,22 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     expect(capturedReq?.definition?.prompt).toBe("Acme body.");
   });
 
-  test("P7a (N-1): and the MODEL-FACING message names the branded directory, not `~/.winter/agents`", async () => {
-    // The other half of the r1 fix. A message naming a directory the reuser's product does not have
-    // teaches the model to look in the wrong place, and it is the half a directory-read assertion
-    // alone would never catch.
+  test("P7a (N-1): and the MODEL-FACING not-found list is the BRANDED session's own set, never a `.winter/agents` definition", async () => {
+    // The other half of the r1 fix, restated for claude's not-found text (spawn-surface parity): the
+    // message no longer names a directory at all -- it lists the agents that exist, and that list
+    // must come from the branded directory.
     const home = mkTempDir("winter-agent-test-home-");
+    mkdirSync(join(home, ".acme", "agents"), { recursive: true });
+    writeFileSync(join(home, ".acme", "agents", "acme-helper.md"), "---\nname: acme-helper\ndescription: acme\n---\nBody.");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "winter-decoy.md"), "---\nname: winter-decoy\ndescription: decoy\n---\nBody.");
     let called = false;
     const { ctx } = makeCtx({ home, brand: ACME, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
     const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "nonexistent" }, ctx);
     expect(result.isError).toBe(true);
-    expect(result.output).toContain(".acme/agents");
-    expect(result.output).not.toContain(".winter/agents");
+    expect(result.output).toContain("acme-helper");
+    expect(result.output).not.toContain("winter-decoy");
+    expect(result.output).not.toContain(".winter");
     expect(called).toBe(false);
   });
 
@@ -248,14 +290,14 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     const home = mkTempDir("winter-agent-test-home-");
     const cwd = mkTempDir("winter-agent-test-cwd-");
     mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(cwd, ".winter", "agents", "local-only.md"), "---\ndescription: project-local\n---\nBody.");
+    writeFileSync(join(cwd, ".winter", "agents", "local-only.md"), "---\nname: local-only\ndescription: project-local\n---\nBody.");
 
     let called = false;
     const { ctx } = makeCtx({ home, cwd, spawnChild: async () => ((called = true), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
     const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "local-only" }, ctx);
     expect(called).toBe(false);
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('unknown subagent_type "local-only"');
+    expect(result.output).toStartWith("Agent type 'local-only' not found.");
   });
 
   // Whole-branch M11 (fix wave follow-up 6): the trust verdict is no longer a second hardcoded
@@ -267,7 +309,7 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     const home = mkTempDir("winter-agent-test-home-");
     const cwd = mkTempDir("winter-agent-test-cwd-");
     mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(cwd, ".winter", "agents", "local-only.md"), "---\ndescription: project-local\n---\nBody.");
+    writeFileSync(join(cwd, ".winter", "agents", "local-only.md"), "---\nname: local-only\ndescription: project-local\n---\nBody.");
 
     let capturedReq: SpawnChildRequest | undefined;
     const { ctx } = makeCtx({
@@ -292,6 +334,8 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
     const parsed = JSON.parse(result.output);
     expect(parsed).toEqual({
       agentId: "child-1",
+      // Spawn-surface parity (research §A7): an omitted subagent_type IS general-purpose.
+      agentType: "general-purpose",
       content: [{ type: "text", text: "the answer" }],
       totalToolUseCount: 3,
       totalDurationMs: 250,
@@ -300,10 +344,10 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
     });
   });
 
-  test("agentType is included only when subagent_type was given", async () => {
+  test("agentType is the RESOLVED type (the definition's own key)", async () => {
     const home = mkTempDir("winter-agent-test-home-");
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(home, ".winter", "agents", "explorer.md"), "---\ndescription: explores\n---\nBody.");
+    writeFileSync(join(home, ".winter", "agents", "explorer.md"), "---\nname: explorer\ndescription: explores\n---\nBody.");
     const { ctx } = makeCtx({ home, spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "done" })) });
     const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "explorer" }, ctx);
     const parsed = JSON.parse(result.output);
@@ -368,6 +412,153 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
   });
 });
 
+// ================================================================================================
+// Task-frames parity (2026-09-17 contract §4): foreground registration/termination, progress, and
+// the corrected "foreground terminates through the SAME updateTask door as background" rule.
+// ================================================================================================
+describe("Agent tool: task-frames parity -- foreground registration and termination", () => {
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-fg-frames-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+
+  test("registers task_started with is_backgrounded:false, task_type:local_agent, spawn_depth, tool_use_id -- and NO background_tasks_changed", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "done" }), { spawnDepth: 1 }),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    expect(frames.some((f) => (f as { subtype: string }).subtype === "background_tasks_changed")).toBe(false);
+    const started = frames.find((f) => (f as { subtype: string }).subtype === "task_started") as {
+      is_backgrounded: boolean;
+      task_type: string;
+      spawn_depth?: number;
+      tool_use_id?: string;
+      description: string;
+    };
+    expect(started).toBeDefined();
+    expect(started.is_backgrounded).toBe(false);
+    expect(started.task_type).toBe("local_agent");
+    expect(started.spawn_depth).toBe(1);
+    expect(typeof started.tool_use_id).toBe("string");
+    expect(started.description).toBe("d");
+  });
+
+  test("CORRECTED: foreground success terminates through updateTask (task_updated then task_notification), never a remove -- output_file is the REAL path, summary is the child's final text", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "the child's final report", usage: { totalTokens: 42, toolUses: 2, durationMs: 500 } })),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+
+    const started = frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { task_id: string };
+    const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { task_id: string; patch: { status?: string; end_time?: number } };
+    const notif = frames.find((f) => (f as { subtype: string }).subtype === "task_notification") as {
+      task_id: string;
+      status: string;
+      output_file: string;
+      summary: string;
+      usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+    };
+    expect(updated).toBeDefined();
+    expect(updated.task_id).toBe(started.task_id);
+    expect(updated.patch.status).toBe("completed");
+    expect(typeof updated.patch.end_time).toBe("number");
+    expect(notif).toBeDefined();
+    expect(notif.task_id).toBe(started.task_id);
+    expect(notif.status).toBe("completed");
+    expect(notif.output_file).not.toBe(""); // the REAL output path, not bash's foreground "" convention
+    expect(notif.output_file.length).toBeGreaterThan(0);
+    expect(notif.summary).toBe("the child's final report");
+    expect(notif.usage).toEqual({ total_tokens: 42, tool_uses: 2, duration_ms: 500 });
+    // Ordering: task_started, task_updated, task_notification -- never a second background_tasks_changed.
+    expect(frames.filter((f) => (f as { subtype: string }).subtype === "background_tasks_changed")).toHaveLength(0);
+  });
+
+  test("foreground failure: task_updated {status:failed, error} then task_notification {status:failed, usage}", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "failed", content: "boom: model returned an error", usage: { totalTokens: 5, toolUses: 0, durationMs: 10 } })),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+
+    const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { patch: { status?: string; error?: string } };
+    expect(updated.patch.status).toBe("failed");
+    expect(updated.patch.error).toBe("boom: model returned an error");
+    const notif = frames.find((f) => (f as { subtype: string }).subtype === "task_notification") as { status: string; summary: string; usage?: unknown };
+    expect(notif.status).toBe("failed");
+    expect(notif.summary).toBe("boom: model returned an error");
+    expect(notif.usage).toEqual({ total_tokens: 5, tool_uses: 0, duration_ms: 10 });
+  });
+
+  test("foreground stopped: task_updated {status:killed} then task_notification {status:stopped}", async () => {
+    const { ctx, frames } = makeCtx({
+      spawnChild: async () => fakeHandle(Promise.resolve({ status: "stopped", content: "stopped by request" })),
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+
+    const updated = frames.find((f) => (f as { subtype: string }).subtype === "task_updated") as { patch: { status?: string } };
+    expect(updated.patch.status).toBe("killed"); // §1: Winter's internal "stopped" patches as "killed"
+    const notif = frames.find((f) => (f as { subtype: string }).subtype === "task_notification") as { status: string };
+    expect(notif.status).toBe("stopped"); // ...and notifies as "stopped"
+  });
+
+  test("task_progress: onProgress fires the pinned shape, correlated on the parent's own tool_use id", async () => {
+    let resolveResult!: (r: ChildResult) => void;
+    const resultPromise = new Promise<ChildResult>((resolve) => {
+      resolveResult = resolve;
+    });
+    let capturedOnProgress: ((p: ChildTaskProgress) => void) | undefined;
+    const { ctx, frames } = makeCtx({
+      spawnChild: async (req) => {
+        capturedOnProgress = req.onProgress;
+        return fakeHandle(resultPromise);
+      },
+    });
+    const execPromise = agentExecutor.execute({ description: "explore the repo", prompt: "p", subagent_type: undefined }, ctx);
+    await new Promise((r) => setTimeout(r, 10)); // let registration (and thus taskId assignment) land before onProgress fires
+    expect(capturedOnProgress).toBeDefined();
+    capturedOnProgress!({ toolUses: 3, totalTokens: 111, durationMs: 250, lastToolName: "Grep" });
+
+    const progress = frames.find((f) => (f as { subtype: string }).subtype === "task_progress") as {
+      description: string;
+      usage: { total_tokens: number; tool_uses: number; duration_ms: number };
+      last_tool_name: string;
+      tool_use_id?: string;
+    };
+    expect(progress).toBeDefined();
+    expect(progress.description).toBe("explore the repo");
+    expect(progress.usage).toEqual({ total_tokens: 111, tool_uses: 3, duration_ms: 250 });
+    expect(progress.last_tool_name).toBe("Grep");
+    expect(typeof progress.tool_use_id).toBe("string");
+
+    resolveResult({ status: "completed", content: "done" });
+    await execPromise;
+  });
+
+  test("background_tasks_changed never lists a running FOREGROUND agent row, even while a background task is announced", async () => {
+    // The bug §7 names directly: "today a running foreground agent is listed whenever anything else
+    // triggers the frame." A foreground agent held open (never resolving) plus a SEPARATE background
+    // agent starting is exactly the scenario that would leak it.
+    const { ctx: fgCtx } = makeCtx({ spawnChild: async () => fakeHandle(new Promise(() => {})) }); // never resolves
+    void agentExecutor.execute({ description: "hanging foreground", prompt: "p" }, fgCtx);
+    await new Promise((r) => setTimeout(r, 10)); // let the foreground registration land
+
+    const { ctx: bgCtx, frames: bgFrames } = makeCtx({ spawnChild: async () => fakeHandle(new Promise(() => {})) });
+    await agentExecutor.execute({ description: "background sibling", prompt: "p", run_in_background: true }, bgCtx);
+
+    const changed = bgFrames.find((f) => (f as { subtype: string }).subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string; description: string }> };
+    expect(changed).toBeDefined();
+    expect(changed.tasks.some((t) => t.description === "hanging foreground")).toBe(false);
+    expect(changed.tasks.filter((t) => t.description === "background sibling")).toHaveLength(1); // listed exactly once
+  });
+});
+
 describe("Agent tool: background setup failure never orphans an already-spawned child", () => {
   test("createBackgroundTask throwing (root never configured) stops the already-running child and returns a legible error", async () => {
     resetBackgroundTaskRootForTest(); // deliberately NOT configureBackgroundTaskRoot -- createBackgroundTask("agent") throws
@@ -419,7 +610,7 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
     await new Promise((r) => setTimeout(r, 20));
   });
 
-  test("emits task_started + background_tasks_changed synchronously, then task_notification + background_tasks_changed once the child settles", async () => {
+  test("emits task_started + background_tasks_changed synchronously, then task_updated + task_notification + background_tasks_changed once the child settles", async () => {
     let resolveResult!: (r: ChildResult) => void;
     const resultPromise = new Promise<ChildResult>((resolve) => {
       resolveResult = resolve;
@@ -433,23 +624,31 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
     expect((frames[0] as { subtype: string }).subtype).toBe("task_started");
     expect((frames[0] as { task_id: string }).task_id).toBe(taskId);
     expect((frames[0] as { is_backgrounded: boolean }).is_backgrounded).toBe(true);
+    // Task-frames parity: the pinned wire spelling is `local_agent`, never the internal kind "agent".
+    expect((frames[0] as { task_type: string }).task_type).toBe("local_agent");
     expect((frames[1] as { subtype: string; tasks: unknown[] }).subtype).toBe("background_tasks_changed");
     expect((frames[1] as { tasks: Array<{ task_id: string; task_type: string; description: string }> }).tasks).toContainEqual({
       task_id: taskId,
-      task_type: "agent",
+      task_type: "local_agent",
       description: "long task",
     });
 
     resolveResult({ status: "completed", content: "done later" });
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(frames.length).toBe(4);
-    expect((frames[2] as { subtype: string; status: string }).subtype).toBe("task_notification");
-    expect((frames[2] as { status: string }).status).toBe("completed");
-    expect((frames[2] as { output_file: string }).output_file).toContain(taskId);
-    expect((frames[3] as { subtype: string; tasks: unknown[] }).subtype).toBe("background_tasks_changed");
-    // The agent task is no longer reported once settled -- backgroundAgentTasks cleans itself up.
-    expect((frames[3] as { tasks: Array<{ task_id: string }> }).tasks.find((t) => t.task_id === taskId)).toBeUndefined();
+    // Task-frames parity (contract §1/§4): the terminal transition now goes through the registry's
+    // ONE update door -- task_updated {status, end_time} lands BEFORE task_notification, same
+    // synchronous call.
+    expect(frames.length).toBe(5);
+    expect((frames[2] as { subtype: string; patch: { status?: string } }).subtype).toBe("task_updated");
+    expect((frames[2] as { patch: { status?: string } }).patch.status).toBe("completed");
+    expect((frames[3] as { subtype: string; status: string }).subtype).toBe("task_notification");
+    expect((frames[3] as { status: string }).status).toBe("completed");
+    expect((frames[3] as { output_file: string }).output_file).toContain(taskId);
+    expect((frames[3] as { usage?: { total_tokens: number; tool_uses: number; duration_ms: number } }).usage).toBeUndefined(); // fakeHandle's ChildResult carries no usage
+    expect((frames[4] as { subtype: string; tasks: unknown[] }).subtype).toBe("background_tasks_changed");
+    // The agent task is no longer reported once settled -- listRunningTasks excludes a terminal row.
+    expect((frames[4] as { tasks: Array<{ task_id: string }> }).tasks.find((t) => t.task_id === taskId)).toBeUndefined();
   });
 
   test("writes a stub .output file naming the durable transcript, never a growing copy (WS-12 §7.2)", async () => {
@@ -477,7 +676,7 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
   test("AgentDefinition.background:true forces background even with run_in_background omitted", async () => {
     const home = mkTempDir("winter-agent-test-home-");
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(home, ".winter", "agents", "bg-forced.md"), "---\ndescription: always background\nbackground: true\n---\nBody.");
+    writeFileSync(join(home, ".winter", "agents", "bg-forced.md"), "---\nname: bg-forced\ndescription: always background\nbackground: true\n---\nBody.");
     let capturedReq: SpawnChildRequest | undefined;
     const { ctx } = makeCtx({
       home,
@@ -566,5 +765,259 @@ describe("rider 24: a background agent task is reachable through the unified tas
     expect(out.output).toContain("Background agent task");
     resolveResult({ status: "completed", content: "done" });
     await new Promise((r) => setTimeout(r, 20));
+  });
+});
+
+// ================================================================================================
+// Spawn-surface parity (lane L2b): name resolution, omitted type, fork gate, launch result.
+// ================================================================================================
+describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () => {
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-l2b-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+
+  function capturing(): { ctx: ToolExecutionContext; frames: unknown[]; reqs: SpawnChildRequest[] } {
+    const reqs: SpawnChildRequest[] = [];
+    const home = mkTempDir("winter-agent-test-home-");
+    const { ctx, frames } = makeCtx({ home, spawnChild: async (req) => (reqs.push(req), fakeHandle(Promise.resolve({ status: "completed", content: "ok" }))) });
+    return { ctx, frames, reqs };
+  }
+
+  for (const guess of ["general", "explorer"]) {
+    test(`"${guess}" does NOT resolve (normalization is not prefix matching): claude's not-found text with the list`, async () => {
+      const { ctx, reqs } = capturing();
+      const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: guess }, ctx);
+      expect(result).toEqual({ output: `Agent type '${guess}' not found. Available agents: Explore, Plan, claude, general-purpose`, isError: true });
+      expect(reqs).toHaveLength(0);
+    });
+  }
+
+  test('"explore" resolves to the Explore built-in, and the frames carry the RESOLVED name', async () => {
+    const { ctx, frames, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "explore" }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.definition?.omitProjectContext).toBe(true);
+    expect((frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { subagent_type?: string }).subagent_type).toBe("Explore");
+    expect(JSON.parse(result.output).agentType).toBe("Explore");
+  });
+
+  test("an ambiguous normalized name refuses with the exact names", async () => {
+    const home = mkTempDir("winter-agent-test-home-");
+    const { ctx } = makeCtx({ home, spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "x" })) });
+    const agents = { "my-helper": { description: "a", prompt: "a" }, my_helper: { description: "b", prompt: "b" } };
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "MyHelper" }, { ...ctx, agents });
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe("Agent type 'MyHelper' is ambiguous — matches my-helper, my_helper. Use the exact name: my-helper or my_helper.");
+  });
+
+  test("omitted subagent_type -> the general-purpose definition, and every frame says so", async () => {
+    const { ctx, frames, reqs } = capturing();
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    expect(reqs[0]?.definition?.tools).toEqual(["*"]);
+    const withType = frames.filter((f) => ["task_started", "task_progress"].includes((f as { subtype: string }).subtype));
+    expect(withType.length).toBeGreaterThan(0);
+    for (const f of withType) expect((f as { subagent_type?: string }).subagent_type).toBe("general-purpose");
+  });
+
+  test("omitted subagent_type with every built-in disabled -> the required-type refusal naming the available agents", async () => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, { ...ctx, env: { WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "1" } });
+    expect(result).toEqual({ output: "subagent_type is required: the general-purpose agent is not available in this session. Available agents: none", isError: true });
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("fork gate OFF: subagent_type 'fork' is an unknown agent", async () => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: false });
+    expect(result.isError).toBe(true);
+    expect(result.output).toStartWith("Agent type 'fork' not found.");
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("fork gate ON: 'fork' sets SpawnChildRequest.fork, uses the fork definition, and IGNORES model", async () => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", model: "opus" }, { ...ctx, forkSubagentEnabled: true, env: {} });
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.fork).toBe(true);
+    expect(reqs[0]?.model).toBeUndefined();
+    expect(reqs[0]?.definition?.maxTurns).toBe(200);
+  });
+
+  test("fork gate ON via the session env fallback when the ctx carries no resolved gate", async () => {
+    const { ctx, reqs } = capturing();
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, env: { WINTER_FORK_SUBAGENT: "1" } });
+    expect(reqs[0]?.fork).toBe(true);
+  });
+
+  // Review r2 finding 8: `isFork` used to be decided from the RAW `subagent_type` string
+  // (`requestedType === "fork"`), before `findAgentByType`'s own case-insensitive normalization ran
+  // -- so a differently-cased request resolved to the SAME fork definition (tools: ["*"], the
+  // placeholder prompt) while every fork-specific behavior (the two refusals, ignoring `model`,
+  // `SpawnChildRequest.fork`) silently did not apply, because the string comparison had already
+  // failed. "fork" and "Fork" must behave identically.
+  test.each(["fork", "Fork"])("fork gate ON: subagent_type %p resolves to the fork definition byte-identically to 'fork'", async (requestedType) => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, model: "opus" }, { ...ctx, forkSubagentEnabled: true, env: {} });
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.fork).toBe(true);
+    expect(reqs[0]?.model).toBeUndefined();
+    expect(reqs[0]?.definition?.maxTurns).toBe(200);
+  });
+
+  test.each(["fork", "Fork"])("fork refusals fire for subagent_type %p (case must not bypass them)", async (requestedType) => {
+    const { ctx, reqs } = capturing();
+    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
+    expect(inside).toEqual({ output: "Fork is not available inside a forked worker. Complete your task directly using your tools.", isError: true });
+    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, isolation: "remote" }, { ...ctx, forkSubagentEnabled: true });
+    expect(remote.isError).toBe(true);
+    expect(remote.output).toStartWith('Fork cannot use isolation: "remote" — ');
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("fork refusals: a fork inside a fork, and a fork with isolation:remote -- claude's wording, nothing spawned", async () => {
+    const { ctx, reqs } = capturing();
+    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
+    expect(inside).toEqual({ output: "Fork is not available inside a forked worker. Complete your task directly using your tools.", isError: true });
+    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork", isolation: "remote" }, { ...ctx, forkSubagentEnabled: true });
+    expect(remote.isError).toBe(true);
+    expect(remote.output).toStartWith('Fork cannot use isolation: "remote" — ');
+    expect(reqs).toHaveLength(0);
+  });
+
+  test("the web-fetch built-in ignores isolation (gate on)", async () => {
+    const { ctx, reqs } = capturing();
+    await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "web-fetch", isolation: "worktree" }, { ...ctx, env: { WINTER_WEB_FETCH_AGENT: "1" } });
+    expect(reqs[0]?.isolation).toBeUndefined();
+  });
+
+  test("background launch result: claude's shape + Winter-worded guidance (notification, no predicting, no mid-run reads, SendMessage)", async () => {
+    const home = mkTempDir("winter-agent-test-home-");
+    const { ctx } = makeCtx({ home, spawnChild: async () => fakeHandle(new Promise(() => {})) });
+    const result = await agentExecutor.execute({ description: "scan repo", prompt: "look around", run_in_background: true }, { ...ctx, advertisedToolNames: () => ["Read", "Agent"] });
+    const parsed = JSON.parse(result.output) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(["agentId", "canReadOutputFile", "description", "message", "outputFile", "prompt", "status", "taskId"]);
+    expect(parsed).toMatchObject({ status: "async_launched", agentId: "child-1", description: "scan repo", prompt: "look around", canReadOutputFile: true });
+    const message = parsed["message"] as string;
+    expect(message).toContain('SendMessage with to: "child-1"');
+    expect(message).toContain("notified automatically when it finishes");
+    expect(message).toContain("Do not guess at or describe its results");
+    expect(message).toContain(`Do not read or tail that file while the agent is still running`);
+    expect(message).toContain(String(parsed["outputFile"]));
+
+    const noRead = await agentExecutor.execute({ description: "scan", prompt: "p", run_in_background: true }, { ...ctx, advertisedToolNames: () => ["Agent"] });
+    const parsedNoRead = JSON.parse(noRead.output) as { canReadOutputFile: boolean; message: string };
+    expect(parsedNoRead.canReadOutputFile).toBe(false);
+    expect(parsedNoRead.message).toContain("Briefly tell the user what you launched");
+    expect(parsedNoRead.message).not.toContain("Do not read or tail");
+  });
+});
+
+// ================================================================================================
+// Review r1 findings 3, 4, 6, 9, 12 and contract §8 at the Agent tool's own seam.
+// ================================================================================================
+describe("Agent tool: review r1 regressions", () => {
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-r1-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+  const subtypes = (frames: unknown[]): string[] => frames.map((f) => (f as { subtype: string }).subtype);
+
+  test("finding 9: task_started is emitted from onSpawned -- BEFORE spawnChild resolves, so nothing the child produces can precede it", async () => {
+    let framesAtSpawnReturn: string[] = [];
+    const { ctx, frames } = makeCtx({
+      spawnChild: async (req) => {
+        const handle = fakeHandle(Promise.resolve({ status: "completed", content: "x" }));
+        req.onSpawned?.(handle);
+        req.onProgress?.({ toolUses: 1, totalTokens: 1, durationMs: 1, lastToolName: "Glob" });
+        framesAtSpawnReturn = subtypes(frames);
+        return handle;
+      },
+    });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    expect(framesAtSpawnReturn).toEqual(["task_started", "task_progress"]);
+    expect(subtypes(frames).filter((s) => s === "task_started")).toHaveLength(1); // the post-spawn fallback is a no-op
+  });
+
+  test("finding 3: a progress callback after the task's notification (a resumed child, a late buffered frame) emits nothing", async () => {
+    let onProgress: ((p: ChildTaskProgress) => void) | undefined;
+    const { ctx, frames } = makeCtx({ spawnChild: async (req) => ((onProgress = req.onProgress), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))) });
+    await agentExecutor.execute({ description: "d", prompt: "p" }, ctx);
+    const before = frames.length;
+    onProgress!({ toolUses: 9, totalTokens: 9, durationMs: 9, lastToolName: "Read" });
+    expect(frames).toHaveLength(before);
+  });
+
+  test("§8: task_progress.description is the progress activity when present, else the task description", async () => {
+    let onProgress: ((p: ChildTaskProgress) => void) | undefined;
+    let finish!: (r: ChildResult) => void;
+    const { ctx, frames } = makeCtx({ spawnChild: async (req) => ((onProgress = req.onProgress), fakeHandle(new Promise((r) => (finish = r)))) });
+    const running = agentExecutor.execute({ description: "child probe", prompt: "p" }, ctx);
+    await new Promise((r) => setTimeout(r, 10));
+    onProgress!({ toolUses: 1, totalTokens: 1, durationMs: 1, lastToolName: "Bash", activity: "Running echo hi" });
+    onProgress!({ toolUses: 2, totalTokens: 2, durationMs: 2, lastToolName: "TodoWrite" });
+    finish({ status: "completed", content: "done" });
+    await running;
+    const progress = frames.filter((f) => (f as { subtype: string }).subtype === "task_progress") as Array<{ description: string }>;
+    expect(progress.map((p) => p.description)).toEqual(["Running echo hi", "child probe"]);
+  });
+
+  test("finding 4 + 13: TaskStop on a BACKGROUND agent reports the child's live usage and the same summary a parent abort does -- one task_updated, one notification, even after the child settles", async () => {
+    let settle!: (r: ChildResult) => void;
+    const handle = fakeHandle(new Promise((r) => (settle = r)));
+    handle.usage = () => ({ totalTokens: 77, toolUses: 3, durationMs: 40 });
+    handle.stop = async () => settle({ status: "stopped", content: "stopped by request", usage: { totalTokens: 77, toolUses: 3, durationMs: 41 } });
+    const { ctx, frames } = makeCtx({ spawnChild: async () => handle });
+    const { taskId } = JSON.parse((await agentExecutor.execute({ description: "bg", prompt: "p", run_in_background: true }, ctx)).output) as { taskId: string };
+    await taskStopExecutor.execute({ task_id: taskId }, ctx);
+    await new Promise((r) => setTimeout(r, 20)); // the child's own settle -> result() chain runs
+    const own = frames.filter((f) => (f as { task_id?: string }).task_id === taskId);
+    expect(subtypes(own)).toEqual(["task_started", "task_updated", "task_notification"]);
+    expect(own[2]).toMatchObject({ status: "stopped", summary: "stopped by request", usage: { total_tokens: 77, tool_uses: 3, duration_ms: 40 } });
+  });
+
+  test("finding 6 + 13: TaskStop on a FOREGROUND agent -- exactly one task_updated and one notification in TOTAL, no stray end_time after it", async () => {
+    let settle!: (r: ChildResult) => void;
+    const handle = fakeHandle(new Promise((r) => (settle = r)));
+    handle.stop = async () => settle({ status: "stopped", content: "stopped by request" });
+    const { ctx, frames } = makeCtx({ spawnChild: async () => handle });
+    const running = agentExecutor.execute({ description: "fg", prompt: "p" }, ctx);
+    await new Promise((r) => setTimeout(r, 10));
+    const taskId = (frames.find((f) => (f as { subtype: string }).subtype === "task_started") as { task_id: string }).task_id;
+    await taskStopExecutor.execute({ task_id: taskId }, ctx);
+    const result = await running;
+    expect(result.isError).toBe(true);
+    expect(subtypes(frames)).toEqual(["task_started", "task_updated", "task_notification"]);
+  });
+
+  test("finding 12: a registration that throws after the row exists leaves no running row behind (foreground degrades, the call still returns)", async () => {
+    const { ctx } = makeCtx({ spawnChild: async () => fakeHandle(Promise.resolve({ status: "completed", content: "fine" })) });
+    const throwing: ToolExecutionContext = {
+      ...ctx,
+      emitFrame: () => {
+        throw new Error("torn down");
+      },
+    };
+    const result = await agentExecutor.execute({ description: "d", prompt: "p" }, throwing);
+    expect(result.isError).toBeUndefined();
+    expect(listRunningTasks()).toHaveLength(0);
+    const { listTasks } = await import("./background-task-runtime.ts");
+    expect(listTasks()).toHaveLength(0);
   });
 });

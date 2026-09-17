@@ -388,8 +388,23 @@ describe("ResponsesStreamMapper", () => {
     expect(mapper.map(JSON.stringify({ type: "response.something.new", data: 1 }))).toEqual([]);
   });
 
-  test("cached input tokens are carried through when the provider reports them", () => {
+  // Review r1 finding 5: `input_tokens` is the TOTAL prompt with `cached_tokens` a subset -- the seam
+  // carries the NON-cached part as `inputTokens`, so input + cacheRead is the prompt counted once.
+  test("cached input tokens are carried through, normalized to the seam's convention (inputTokens = non-cached)", () => {
     const events = drive(new ResponsesStreamMapper(), [{ type: "response.completed", response: { usage: { input_tokens: 100, output_tokens: 5, input_tokens_details: { cached_tokens: 80 } } } }]);
-    expect(events[0]).toEqual({ type: "usage", inputTokens: 100, outputTokens: 5, cacheReadTokens: 80 });
+    expect(events[0]).toEqual({ type: "usage", inputTokens: 20, outputTokens: 5, cacheReadTokens: 80 });
+  });
+
+  test("no cached count -> inputTokens is the whole prompt; an over-reported cached count is clamped, never negative", () => {
+    expect(drive(new ResponsesStreamMapper(), [{ type: "response.completed", response: { usage: { input_tokens: 100, output_tokens: 5 } } }])[0]).toEqual({ type: "usage", inputTokens: 100, outputTokens: 5 });
+    expect(drive(new ResponsesStreamMapper(), [{ type: "response.completed", response: { usage: { input_tokens: 10, output_tokens: 1, input_tokens_details: { cached_tokens: 50 } } } }])[0]).toEqual({ type: "usage", inputTokens: 0, outputTokens: 1, cacheReadTokens: 10 });
+  });
+});
+
+// R-S4: the Responses surface has no error field on a function_call_output -- the text carries it.
+describe("mapResponsesInput: an is_error tool result keeps its text", () => {
+  test("the output is sent verbatim", () => {
+    const out = mapResponsesInput([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "it failed", is_error: true }] }]) as Array<Record<string, unknown>>;
+    expect(out).toContainEqual({ type: "function_call_output", call_id: "c1", output: "it failed" });
   });
 });

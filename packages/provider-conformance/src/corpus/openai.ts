@@ -269,9 +269,12 @@ export function openAiCorpusCases(harness: CorpusHarness): Partial<Record<Corpus
 
     "usage-accounting": async ({ fake }) => {
       const turn = await foldProviderStream(harness.stream(fake, req(SCENARIO.happy)));
-      // Carried THROUGH UNMODIFIED — the fake scripts 12/5 with 4 cached, and any arithmetic here
-      // would be Winter inventing an accounting rule the provider did not state.
-      assert(turn.usage?.inputTokens === 12 && turn.usage.outputTokens === 5, `usage was altered in transit: ${JSON.stringify(turn.usage)}`);
+      // The fake scripts 12/5 with 4 cached. The provider STATES its rule (the cached tokens are a
+      // subset of the prompt), so the only arithmetic is the one that rule implies.
+      // Review r1 finding 5 (task-frames parity): the wire reports a TOTAL prompt of 12 with 4 of it
+      // cached; the seam's one convention carries the NON-cached 8 as `inputTokens` beside the 4 read
+      // from cache -- the prompt counted once, never 12 + 4.
+      assert(turn.usage?.inputTokens === 8 && turn.usage.outputTokens === 5, `usage was not normalized to the seam's convention: ${JSON.stringify(turn.usage)}`);
       assert(turn.usage?.cacheReadTokens === 4, `cache tokens were dropped: ${JSON.stringify(turn.usage)}`);
     },
 

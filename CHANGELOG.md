@@ -4,6 +4,45 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.15
+
+- `runtime`: background-task frames now match the pinned Claude Agent SDK runtime for Bash, Agent, Monitor,
+  Workflow and TaskStop. `task_updated` is emitted on every task state change (before the terminal
+  `task_notification`); foreground agents and foreground Bash commands that run longer than 2 s emit
+  `task_started` (`is_backgrounded: false`) and `task_notification`; agents emit `task_progress` after each
+  tool call, with the tool's activity text (e.g. `Running …`, `Reading …`) and token/tool-use counts;
+  `task_type` is now `local_bash` / `local_agent` / `monitor_ws` / `local_workflow`; notification summaries
+  use the same wording (e.g. `Background command "…" failed with exit code 3`); foreground tasks are never
+  listed in `background_tasks_changed`; `task_started` and `task_notification` always carry `tool_use_id`.
+- `runtime`: built-in subagent types `general-purpose`, `Explore`, `Plan` and `claude`; `web-fetch` and
+  `fork` are opt-in (`WINTER_WEB_FETCH_AGENT`, `WINTER_FORK_SUBAGENT` / `Options.forkSubagent`). Kill
+  switches: `WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS`, `WINTER_DISABLE_EXPLORE_PLAN_AGENTS`,
+  `WINTER_DISABLE_AGENT_VIEW`. **The fork subagent is experimental in this release: keep it off.**
+- `runtime`: the available agent types are listed to the model, and exposed as `system/init.agents` and the
+  new `Query.supportedAgents()`. **Custom implementations of `Query` must add `supportedAgents`.**
+- `runtime`: `subagent_type` handling — omitting it selects `general-purpose`; names match case- and
+  separator-insensitively; an unknown or ambiguous name returns an error listing the available agents;
+  `isolation: "remote"` falls back to a worktree (inside a git repository) or a local run instead of failing;
+  worktree, nesting-depth and concurrency errors tell the model what to do next.
+- `runtime`: subagent tool pools follow the Claude runtime — plan-mode, question, scheduling, notification and
+  workflow tools are removed from subagents, `Agent` is only available below the nesting limit, and
+  background subagents are limited to an allowlist (MCP tools always pass). `tools: ["*"]` in an agent
+  definition now means all tools.
+- **BREAKING** `runtime`: filesystem and plugin agent files now require `name:` and `description:`
+  frontmatter (the agent's name no longer comes from the file name). Files without them are skipped with one
+  stderr line each. Migration: add both fields.
+- `runtime`: tool errors carry `is_error: true` on the wire (Anthropic and Bedrock map it natively; other
+  providers keep the error text), and a failed tool result fires `PostToolUseFailure` instead of
+  `PostToolUse`.
+- `runtime`: background Bash and Monitor commands survive a turn interrupt; they stop when they exit, when
+  TaskStop stops them, or when the session (for a subagent: that subagent) ends — including on SIGTERM/SIGINT.
+  Hosts that retire idle runtime processes will stop their background commands at that point.
+- **BEHAVIOUR CHANGE** `provider-runtime`: `usage.inputTokens` is the non-cached prompt for every provider
+  family (OpenAI Responses/Chat, DeepSeek and Google were normalised), with cache reads/writes reported
+  separately. Token and cost totals for those families no longer double-count cached tokens.
+- `runtime`: context accounting includes cache tokens, so sessions using prompt caching compact at their real
+  context size.
+
 ## 0.0.14
 
 - `provider-runtime`: a ChatGPT Codex `usage_limit_reached` (and `usage_limit_exceeded`) HTTP 429 is now

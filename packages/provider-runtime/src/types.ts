@@ -186,6 +186,14 @@ export type ProviderEvent =
   | { type: "tool_call_end"; id: string }
   /** Opaque continuation state, COMPLETE, captured from the completion event — never an earlier partial copy (the descriptor's `reasoning.completionEvent` names which). */
   | { type: "native_state"; items: unknown[] }
+  /**
+   * ONE CONVENTION FOR EVERY FAMILY (review r1 finding 5): `inputTokens` is the NON-cached prompt
+   * tokens only; `cacheReadTokens` / `cacheWriteTokens` are the cached / cache-written prompt tokens,
+   * disjoint from it -- Anthropic's own accounting. A family whose API reports the TOTAL prompt with
+   * the cached count as a subset (OpenAI Responses / Chat Completions, DeepSeek, Google) is
+   * normalized in its adapter (`inputTokens = prompt - cached`), so `input + cacheRead + cacheWrite`
+   * is the whole prompt, counted once, for every provider.
+   */
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
   /**
    * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the `kind` discriminant is what says so at the type

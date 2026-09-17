@@ -7,7 +7,7 @@ import "./task-stop.ts";
 import { getRegisteredTool } from "../registry.ts";
 import type { ToolExecutionContext } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
-import { startTracking, getTask, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
+import { startTracking, getTask, resetBackgroundTaskRuntimeForTest, type BackgroundTaskKind } from "./background-task-runtime.ts";
 import { parseTaskStopInput } from "./task-stop.ts";
 
 function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
@@ -86,26 +86,41 @@ describe("TaskStop executor", () => {
     expect((JSON.parse(again.output) as { task_type: string }).task_type).toBe("local_workflow");
   });
 
-  test("M4: every other kind is spelled identically on both sides -- the mapping exists for workflow alone", async () => {
-    for (const kind of ["bash", "monitor", "agent"] as const) {
+  // Task-frames parity (2026-09-17 contract §2): every kind's wire task_type now follows the pinned
+  // `claude` 0.3.250 spelling, not the internal kind name -- `workflow` was already right above;
+  // this pins the other four (`monitor_ws` joins as its own kind, contract §2's Monitor-ws-half row).
+  test("task-frames parity: task_type follows the pinned wire spelling for every kind, not the internal name", async () => {
+    const cases: Array<{ kind: BackgroundTaskKind; expected: string }> = [
+      { kind: "bash", expected: "local_bash" },
+      { kind: "monitor", expected: "local_bash" },
+      { kind: "monitor_ws", expected: "monitor_ws" },
+      { kind: "agent", expected: "local_agent" },
+    ];
+    for (const { kind, expected } of cases) {
       startTracking({ taskId: `k-${kind}`, kind, outputPath: `/x/k-${kind}.output`, description: "d" });
       const result = await taskStop()({ task_id: `k-${kind}` }, fakeCtx());
-      expect((JSON.parse(result.output) as { task_type: string }).task_type).toBe(kind);
+      expect((JSON.parse(result.output) as { task_type: string }).task_type).toBe(expected);
     }
   });
 
   test("stops a running task: kills the process group, sets status stopped, emits frames, returns the pinned {message,task_id,task_type,command?} shape", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
-    startTracking({ taskId: "t1", kind: "bash", outputPath: "/x/t1.output", description: "echo hi", command: "echo hi" });
+    // Task-frames parity: task_updated/task_notification now go out through the row's OWN stored
+    // emitter (background-task-runtime.ts's "one registry, three doors") rather than a literal
+    // ctx.emitFrame call inside task-stop.ts itself -- so a test driving TaskStop against a task
+    // registered elsewhere must register it WITH an emitter, exactly as every real producer
+    // (bash.ts/monitor.ts/workflow.ts/agent.ts) now does at its own startTracking call.
+    startTracking({ taskId: "t1", kind: "bash", outputPath: "/x/t1.output", description: "echo hi", command: "echo hi", emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId } });
     const res = await taskStop()({ task_id: "t1" }, ctx);
     expect(res.isError).toBeFalsy();
     const parsed = JSON.parse(res.output);
     expect(parsed.message).toContain("stopped");
     expect(parsed.task_id).toBe("t1");
-    expect(parsed.task_type).toBe("bash");
+    expect(parsed.task_type).toBe("local_bash");
     expect(parsed.command).toBe("echo hi");
     expect(getTask("t1")?.status).toBe("stopped");
+    expect(frames.some((f) => f.subtype === "task_updated" && "patch" in f && (f.patch as { status?: string }).status === "killed")).toBe(true);
     expect(frames.some((f) => f.subtype === "task_notification" && "status" in f && f.status === "stopped")).toBe(true);
     // M9 (fix wave, lens 4, "frame exists, contents not"): the pre-existing assertion only checked
     // that a background_tasks_changed frame existed at all -- correct today only because status is
@@ -114,6 +129,30 @@ describe("TaskStop executor", () => {
     const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string }> } | undefined;
     expect(changed).toBeDefined();
     expect(changed!.tasks.map((t) => t.task_id)).not.toContain("t1");
+  });
+
+  // Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the pinned "killed"
+  // strings for bash and Monitor's command half; a kind with no pinned kill wording (agent) keeps
+  // this file's own established generic phrasing.
+  test("the pinned kill-notification summary wording, per kind", async () => {
+    const bashFrames: BackgroundTaskMessage[] = [];
+    const bashCtx = fakeCtx({ emitFrame: (f) => bashFrames.push(f) });
+    startTracking({ taskId: "b1", kind: "bash", outputPath: "/x/b1.output", description: "sleep 100", emitter: { emitFrame: bashCtx.emitFrame, sessionId: bashCtx.sessionId } });
+    await taskStop()({ task_id: "b1" }, bashCtx);
+    expect((bashFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Background command "sleep 100" was stopped');
+
+    const monitorFrames: BackgroundTaskMessage[] = [];
+    const monitorCtx = fakeCtx({ emitFrame: (f) => monitorFrames.push(f) });
+    startTracking({ taskId: "m1", kind: "monitor", outputPath: "/x/m1.output", description: "watch logs", emitter: { emitFrame: monitorCtx.emitFrame, sessionId: monitorCtx.sessionId } });
+    await taskStop()({ task_id: "m1" }, monitorCtx);
+    expect((monitorFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe('Monitor "watch logs" stopped');
+
+    const agentFrames: BackgroundTaskMessage[] = [];
+    const agentCtx = fakeCtx({ emitFrame: (f) => agentFrames.push(f) });
+    startTracking({ taskId: "a1", kind: "agent", outputPath: "/x/a1.output", description: "review the diff", emitter: { emitFrame: agentCtx.emitFrame, sessionId: agentCtx.sessionId } });
+    await taskStop()({ task_id: "a1" }, agentCtx);
+    // Review r1 finding 4: the SAME text the child's own settle() reports on a parent abort.
+    expect((agentFrames.find((f) => f.subtype === "task_notification") as { summary: string }).summary).toBe("stopped by request");
   });
 
   test("shell_id is an alias for the same task-id namespace, never a second registry", async () => {

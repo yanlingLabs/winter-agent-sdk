@@ -476,7 +476,9 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
       const turn = await foldTurn(adapter, { model: MODELS.usage, messages: [user("go")] }, ctxFor(fake));
       // Reasoning is billed separately from the visible answer, so both are summed into the seam's
       // single `outputTokens`: 30 candidate + 7 thought.
-      eq(turn.usage, { inputTokens: 101, outputTokens: 37, cacheReadTokens: 12 }, "the usage counters, with reasoning tokens included in the output count");
+      // Review r1 finding 5: `promptTokenCount` (101) INCLUDES `cachedContentTokenCount` (12) -- the
+      // seam carries the non-cached 89 as `inputTokens`, so the prompt is counted once.
+      eq(turn.usage, { inputTokens: 89, outputTokens: 37, cacheReadTokens: 12 }, "the usage counters, normalized, with reasoning tokens included in the output count");
     },
 
     "error-auth": async ({ fake }) => {

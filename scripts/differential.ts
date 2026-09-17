@@ -730,13 +730,16 @@ export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceE
 // is not volatile at all for these fixtures -- every scenario's child makes a fixed number of tool
 // calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
 const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
   const scrubValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(scrubValue);
     if (value === null || typeof value !== "object") return value;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = P4_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : scrubValue(v);
+    // `ListAgents`' listing (the `subagentperm` child's call) names the running child by its per-run
+    // session/agent uuids -- scrubbed to their shape, the rest of the line pinned.
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = P4_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : k === "listing" && typeof v === "string" ? v.replace(UUID_RE, "<uuid>") : scrubValue(v);
     return out;
   };
   return entries.map((entry) => {
@@ -756,6 +759,49 @@ function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTrac
     });
     return { ...entry, payload: { ...(entry.payload as object), message: { ...message, content } } };
   });
+}
+
+/**
+ * Task-frames parity (review r1 finding 1): a foreground Agent spawn now emits its own
+ * task_started / task_progress / task_updated / task_notification frames, and three of their values
+ * are minted per run -- `task_id` (a randomUUID), the notification's `output_file` (a path under this
+ * run's own OS temp dir) and `task_updated.patch.end_time` (Date.now()). None of them is one of
+ * trace.ts's shared VOLATILE keys, and widening that set would strip the FIXED literals the scripted
+ * `background-task-round` golden pins on purpose -- so, like the Bash-background scenario's own
+ * scrub, these are replaced BY EXACT VALUE: every task id in first-seen order becomes `TASKID_<n>`,
+ * every real output path becomes `/winter-fixture-tasks/TASKID_<n>.output`, and `end_time` (a clock
+ * reading) and the task usage's `total_tokens` (machine-dependent, see below) become fixed tokens --
+ * their PRESENCE stays part of the pinned shape.
+ */
+function scrubTaskFrameValues(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
+  const taskIds: string[] = [];
+  const outputFiles = new Map<string, string>(); // real path -> its task id
+  for (const e of entries) {
+    const p = e.payload as { type?: string; subtype?: string; task_id?: unknown; output_file?: unknown; tasks?: Array<{ task_id?: unknown }> } | undefined;
+    if (p?.type !== "system") continue;
+    const ids = [p.task_id, ...(Array.isArray(p.tasks) ? p.tasks.map((t) => t.task_id) : [])];
+    for (const id of ids) if (typeof id === "string" && !taskIds.includes(id)) taskIds.push(id);
+    if (p.subtype === "task_notification" && typeof p.output_file === "string" && p.output_file !== "" && typeof p.task_id === "string") outputFiles.set(p.output_file, p.task_id);
+  }
+  let text = JSON.stringify(
+    entries.map((e) => {
+      const p = e.payload as { type?: string; subtype?: string; patch?: Record<string, unknown>; usage?: Record<string, unknown> } | undefined;
+      if (p?.type !== "system") return e;
+      if (p.subtype === "task_updated" && p.patch !== undefined && "end_time" in p.patch) return { ...e, payload: { ...p, patch: { ...p.patch, end_time: "<end_time>" } } };
+      // The fixture providers' synthetic usage counts the request's characters, and the request
+      // carries this run's temp-dir memory path, whose LENGTH differs by machine -- so the token
+      // total is machine-specific. The key stays (its presence is the pinned shape); the counting
+      // math is pinned by unit tests (child-engine.test.ts), not by a byte-frozen golden.
+      if ((p.subtype === "task_progress" || p.subtype === "task_notification") && p.usage !== undefined && "total_tokens" in p.usage) return { ...e, payload: { ...p, usage: { ...p.usage, total_tokens: "<total_tokens>" } } };
+      return e;
+    }),
+  );
+  // Paths first (each contains its task id), then the ids themselves.
+  for (const [path, id] of outputFiles) text = text.split(path).join(`/winter-fixture-tasks/TASKID_${taskIds.indexOf(id) + 1}.output`);
+  taskIds.forEach((id, i) => {
+    text = text.split(id).join(`TASKID_${i + 1}`);
+  });
+  return JSON.parse(text) as ConformanceTraceEntry[];
 }
 
 // (1) WS-09 §1.1/§2.1 + RULING P4-C: an in-process SDK MCP server -- its tool round AND the
@@ -877,7 +923,7 @@ export async function traceWinterSubagentSpawnRound(): Promise<ConformanceTraceE
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(scrubWinterHome(scrubJsonToolResults(entries), winterHome));
+    return normalizeTrace(scrubWinterHome(scrubTaskFrameValues(scrubJsonToolResults(entries)), winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -886,16 +932,18 @@ export async function traceWinterSubagentSpawnRound(): Promise<ConformanceTraceE
 // Phase 4 fix wave (task-8 review I2 + whole-branch KNOWN 11): the spawn round in which the CHILD
 // itself makes a tool call, with `forwardSubagentText` ON so the child's own frames reach the wire.
 //
-// What this golden pins, frame by frame (17 -> 18 goldens; the ONLY new one this wave adds):
+// What this golden pins, frame by frame (17 -> 18 goldens; the ONLY new one this wave adds).
+// (Task-frames parity adds the foreground agent's own task_started/task_progress/task_updated/
+// task_notification frames around these, so the indices below are the order, not the positions.)
 //   [0] system/init            -- one, and only one (P4-J(c)): a child's own init never surfaces.
 //   [1] assistant              -- the PARENT's `Agent` tool_use, id `agent-call-1`, NO
 //                                 parent_tool_use_id (it is the top-level turn's own block).
-//   [2] assistant              -- the CHILD's `ReadNotifications` tool_use, id `child-call-1`,
+//   [2] assistant              -- the CHILD's `ListAgents` tool_use, id `child-call-1`,
 //                                 stamped `parent_tool_use_id: "agent-call-1"`. THE point of this
 //                                 golden: before it, `parent_tool_use_id` appeared in no committed
 //                                 golden at all.
-//   [3] user                   -- the CHILD's own tool_result, same stamp, carrying the fixed
-//                                 `{"notifications":[],"remaining":0}` -- proof the child's call was
+//   [3] user                   -- the CHILD's own tool_result, same stamp, carrying its listing
+//                                 (uuids scrubbed to `<uuid>`) -- proof the child's call was
 //                                 genuinely EXECUTED after its permission request was answered
 //                                 (`canUseTool` here answers immediately; the LATE-answer half,
 //                                  which needs a real clock, is the equivalence scenario's job --
@@ -925,7 +973,7 @@ export async function traceWinterSubagentPermissionRound(): Promise<ConformanceT
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(scrubWinterHome(scrubJsonToolResults(entries), winterHome));
+    return normalizeTrace(scrubWinterHome(scrubTaskFrameValues(scrubJsonToolResults(entries)), winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -958,7 +1006,7 @@ export async function traceWinterSendMessageToChildRound(): Promise<ConformanceT
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(scrubWinterHome(scrubJsonToolResults(entries), winterHome));
+    return normalizeTrace(scrubWinterHome(scrubTaskFrameValues(scrubJsonToolResults(entries)), winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }

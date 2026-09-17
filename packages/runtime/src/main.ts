@@ -40,6 +40,10 @@ import { restoreChildRoster } from "./subagents/restore.ts";
 // and start an engine as an import side effect. subprocess-entry.ts is declaration-only and is the
 // safe home for it.
 import { workflowWorkerMain, WORKFLOW_WORKER_ARGV_FLAG } from "./workflows/subprocess-entry.ts";
+// Review r2 finding 9 (whole-branch): the SIGTERM/SIGINT handler's own process-group sweep -- see
+// installShutdownSignalHandlers's own header below for why this needs its OWN synchronous, frame-free
+// door rather than reusing engine.ts's ordinary teardown sweep.
+import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -126,6 +130,76 @@ const stdoutFrameSink: FrameSink = {
   },
 };
 
+// --- Review r2 finding 9 (whole-branch): SIGTERM/SIGINT handling -----------------------------------
+//
+// Before this fix, main.ts installed NO signal handler at all. Node/Bun's DEFAULT disposition for
+// both SIGTERM and SIGINT is to terminate the process immediately -- which means a `detached: true`
+// background shell this run started (bash.ts's own `run_in_background: true`, or Monitor's command
+// half) was never given a chance to be killed: the process just stopped existing mid-write,
+// mid-await, mid-anything, orphaning that process group under its own reparent. (engine.ts's own
+// `stopSessionShellTasks` sweep -- review r1 finding 2, and now also review r2 finding 9's own
+// outer-wrapper fix for a THROWN runEngine -- never gets a chance to run either, for the identical
+// reason: the process is simply gone.)
+//
+// Installing ANY listener for a signal OVERRIDES the runtime's own default "terminate" disposition,
+// so this handler must both do the cleanup AND still actually end the process -- otherwise a
+// SIGTERM/SIGINT silently becomes a no-op, which is worse than doing nothing (the daemon's own "kill
+// this child" door would hang forever instead of failing fast).
+//
+// EXIT PATH: "remove this listener, then re-raise the SAME signal at ourselves", not a bare
+// `process.exit(code)`. `process.exit()` is a NORMAL, code-based exit at the OS level
+// (`{code, signal: null}` reported to a parent's `child_process`), never a signal-terminated one
+// (`{code: null, signal: "SIGTERM"}`) -- the two are genuinely different exit PATHS, not just
+// different ways of describing the same event, and downstream code (query.ts's own `ProcessError`
+// classification; this SDK's own transport-equivalence fixtures, which pin the exact shape) tells
+// them apart. Removing every listener for this signal restores the runtime's own default SIG_DFL
+// disposition for it, so the re-raised signal terminates the process through the kernel's ordinary
+// machinery -- a genuine signal-terminated exit. `process.exit(...)` with the POSIX signal-exit
+// convention (128 + signal number) is kept only as the last-resort fallback for the case where
+// re-raising somehow still leaves the process alive.
+//
+// MEASURED, not assumed (see this lane's own report for the full trace): signal delivery to a
+// CUSTOM JS handler -- for EITHER exit path above, since both start by entering this same callback
+// -- is mediated by the runtime's own native signal-to-callback bridge, unlike the kernel's
+// unconditional default disposition, and under Bun that bridge has a narrow, real race (reproduced
+// directly against `transport-equivalence.test.ts`'s own real-child-process round: killing a child
+// within the same tick as it finishes writing a control_response can leave the JS handler never
+// invoked at all, with no exception, no partial effect, nothing -- the process is simply left
+// running). This is NOT something a handler body can defend against by construction: the handler
+// never runs at all in that window, so no amount of code inside it helps -- the mitigation lives on
+// the CALLER side, matching this codebase's own established precedent for exactly this class of
+// problem (`query.ts`'s own `onAbort`, `KILL_GRACE_MS`'s SIGTERM-then-SIGKILL escalation, where
+// SIGKILL cannot be intercepted or raced by ANY handler, custom or default);
+// `transport-equivalence.test.ts`'s own `runLeg`/`killAndReap` helper now does the same. A SEPARATE,
+// also-measured Bun `node:child_process` gap (the "close" event not firing even once SIGKILL has
+// genuinely ended the process) is the reason that helper also bounds its own wait with a timeout --
+// see its own header for the full trace; neither gap is specific to which exit path this handler
+// takes, which is exactly why re-raising (needed for the correct exit SHAPE) is safe to use now:
+// the caller-side escalation already covers the case this handler's own first, abandoned draft was
+// avoiding when it reached for a bare `process.exit()` instead.
+const SIGNAL_EXIT_CODE: Record<"SIGTERM" | "SIGINT", number> = { SIGTERM: 143, SIGINT: 130 };
+
+function installShutdownSignalHandlers(): void {
+  for (const signal of Object.keys(SIGNAL_EXIT_CODE) as Array<keyof typeof SIGNAL_EXIT_CODE>) {
+    process.on(signal, () => {
+      // Synchronously safe, as the review requires: killAllTaskProcessGroups is a plain loop of
+      // process.kill(-pid, "SIGKILL") calls -- no await, no I/O, nothing that depends on the event
+      // loop still turning, and (deliberately, unlike the ordinary teardown sweep) no frame write.
+      try {
+        killAllTaskProcessGroups();
+      } catch {
+        /* a signal handler must never itself throw */
+      }
+      process.removeAllListeners(signal);
+      try {
+        process.kill(process.pid, signal);
+      } catch {
+        process.exit(SIGNAL_EXIT_CODE[signal]);
+      }
+    });
+  }
+}
+
 // --- P9a-6: the `--version` door -------------------------------------------------------------------
 //
 // Checked FIRST -- before the `__workflow-worker` dispatch below and before `parseConfigFromArgv` --
@@ -160,6 +234,10 @@ if (process.argv.includes(WORKFLOW_WORKER_ARGV_FLAG)) {
 }
 
 try {
+  // Review r2 finding 9: installed BEFORE anything else this process does -- a SIGTERM/SIGINT can
+  // arrive at any point in this process's lifetime, including before `runEngine` itself even starts
+  // (session resolution, provider wiring), so the handler must be live from the very first line.
+  installShutdownSignalHandlers();
   const config = parseConfigFromArgv(process.argv);
   assertRecognizedTestProviderEnv(process.env);
   // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or

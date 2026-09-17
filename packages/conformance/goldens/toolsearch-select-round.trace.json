@@ -59,6 +59,12 @@
           "name": "t8toolsearch",
           "status": "connected"
         }
+      ],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
       ]
     }
   },

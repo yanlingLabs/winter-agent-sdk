@@ -140,6 +140,14 @@ const PRODUCT_ENV_SUFFIXES = [
   "ENABLE_TELEMETRY",
   "ENHANCED_TELEMETRY_BETA",
   "PROFILE",
+  // Spawn-surface parity (builtin-agents.ts, R-S5/R-S6): the fork gate and the four built-in-agent
+  // kill switches, added to the suffix list so a future accidental `process.env.WINTER_FORK_SUBAGENT`
+  // (bypassing `envName`) is caught by rules 9/10b exactly like every other product env name is.
+  "FORK_SUBAGENT",
+  "AGENT_SDK_DISABLE_BUILTIN_AGENTS",
+  "DISABLE_EXPLORE_PLAN_AGENTS",
+  "DISABLE_AGENT_VIEW",
+  "WEB_FETCH_AGENT",
 ] as const;
 const TOP_LEVEL_ENV_RE = new RegExp(`process\\.env\\.WINTER_(?:${PRODUCT_ENV_SUFFIXES.join("|")})\\b`, "g");
 
@@ -819,10 +827,10 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/sdk/src/tools/advisor.ts:235": "transcriptSourceForSessionKey's DEFAULT store location; a branded host passes `winterHome` (or its own `store`) explicitly, which is the whole reason both options exist",
   "packages/sdk/src/options.ts:59": "DEFAULT_PLANS_DIRECTORY -- the default a session's `brand.projectDirName` replaces",
   "packages/sdk/src/options.ts:76": "DEFAULT_KEYCHAIN_SERVICE -- the default a host's own `brand.keychainService` replaces",
-  "packages/sdk/src/query.ts:531": "the FALLBACK side of `options.brand?.envPrefix ?? WINTER_BRAND.envPrefix` (M-1's fix)",
-  "packages/sdk/src/query.ts:690": "a COMPARISON against the default, deciding whether to emit the deprecated top-level key",
-  "packages/runtime/src/subagents/limits.ts:38": "a DEFAULT PARAMETER; the call site passes `brand ?? WINTER_BRAND` (review §5.1 names this correct)",
-  "packages/runtime/src/subagents/limits.ts:49": "a DEFAULT PARAMETER; same call site, same override",
+  "packages/sdk/src/query.ts:545": "the FALLBACK side of `options.brand?.envPrefix ?? WINTER_BRAND.envPrefix` (M-1's fix)",
+  "packages/sdk/src/query.ts:705": "a COMPARISON against the default, deciding whether to emit the deprecated top-level key",
+  "packages/runtime/src/subagents/limits.ts:42": "a DEFAULT PARAMETER; the call site passes `brand ?? WINTER_BRAND` (review §5.1 names this correct)",
+  "packages/runtime/src/subagents/limits.ts:58": "a DEFAULT PARAMETER; same call site, same override",
   "packages/runtime/src/subagents/watchdog.ts:12": "a DEFAULT PARAMETER; the call site passes the session brand",
   "packages/runtime/src/context/memory.ts:77": "renderMemoryBlock's `instructionsFile` DEFAULT; the assembler passes `brand.instructionsFile` (M-1's fix)",
   "packages/runtime/src/context/winter-md.ts:40": "WINTER_MD_BASENAME -- Winter's own value; a session's comes from `brand.instructionsFile`",
@@ -836,7 +844,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/provider-runtime/src/adapters/openai/codex-config.ts:62": "CODEX_ORIGINATOR -- the same default, exported for the fixtures that assert it",
   "packages/provider-runtime/src/adapters/openai/xai-oauth.ts:63": "DOCUMENTATION ONLY (that row's own comment): nothing reads it; all three wire sites read `activeWinterIdentity().product`",
   // --- (b) the `from` side of a rename, or a comparison against the default ------------------------
-  "packages/runtime/src/tools/registry.ts:701": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name",
+  "packages/runtime/src/tools/registry.ts:726": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name",
   "packages/runtime/src/mcp/winter-server.ts:38": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side",
   "packages/runtime/src/context/winter-code-preset.ts:48": "WINTER_CODE_PRESET_VERSION -- an ATTRIBUTION of who authored the preset, not a name a reuser renames",
   // --- scripts: this repository's own harness ------------------------------------------------------

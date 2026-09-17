@@ -48,7 +48,13 @@
       ],
       "output_style": "default",
       "skills": [],
-      "plugins": []
+      "plugins": [],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
+      ]
     }
   },
   {
@@ -75,6 +81,23 @@
   {
     "sequence": 2,
     "direction": "runtime-to-host",
+    "kind": "system/task_started",
+    "payload": {
+      "type": "system",
+      "subtype": "task_started",
+      "task_id": "TASKID_1",
+      "tool_use_id": "agent-call-1",
+      "description": "permission probe",
+      "subagent_type": "general-purpose",
+      "is_backgrounded": false,
+      "spawn_depth": 1,
+      "task_type": "local_agent",
+      "prompt": "child probe text"
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
     "kind": "assistant",
     "payload": {
       "type": "assistant",
@@ -83,7 +106,7 @@
           {
             "type": "tool_use",
             "id": "child-call-1",
-            "name": "ReadNotifications",
+            "name": "ListAgents",
             "input": {}
           }
         ]
@@ -92,7 +115,25 @@
     }
   },
   {
-    "sequence": 3,
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "system/task_progress",
+    "payload": {
+      "type": "system",
+      "subtype": "task_progress",
+      "task_id": "TASKID_1",
+      "tool_use_id": "agent-call-1",
+      "description": "permission probe",
+      "subagent_type": "general-purpose",
+      "usage": {
+        "total_tokens": "<total_tokens>",
+        "tool_uses": 1
+      },
+      "last_tool_name": "ListAgents"
+    }
+  },
+  {
+    "sequence": 5,
     "direction": "runtime-to-host",
     "kind": "user",
     "payload": {
@@ -102,7 +143,7 @@
           {
             "type": "tool_result",
             "tool_use_id": "child-call-1",
-            "content": "{\"notifications\":[],\"remaining\":0}"
+            "content": "{\"listing\":\"- agent:<uuid>:<uuid> [agent/winter-agent] status=running mode=default\"}"
           }
         ]
       },
@@ -110,7 +151,7 @@
     }
   },
   {
-    "sequence": 4,
+    "sequence": 6,
     "direction": "runtime-to-host",
     "kind": "assistant",
     "payload": {
@@ -127,7 +168,39 @@
     }
   },
   {
-    "sequence": 5,
+    "sequence": 7,
+    "direction": "runtime-to-host",
+    "kind": "system/task_updated",
+    "payload": {
+      "type": "system",
+      "subtype": "task_updated",
+      "task_id": "TASKID_1",
+      "patch": {
+        "status": "completed",
+        "end_time": "<end_time>"
+      }
+    }
+  },
+  {
+    "sequence": 8,
+    "direction": "runtime-to-host",
+    "kind": "system/task_notification",
+    "payload": {
+      "type": "system",
+      "subtype": "task_notification",
+      "task_id": "TASKID_1",
+      "tool_use_id": "agent-call-1",
+      "status": "completed",
+      "output_file": "/winter-fixture-tasks/TASKID_1.output",
+      "summary": "child finished after its own tool call",
+      "usage": {
+        "total_tokens": "<total_tokens>",
+        "tool_uses": 1
+      }
+    }
+  },
+  {
+    "sequence": 9,
     "direction": "runtime-to-host",
     "kind": "user",
     "payload": {
@@ -137,14 +210,14 @@
           {
             "type": "tool_result",
             "tool_use_id": "agent-call-1",
-            "content": "{\"agentId\":\"<scrubbed>\",\"content\":[{\"type\":\"text\",\"text\":\"child finished after its own tool call\"}],\"totalToolUseCount\":1,\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"winter-test/echo\",\"prompt\":\"child probe text\"}"
+            "content": "{\"agentId\":\"<scrubbed>\",\"agentType\":\"general-purpose\",\"content\":[{\"type\":\"text\",\"text\":\"child finished after its own tool call\"}],\"totalToolUseCount\":1,\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"winter-test/echo\",\"prompt\":\"child probe text\"}"
           }
         ]
       }
     }
   },
   {
-    "sequence": 6,
+    "sequence": 10,
     "direction": "runtime-to-host",
     "kind": "assistant",
     "payload": {
@@ -160,7 +233,7 @@
     }
   },
   {
-    "sequence": 7,
+    "sequence": 11,
     "direction": "runtime-to-host",
     "kind": "result",
     "payload": {

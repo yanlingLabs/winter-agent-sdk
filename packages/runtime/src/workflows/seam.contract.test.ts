@@ -69,12 +69,16 @@ describe("workflows/seam.ts -- WorkflowRunHost (Lane W implements the runtime)",
     expect(Object.keys(progress.usage!).sort()).toEqual(["duration_ms", "tool_uses", "total_tokens"]);
   });
 
-  test("the internal kind is `workflow`, the WIRE task_type is `local_workflow` (item (g) + capture (3))", () => {
+  // Task-frames parity (2026-09-17 contract §2): every kind now follows the PINNED wire spelling,
+  // not the internal kind name -- "the mapping exists for this one case" was true at P5 (only
+  // `workflow` differed from its own internal name) and is no longer true; `wireTaskType` grew a
+  // fifth kind (`monitor_ws`, contract §2's Monitor-ws-half row) alongside the correction.
+  test("the internal kind is `workflow`, the WIRE task_type is `local_workflow` (item (g) + capture (3)) -- and every other kind follows the pin's own spelling too", () => {
     expect(wireTaskType("workflow")).toBe("local_workflow");
-    // Every other kind is spelled identically on both sides -- the mapping exists for this one case.
-    expect(wireTaskType("bash")).toBe("bash");
-    expect(wireTaskType("monitor")).toBe("monitor");
-    expect(wireTaskType("agent")).toBe("agent");
+    expect(wireTaskType("bash")).toBe("local_bash");
+    expect(wireTaskType("monitor")).toBe("local_bash"); // Monitor's command half: registered as a plain background shell task
+    expect(wireTaskType("monitor_ws")).toBe("monitor_ws");
+    expect(wireTaskType("agent")).toBe("local_agent");
   });
 });
 

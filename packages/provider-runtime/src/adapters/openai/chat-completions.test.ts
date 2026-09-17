@@ -162,7 +162,8 @@ describe("ChatStreamMapper", () => {
       { type: "message_start", id: "chatcmpl-1", model: "deepseek-reasoner" },
       { type: "thinking_exposed_delta", text: "thinking..." },
       { type: "text_delta", text: "answer" },
-      { type: "usage", inputTokens: 11, outputTokens: 4, cacheReadTokens: 8 },
+      // Review r1 finding 5: DeepSeek's `prompt_tokens` includes its cache hits -- normalized.
+      { type: "usage", inputTokens: 3, outputTokens: 4, cacheReadTokens: 8 },
       { type: "native_state", items: [{ type: "winter.exposed_reasoning", text: "thinking..." }] },
       { type: "done", stopReason: "end_turn" },
     ]);
@@ -247,5 +248,26 @@ describe("Lane A r3 residuals: the two mappers answer the same input the same wa
     expect(mapChatMessages([{ role: "tool", content: "just text" }], false)).toEqual([{ role: "user", content: "just text" }]);
     // A tool message that DOES carry a result is untouched by this arm.
     expect(mapChatMessages([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "ok" }] }], false)).toEqual([{ role: "tool", tool_call_id: "c1", content: "ok" }]);
+  });
+});
+
+// Review r1 finding 5 (task-frames parity): one usage convention across families.
+describe("ChatStreamMapper usage: normalized to the seam's convention", () => {
+  test("OpenAI's prompt_tokens_details.cached_tokens is a subset of prompt_tokens -> inputTokens is the non-cached part", () => {
+    const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 1000, completion_tokens: 50, prompt_tokens_details: { cached_tokens: 900 } } }]);
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 100, outputTokens: 50, cacheReadTokens: 900 });
+  });
+
+  test("no cached count -> the whole prompt is inputTokens and no cache field appears", () => {
+    const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 40, completion_tokens: 2 } }]);
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 40, outputTokens: 2 });
+  });
+});
+
+// R-S4: the OpenAI family has no error field on a tool reply -- the error TEXT is what carries it.
+describe("mapChatMessages: an is_error tool result keeps its text (no wire field to map it to)", () => {
+  test("the content is sent verbatim", () => {
+    const out = mapChatMessages([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "Agent type 'x' not found.", is_error: true }] }], false);
+    expect(out).toEqual([{ role: "tool", tool_call_id: "c1", content: "Agent type 'x' not found." }]);
   });
 });

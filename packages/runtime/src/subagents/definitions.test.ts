@@ -2,7 +2,19 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFrontmatter, parseAgentDefinitionFile, loadAgentDefinitions, validateAgentDefinition } from "./definitions.ts";
+import {
+  createAgentDefinitionRejectionReporter,
+  parseFrontmatter,
+  parseAgentDefinitionFile,
+  loadAgentDefinitions,
+  validateAgentDefinition,
+  findAgentByType,
+  formatAgentNotFound,
+  formatAgentAmbiguous,
+  toAgentInfoList,
+  type AgentDefinitionRejection,
+  type SourcedAgentDefinition,
+} from "./definitions.ts";
 
 const tempDirs: string[] = [];
 function mkTemp(prefix: string): string {
@@ -13,6 +25,12 @@ function mkTemp(prefix: string): string {
 afterEach(() => {
   for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
+
+// Every `loadAgentDefinitions` call below that cares about an EXACT set/size passes `builtinAgents:
+// {}` -- otherwise the default-on `general-purpose`/`Explore`/`Plan`/`claude` built-ins (R-S1) would
+// leak into every `.size`/`.has(...)` assertion this file predates. Tests that specifically exercise
+// the builtin tier opt back in explicitly.
+const NO_BUILTINS = { builtinAgents: {} };
 
 describe("parseFrontmatter", () => {
   test("no frontmatter delimiter -> the whole file is body, no attrs", () => {
@@ -42,10 +60,11 @@ describe("parseFrontmatter", () => {
   });
 });
 
-describe("parseAgentDefinitionFile (WS-10 §2 field table)", () => {
-  test("a full field set round-trips into the RuntimeAgentDefinition shape", () => {
+describe("parseAgentDefinitionFile (spawn-surface parity: name+description required, research §A1)", () => {
+  test("a full field set round-trips into {ok, name, definition}", () => {
     const raw = [
       "---",
+      "name: reviewer",
       "description: reviews code",
       "tools: Read, Grep, Skill",
       "disallowedTools: Bash",
@@ -57,66 +76,124 @@ describe("parseAgentDefinitionFile (WS-10 §2 field table)", () => {
       "effort: high",
       "permissionMode: plan",
       "skills: linting, testing",
+      "isolation: worktree",
+      "color: purple",
       "---",
       "You are a careful code reviewer.",
     ].join("\n");
-    const def = parseAgentDefinitionFile(raw, "reviewer");
-    expect(def).toEqual({
-      description: "reviews code",
-      prompt: "You are a careful code reviewer.",
-      tools: ["Read", "Grep", "Skill"],
-      disallowedTools: ["Bash"],
-      model: "opus",
-      initialPrompt: "start here",
-      maxTurns: 10,
-      background: true,
-      memory: "project",
-      effort: "high",
-      permissionMode: "plan",
-      skills: ["linting", "testing"],
+    const parsed = parseAgentDefinitionFile(raw, "/agents/reviewer.md");
+    expect(parsed).toEqual({
+      ok: true,
+      name: "reviewer",
+      definition: {
+        description: "reviews code",
+        prompt: "You are a careful code reviewer.",
+        tools: ["Read", "Grep", "Skill"],
+        disallowedTools: ["Bash"],
+        model: "opus",
+        initialPrompt: "start here",
+        maxTurns: 10,
+        background: true,
+        memory: "project",
+        effort: "high",
+        permissionMode: "plan",
+        skills: ["linting", "testing"],
+        isolation: "worktree",
+        color: "purple",
+      },
     });
   });
 
   test("effort accepts the numeric form (0.3.251/0.3.252 declaration detail)", () => {
-    const raw = ["---", "effort: 42", "---", "body text"].join("\n");
-    expect(parseAgentDefinitionFile(raw, "x")?.effort).toBe(42);
+    const raw = ["---", "name: x", "description: d", "effort: 42", "---", "body text"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.effort).toBe(42);
   });
 
-  test("description falls back to the filename when frontmatter omits it", () => {
-    const raw = "no frontmatter at all, just a prompt body";
-    expect(parseAgentDefinitionFile(raw, "my-agent")?.description).toBe("my-agent");
-    expect(parseAgentDefinitionFile(raw, "my-agent")?.prompt).toBe(raw);
+  test("a missing name is REJECTED, not filename-fallback keyed (deliberate break from the pre-parity contract)", () => {
+    const raw = "---\ndescription: no name here\n---\nbody";
+    const parsed = parseAgentDefinitionFile(raw, "/agents/my-agent.md");
+    expect(parsed).toEqual({ ok: false, filePath: "/agents/my-agent.md", reason: 'missing required frontmatter field "name"' });
   });
 
-  test("an empty body (no prompt at all) is not a usable definition", () => {
-    const raw = ["---", "description: nothing to run", "---", "   "].join("\n");
-    expect(parseAgentDefinitionFile(raw, "x")).toBeUndefined();
+  test("a name starting with '-' is rejected", () => {
+    const parsed = parseAgentDefinitionFile("---\nname: -bad\ndescription: d\n---\nbody", "f.md");
+    expect(parsed.ok).toBe(false);
+    expect(!parsed.ok && parsed.reason).toContain('invalid agent name "-bad"');
+  });
+
+  test("a name containing ':' is rejected", () => {
+    const parsed = parseAgentDefinitionFile("---\nname: ns:agent\ndescription: d\n---\nbody", "f.md");
+    expect(parsed.ok).toBe(false);
+    expect(!parsed.ok && parsed.reason).toContain('invalid agent name "ns:agent"');
+  });
+
+  test("a missing description is REJECTED -- no filename fallback of any kind", () => {
+    const raw = "---\nname: my-agent\n---\nbody";
+    const parsed = parseAgentDefinitionFile(raw, "/agents/my-agent.md");
+    expect(parsed).toEqual({ ok: false, filePath: "/agents/my-agent.md", reason: 'missing required frontmatter field "description"' });
+  });
+
+  test("an empty body (no prompt at all) is REJECTED before name/description are even checked", () => {
+    const raw = ["---", "name: x", "description: nothing to run", "---", "   "].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok).toBe(false);
   });
 
   test("an invalid memory value is dropped rather than mis-typed through", () => {
-    const raw = ["---", "memory: bogus", "---", "body"].join("\n");
-    expect(parseAgentDefinitionFile(raw, "x")?.memory).toBeUndefined();
+    const raw = ["---", "name: x", "description: d", "memory: bogus", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.memory).toBeUndefined();
+  });
+
+  test("an unrecognised isolation value is dropped, never mis-typed through", () => {
+    const raw = ["---", "name: x", "description: d", "isolation: docker", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.isolation).toBeUndefined();
   });
 });
 
-describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence)", () => {
+describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence, builtins excluded via NO_BUILTINS)", () => {
   test("user-level (~/.winter/agents) loads unconditionally, even when the workspace is untrusted", () => {
     const home = mkTemp("winter-defs-home-");
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(home, ".winter", "agents", "helper.md"), "---\ndescription: a user helper\n---\nHelp out.");
+    writeFileSync(join(home, ".winter", "agents", "helper.md"), "---\nname: helper\ndescription: a user helper\n---\nHelp out.");
     const cwd = mkTemp("winter-defs-cwd-");
-    const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false });
+    const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, ...NO_BUILTINS });
     expect(defs.get("helper")?._source).toBe("user");
     expect(defs.get("helper")?.prompt).toBe("Help out.");
+  });
+
+  test("a file's frontmatter `name` is the map key, independent of its filename", () => {
+    const home = mkTemp("winter-defs-home-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "totally-different-filename.md"), "---\nname: real-name\ndescription: d\n---\nBody.");
+    const cwd = mkTemp("winter-defs-cwd-");
+    const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, ...NO_BUILTINS });
+    expect(defs.has("real-name")).toBe(true);
+    expect(defs.has("totally-different-filename")).toBe(false);
+  });
+
+  test("a file with no frontmatter `name` is skipped and reported through onReject, never crashes the scan", () => {
+    const home = mkTemp("winter-defs-home-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "nameless.md"), "---\ndescription: no name\n---\nBody.");
+    writeFileSync(join(home, ".winter", "agents", "good.md"), "---\nname: good\ndescription: d\n---\nBody.");
+    const cwd = mkTemp("winter-defs-cwd-");
+    const rejections: AgentDefinitionRejection[] = [];
+    const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, onReject: (r) => rejections.push(r), ...NO_BUILTINS });
+    expect(defs.size).toBe(1);
+    expect(defs.has("good")).toBe(true);
+    expect(rejections).toEqual([{ source: "user", filePath: join(home, ".winter", "agents", "nameless.md"), reason: 'missing required frontmatter field "name"' }]);
   });
 
   test("project-level (.winter/agents) is INVISIBLE when the workspace is untrusted", () => {
     const home = mkTemp("winter-defs-home-");
     const cwd = mkTemp("winter-defs-cwd-");
     mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(cwd, ".winter", "agents", "proj.md"), "---\ndescription: a project agent\n---\nDo project things.");
-    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: false }).has("proj")).toBe(false);
-    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true }).has("proj")).toBe(true);
+    writeFileSync(join(cwd, ".winter", "agents", "proj.md"), "---\nname: proj\ndescription: a project agent\n---\nDo project things.");
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: false, ...NO_BUILTINS }).has("proj")).toBe(false);
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, ...NO_BUILTINS }).has("proj")).toBe(true);
   });
 
   test("precedence: programmatic > project (trusted) > user, on a real name collision", () => {
@@ -124,10 +201,10 @@ describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence)", () 
     const cwd = mkTemp("winter-defs-cwd-");
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
     mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
-    writeFileSync(join(home, ".winter", "agents", "shared.md"), "---\ndescription: from user\n---\nUser body.");
-    writeFileSync(join(cwd, ".winter", "agents", "shared.md"), "---\ndescription: from project\n---\nProject body.");
+    writeFileSync(join(home, ".winter", "agents", "shared.md"), "---\nname: shared\ndescription: from user\n---\nUser body.");
+    writeFileSync(join(cwd, ".winter", "agents", "shared.md"), "---\nname: shared\ndescription: from project\n---\nProject body.");
 
-    const projectWins = loadAgentDefinitions({ cwd, home, trustedWorkspace: true });
+    const projectWins = loadAgentDefinitions({ cwd, home, trustedWorkspace: true, ...NO_BUILTINS });
     expect(projectWins.get("shared")?._source).toBe("project");
 
     const programmaticWins = loadAgentDefinitions({
@@ -135,6 +212,7 @@ describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence)", () 
       home,
       trustedWorkspace: true,
       programmatic: { shared: { description: "from options", prompt: "Programmatic body." } },
+      ...NO_BUILTINS,
     });
     expect(programmaticWins.get("shared")?._source).toBe("programmatic");
     expect(programmaticWins.get("shared")?.prompt).toBe("Programmatic body.");
@@ -143,7 +221,7 @@ describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence)", () 
   test("a nonexistent directory on any source contributes zero definitions, never an error", () => {
     const home = join(mkTemp("winter-defs-home-"), "does-not-exist");
     const cwd = join(mkTemp("winter-defs-cwd-"), "does-not-exist-either");
-    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true }).size).toBe(0);
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, ...NO_BUILTINS }).size).toBe(0);
   });
 
   test("a non-.md file in the agents directory is ignored", () => {
@@ -151,7 +229,158 @@ describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence)", () 
     mkdirSync(join(home, ".winter", "agents"), { recursive: true });
     writeFileSync(join(home, ".winter", "agents", "notes.txt"), "not an agent file");
     const cwd = mkTemp("winter-defs-cwd-");
-    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: false }).size).toBe(0);
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: false, ...NO_BUILTINS }).size).toBe(0);
+  });
+
+  test("builtins are the LOWEST precedence tier (R-S1): a same-named user file overrides Winter's own Explore", () => {
+    const home = mkTemp("winter-defs-home-");
+    mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(home, ".winter", "agents", "explore.md"), "---\nname: Explore\ndescription: my own explorer\n---\nCustom body.");
+    const cwd = mkTemp("winter-defs-cwd-");
+    const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, env: {} });
+    expect(defs.get("Explore")?._source).toBe("user");
+    expect(defs.get("Explore")?.prompt).toBe("Custom body.");
+  });
+
+  test("with no override, the built-in tier supplies general-purpose/Explore/Plan/claude by default", () => {
+    const home = join(mkTemp("winter-defs-home-"), "does-not-exist");
+    const cwd = join(mkTemp("winter-defs-cwd-"), "does-not-exist-either");
+    const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, env: {} });
+    expect([...defs.keys()].sort()).toEqual(["Explore", "Plan", "claude", "general-purpose"]);
+    expect(defs.get("Explore")?._source).toBe("builtin");
+  });
+
+  test("a plugin agent overrides a built-in of the same name, and is itself overridden by a user file", () => {
+    const home = join(mkTemp("winter-defs-home-"), "does-not-exist");
+    const cwd = join(mkTemp("winter-defs-cwd-"), "does-not-exist-either");
+    const pluginOnly = loadAgentDefinitions({
+      cwd,
+      home,
+      trustedWorkspace: false,
+      env: {},
+      pluginAgents: { "general-purpose": { description: "plugin's own", prompt: "p", plugin: "acme" } },
+    });
+    expect(pluginOnly.get("general-purpose")?._source).toBe("plugin");
+  });
+});
+
+// Review r2 finding 2 (whole-branch): `onReject` used to have no production caller at all -- this is
+// the reporter every production call site now shares.
+describe("createAgentDefinitionRejectionReporter (review r2 finding 2)", () => {
+  function capturingWriter(): { write: (line: string) => void; lines: string[] } {
+    const lines: string[] = [];
+    return { write: (line) => lines.push(line), lines };
+  }
+
+  test("writes one line naming the file and the reason, with the fix suggestion", () => {
+    const { write, lines } = capturingWriter();
+    const report = createAgentDefinitionRejectionReporter(write);
+    report({ source: "user", filePath: "/home/.winter/agents/broken.md", reason: 'missing required frontmatter field "name"' });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("/home/.winter/agents/broken.md");
+    expect(lines[0]).toContain('missing required frontmatter field "name"');
+    expect(lines[0]).toContain('add "name:" and "description:" frontmatter');
+  });
+
+  test("a repeated rejection of the SAME file path is reported only ONCE", () => {
+    const { write, lines } = capturingWriter();
+    const report = createAgentDefinitionRejectionReporter(write);
+    const rejection: AgentDefinitionRejection = { source: "project", filePath: "/proj/.winter/agents/x.md", reason: 'missing required frontmatter field "description"' };
+    report(rejection);
+    report(rejection);
+    report(rejection);
+    expect(lines).toHaveLength(1);
+  });
+
+  test("DIFFERENT file paths each get their own line", () => {
+    const { write, lines } = capturingWriter();
+    const report = createAgentDefinitionRejectionReporter(write);
+    report({ source: "user", filePath: "/a.md", reason: "r1" });
+    report({ source: "user", filePath: "/b.md", reason: "r2" });
+    expect(lines).toHaveLength(2);
+  });
+
+  test("a throwing writer never propagates -- a closed stderr must not crash agent-definition loading", () => {
+    const report = createAgentDefinitionRejectionReporter(() => {
+      throw new Error("EPIPE");
+    });
+    expect(() => report({ source: "plugin", filePath: "/p.md", reason: "r" })).not.toThrow();
+  });
+});
+
+describe("findAgentByType (research §A4 normalization)", () => {
+  function defsOf(names: string[]): Map<string, SourcedAgentDefinition> {
+    const m = new Map<string, SourcedAgentDefinition>();
+    for (const n of names) m.set(n, { description: "d", prompt: "p", _source: "builtin" });
+    return m;
+  }
+
+  test("an exact match always wins outright", () => {
+    const result = findAgentByType(defsOf(["Explore", "general-purpose"]), "Explore");
+    expect(result).toEqual({ kind: "found", name: "Explore", definition: { description: "d", prompt: "p", _source: "builtin" } });
+  });
+
+  test("'explore' (lowercase) normalizes onto 'Explore'", () => {
+    expect(findAgentByType(defsOf(["Explore"]), "explore").kind).toBe("found");
+  });
+
+  test("'general purpose' (space) and 'general-purpose' both normalize onto the same key", () => {
+    expect(findAgentByType(defsOf(["general-purpose"]), "general purpose").kind).toBe("found");
+    expect(findAgentByType(defsOf(["general-purpose"]), "general_purpose").kind).toBe("found");
+  });
+
+  test("'general' and 'explorer' do NOT match -- they normalize to a different string entirely", () => {
+    expect(findAgentByType(defsOf(["general-purpose"]), "general").kind).toBe("not-found");
+    expect(findAgentByType(defsOf(["Explore"]), "explorer").kind).toBe("not-found");
+  });
+
+  test("an empty definitions map is a clean not-found, never a throw", () => {
+    expect(findAgentByType(new Map(), "anything").kind).toBe("not-found");
+  });
+
+  test("two keys normalizing to the same target are reported ambiguous, sorted", () => {
+    const result = findAgentByType(defsOf(["my_agent", "my-agent"]), "myagent");
+    expect(result).toEqual({ kind: "ambiguous", matches: ["my-agent", "my_agent"] });
+  });
+});
+
+describe("formatAgentNotFound / formatAgentAmbiguous (research §A4 wording)", () => {
+  test("lists available agents, sorted, comma-joined", () => {
+    expect(formatAgentNotFound("explorer", ["Plan", "Explore", "claude"])).toBe("Agent type 'explorer' not found. Available agents: Explore, Plan, claude");
+  });
+
+  test("says 'none' when the session has zero agents", () => {
+    expect(formatAgentNotFound("anything", [])).toBe("Agent type 'anything' not found. Available agents: none");
+  });
+
+  test("ambiguous wording names both matches and the exact-name instruction", () => {
+    expect(formatAgentAmbiguous("myagent", ["my_agent", "my-agent"])).toBe("Agent type 'myagent' is ambiguous — matches my-agent, my_agent. Use the exact name: my-agent or my_agent.");
+  });
+});
+
+describe("toAgentInfoList (Query.supportedAgents()'s own shape, research §A3)", () => {
+  function defsOf(entries: Record<string, { description: string; model?: string }>): Map<string, SourcedAgentDefinition> {
+    const m = new Map<string, SourcedAgentDefinition>();
+    for (const [name, e] of Object.entries(entries)) m.set(name, { description: e.description, prompt: "p", ...(e.model !== undefined ? { model: e.model } : {}), _source: "builtin" });
+    return m;
+  }
+
+  test("maps name/description/model, sorted by name", () => {
+    const list = toAgentInfoList(defsOf({ Explore: { description: "d1", model: "opus" }, claude: { description: "d2" } }));
+    expect(list).toEqual([
+      { name: "claude", description: "d2" },
+      { name: "Explore", description: "d1", model: "opus" },
+    ]);
+  });
+
+  test('model: "inherit" is OMITTED, never passed through as the literal string', () => {
+    const list = toAgentInfoList(defsOf({ Explore: { description: "d", model: "inherit" } }));
+    expect(list[0]).toEqual({ name: "Explore", description: "d" });
+    expect(list[0]).not.toHaveProperty("model");
+  });
+
+  test("an empty map yields an empty array", () => {
+    expect(toAgentInfoList(new Map())).toEqual([]);
   });
 });
 

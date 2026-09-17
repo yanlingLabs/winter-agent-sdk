@@ -93,7 +93,13 @@
       ],
       "output_style": "default",
       "skills": [],
-      "plugins": []
+      "plugins": [],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
+      ]
     }
   },
   {

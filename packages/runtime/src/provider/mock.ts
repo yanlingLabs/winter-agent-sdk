@@ -576,13 +576,17 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     // watchdog pause is proven end to end rather than in-process only.
     //
     // Same pure-function discipline as "subagent" (ONE provider instance serves the parent's turns
-    // AND the child's). The child's target is `ReadNotifications`, chosen for four properties no
-    // other candidate has together: it is a REAL registered tool on every leg (so it does not depend
-    // on a test stand-in the child leg's own process never registers), it is ADVERTISED by default
-    // (so it survives the child's inherited-pool deny complement), its permissionClass is
-    // "messaging" (so it genuinely PROMPTS under `default` mode -- the read-only pre-approval is
-    // Bash-only), and against an empty queue its output is the fixed, machine-independent
-    // `{"notifications":[],"remaining":0}` -- byte-identical on every leg and stable in a golden.
+    // AND the child's). The child's target is `ListAgents`: a REAL registered tool on every leg (so it
+    // does not depend on a test stand-in the child leg's own process never registers), ADVERTISED by
+    // default and KEPT in a foreground child's pool (so it survives the child's inherited-pool deny
+    // complement), and of permissionClass "messaging" (so it genuinely PROMPTS under `default` mode --
+    // the read-only pre-approval is Bash-only).
+    //
+    // CHANGED by spawn-surface parity (research §A6): the target used to be `ReadNotifications`,
+    // which claude removes from every subagent -- a child no longer holds it, so its call never
+    // reached a permission prompt. `ListAgents`' output names the running child by its per-run
+    // address (`- agent:<session>:<agent> [...]`), so the goldens and the cross-leg comparison scrub
+    // the two uuids in its `listing` (scripts/differential.ts, transport-equivalence.test.ts).
     case "subagentperm":
       return {
         async generate({ messages }) {
@@ -593,8 +597,8 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           );
           if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) {
             // The CHILD's own conversation.
-            if (calls.includes("ReadNotifications")) return { kind: "text", text: "child finished after its own tool call" };
-            return { kind: "tool_use", calls: [{ id: "child-call-1", name: "ReadNotifications", input: {} }] };
+            if (calls.includes("ListAgents")) return { kind: "text", text: "child finished after its own tool call" };
+            return { kind: "tool_use", calls: [{ id: "child-call-1", name: "ListAgents", input: {} }] };
           }
           if (calls.includes("Agent")) return { kind: "text", text: "parent finished" };
           return {

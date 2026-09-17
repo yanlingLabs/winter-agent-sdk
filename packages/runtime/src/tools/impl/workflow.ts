@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/workflow.ts"; // self-sufficiency: the "Workflow" stub must be registered before replaceExecutor runs
-import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 import { createBackgroundTask, wireTaskType } from "../background-tasks.ts";
 import { getWorkflowSession, type WorkflowSessionRuntime } from "../../workflows/host-registry.ts";
 import { WorkflowRuntime, WorkflowRuntimeError, type WorkflowRuntimeDeps, type WorkflowLaunchResult } from "../../workflows/runtime.ts";
@@ -77,6 +77,9 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
         kind: "workflow",
         outputPath,
         description,
+        isBackgrounded: true,
+        ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
+        emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
         stop: () => {
           runtime.stop(meta.runId);
         },
@@ -130,8 +133,17 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           // `task_notification` for exactly this reason; without the write, `TaskOutput` errors and a
           // `Read` on the advertised path is ENOENT.
           writeTaskOutput(outputPath, renderResultText(result));
-          if (getTask(taskId) !== undefined) setTaskStatus(taskId, "completed");
-          emitNotification(ctx, taskId, outputPath, "completed", renderSummary(result));
+          // §1/§5: the terminal update goes through the ONE update door -- task_updated {status,
+          // end_time} then, synchronously after it, the once-per-id task_notification. Guarded on
+          // "still running" the same way bash.ts/monitor.ts's own completion handlers are: a
+          // production TaskStop already moved the row to "stopped" before this callback fires (it
+          // marks the row BEFORE invoking this task's own `stop` callback, which is what triggers
+          // `runtime.stop()` and this eventual `fail()`/`complete()`), and re-applying a DIFFERENT
+          // terminal status here would flip an already-terminal row and emit a stray task_updated
+          // for no reason (the notification itself is already claimed once either way).
+          if (getTask(taskId)?.status === "running") {
+            updateTask(taskId, { status: "completed", endTime: Date.now(), notification: { summary: renderSummary(result) } });
+          }
           emitBackgroundTasksChanged(ctx);
         },
         fail(error: string) {
@@ -145,8 +157,9 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           // The failure detail gets the same durable channel as a result: it is the run's diagnostic,
           // and truncating it into a 500-char preview is how a debuggable error becomes an opaque one.
           writeTaskOutput(outputPath, error);
-          if (getTask(taskId) !== undefined) setTaskStatus(taskId, status);
-          emitNotification(ctx, taskId, outputPath, status, error);
+          if (getTask(taskId)?.status === "running") {
+            updateTask(taskId, { status, endTime: Date.now(), notification: { summary: error } });
+          }
           emitBackgroundTasksChanged(ctx);
         },
       };
@@ -180,19 +193,6 @@ function writeTaskOutput(outputPath: string, text: string): void {
   } catch {
     /* the directory was ensured by createBackgroundTask; a failure here must never swallow the notification below */
   }
-}
-
-function emitNotification(ctx: ToolExecutionContext, taskId: string, outputPath: string, status: "completed" | "failed" | "stopped", summary: string): void {
-  ctx.emitFrame({
-    type: "system",
-    subtype: "task_notification",
-    task_id: taskId,
-    status,
-    output_file: outputPath,
-    summary,
-    uuid: randomUUID(),
-    session_id: ctx.sessionId,
-  });
 }
 
 /** The result as text -- the SAME rendering the runtime uses for `WorkflowRunView.result`. */

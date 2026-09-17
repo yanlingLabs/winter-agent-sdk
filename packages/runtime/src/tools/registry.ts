@@ -333,6 +333,31 @@ export interface ToolExecutionContext {
   // this module free of a runtime dependency on that one; `loadAgentDefinitions` accepts the same
   // shape by construction. Optional/absent = "no programmatic definitions this session."
   agents?: Readonly<Record<string, unknown>>;
+  /**
+   * Spawn-surface parity: the SESSION's environment (the engine's `env` option, else the process
+   * env) -- the per-session kill switches the Agent tool reads (`loadAgentDefinitions`' built-in
+   * gates, the background kill switch, the fork gate's env fallback) come from here, exactly like
+   * `limits.ts`'s own per-session env reads. Absent = `process.env`.
+   */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** Spawn-surface parity (R-S5): this session's resolved fork gate (RuntimeConfig.forkSubagent, else the env fallback). Absent = resolve from `env`. */
+  forkSubagentEnabled?: boolean;
+  /** Spawn-surface parity (R-S5): this engine is itself a forked worker (RuntimeConfig.insideFork) -- a fork may not fork again. */
+  insideFork?: boolean;
+  /**
+   * Review r2 finding 2 (whole-branch): the session's ONE rejection reporter for a filesystem
+   * `agents/*.md` file `loadAgentDefinitions` could not parse (`tools/impl/agent.ts`'s own call
+   * passes it straight through as `onReject`). Typed structurally (the same discipline `agents?`
+   * above documents) rather than importing `subagents/definitions.ts`'s own `AgentDefinitionRejection`
+   * here. Absent = silent-skip, the pre-existing behavior for every hand-built test context.
+   */
+  onAgentDefinitionRejected?: (rejection: { source: "user" | "project" | "plugin"; filePath: string; reason: string }) => void;
+  /**
+   * Spawn-surface parity (research §A8): the names this session currently ADVERTISES to its model
+   * (canonical). The Agent tool's background launch result reads it to decide whether the model can
+   * read the task's output file at all (`Read`/`Bash` present). A getter: the set can move mid-run.
+   */
+  advertisedToolNames?: () => readonly string[];
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
@@ -1351,6 +1376,13 @@ export interface EngineToolCall {
 }
 export interface EngineToolResult {
   output: string;
+  /**
+   * Spawn-surface parity (R-S4, research gap 6): the executor's own `isError`, carried to the engine
+   * so the model-facing `tool_result` block says `is_error: true` -- claude's shape for every tool
+   * error. Dropped here before, so every executor error reached the wire (and the daemon) as a
+   * success.
+   */
+  isError?: boolean;
 }
 export interface EngineFacingToolExecutor {
   /** Phase 6 Task 3 (R6-6): `opts.signal` is the engine's per-turn abort. It reaches a real executor as `ToolExecutionContext.signal`. */
@@ -1378,7 +1410,7 @@ function notYetExecutableResult(name: string): ToolResultPayload {
 // above already writes complete, human/model-legible text into `output` itself, so folding never
 // needs to invent additional prefixing here.
 function foldResult(result: ToolResultPayload): EngineToolResult {
-  return { output: result.output };
+  return { output: result.output, ...(result.isError === true ? { isError: true } : {}) };
 }
 
 export interface RegistryToolExecutorDeps {
@@ -1422,6 +1454,13 @@ export interface RegistryToolExecutorDeps {
   agentId?: string;
   // Phase 4 Task 8: mirrors ToolExecutionContext.agents exactly -- see that field's own comment.
   agents?: Readonly<Record<string, unknown>>;
+  // Spawn-surface parity: mirrors the four ToolExecutionContext fields of the same names.
+  env?: Readonly<Record<string, string | undefined>>;
+  forkSubagentEnabled?: boolean;
+  insideFork?: boolean;
+  advertisedToolNames?: () => readonly string[];
+  // Review r2 finding 2: mirrors ToolExecutionContext.onAgentDefinitionRejected exactly.
+  onAgentDefinitionRejected?: (rejection: { source: "user" | "project" | "plugin"; filePath: string; reason: string }) => void;
   // Phase 4 Task 8 (rider 27): the session's own availability inputs, so this adapter can enforce
   // `isAvailable` AT DISPATCH rather than only at advertisement. Rationale, from Lane C's own I3
   // finding: `AskUserQuestion`'s `availability: { insideSubagent: false }` excluded it from a child's
@@ -1497,6 +1536,11 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         // required field); optional only on the interface, for hand-built test contexts.
         toolUseId: call.id,
         ...(deps.agents !== undefined ? { agents: deps.agents } : {}),
+        ...(deps.env !== undefined ? { env: deps.env } : {}),
+        ...(deps.forkSubagentEnabled !== undefined ? { forkSubagentEnabled: deps.forkSubagentEnabled } : {}),
+        ...(deps.insideFork !== undefined ? { insideFork: deps.insideFork } : {}),
+        ...(deps.advertisedToolNames !== undefined ? { advertisedToolNames: deps.advertisedToolNames } : {}),
+        ...(deps.onAgentDefinitionRejected !== undefined ? { onAgentDefinitionRejected: deps.onAgentDefinitionRejected } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);

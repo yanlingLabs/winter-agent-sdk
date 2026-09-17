@@ -69,6 +69,11 @@ describe("toBedrockMessages", () => {
     expect((toBedrockMessages(messages)[0]!.content[0] as { toolResult: { status: string } }).toolResult.status).toBe("error");
   });
 
+  test("the engine's synthetic `error` marker is an error on the wire too (it used to be dropped)", () => {
+    const messages: ProviderMessageLike[] = [{ role: "tool", content: [{ type: "tool_result", tool_use_id: "tu_1", content: "[error: threw]", error: true }] }];
+    expect((toBedrockMessages(messages)[0]!.content[0] as { toolResult: { status: string } }).toolResult.status).toBe("error");
+  });
+
   test("CONSECUTIVE SAME-ROLE messages are merged — Bedrock requires strict alternation", () => {
     const messages: ProviderMessageLike[] = [
       { role: "user", content: "one" },

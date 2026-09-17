@@ -32,7 +32,7 @@ function plugin(opts?: { manifestDir?: string; manifest?: Record<string, unknown
   if (opts?.manifestDir) write(join(root, opts.manifestDir, "plugin.json"), JSON.stringify(opts.manifest ?? {}));
   write(join(root, "skills", "ship", "SKILL.md"), "---\nname: ship\ndescription: ships\n---\n\nSHIP BODY");
   write(join(root, "commands", "deploy.md"), "---\ndescription: deploys\n---\n\nDeploy $ARGUMENTS");
-  write(join(root, "agents", "helper.md"), "---\ndescription: a helper\nmodel: sonnet\n---\nYou are a helper.");
+  write(join(root, "agents", "helper.md"), "---\nname: helper\ndescription: a helper\nmodel: sonnet\n---\nYou are a helper.");
   write(join(root, ".mcp.json"), JSON.stringify({ mcpServers: { tools: { command: "tools-server" } } }));
   return root;
 }
@@ -74,8 +74,8 @@ describe("loadPlugins: `type: \"local\"` is the only accepted config (WS-11 §4)
   });
 
   test("no plugins at all is an empty result, not an error", () => {
-    expect(loadPlugins(undefined)).toEqual({ bundles: [], rejected: [] });
-    expect(loadPlugins([])).toEqual({ bundles: [], rejected: [] });
+    expect(loadPlugins(undefined)).toEqual({ bundles: [], rejected: [], agentFileRejections: [] });
+    expect(loadPlugins([])).toEqual({ bundles: [], rejected: [], agentFileRejections: [] });
   });
 });
 
@@ -236,6 +236,22 @@ describe("the producers T8 wires", () => {
     const b = plugin({ dirName: "second" });
     const { bundles } = loadPlugins([{ type: "local", path: a }, { type: "local", path: b }]);
     expect(pluginAgentDefinitions(bundles)["helper"]!.plugin).toBe("first");
+  });
+
+  // Review r2 finding 2: a rejected `<plugin>/agents/*.md` file no longer vanishes silently -- the
+  // plugin ITSELF still loads (this is not `rejected`, the per-PLUGIN list), but the bad file is
+  // reported through the new `agentFileRejections` list, naming the file and the missing field.
+  test("a broken agent file inside an otherwise-valid plugin is reported in agentFileRejections, not silently dropped", () => {
+    const root = plugin();
+    write(join(root, "agents", "broken-no-name.md"), "---\ndescription: has no name\n---\nBody.");
+    const { bundles, agentFileRejections } = loadPlugins([{ type: "local", path: root }]);
+    // The plugin still loaded, and its ONE valid agent is still present.
+    expect(bundles).toHaveLength(1);
+    expect(pluginAgentDefinitions(bundles)["helper"]).toBeDefined();
+    expect(agentFileRejections).toHaveLength(1);
+    expect(agentFileRejections[0]!.source).toBe("plugin");
+    expect(agentFileRejections[0]!.filePath).toEndWith(join("agents", "broken-no-name.md"));
+    expect(agentFileRejections[0]!.reason).toContain('"name"');
   });
 
   test("`pluginSkillContributions` / `pluginCommandContributions` feed the index and the resolver with BARE names", () => {

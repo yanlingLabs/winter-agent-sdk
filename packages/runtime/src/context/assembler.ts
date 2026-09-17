@@ -40,6 +40,8 @@ import { autoMemoryEnabled, renderMemoryBlock } from "./memory.ts";
 import { memoryDirFor } from "./memory-key.ts";
 import { resolveOutputStyle, type ResolvedOutputStyle } from "./output-styles.ts";
 import { renderPlanModeBlock } from "./plan-mode.ts";
+import { renderAgentListing } from "./agent-listing.ts";
+import { systemReminder } from "./injection.ts";
 
 export interface SystemPromptAssemblerDeps {
   /**
@@ -172,13 +174,18 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(settings?.autoMemoryDirectory !== undefined ? { override: settings.autoMemoryDirectory } : {}) })) : undefined;
 
       // --- the dynamic block ------------------------------------------------------------------
+      //
+      // Spawn-surface parity: `omitProjectContext` drops `gitSummary` specifically (claude's own
+      // Explore/Plan "context also drops gitStatus") -- every OTHER dynamic-section field (cwd,
+      // platform, date, memory) is untouched, since claude's own omission is scoped to exactly two
+      // things (the instructions file, handled below, and git status).
       const dynamic = renderDynamicSections({
         cwd: input.cwd,
         platform: input.platform,
         osVersion: input.osVersion,
         shell: input.shell,
         date: input.date,
-        ...(input.gitSummary !== undefined ? { gitSummary: input.gitSummary } : {}),
+        ...(input.gitSummary !== undefined && input.omitProjectContext !== true ? { gitSummary: input.gitSummary } : {}),
         ...(memoryDir !== undefined ? { memoryDir } : {}),
       });
 
@@ -241,8 +248,51 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // and the environment has to precede the instructions that depend on it.
       const userContextBlocks: string[] = [];
       if (region.excludeDynamicSections) userContextBlocks.push(dynamic);
-      for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
+      // Spawn-surface parity: `omitProjectContext` drops the discovered instructions-file blocks
+      // entirely (claude's own "omitClaudeMd") -- the memory index just below is UNAFFECTED (claude's
+      // own omission never touches memory).
+      if (input.omitProjectContext !== true) {
+        for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
+      }
       if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir, brand.instructionsFile));
+
+      // Spawn-surface parity (research §A3, scope item 3): the Agent-tool listing, LAST among the
+      // user-context blocks -- WINTER.md/the memory index are file content describing the project and
+      // the user's own accumulated context, which reads naturally before "here is what you can spawn
+      // right now"; nothing in R5-9/the seam's own ordering rule pins this one specifically, so this
+      // is a disclosed ordering choice, not a spec-pinned position the way "the moved dynamic block is
+      // FIRST" is. Absent `agentListing` (every pre-existing caller, and any turn where `Agent` is not
+      // advertised) contributes nothing -- see `SystemPromptInput.agentListing`'s own header for why
+      // that decision belongs to the caller, not this function.
+      //
+      // FULL EVERY TURN, plus the delta when the set moved (L2b integration). User-context blocks are
+      // re-attached to each turn's request and never enter history (the seam's own P1-B rule), so
+      // the pin's "list once, then deltas" -- which relies on its listing attachment staying in the
+      // transcript -- would leave every turn after the first with no listing at all here. The full
+      // block is therefore rendered whenever there is anything to list, and a changed set ADDS
+      // claude's "now available / no longer available" block beside it on the turn it changed.
+      // Review r2 finding 11 (whole-branch): wrapped in the SAME `<system-reminder>` wrapper every
+      // other harness-injected block in this file uses (memory.ts's `renderMemoryBlock`, winter-md.ts's
+      // discovered-instructions blocks) -- the tool's own description (`renderAgentToolDescription`)
+      // already SAYS the listing arrives this way ("announced in a runtime-injected reminder"), which
+      // was false until this fix (the block used to be pushed raw, an unlabelled, un-neutralized
+      // string). `systemReminder` both labels the block (so the model can tell harness-injected
+      // context from something the user typed) and neutralizes any literal `<system-reminder>`/
+      // `</system-reminder>` INSIDE it -- load-bearing here specifically because `renderAgentListing`'s
+      // own rows fold in a project/user/plugin file's `description` verbatim (whenToUse-capping,
+      // just above in engine.ts, bounds the LENGTH; this bounds the TAG-BREAKOUT risk the length cap
+      // does not touch at all).
+      const AGENT_LISTING_LABEL = "Agent-tool listing (injected by the runtime, not typed by the user):";
+      let agentListingTypes: string[] | undefined;
+      if (input.agentListing !== undefined) {
+        const full = renderAgentListing(input.agentListing.entries);
+        if (full.text !== undefined && input.agentListing.entries.length > 0) userContextBlocks.push(systemReminder(AGENT_LISTING_LABEL, full.text));
+        if (input.agentListing.priorAgentTypes !== undefined) {
+          const delta = renderAgentListing(input.agentListing.entries, input.agentListing.priorAgentTypes);
+          if (delta.text !== undefined) userContextBlocks.push(systemReminder(AGENT_LISTING_LABEL, delta.text));
+        }
+        agentListingTypes = full.agentTypes;
+      }
 
       // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,
       // not only on `resolveOutputStyle`'s return value -- which no host calls and no frame carries,
@@ -254,6 +304,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         userContextBlocks,
         ...(region.presetVersion !== undefined ? { presetVersion: region.presetVersion } : {}),
         ...(style?.replacementDowngraded === true ? { replacementDowngraded: true } : {}),
+        ...(agentListingTypes !== undefined ? { agentListingTypes } : {}),
       };
     },
   };

@@ -31,14 +31,30 @@ export type CreateWorkspaceResult = { ok: true; workspace: Workspace } | { ok: f
 // convention (WS-01 §2.4) with the child's own identity as the name, never a model-supplied string
 // (a child's own isolation worktree is not named BY the model the way EnterWorktree's `name` input
 // is).
-export async function createWorkspace(opts: { parentCwd: string; isolation?: "worktree"; agentId: string; brand?: Pick<BrandProfile, "projectDirName"> }): Promise<CreateWorkspaceResult> {
+export async function createWorkspace(opts: {
+  parentCwd: string;
+  isolation?: "worktree";
+  agentId: string;
+  brand?: Pick<BrandProfile, "projectDirName">;
+}): Promise<CreateWorkspaceResult> {
   if (opts.isolation === undefined) {
     return { ok: true, workspace: { root: opts.parentCwd, isolationType: "normal", cleanupPolicy: "keep" } };
   }
 
   const repoCheck = await runGit(["rev-parse", "--show-toplevel"], opts.parentCwd);
   if (!repoCheck.ok) {
-    return { ok: false, error: `isolation:"worktree" requires the session's cwd to be inside a git repository (${opts.parentCwd} is not: ${repoCheck.stderr})` };
+    // Review r2 finding 5 (whole-branch): REVERTED the "a configured WorktreeCreate hook counts as
+    // a valid non-git isolation path" branch this module used to have. Nothing in this codebase
+    // actually INVOKES a WorktreeCreate hook and adopts the root it creates (that requires a real
+    // `HookInvoker`, only reachable from inside `engine.ts`'s own closure) -- so the removed branch
+    // returned a "normal" workspace at the PARENT's own cwd whenever a hook was merely configured,
+    // silently widening every subsequent edit from an isolated worktree to the real tree. Refusing
+    // unconditionally here is the safe reading until a caller genuinely runs the hook and threads
+    // its resolved root through; claude's own wording stays exactly as before.
+    return {
+      ok: false,
+      error: `Cannot create agent worktree: not in a git repository and no WorktreeCreate hooks are configured. Configure WorktreeCreate/WorktreeRemove hooks in settings.json to use worktree isolation with other VCS systems. (${opts.parentCwd} is not a git repository: ${repoCheck.stderr})`,
+    };
   }
 
   const worktreesDir = join(opts.parentCwd, (opts.brand ?? WINTER_BRAND).projectDirName, "worktrees");

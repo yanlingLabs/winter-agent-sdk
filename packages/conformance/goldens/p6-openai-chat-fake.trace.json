@@ -58,7 +58,13 @@
       ],
       "output_style": "default",
       "skills": [],
-      "plugins": []
+      "plugins": [],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
+      ]
     }
   },
   {
@@ -96,7 +102,8 @@
           {
             "type": "tool_result",
             "tool_use_id": "call_p6",
-            "content": "Error: path not found: /winter-fixture"
+            "content": "Error: path not found: /winter-fixture",
+            "is_error": true
           }
         ]
       }

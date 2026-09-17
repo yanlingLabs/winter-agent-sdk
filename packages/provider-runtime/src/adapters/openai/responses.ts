@@ -54,6 +54,7 @@ import {
   type OpenAiAdapterOptions,
   type ReasoningPlan,
   type ResolvedEndpoint,
+  normalizedPromptUsage,
 } from "./shared.ts";
 
 export const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
@@ -393,11 +394,12 @@ export class ResponsesStreamMapper {
     if (usage !== null && typeof usage === "object") {
       const u = usage as { input_tokens?: unknown; output_tokens?: unknown; input_tokens_details?: unknown };
       const cached = u.input_tokens_details !== null && typeof u.input_tokens_details === "object" ? (u.input_tokens_details as { cached_tokens?: unknown }).cached_tokens : undefined;
+      // Review r1 finding 5: `input_tokens` is the TOTAL prompt and `cached_tokens` a subset of it;
+      // the seam's convention (types.ts) is Anthropic's -- non-cached input, cache read disjoint.
       events.push({
         type: "usage",
-        inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
+        ...normalizedPromptUsage(typeof u.input_tokens === "number" ? u.input_tokens : 0, typeof cached === "number" ? cached : undefined),
         outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
-        ...(typeof cached === "number" ? { cacheReadTokens: cached } : {}),
       });
     }
 

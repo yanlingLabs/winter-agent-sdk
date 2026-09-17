@@ -530,9 +530,8 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
   // already resolves those correctly via tool-name matching alone, without ever touching call.input.
   if (FILE_RULE_TOOLS.has(rule.toolName) && rule.specifier?.kind === "pattern") {
     if (rule.toolName !== call.toolName) return false; // literal match only — WS-07 never documents a globbed tool name for this family
-    // Task 8 (RULING P3-E): `fileRulePathField` -- WS-06's own pinned field name per tool
-    // (docs/superpowers/specs/winter/WS-06-tool-catalog.md:145,167,179: file_path for Read/Edit/
-    // Write, notebook_path for NotebookEdit) -- shared with edit-recognition.ts/
+    // Task 8 (RULING P3-E): `fileRulePathField` -- the pinned field name per tool (file_path for
+    // Read/Edit/Write, notebook_path for NotebookEdit) -- shared with edit-recognition.ts/
     // extractCandidateWritePaths so this dispatch can never drift from theirs.
     const rawPath = call.input[fileRulePathField(call.toolName)];
     // I1 (fix wave, P3 close-out): Glob/Grep's own `path` field is OPTIONAL on the call (absent ==

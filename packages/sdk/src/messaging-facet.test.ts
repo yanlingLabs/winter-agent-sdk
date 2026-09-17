@@ -108,7 +108,7 @@ async function runFacetSession(opts: {
         sessionId: SESSION_ID,
         allowedTools: ["Agent"],
         permissionMode: "default",
-        // The child's own `ReadNotifications` call has no matching rule under `default`, so it
+        // The child's own `ListAgents` call has no matching rule under `default`, so it
         // reaches this callback -- and the child is BLOCKED here, which is the observation the
         // running-child assertions need.
         canUseTool: async () => {

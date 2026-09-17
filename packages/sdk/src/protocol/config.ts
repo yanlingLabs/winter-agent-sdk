@@ -274,6 +274,48 @@ export interface RuntimeAgentDefinition {
   permissionMode?: string;
   observer?: string;
   observerMessage?: string;
+  // --- Spawn-surface parity (2026-09-17, WS-S2a) -- four Winter-own additive fields ----------------
+  //
+  // None of these is on the pinned `AgentDefinition` shape (derived-shapes item (d)'s own field
+  // table stops at `observerMessage`); every one follows the SAME precedent as `skills`/`memory`/
+  // `effort` above -- a Winter extension riding the one definition shape both a programmatic
+  // `Options.agents` entry AND a filesystem `agents/*.md` frontmatter file produce, so a consumer
+  // (subagents/definitions.ts's merge, the resolved child config) never has to reconcile two
+  // structurally-different "agent definition" types.
+  //
+  /**
+   * A filesystem/frontmatter agent's own `isolation` (research §A1's own field table: "also color,
+   * isolation (worktree|remote), background, memory, effort, permissionMode"). Mirrors the model-
+   * facing `Agent` tool's own `isolation` enum exactly -- a DEFINITION may pin the isolation a caller
+   * would otherwise choose per-invocation. Absent = no isolation preference from the definition
+   * (today: the invocation's own `isolation` field, if any, still governs -- wiring a definition's
+   * own value through spawn resolution is a later lane's job; this field only carries it now).
+   */
+  isolation?: "worktree" | "remote";
+  /**
+   * A filesystem/frontmatter agent's own display `color` (research §A1's field table, same entry as
+   * `isolation` above). Advisory/presentational only -- nothing in this package interprets it; a host
+   * UI (or a future Winter surface) may render an agent's rows in its own color.
+   */
+  color?: string;
+  /**
+   * The `claude` built-in's own shape (research §A1: "`appendSystemPrompt: true` (appended to the
+   * default prompt)"): when true, `prompt` is APPENDED to the session's own composed system prompt
+   * rather than replacing it the way every other definition's `prompt` does (WS-10 §2's "system
+   * prompt of the child", layered onto the base). Absent/false = the established replace-and-layer
+   * behavior every pre-existing definition already has.
+   */
+  appendSystemPrompt?: boolean;
+  /**
+   * The `Explore`/`Plan` built-ins' own shape (research §A1: "`omitClaudeMd: true`; context also
+   * drops gitStatus"). WINTER-NAMED rather than mirroring the pinned field's own product-specific
+   * spelling (WS-01 §5's own "rebrand, don't borrow the vendor's literal name" posture) -- but the
+   * BEHAVIOR is identical: when true, this agent's own context assembly omits the discovered
+   * project-instructions file (the brand's own instructions-file convention, `brand.instructionsFile`) and the git-status dynamic section
+   * from its system/user-context, the same two things claude's `omitClaudeMd` drops. Absent/false =
+   * every pre-existing definition's context, unchanged.
+   */
+  omitProjectContext?: boolean;
 }
 
 export interface RuntimeConfig {
@@ -380,6 +422,18 @@ export interface RuntimeConfig {
   // carrying them).
   agentId?: string;
   isolationPinnedCwd?: boolean;
+  /**
+   * Spawn-surface parity (R-S5): the fork gate -- `subagent_type: "fork"` is selectable (and the
+   * `fork` built-in is listed) only when this is `true`. `false` forces it off; ABSENT falls back to
+   * the `<PREFIX>FORK_SUBAGENT` env var (claude's own `CLAUDE_CODE_FORK_SUBAGENT` precedent), and
+   * absent-and-unset is OFF (a Winter session is non-interactive, like a headless SDK session).
+   */
+  forkSubagent?: boolean;
+  /**
+   * Spawn-surface parity (R-S5): set ONLY on the RuntimeConfig of a child that is itself a FORK --
+   * a forked worker may not fork again (claude's own refusal). Never set by `query()`.
+   */
+  insideFork?: boolean;
 
   // --- Phase 5 Task 2 (WS-11): the P5 session options' wire mirrors --------------------------------
   //
@@ -626,6 +680,22 @@ export interface ModelInfo {
   supportsAdaptiveThinking?: boolean;
   supportsFastMode?: boolean;
   supportsAutoMode?: boolean;
+}
+
+/**
+ * The pinned `AgentInfo` (0.3.250 `sdk.d.ts`: "Information about an available subagent that can be
+ * invoked via the Task/Agent tool"). Three fields, one required trio short of `ModelInfo`'s own
+ * richness -- `name`/`description` required, `model` optional ("Model alias this agent uses. If
+ * omitted, inherits the parent's model").
+ *
+ * Declared here for the identical structural reason `ModelInfo`/`AccountInfo` are: `Query.
+ * supportedAgents()` is on the sdk's public surface, the sdk package is dependency-free and
+ * fence-resident, and `packages/runtime` (which BUILDS the listing this feeds) is Bun-only.
+ */
+export interface AgentInfo {
+  name: string;
+  description: string;
+  model?: string;
 }
 
 /**

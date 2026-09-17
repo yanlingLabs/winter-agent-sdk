@@ -768,7 +768,10 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     // a partial accumulation. A stream that dies mid-turn reaches the `!finished` return above and
     // emits no native state at all.
     if (signatures.length > 0) yield { type: "native_state", items: signatures };
-    yield { type: "usage", inputTokens, outputTokens: candidatesTokens + thoughtsTokens, ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}) };
+    // Review r1 finding 5: `promptTokenCount` INCLUDES `cachedContentTokenCount` -- normalized to the
+    // seam's convention (types.ts): non-cached input, cache read disjoint, the sum counted once.
+    const cachedRead = cacheReadTokens === undefined ? undefined : Math.max(0, Math.min(cacheReadTokens, inputTokens));
+    yield { type: "usage", inputTokens: inputTokens - (cachedRead ?? 0), outputTokens: candidatesTokens + thoughtsTokens, ...(cachedRead !== undefined ? { cacheReadTokens: cachedRead } : {}) };
     yield { type: "done", stopReason };
   }
 

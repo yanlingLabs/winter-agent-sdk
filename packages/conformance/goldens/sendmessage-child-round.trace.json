@@ -48,7 +48,13 @@
       ],
       "output_style": "default",
       "skills": [],
-      "plugins": []
+      "plugins": [],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
+      ]
     }
   },
   {
@@ -75,6 +81,55 @@
   {
     "sequence": 2,
     "direction": "runtime-to-host",
+    "kind": "system/task_started",
+    "payload": {
+      "type": "system",
+      "subtype": "task_started",
+      "task_id": "TASKID_1",
+      "tool_use_id": "agent-call-1",
+      "description": "message target",
+      "subagent_type": "general-purpose",
+      "is_backgrounded": false,
+      "spawn_depth": 1,
+      "task_type": "local_agent",
+      "prompt": "child probe text"
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "system/task_updated",
+    "payload": {
+      "type": "system",
+      "subtype": "task_updated",
+      "task_id": "TASKID_1",
+      "patch": {
+        "status": "completed",
+        "end_time": "<end_time>"
+      }
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "system/task_notification",
+    "payload": {
+      "type": "system",
+      "subtype": "task_notification",
+      "task_id": "TASKID_1",
+      "tool_use_id": "agent-call-1",
+      "status": "completed",
+      "output_file": "/winter-fixture-tasks/TASKID_1.output",
+      "summary": "child finished",
+      "usage": {
+        "total_tokens": "<total_tokens>",
+        "tool_uses": 0
+      }
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
     "kind": "user",
     "payload": {
       "type": "user",
@@ -83,14 +138,14 @@
           {
             "type": "tool_result",
             "tool_use_id": "agent-call-1",
-            "content": "{\"agentId\":\"<scrubbed>\",\"content\":[{\"type\":\"text\",\"text\":\"child finished\"}],\"totalToolUseCount\":0,\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"winter-test/echo\",\"prompt\":\"child probe text\"}"
+            "content": "{\"agentId\":\"<scrubbed>\",\"agentType\":\"general-purpose\",\"content\":[{\"type\":\"text\",\"text\":\"child finished\"}],\"totalToolUseCount\":0,\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"winter-test/echo\",\"prompt\":\"child probe text\"}"
           }
         ]
       }
     }
   },
   {
-    "sequence": 3,
+    "sequence": 6,
     "direction": "runtime-to-host",
     "kind": "assistant",
     "payload": {
@@ -111,7 +166,7 @@
     }
   },
   {
-    "sequence": 4,
+    "sequence": 7,
     "direction": "runtime-to-host",
     "kind": "user",
     "payload": {
@@ -128,7 +183,7 @@
     }
   },
   {
-    "sequence": 5,
+    "sequence": 8,
     "direction": "runtime-to-host",
     "kind": "assistant",
     "payload": {
@@ -144,7 +199,7 @@
     }
   },
   {
-    "sequence": 6,
+    "sequence": 9,
     "direction": "runtime-to-host",
     "kind": "result",
     "payload": {

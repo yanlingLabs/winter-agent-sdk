@@ -91,6 +91,17 @@ export function resolveWorkspaceTrust(ctx?: { trustedWorkspace?: boolean }): boo
   return ctx?.trustedWorkspace === true;
 }
 
+/**
+ * Spawn-surface parity: the STAGE 2 kill switch alone, exported -- `tools/descriptors/agent.ts`'s
+ * own schema function (item 5) needs "is background disabled" to decide whether `run_in_background`
+ * is even in the advertised schema (research §A2: "DROPPED from the schema when background tasks are
+ * disabled"), without re-deriving this env read a second time or pulling in the rest of
+ * `resolveForegroundBackground`'s own five-stage chain.
+ */
+export function resolveBackgroundTasksDisabled(env: Record<string, string | undefined> = process.env, brand?: Pick<BrandProfile, "envPrefix">): boolean {
+  return isTruthyEnv(env[envName(brand ?? WINTER_BRAND, "DISABLE_BACKGROUND_TASKS")]);
+}
+
 export function resolveForegroundBackground(input: ResolveForegroundBackgroundInput): ForegroundBackgroundDecision {
   const env = input.env ?? process.env;
 
@@ -98,7 +109,7 @@ export function resolveForegroundBackground(input: ResolveForegroundBackgroundIn
 
   // Stage 2: hard kill switch.
   const killSwitch = envName(input.brand ?? WINTER_BRAND, "DISABLE_BACKGROUND_TASKS");
-  if (isTruthyEnv(env[killSwitch])) {
+  if (resolveBackgroundTasksDisabled(env, input.brand)) {
     return { background: false, reason: killSwitch };
   }
 

@@ -356,6 +356,12 @@ export interface Options {
   // text/thinking blocks as assistant/user messages carrying `parent_tool_use_id`, for a full nested
   // transcript. Absent/false preserves the pre-existing, already-shipped default behavior exactly.
   forwardSubagentText?: boolean;
+  /**
+   * Winter extension (spawn-surface parity R-S5): enables `subagent_type: "fork"` for this session.
+   * `true` on, `false` off; omitted = the runtime reads `WINTER_FORK_SUBAGENT` (claude's own
+   * `CLAUDE_CODE_FORK_SUBAGENT`), and is off when that is unset.
+   */
+  forkSubagent?: boolean;
 
   // Phase 4 Task 3 (WS-09 §5; derived-shapes-p4.md item (f) rendering 3): the host-side elicitation
   // callback -- "called when an MCP server requests user input and no [Elicitation] hook handles it."
