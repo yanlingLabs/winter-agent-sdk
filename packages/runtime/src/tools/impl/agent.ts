@@ -27,7 +27,7 @@ import { createBackgroundTask } from "../background-tasks.ts";
 // registry did not already have; the two were kept in lockstep by hand, which is exactly the
 // "per-tool literal" duplication the update/notify doors below exist to remove.
 import { startTracking, updateTask, getTask, removeTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
-import { loadAgentDefinitions, findAgentByType, formatAgentNotFound, formatAgentAmbiguous } from "../../subagents/definitions.ts";
+import { loadAgentDefinitions, findAgentByType, formatAgentNotFound, formatAgentAmbiguous, type SourcedAgentDefinition } from "../../subagents/definitions.ts";
 import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
 import { resolveForkSubagentEnabled } from "../../subagents/builtin-agents.ts";
@@ -394,21 +394,46 @@ export const agentExecutor: ToolExecutor = {
 
     // Research §A4/§A7: omitted -> general-purpose; a name resolves after normalization (exact match
     // first); a miss or an ambiguity refuses with claude's own wording and the available list.
+    //
+    // SDK 0.0.16 Lane P (R3b §4): `ctx.agentAvailability` (registry.ts) is this session's live
+    // Agent(type) deny / allowedAgentTypes / all-tools-denied verdict, built fresh by engine.ts per
+    // call. `avail === undefined` (every hand-built ToolExecutionContext in this package's own test
+    // files, and any host that never wires the seam) falls back to the PRE-EXISTING, unrestricted
+    // behavior byte-for-byte -- resolution always runs against the FULL `definitions` map either
+    // way (a denied/not-allowed type must still be resolvable BY NAME so its own refusal can name
+    // it, never a bare "not found" for a type that genuinely exists).
     let definition: RuntimeAgentDefinition | undefined;
     let subagentType: string;
+    let definitionSource: SourcedAgentDefinition["_source"] | undefined;
+    const avail = ctx.agentAvailability?.();
     if (requestedType === undefined) {
       const generalPurpose = definitions.get("general-purpose");
-      if (generalPurpose === undefined) {
-        const available = [...definitions.keys()].sort();
-        return refusal(`${OMITTED_TYPE_REQUIRED_PREFIX}. Available agents: ${available.length > 0 ? available.join(", ") : "none"}`);
+      // R3b §4: "the omitted-type default (general-purpose) applies only when it is allowed" --
+      // denied, not-allowed (allowedAgentTypes) and all-tools-denied all withhold the default
+      // exactly like an explicit request would.
+      const generalPurposeAvailable = generalPurpose !== undefined && (avail === undefined || avail.availableNames.includes("general-purpose"));
+      if (!generalPurposeAvailable) {
+        const available = avail?.availableNames ?? [...definitions.keys()];
+        return refusal(`${OMITTED_TYPE_REQUIRED_PREFIX}. Available agents: ${available.length > 0 ? [...available].sort().join(", ") : "none"}`);
       }
       definition = generalPurpose;
+      definitionSource = generalPurpose!._source;
       subagentType = "general-purpose";
     } else {
       const found = findAgentByType(definitions, requestedType);
-      if (found.kind === "not-found") return refusal(formatAgentNotFound(requestedType, [...definitions.keys()]));
+      if (found.kind === "not-found") return refusal(formatAgentNotFound(requestedType, avail?.availableNames ?? [...definitions.keys()]));
       if (found.kind === "ambiguous") return refusal(formatAgentAmbiguous(requestedType, found.matches));
+      // SDK 0.0.16 Lane P (R3b §4): a resolved type may EXIST in the full definitions map but be
+      // unavailable right now -- either a per-type deny rule or "every tool it may use is denied"
+      // (both carry their own exact claude-shaped prose, `unavailableMessage`), or simply excluded
+      // from `allowedAgentTypes` (claude reuses the plain not-found shape for THAT case -- an
+      // out-of-scope name reads exactly like an unknown one, and "Available agents" lists only
+      // what is actually in scope -- `avail.availableNames`, never the full universe).
+      const unavailable = avail?.unavailableMessage(found.name);
+      if (unavailable !== undefined) return refusal(unavailable);
+      if (avail !== undefined && !avail.availableNames.includes(found.name)) return refusal(formatAgentNotFound(requestedType, avail.availableNames));
       definition = found.definition;
+      definitionSource = found.definition._source;
       subagentType = found.name;
     }
 
@@ -492,6 +517,10 @@ export const agentExecutor: ToolExecutor = {
       ...(model !== undefined && !isFork ? { model } : {}),
       ...(resolvedIsolation !== undefined ? { isolation: resolvedIsolation } : {}),
       ...(name !== undefined ? { name } : {}),
+      // SDK 0.0.16 Lane P (R3b §5): see SpawnChildRequest.builtinAgentType's own header -- this is
+      // the one channel engine.ts's `resolveChildModel` has for telling "this child IS the built-in
+      // Explore" (the Explore model cap) from "this child is merely named 'Explore'".
+      ...(definitionSource === "builtin" ? { builtinAgentType: subagentType } : {}),
       onSpawned: register,
       onProgress: (progress) => {
         // Review r1 finding 3: a RESUMED child (SendMessage) runs a new generation under the same

@@ -358,6 +358,31 @@ export interface ToolExecutionContext {
    * read the task's output file at all (`Read`/`Bash` present). A getter: the set can move mid-run.
    */
   advertisedToolNames?: () => readonly string[];
+  /**
+   * SDK 0.0.16 Lane P (R3b §4): this session's live Agent-type availability -- `Agent(type)` deny
+   * rules, `allowedAgentTypes`, and "every tool it may use is denied" -- built fresh per call
+   * (never cached) so a live rule/settings change is reflected without a restart, mirroring
+   * `probeReadAccess`'s own "cheap, side-effect-free, re-derived per call" precedent.
+   * `tools/impl/agent.ts` is the one consumer: it resolves a requested `subagent_type` against the
+   * FULL definitions map (a denied/not-allowed type still names itself in the refusal, never a bare
+   * "not found"), then asks this closure whether the resolved name is available right now and why
+   * not. Structurally typed (no `SourcedRuleEntry`/evaluator.ts import here, matching this
+   * interface's own `onAgentDefinitionRejected` precedent immediately above) -- engine.ts builds
+   * both the name list and the per-type message from its own `permissions/evaluator.ts` +
+   * `subagents/availability.ts` imports, and hands this seam only the already-formatted result.
+   */
+  agentAvailability?: () => {
+    /** Names available right now -- deny rules, allowedAgentTypes and all-tools-denied already applied. Used for "Available agents: ..." refusal text and the omitted-type default's own availability check. */
+    availableNames: readonly string[];
+    /**
+     * Exact refusal prose for a type that EXISTS in the full definitions map but is refused for a
+     * reason OTHER than `allowedAgentTypes` (a per-type deny rule, or "every tool it may use is
+     * denied") -- `undefined` when neither applies (including when the type does not exist at all,
+     * or is merely excluded by `allowedAgentTypes` -- claude reuses the plain not-found shape for
+     * that case, built by the caller from `availableNames` above).
+     */
+    unavailableMessage: (agentType: string) => string | undefined;
+  };
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
