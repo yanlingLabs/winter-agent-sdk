@@ -106,6 +106,13 @@ export interface BackgroundTaskHandle {
    * pin's own `killShellTasksForAgent` on agent exit).
    */
   ownerAgentId?: string;
+  /**
+   * Contract §1's `ambient` (a row that runs for the session rather than for a request). NOTHING sets
+   * it today -- it exists because the print-mode background WAIT excludes an ambient `monitor_ws` row
+   * (claude's own `Mtn`), and a filter written against a field nobody can set would be a filter that
+   * silently means nothing the day someone does set it.
+   */
+  ambient?: boolean;
 }
 
 export interface TaskUsage {
@@ -139,6 +146,7 @@ export interface StartTrackingInput {
   emitter?: TaskFrameEmitter;
   usage?: () => TaskUsage | undefined;
   ownerAgentId?: string;
+  ambient?: boolean;
 }
 
 // §1's register(): "emits task_started unless the id is already registered and non-terminal (a
@@ -603,6 +611,42 @@ export function stopSessionShellTasks(owner: { sessionId: string; agentId?: stri
     }
   }
   return stopped;
+}
+
+/**
+ * SDK 0.0.16 Lane N: every still-running BACKGROUND row of one session (foreground rows excluded, as
+ * everywhere else). This is what a closed-input session waits on before it tears down -- the pin's own
+ * `sge(appState).filter(kf && …)`. An AMBIENT `monitor_ws` row is excluded: it runs for the session,
+ * not for a request, so waiting on it would mean never exiting (claude's `Mtn`).
+ */
+export function listSessionRunningTasks(owner: { sessionId: string; agentId?: string }): readonly BackgroundTaskHandle[] {
+  return listRunningTasks().filter((task) => {
+    if (task.emitter?.sessionId !== owner.sessionId) return false;
+    if (owner.agentId !== undefined && task.ownerAgentId !== owner.agentId) return false;
+    if (task.kind === "monitor_ws" && task.ambient === true) return false;
+    return true;
+  });
+}
+
+/**
+ * Lane N: the print-mode WIND-DOWN sweep (claude's `$u`), reached only after the wait ceiling and its
+ * grace have both passed. Unlike `stopSessionShellTasks` (the teardown door, shells only) this covers
+ * EVERY kind: a shell is killed, and an agent/workflow row is finalized as stopped -- which, through
+ * the one update door, both emits its `task_updated`/`task_notification` pair and enqueues the
+ * model-facing "was stopped" document the pin sends in exactly this situation. Returns the ids swept.
+ */
+export function sweepSessionBackgroundTasks(owner: { sessionId: string; agentId?: string }): string[] {
+  const swept: string[] = [];
+  for (const task of listSessionRunningTasks(owner)) {
+    try {
+      updateTask(task.taskId, { status: "stopped", endTime: Date.now(), notification: { summary: killedTaskSummary(task.kind, task.description) } });
+      stopTask(task.taskId);
+      swept.push(task.taskId);
+    } catch {
+      /* one misbehaving row must never strand the rest of the sweep */
+    }
+  }
+  return swept;
 }
 
 // Test-only escape hatch, same rationale as background-tasks.ts's own resetBackgroundTaskRootForTest:

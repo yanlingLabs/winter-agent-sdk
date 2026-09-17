@@ -4532,16 +4532,29 @@ describe("Task-frames parity §7: the Notification hook fires only for a backgro
 });
 
 // Review r1 finding 2 (controller ruling): a background shell survives the turn but not the session.
-describe("engine teardown stops this session's background shells (review r1 finding 2)", () => {
-  test.skipIf(process.platform !== "darwin")("a still-running run_in_background command is killed at teardown: task_updated {killed} + the kill-worded notification, before the stream ends", async () => {
+//
+// SDK 0.0.16 Lane N CHANGED WHEN: a CLOSED-INPUT session no longer tears down the instant its turn
+// ends -- it waits for its background work (that is the whole point of the wind-down), so a live
+// background shell is now ended by the WIND-DOWN SWEEP after its 5 s grace rather than by the final
+// teardown a few milliseconds after the result. The frames are the same and in the same order; only
+// the clock moved. This test's own pass used to depend on that race (its `cwd: "/tmp/x"` does not
+// exist, so `sleep 30` failed at spawn and teardown merely got there first, reporting a kill for a
+// command that had already failed) -- hence the real cwd below: with a shell that genuinely runs, the
+// sweep is what ends it, which is what the contract has always claimed.
+describe("a closed-input session ends this session's background shells before it returns (review r1 finding 2)", () => {
+  test.skipIf(process.platform !== "darwin")("a still-running run_in_background command is killed by the wind-down: task_updated {killed} + the kill-worded notification, before the stream ends", async () => {
     resetBackgroundTaskRuntimeForTest();
+    const shellCwd = mkdtempSync(join(tmpdir(), "winter-teardown-shell-"));
     try {
       const { host, runtime } = createInMemoryChannel();
       const provider = scriptedProvider([
         { kind: "tool_use", calls: [{ id: "bg-bash-1", name: "Bash", input: { command: "sleep 30", description: "teardown probe", run_in_background: true } }] },
         { kind: "text", text: "started" },
+        // Lane N: the sweep's own "was stopped" notification reaches the MODEL as an unsolicited turn,
+        // so the wind-down runs one more generation before the session ends.
+        { kind: "text", text: "noted" },
       ]);
-      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const config = baseConfig({ cwd: shellCwd, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
       const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
       host.output.write({ type: "user", text: "go" });
       host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
@@ -4563,6 +4576,7 @@ describe("engine teardown stops this session's background shells (review r1 find
       expect((changed.at(-1)!.m as unknown as { tasks: Array<{ task_id: string }> }).tasks.map((t) => t.task_id)).not.toContain(started!.task_id);
     } finally {
       resetBackgroundTaskRuntimeForTest();
+      rmSync(shellCwd, { recursive: true, force: true });
     }
   }, 20_000);
 });

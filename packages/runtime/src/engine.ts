@@ -267,7 +267,7 @@ import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
 // task's own notification apart from a background one -- see the `emitFrame` closure below for why.
-import { getTask, stopSessionShellTasks, listRunningTasks, toBackgroundTasksChangedEntry } from "./tools/impl/background-task-runtime.ts";
+import { getTask, stopSessionShellTasks, listSessionRunningTasks, sweepSessionBackgroundTasks, listRunningTasks, toBackgroundTasksChangedEntry } from "./tools/impl/background-task-runtime.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
@@ -4069,19 +4069,202 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(next.taskId !== undefined ? { taskNotificationTaskId: next.taskId } : {}),
     });
   }
-  const disposeNotificationEndpoint = notifications.registerEndpoint(config.agentId, () => pumpNotifications());
+  const disposeNotificationEndpoint = notifications.registerEndpoint(config.agentId, () => {
+    pumpNotifications();
+    signalBackgroundWait();
+  });
   /** True once the host has closed its input (`end_input`, or the pump reaching EOF). */
   let inputClosed = false;
   /**
-   * The ONE door "no more host envelopes" goes through. It exists because ending `userFrames`
-   * IMMEDIATELY is the wrong answer for a `-p`-style session with background work still running: the
-   * turn loop would exit, teardown would sweep the children, and their notifications would never
-   * reach the model. See `runBackgroundWait` for what the deferral does instead.
+   * SDK 0.0.16 Lane N, the INPUT-CLOSED HOLD (R3a §1, ruling P16-3's second half).
+   *
+   * A streaming-input host (the daemon) never holds anything: every turn's `result` goes out the
+   * moment the turn ends, and a later completion arrives as its own unsolicited turn. A `-p`-style
+   * host has no later -- it closes its input with the prompt, so the instant the turn ends there is
+   * nowhere for a background completion to go. claude's answer, ported here:
+   *
+   *   * the turn's `result` is HELD while a background agent or workflow is still running, or while a
+   *     notification is still queued (`holdBackActive`, the pin's `xu`/`Qo`);
+   *   * `userFrames` does NOT end -- `runBackgroundWait` keeps the turn loop alive, so each queued
+   *     notification still gets its own turn, with its own held result;
+   *   * a ceiling (default 600 s, `0` = wait forever) then a 5 s grace then a SWEEP kills what is left
+   *     and notifies the model that it was stopped;
+   *   * the held results flush after the loop, re-stamped with the session's totals, and only then
+   *     does teardown run.
+   */
+  // `Extract<SdkMessage, {type:"result"}>` carries an index signature, which makes `Omit<…>` over it
+  // collapse every named property -- so `finalResult`'s own type cannot be spread into this shape
+  // without a cast at the two call sites. The cast is honest: the object IS this message.
+  type TurnResultMessage = Extract<SdkMessage, { type: "result" }>;
+  const heldResults: TurnResultMessage[] = [];
+  /** claude's `ia`: the grace between arming the wind-down and actually sweeping. */
+  const BG_WAIT_GRACE_MS = 5_000;
+  /** claude's `Vp`. `0` means "wait indefinitely". */
+  const BG_WAIT_CEILING_DEFAULT_MS = 600_000;
+  const BG_WAIT_POLL_MS = 100;
+  const backgroundWaitCeilingMs = (): number => {
+    const raw = (engineEnv ?? process.env)[envName(sessionBrand, "PRINT_BG_WAIT_CEILING_MS")];
+    if (raw === undefined || raw.trim() === "") return BG_WAIT_CEILING_DEFAULT_MS;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : BG_WAIT_CEILING_DEFAULT_MS;
+  };
+  const sessionOwner = (): { sessionId: string; agentId?: string } => ({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
+  /** Every background row this session is still waiting on (ambient ws monitors excluded -- see the registry). */
+  const runningBackgroundTasks = (): readonly { kind: string }[] => listSessionRunningTasks(sessionOwner());
+  /**
+   * claude's `xM`: the kinds whose completion is worth HOLDING a result for. A background shell does
+   * not hold one (the model was told where its output file is); an agent or a workflow does, because
+   * its whole result is the notification that has not been delivered yet.
+   */
+  const holdingTasksRunning = (): boolean => runningBackgroundTasks().some((t) => t.kind === "agent" || t.kind === "workflow");
+  /**
+   * claude's `xu` OR `Qo`. The second disjunct is "a terminal agent notification has not been
+   * delivered": in Winter the enqueue is SYNCHRONOUS with the terminal transition, so a pending queue
+   * entry is exactly that condition and the pin's 60 s "terminal but never enqueued" expiry has
+   * nothing to guard (named simplification).
+   */
+  const holdBackActive = (): boolean => inputClosed && config.agentId === undefined && (holdingTasksRunning() || notifications.peekMain() !== undefined);
+  const flushHeldResults = (): void => {
+    if (heldResults.length === 0) return;
+    // Re-stamped at FLUSH with `costFields()`, which is the session-cumulative ledger -- the pin
+    // re-stamps a held result with the session's own totals for the same reason: by the time it goes
+    // out, "this turn's cost" is no longer what the caller is being told.
+    for (const message of heldResults.splice(0)) output.write({ type: "data", message: { ...message, ...costFields() } });
+  };
+  /** claude's `hl`: a result that is NOT held flushes everything held before it, then itself. */
+  const writeTurnResult = (message: TurnResultMessage): void => {
+    if (holdBackActive()) {
+      heldResults.push(message);
+      return;
+    }
+    flushHeldResults();
+    output.write({ type: "data", message: { ...message, ...costFields() } });
+  };
+  /** Set when a turn ends interrupted -- claude's `Fu` reads it to decide whether to stop background agents. */
+  let lastTurnInterrupted = false;
+  /**
+   * SDK 0.0.16 Lane N, `session_state_changed` (frames.ts's own `SDKSessionStateChangedMessage`).
+   * ENV-GATED exactly as the pin gates it (`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`): a default
+   * session's frame stream does not change at all, which is also what keeps every golden and every
+   * differential frame-sequence comparison byte-identical.
+   */
+  // Same truthiness rule every other Winter env gate in this repo uses (`1`/`true`, nothing else).
+  const sessionStateEnv = (engineEnv ?? process.env)[envName(sessionBrand, "EMIT_SESSION_STATE_EVENTS")];
+  const sessionStateEventsEnabled = sessionStateEnv === "1" || sessionStateEnv === "true";
+  let sessionStateReported: "idle" | "running" = "idle";
+  const emitSessionState = (state: "idle" | "running"): void => {
+    if (!sessionStateEventsEnabled || sessionStateReported === state) return;
+    sessionStateReported = state;
+    try {
+      output.write({ type: "data", message: { type: "system", subtype: "session_state_changed", state, uuid: randomUUID(), session_id: config.sessionId } });
+    } catch {
+      /* a closed sink must never fail a state transition */
+    }
+  };
+  /** Counts completed turns, so the ceiling clock can restart whenever the wait actually made progress. */
+  let turnsCompleted = 0;
+  let backgroundWaitRunning = false;
+  /** The `turnsCompleted` value the ceiling clock was last reset at (claude resets `Be` whenever a command ran). */
+  let ceilingClockTurns = 0;
+  /**
+   * Wakes the wait loop out of its poll sleep. The pin polls at a flat 100 ms because ITS loop is the
+   * turn runner and therefore observes a turn ending directly; Winter's wait is a separate loop beside
+   * the turn loop, so without this signal "the last turn just ended and nothing is running" would cost
+   * a full poll interval of pure latency on EVERY closed-input session -- teardown would get slower for
+   * every host, to no one's benefit.
+   */
+  let wakeBackgroundWait: (() => void) | undefined;
+  const signalBackgroundWait = (): void => {
+    const wake = wakeBackgroundWait;
+    wakeBackgroundWait = undefined;
+    wake?.();
+  };
+
+  /**
+   * The wait loop (claude's print-mode do/while). Runs ONLY on the top-level engine: a child engine is
+   * torn down by its wrapper the moment it produces a result, so deferring its `userFrames.end()`
+   * would strand the engine and the parent call awaiting it.
+   */
+  async function runBackgroundWait(): Promise<void> {
+    if (backgroundWaitRunning) return;
+    backgroundWaitRunning = true;
+    let swept = false;
+    let sweepDeadline: number | null = null;
+    let ceilingClockStartedAt: number | null = null;
+    let ceilingAnnounced = false;
+    try {
+      for (;;) {
+        pumpNotifications();
+        // An interrupted turn stops the wait outright (the pin's own `!aborted` guard on the wait
+        // branch): the caller asked for the session to end, not for more background work.
+        if (lastTurnInterrupted) break;
+        const running = runningBackgroundTasks();
+        const queued = notifications.peekMain() !== undefined;
+        if (!turnActive && !queued && running.length === 0) break;
+        const now = Date.now();
+        const ceiling = backgroundWaitCeilingMs();
+        // claude's `Be`: the clock runs only while the wait is making no progress -- a turn that ran,
+        // or a command still queued, restarts it.
+        const progressing = turnActive || queued || turnsCompleted !== ceilingClockTurns;
+        if (progressing) {
+          ceilingClockStartedAt = null;
+          ceilingClockTurns = turnsCompleted;
+        } else if (ceilingClockStartedAt === null) {
+          ceilingClockStartedAt = now;
+        }
+        const ceilingExceeded = ceiling > 0 && ceilingClockStartedAt !== null && now - ceilingClockStartedAt >= ceiling;
+        // claude's `ju`: the wind-down arms only when nothing model-facing is pending -- either the
+        // ceiling blew, or the only thing left running is work whose result the model does not need.
+        const armed = !queued && running.length > 0 && (ceilingExceeded || !holdingTasksRunning());
+        if (!armed) sweepDeadline = null;
+        else if (sweepDeadline === null) sweepDeadline = ceilingExceeded ? now : now + BG_WAIT_GRACE_MS;
+        if (armed && !swept && sweepDeadline !== null && now >= sweepDeadline) {
+          if (ceilingExceeded && !ceilingAnnounced) {
+            ceilingAnnounced = true;
+            try {
+              process.stderr.write(`Background tasks still running after ${Math.round(ceiling / 1000)}s; terminating. Set ${envName(sessionBrand, "PRINT_BG_WAIT_CEILING_MS")}=0 to wait indefinitely.\n`);
+            } catch {
+              /* a closed stderr must never fail the wind-down */
+            }
+          }
+          swept = true;
+          // The sweep's own notifications are queued, so the loop runs once more and delivers them as
+          // a final turn -- the pin's `ae` stays true for exactly that reason.
+          sweepSessionBackgroundTasks(sessionOwner());
+          try {
+            output.write({ type: "data", message: { type: "system", subtype: "background_tasks_changed", tasks: listRunningTasks().map(toBackgroundTasksChangedEntry), uuid: randomUUID(), session_id: config.sessionId } });
+          } catch {
+            /* a closed sink during wind-down is not an error */
+          }
+          continue;
+        }
+        await new Promise<void>((resolve) => {
+          wakeBackgroundWait = resolve;
+          const timer = setTimeout(resolve, BG_WAIT_POLL_MS);
+          if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as { unref: () => void }).unref();
+        });
+      }
+    } finally {
+      backgroundWaitRunning = false;
+      endUserFrames();
+    }
+  }
+
+  /**
+   * The ONE door "no more host envelopes" goes through. Ending `userFrames` immediately is the wrong
+   * answer for a closed-input session with background work still running: the turn loop would exit,
+   * teardown would sweep the children, and their completions would never reach the model.
    */
   function requestInputEnd(): void {
     if (inputClosed) return;
     inputClosed = true;
-    endUserFrames();
+    // A child engine never waits (see `runBackgroundWait`), and a session with nothing running has
+    // nothing to wait for -- both end their input exactly as before this lane.
+    if (config.agentId !== undefined) {
+      endUserFrames();
+      return;
+    }
+    void runBackgroundWait();
   }
 
   // Non-null exactly while a turn is turn_active; the pump calls it (a no-op while idle) when an
@@ -5728,6 +5911,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // meta flag on the persisted envelope, and which anti-injection preamble a MID-turn notification
     // gets (`scanAttachments`).
     turnActive = true;
+    emitSessionState("running");
     turnStartedByNotification = (userFrame as { taskNotification?: unknown }).taskNotification === true;
     if (turnStartedByNotification) {
       // Captured from the pinned binary: an unsolicited turn opens with its own `system/init`, then
@@ -6674,13 +6858,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // so the envelope's terminal result is the one place the id can travel. CONDITIONAL on
       // checkpointing being enabled, so every pre-P5 golden trace stays byte-identical. Disclosed as
       // a Winter-defined discovery channel.
-      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}), ...costFields() } });
+      // Lane N: the ONE terminal-result door. `costFields()` is stamped INSIDE it -- at write time, not
+      // here -- because a HELD result is re-stamped with the session totals when it finally flushes.
+      writeTurnResult({ ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } as TurnResultMessage);
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials, ...costFields() } });
+      lastTurnInterrupted = true;
+      writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials });
     }
     // Fix r1 (M1): the messaging facet's own quiescent boundary, fired on BOTH branches. It used to
     // sit inside the success arm beside `emitNotification("idle", ...)`, which is also success-only --
@@ -6694,8 +6881,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // one per turn, in queue order.
     turnActive = false;
     turnStartedByNotification = false;
+    turnsCompleted++;
     pumpNotifications();
+    signalBackgroundWait();
+    // claude's `Lu`: a session whose input is still OPEN is idle the moment its turn ends. With the
+    // input closed the authoritative `idle` waits for the held flush and the wind-down (below), which
+    // is what the pin's own doc comment on this frame calls "the authoritative turn-over signal".
+    if (!inputClosed && !turnActive) emitSessionState("idle");
   }
+
+  // SDK 0.0.16 Lane N: the turn loop has drained, so the wait (if any) is over -- flush what was held.
+  //
+  // ORDER: stop background agents FIRST when the wait ended on an INTERRUPT with results still held
+  // (claude's `Fu` -> `SV`): the caller asked for the session to end, and a background child that
+  // outlived it would keep burning tokens with nobody reading its result. Then the held results go
+  // out, re-stamped with the session's totals, and only then does the ordinary teardown below run --
+  // which is what makes "the model was told about its background work" true before the sweep.
+  if (heldResults.length > 0 && lastTurnInterrupted) {
+    await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+  }
+  flushHeldResults();
+  emitSessionState("idle");
 
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "teardown" — fired HERE, after the turn loop has
   // fully drained but strictly BEFORE `stopReading()` below, so the pump (still alive at this exact

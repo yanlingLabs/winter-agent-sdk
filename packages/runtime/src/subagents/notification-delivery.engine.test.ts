@@ -10,6 +10,7 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type ContentBlock, type EngineOptions, type ProviderMessage, type ProviderRequest, type ProviderTurn, type UserEntryMeta } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { clearNotificationQueue, enqueueTaskNotification, notificationQueueFor, renderAgentNotification, NOTIFICATION_PREAMBLE, NOTIFICATION_PREAMBLE_IN_HUMAN_TURN } from "./notification-queue.ts";
+import { startTracking, updateTask, getTask, resetBackgroundTaskRuntimeForTest } from "../tools/impl/background-task-runtime.ts";
 
 let cwd: string;
 beforeEach(() => {
@@ -261,5 +262,214 @@ describe("between-turn delivery (the unsolicited turn)", () => {
     // holds no reference to the finished engine.
     expect(notificationQueueFor(sessionId).size()).toBe(1);
     clearNotificationQueue(sessionId);
+  });
+});
+
+// --- the INPUT-CLOSED hold (R3a §1 / P16-3's second half) ------------------------------------------
+//
+// A `-p`-style host closes its input with the prompt, so the instant the turn ends there is nowhere
+// for a background completion to go. These scenarios drive that shape directly: the host writes its
+// prompt and `end_input` back to back, exactly as `query()` does for a string prompt.
+describe("the input-closed hold", () => {
+  /**
+   * Registers a real background row for `sessionId`, as the Agent tool's own spawn path does, and
+   * returns the frames ITS OWN emitter receives -- the registry emits a row's frames through the
+   * emitter the row was registered with (the tool's `ctx.emitFrame`), never through the engine, so
+   * this array is where a swept row's `task_updated`/`task_notification` actually shows up.
+   */
+  function registerBackgroundRow(sessionId: string, taskId: string, kind: "agent" | "bash"): Array<Record<string, unknown>> {
+    const frames: Array<Record<string, unknown>> = [];
+    startTracking({ taskId, kind, outputPath: join(cwd, `${taskId}.output`), description: `${kind} probe`, isBackgrounded: true, toolUseId: "toolu_spawn", emitter: { emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>), sessionId } });
+    return frames;
+  }
+
+  async function driveClosedInput(opts: {
+    sessionId: string;
+    script: (req: ProviderRequest, index: number) => ProviderTurn;
+    onFirstResultPending?: () => void | Promise<void>;
+    env?: Record<string, string | undefined>;
+    /** Called once the engine has written its first ASSISTANT frame (i.e. the turn is under way). */
+    afterFirstAssistant?: () => void | Promise<void>;
+  }): Promise<{ frames: WinterFrame[]; kinds: string[] }> {
+    const frames: WinterFrame[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: { sessionId: opts.sessionId, cwd, model: "winter-test/notify", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+      input: runtime.input,
+      output: runtime.output,
+      provider: {
+        async generate(req) {
+          return opts.script(req, frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "assistant").length);
+        },
+      },
+      tools: stubExecutor,
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
+    });
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    if (opts.afterFirstAssistant !== undefined) {
+      for (let n = 0; n < 400 && frameKinds(frames).filter((k) => k === "assistant").length === 0; n++) await new Promise((r) => setTimeout(r, 5));
+      await opts.afterFirstAssistant();
+    }
+    await done;
+    await reader;
+    return { frames, kinds: frameKinds(frames) };
+  }
+
+  test("the turn's result is HELD while a background agent runs, and flushes with the notification turn's own", async () => {
+    const sessionId = "notify-hold";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    registerBackgroundRow(sessionId, "held-task", "agent");
+    const { kinds } = await driveClosedInput({
+      sessionId,
+      script: () => ({ kind: "text", text: "ok" }),
+      afterFirstAssistant: async () => {
+        // The child finishes a beat later -- while the turn's result is being withheld.
+        await new Promise((r) => setTimeout(r, 60));
+        updateTask("held-task", {
+          status: "completed",
+          endTime: Date.now(),
+          notification: { summary: "the child's report", modelNotification: renderAgentNotification({ taskId: "held-task", description: "agent probe", status: "completed", finalMessage: "found it" }) },
+        });
+      },
+    });
+    // The notification's own turn (init + assistant) happens BEFORE either result reaches the wire:
+    // that is what "held" means. Then both results flush, oldest first.
+    expect(kinds.filter((k) => k === "result")).toHaveLength(2);
+    const firstResult = kinds.indexOf("result");
+    expect(kinds.lastIndexOf("system:init")).toBeLessThan(firstResult);
+    expect(kinds.slice(firstResult)).toEqual(["result", "result"]);
+    resetBackgroundTaskRuntimeForTest();
+    clearNotificationQueue(sessionId);
+  });
+
+  test("with nothing running, a closed-input session holds nothing at all", async () => {
+    const sessionId = "notify-nohold";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    const { kinds } = await driveClosedInput({ sessionId, script: () => ({ kind: "text", text: "ok" }) });
+    expect(kinds).toEqual(["system:init", "assistant", "result"]);
+    clearNotificationQueue(sessionId);
+  });
+
+  test("the CEILING sweeps immediately (no grace) and tells the model the task was stopped", async () => {
+    const sessionId = "notify-ceiling";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    const rowFrames = registerBackgroundRow(sessionId, "ceiling-task", "agent");
+    const { kinds } = await driveClosedInput({
+      sessionId,
+      // 1 ms: the wait makes no progress once the turn ends, so the ceiling blows on the next poll and
+      // the pin's own "deadline = now" branch sweeps without waiting out the 5 s grace.
+      env: { WINTER_PRINT_BG_WAIT_CEILING_MS: "1" },
+      script: () => ({ kind: "text", text: "ok" }),
+    });
+    const notification = rowFrames.find((f) => f["subtype"] === "task_notification");
+    // `killedTaskSummary`'s own agent wording -- the same text the child's own settle reports.
+    expect(notification).toMatchObject({ task_id: "ceiling-task", status: "stopped", summary: "stopped by request" });
+    // ...and the swept row's notification reached the MODEL as its own turn before the session ended.
+    expect(kinds.filter((k) => k === "result")).toHaveLength(2);
+    expect(getTask("ceiling-task")?.status).toBe("stopped");
+    resetBackgroundTaskRuntimeForTest();
+    clearNotificationQueue(sessionId);
+  });
+
+  test("a ceiling of 0 means wait indefinitely -- the task's own completion is what ends the session", async () => {
+    const sessionId = "notify-ceiling-zero";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    registerBackgroundRow(sessionId, "zero-task", "agent");
+    const { kinds } = await driveClosedInput({
+      sessionId,
+      env: { WINTER_PRINT_BG_WAIT_CEILING_MS: "0" },
+      script: () => ({ kind: "text", text: "ok" }),
+      afterFirstAssistant: async () => {
+        await new Promise((r) => setTimeout(r, 250)); // far past any ceiling a non-zero value would give
+        updateTask("zero-task", { status: "completed", endTime: Date.now(), notification: { summary: "done", modelNotification: renderAgentNotification({ taskId: "zero-task", description: "agent probe", status: "completed" }) } });
+      },
+    });
+    expect(getTask("zero-task")?.status).toBe("completed"); // never swept
+    expect(kinds.filter((k) => k === "result")).toHaveLength(2);
+    resetBackgroundTaskRuntimeForTest();
+    clearNotificationQueue(sessionId);
+  });
+
+  test("an INTERRUPT while a result is held ends the wait, flushes the held result, and stops nothing it does not own", async () => {
+    const sessionId = "notify-abort";
+    clearNotificationQueue(sessionId);
+    resetBackgroundTaskRuntimeForTest();
+    registerBackgroundRow(sessionId, "abort-task", "agent");
+    const frames: WinterFrame[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    // Never resolved: the interrupt is what ends this turn, which is the only way `lastTurnInterrupted`
+    // is ever true. (A provider that resolves first produces an ordinary completed turn, and the
+    // session then waits for its background agent exactly as the scenarios above do.)
+    const blocked = new Promise<void>(() => {});
+    const done = runEngine({
+      config: { sessionId, cwd, model: "winter-test/notify", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+      input: runtime.input,
+      output: runtime.output,
+      provider: {
+        async generate() {
+          await blocked; // the turn is still running when the interrupt lands
+          return { kind: "text", text: "ok" };
+        },
+      },
+      tools: stubExecutor,
+    });
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await new Promise((r) => setTimeout(r, 30));
+    host.output.write({ type: "control_request", requestId: "int", subtype: "interrupt", payload: undefined });
+    await done;
+    await reader;
+    // The interrupted turn's result still reaches the host -- a held result is never a LOST result --
+    // and the session returns instead of waiting out its (still-running) background agent.
+    const kinds = frameKinds(frames);
+    expect(kinds.filter((k) => k === "result")).toHaveLength(1);
+    expect(kinds.at(-1)).toBe("result");
+    expect(getTask("abort-task")?.status).toBe("running"); // the wait ended; the sweep never armed
+    resetBackgroundTaskRuntimeForTest();
+    clearNotificationQueue(sessionId);
+  });
+});
+
+// --- session_state_changed (env-gated, exactly as the pin gates it) --------------------------------
+describe("session_state_changed", () => {
+  async function stateFrames(env?: Record<string, string | undefined>): Promise<string[]> {
+    const frames: WinterFrame[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: { sessionId: `state-${Math.random().toString(36).slice(2)}`, cwd, model: "winter-test/notify" },
+      input: runtime.input,
+      output: runtime.output,
+      provider: { generate: async () => ({ kind: "text", text: "ok" }) },
+      tools: stubExecutor,
+      ...(env !== undefined ? { env } : {}),
+    });
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    host.output.write({ type: "user", text: "go" });
+    for (let n = 0; n < 400 && frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length === 0; n++) await new Promise((r) => setTimeout(r, 5));
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await done;
+    await reader;
+    return frames.filter((f) => f.type === "data" && (f as { message: { subtype?: string } }).message.subtype === "session_state_changed").map((f) => String((f as { message: { state: string } }).message.state));
+  }
+
+  test("absent by default -- a session that did not ask for these frames sees none", async () => {
+    expect(await stateFrames()).toEqual([]);
+  });
+
+  test("WINTER_EMIT_SESSION_STATE_EVENTS: running at the turn's start, idle once it is over", async () => {
+    expect(await stateFrames({ WINTER_EMIT_SESSION_STATE_EVENTS: "1" })).toEqual(["running", "idle"]);
   });
 });

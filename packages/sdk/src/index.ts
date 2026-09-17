@@ -138,6 +138,10 @@ export type {
   // `.subtype === "compact_boundary"` -- named on the barrel because a host that renders a transcript
   // needs the metadata shape to relink a preserved segment, not merely to skip the frame.
   SDKCompactBoundaryMessage,
+  // SDK 0.0.16 Lane N: named on the barrel because a host that renders turns needs the authoritative
+  // turn-over signal (and because it is env-gated, a host must be able to type-check for a frame it
+  // will only ever see when it asks for it).
+  SDKSessionStateChangedMessage,
   // Phase 6 Task 3 (R6-5/R6-D, derived-shapes-p6.md items (a)/(b)): the provider-facing frame family
   // plus the Winter-DECLARED wire vocabularies it carries. Named on the barrel because a host that
   // renders live tokens must be able to discriminate `stream_event` and reach inside `event`, and
