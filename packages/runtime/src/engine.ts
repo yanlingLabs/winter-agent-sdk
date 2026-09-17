@@ -3712,6 +3712,36 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // omitted the key entirely. (A caller-supplied state source always reports, even when its snapshot
   // is empty: that is a host declaring it owns the MCP stack.)
   const mcpServersWire = sessionHasMcp() && effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
+  // Spawn-surface parity (research §A3, scope item 4): `system/init.agents` -- the per-session
+  // `subagent_type` names, present only when the `Agent` tool is itself advertised (a session that
+  // cannot spawn has nothing to list; matches `mcp_servers`' own conditional-presence convention on
+  // this same frame, a few lines below). Reuses the EXACT resolution `resolveAgentType` above already
+  // performs for workflow agent lookups (`loadAgentDefinitions` with this session's own
+  // `permissionHome`/`sessionBrand`/`trustedWorkspace`/`config.agents`/plugin agents) -- one producer,
+  // never a second, independently-derived list that could disagree with what `subagent_type`
+  // resolution actually accepts. `AGENT_TOOL_CANONICAL_NAME` is imported already (provider/slots.ts,
+  // line 95) for the per-turn model-slot render just below this block.
+  const initAgentNames = advertisedToolNames.includes(AGENT_TOOL_CANONICAL_NAME)
+    ? [
+        ...loadAgentDefinitions({
+          home: permissionHome,
+          // Phase 5 fix wave, KNOWN-6 (this file's own `resolvedWinterHome`, line ~1702: "the same
+          // resolved root every other fence in this run uses"): WITHOUT this, a session run with a
+          // custom `<PREFIX>HOME` would list `init.agents` from `~/.winter/agents` (the OS home)
+          // while `subagent_type` resolution itself (`tools/impl/agent.ts` threads `ctx.winterHome`)
+          // resolves the SAME user tier from the configured root -- the exact two-places-for-one-
+          // configuration bug KNOWN-6 already closed once, reopened on this new call site were this
+          // omitted.
+          ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+          brand: sessionBrand,
+          cwd: config.cwd,
+          trustedWorkspace,
+          env: engineEnv ?? process.env,
+          ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
+          ...(getPluginAgents(config.sessionId) !== undefined ? { pluginAgents: getPluginAgents(config.sessionId) as Record<string, PluginAgentDefinition> } : {}),
+        }).keys(),
+      ].sort((a, b) => a.localeCompare(b))
+    : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -3776,6 +3806,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         : {}),
       ...initLoadedSurface,
       ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
+      ...(initAgentNames !== undefined ? { agents: initAgentNames } : {}),
     },
   });
 

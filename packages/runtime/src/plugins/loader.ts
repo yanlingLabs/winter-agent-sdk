@@ -175,6 +175,13 @@ function frontmatterAttrs(raw: string): Record<string, string> {
  * `<plugin>/agents/*.md`, parsed by `parseAgentDefinitionFile` -- subagents/definitions.ts is the
  * ONE authority on that file format, and re-implementing it here is exactly the producer drift R5-2
  * exists to catch. Only the directory walk lives here (`loadAgentDirectory` is module-private there).
+ *
+ * Spawn-surface parity: `parseAgentDefinitionFile` now sources the agent's NAME from the file's own
+ * frontmatter `name:` field (required, same as every other filesystem tier -- see that function's
+ * own header) rather than the file's basename; a plugin agent file with no `name:` is skipped exactly
+ * like an unreadable one, silently, matching this scanner's own pre-existing "a broken plugin file
+ * never fails the load" posture (no rejection channel exists at THIS call site the way
+ * `loadAgentDefinitions`'s own `onReject` does -- disclosed in this lane's report).
  */
 function scanPluginAgents(root: string, pluginName: string): Record<string, PluginAgentDefinition> {
   const agentsRoot = join(root, "agents");
@@ -190,9 +197,8 @@ function scanPluginAgents(root: string, pluginName: string): Record<string, Plug
     const full = join(agentsRoot, file);
     try {
       if (!statSync(full).isFile()) continue;
-      const name = basename(file).replace(/\.md$/i, "");
-      const def = parseAgentDefinitionFile(readFileSync(full, "utf8"), name);
-      if (def !== undefined) out[name] = { ...def, plugin: pluginName };
+      const parsed = parseAgentDefinitionFile(readFileSync(full, "utf8"), full);
+      if (parsed.ok) out[parsed.name] = { ...parsed.definition, plugin: pluginName };
     } catch {
       continue;
     }

@@ -58,6 +58,20 @@ describe("checkAndRegisterSpawn / releaseSpawn (depth chain)", () => {
     }
   });
 
+  test("the depth-refusal wording matches research §A6 (Winter's own env name)", () => {
+    checkAndRegisterSpawn({ parentKey: "top", childKey: "c1", env: {} });
+    checkAndRegisterSpawn({ parentKey: "c1", childKey: "c2", env: {} });
+    checkAndRegisterSpawn({ parentKey: "c2", childKey: "c3", env: {} });
+    try {
+      checkAndRegisterSpawn({ parentKey: "c3", childKey: "c4", env: {} });
+      throw new Error("unreachable");
+    } catch (err) {
+      expect((err as Error).message).toBe(
+        "Subagent nesting limit reached (depth 4 of 3). Complete this task directly using your tools instead of spawning another agent. If the user explicitly requested deeper nesting, ask them to raise WINTER_MAX_SUBAGENT_SPAWN_DEPTH.",
+      );
+    }
+  });
+
   test("a custom WINTER_MAX_SUBAGENT_SPAWN_DEPTH is honored", () => {
     const env = { WINTER_MAX_SUBAGENT_SPAWN_DEPTH: "1" };
     checkAndRegisterSpawn({ parentKey: "top", childKey: "c1", env }); // depth 1, at the max
@@ -88,6 +102,18 @@ describe("checkAndRegisterSpawn (concurrency)", () => {
     }
     expect(currentRunningSubagentCount()).toBe(20);
     expect(() => checkAndRegisterSpawn({ parentKey: "top", childKey: "c20", env: {} })).toThrow(SpawnConcurrencyExceededError);
+  });
+
+  test("the concurrency-refusal wording follows research §A6's fragment (\"Do not retry\") to a Winter-authored completion", () => {
+    for (let i = 0; i < 20; i++) checkAndRegisterSpawn({ parentKey: "top", childKey: `c${i}`, env: {} });
+    try {
+      checkAndRegisterSpawn({ parentKey: "top", childKey: "c20", env: {} });
+      throw new Error("unreachable");
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toContain("Concurrent subagent limit reached. You can run 20 subagent(s) at once");
+      expect(message).toContain("Do not retry immediately");
+    }
   });
 
   test("releasing one running child frees a concurrency slot for a new one", () => {

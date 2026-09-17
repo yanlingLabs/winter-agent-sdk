@@ -10,7 +10,7 @@ import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { PermissionMode, PermissionResult, PermissionRequestPayload, HookInvocationPayload, HookInput, HookJSONOutput } from "./permissions/types.ts";
-import type { ModelFamilyListing } from "./protocol/config.ts";
+import type { ModelFamilyListing, AgentInfo } from "./protocol/config.ts";
 // P7a spine, Step 2 (D19): the brand profile the wrapper resolves onto every `--config-json`.
 import { WINTER_BRAND } from "./brand.ts";
 // Phase 5 Task 2: the P5 session-option constants (see this file's own P5 block at the bottom).
@@ -884,6 +884,34 @@ test("listModelFamilies(): a malformed control-response payload degrades to { ac
     if (msg.type === "system" && resultPromise === undefined) resultPromise = gen.listModelFamilies();
   }
   expect(await resultPromise).toEqual({ active: undefined, families: [] });
+});
+
+// --- Spawn-surface parity (research §A3): Query.supportedAgents() -------------------------------
+
+test("supportedAgents(): resolves the AgentInfo[] the runtime answers over the list_agents control request", async () => {
+  const agents: AgentInfo[] = [
+    { name: "general-purpose", description: "General-purpose agent." },
+    { name: "Explore", description: "Fast read-only search.", model: "inherit" },
+  ];
+  const proc = scriptedProcessAnsweringControlRequest("list_agents", agents);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  let resultPromise: Promise<AgentInfo[]> | undefined;
+  for await (const msg of gen) {
+    if (msg.type === "system" && resultPromise === undefined) resultPromise = gen.supportedAgents();
+  }
+  expect(await resultPromise).toEqual(agents);
+});
+
+test("supportedAgents(): a malformed (non-array) control-response payload degrades to [], never a throw", async () => {
+  const proc = scriptedProcessAnsweringControlRequest("list_agents", { nonsense: true });
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  let resultPromise: Promise<AgentInfo[]> | undefined;
+  for await (const msg of gen) {
+    if (msg.type === "system" && resultPromise === undefined) resultPromise = gen.supportedAgents();
+  }
+  expect(await resultPromise).toEqual([]);
 });
 
 // --- Task 8 (WS-07 §7): canUseTool end-to-end -------------------------------------------------

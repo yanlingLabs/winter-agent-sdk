@@ -32,7 +32,7 @@ function plugin(opts?: { manifestDir?: string; manifest?: Record<string, unknown
   if (opts?.manifestDir) write(join(root, opts.manifestDir, "plugin.json"), JSON.stringify(opts.manifest ?? {}));
   write(join(root, "skills", "ship", "SKILL.md"), "---\nname: ship\ndescription: ships\n---\n\nSHIP BODY");
   write(join(root, "commands", "deploy.md"), "---\ndescription: deploys\n---\n\nDeploy $ARGUMENTS");
-  write(join(root, "agents", "helper.md"), "---\ndescription: a helper\nmodel: sonnet\n---\nYou are a helper.");
+  write(join(root, "agents", "helper.md"), "---\nname: helper\ndescription: a helper\nmodel: sonnet\n---\nYou are a helper.");
   write(join(root, ".mcp.json"), JSON.stringify({ mcpServers: { tools: { command: "tools-server" } } }));
   return root;
 }

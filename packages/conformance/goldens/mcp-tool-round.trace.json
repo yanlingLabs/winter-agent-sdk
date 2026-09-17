@@ -60,6 +60,12 @@
           "name": "t8mcpsdk",
           "status": "connected"
         }
+      ],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan"
       ]
     }
   },

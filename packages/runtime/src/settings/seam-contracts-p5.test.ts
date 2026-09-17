@@ -247,7 +247,10 @@ describe("(ii) onCompaction resets the deferred loaded set to `evidenced` and an
 describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the precedence chain", () => {
   function agentFile(dir: string, name: string, body: string, description: string): void {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${name}.md`), `---\ndescription: ${description}\n---\n${body}\n`);
+    // Spawn-surface parity: filesystem agents now require a frontmatter `name` (definitions.ts) --
+    // this fixture's own `name` argument IS the agent's real name (its filename happens to match,
+    // which is what every call site below relies on for its own `.get(name)` lookups).
+    writeFileSync(join(dir, `${name}.md`), `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`);
   }
 
   const pluginAgent = (plugin: string, prompt: string) => ({ description: `from ${plugin}`, prompt, plugin });
@@ -301,6 +304,7 @@ describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the p
         home,
         trustedWorkspace: false,
         pluginAgents: { alpha: pluginAgent("acme", "a"), beta: pluginAgent("other", "b") },
+        builtinAgents: {}, // isolates this exact-set assertion from R-S1's own default-on built-in tier
       });
       expect([...defs.keys()].sort()).toEqual(["alpha", "beta"]);
       expect(defs.get("beta")?._plugin).toBe("other");
@@ -310,7 +314,7 @@ describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the p
   test("omitting pluginAgents entirely is byte-identical to the pre-P5 behaviour", () => {
     withTempTree(({ cwd, home }) => {
       agentFile(join(home, ".winter", "agents"), "reviewer", "user body", "user");
-      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false });
+      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, builtinAgents: {} });
       expect([...defs.keys()]).toEqual(["reviewer"]);
       expect(defs.get("reviewer")?._source).toBe("user");
       expect(defs.get("reviewer")).not.toHaveProperty("_plugin");

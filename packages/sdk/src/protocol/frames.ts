@@ -325,7 +325,13 @@ export type WireContentBlock =
   /** `data` is OPAQUE provider state. It rides in-dialect (the dialect defines it) and NOWHERE else -- never a log, never an error message, never the advisor transcript (Global Constraints). */
   | { type: "redacted_thinking"; data: string; [k: string]: unknown }
   | { type: "tool_use"; id: string; name: string; input: unknown; [k: string]: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string | WireContentBlock[]; [k: string]: unknown }
+  // Spawn-surface parity (gap 6): a thrown executor result crosses the wire as `tool_result
+  // {content, is_error: true}` on the pinned artifact -- Winter's own `ContentBlock` (engine.ts:297)
+  // already carries an `error?: boolean` field but nothing copies it onto THIS name, so a foreign
+  // reader (or a differential fixture asserting the pinned shape) sees a normal, non-error result.
+  // Typed here as the wire contract; the engine-side producer (`engine.ts:~5965`, setting it from
+  // `ToolResultPayload.isError`) is a separate lane's edit -- see that lane's own report.
+  | { type: "tool_result"; tool_use_id: string; content: string | WireContentBlock[]; is_error?: boolean; [k: string]: unknown }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string }; [k: string]: unknown };
 
 export type WireStreamEventDelta =
@@ -625,6 +631,15 @@ export type SdkMessage =
       skills: string[];
       plugins: InitPluginInfo[];
       mcp_servers?: WireMcpServerStatus[];
+      /**
+       * Spawn-surface parity (research §A3): the per-session `subagent_type` names -- the SAME set
+       * `Query.supportedAgents()` reports (research: "Same list feeds `system/init.agents?:
+       * string[]` and `Query.supportedAgents(): AgentInfo[]`"). Present only when the `Agent` tool
+       * is itself advertised (absent otherwise, matching `mcp_servers`' own conditional-presence
+       * convention on this same frame) -- the engine-side producer is `engine.ts`'s own
+       * `system/init` block.
+       */
+      agents?: string[];
       [k: string]: unknown;
     }
   | SDKHookStartedMessage

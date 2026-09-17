@@ -4407,3 +4407,41 @@ describe("Task-frames parity §7: the Notification hook fires only for a backgro
     }
   });
 });
+
+// --- Spawn-surface parity (research §A3, scope item 4): system/init.agents ------------------------
+
+describe("system/init.agents (spawn-surface parity)", () => {
+  async function initAgents(configOverrides: Partial<RuntimeConfig> = {}, env?: Record<string, string | undefined>): Promise<string[] | undefined> {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(configOverrides), input: runtime.input, output: runtime.output, provider: echoProvider, ...(env !== undefined ? { env } : {}) });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const init = frames.find((f) => f.type === "data" && (f as { message?: { subtype?: string } }).message?.subtype === "init") as
+      | { message: { agents?: string[] } }
+      | undefined;
+    return init?.message.agents;
+  }
+
+  test("a default session (Agent advertised with no host capabilities, per rider 1) lists the four default built-ins, sorted", async () => {
+    const agents = await initAgents();
+    expect(agents).toEqual(["claude", "Explore", "general-purpose", "Plan"]);
+  });
+
+  test("WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS empties the built-in set -- Agent stays advertised, but agents is an empty array, never absent", async () => {
+    const agents = await initAgents({}, { WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "true" });
+    expect(agents).toEqual([]);
+  });
+
+  test("WINTER_DISABLE_EXPLORE_PLAN_AGENTS drops Explore and Plan only", async () => {
+    const agents = await initAgents({}, { WINTER_DISABLE_EXPLORE_PLAN_AGENTS: "true" });
+    expect(agents).toEqual(["claude", "general-purpose"]);
+  });
+
+  test("a programmatic Options.agents entry appears in the list, and can override a built-in name", async () => {
+    const agents = await initAgents({ agents: { Explore: { description: "my own explorer", prompt: "p" }, extra: { description: "d", prompt: "p" } } });
+    expect(agents).toContain("extra");
+    expect(agents).toContain("Explore");
+  });
+});

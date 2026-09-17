@@ -19,6 +19,7 @@
 // produce -- an assembler that returns the right string and an engine that drops it look identical
 // from the assembler's own tests.
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import type { AgentListingEntry } from "./agent-listing.ts";
 
 // RULING R5-17 (pre-flight scan T5<->T6): Lane S produces this listing, Lane C consumes it through
 // `SystemPromptInput.skillListing`, and neither lane may define it -- it lives here, in the spine,
@@ -82,6 +83,35 @@ export interface SystemPromptInput {
    * caller's.
    */
   agentPrompt?: string;
+  /**
+   * Spawn-surface parity (research §A3, scope item 3): the `Agent`-tool listing block -- "Available
+   * agent types for the Agent tool:" plus later-turn deltas. Absent (every pre-existing caller, and
+   * any turn where the `Agent` tool is not advertised at all) contributes nothing to
+   * `userContextBlocks`; the assembler makes NO capability decision of its own about whether `Agent`
+   * is advertised -- `entries` arriving empty vs. this field arriving absent are the two different
+   * facts "the Agent tool is on but has zero agents" and "the Agent tool is off" respectively, and
+   * only the CALLER (engine.ts, which alone knows this turn's real advertised tool set) can tell them
+   * apart. `entries` is presumed ALREADY FILTERED to what this particular child may see (depth-gating,
+   * a required-MCP-server filter, a deny-rule filter -- research §A3's own three filters; R-S8 defers
+   * the latter two) -- this seam does no filtering.
+   *
+   * `priorAgentTypes` mirrors the seam's own "plain data snapshot, no session-mutable state" rule
+   * (this file's own header): the CALLER holds the cross-turn state (which agentTypes were listed
+   * last time) and hands it in fresh each call, exactly like every other per-turn input here. Omitted
+   * = this session's first listing.
+   */
+  agentListing?: { entries: AgentListingEntry[]; priorAgentTypes?: readonly string[] };
+  /**
+   * Spawn-surface parity (research §A1's `Explore`/`Plan` field table: "`omitClaudeMd: true`;
+   * context also drops gitStatus", mirrored on `RuntimeAgentDefinition.omitProjectContext`). When
+   * true, this render OMITS the discovered project-instructions blocks (`discoverWinterMd`'s own
+   * user+project WINTER.md-equivalent files) from `userContextBlocks`, AND omits `gitSummary` from
+   * the dynamic section, even when the caller supplied one. Everything else (the memory index, the
+   * skill listing, the agent listing, the dynamic section's non-git fields) is UNAFFECTED -- claude's
+   * own two dropped things are the instructions file and git status specifically, never the whole
+   * context surface. Absent/false = every pre-existing caller, byte-identical.
+   */
+  omitProjectContext?: boolean;
 }
 
 /**
@@ -127,6 +157,14 @@ export interface AssembledPrompt {
    * byte-identical to one from before this field existed.
    */
   replacementDowngraded?: boolean;
+  /**
+   * Spawn-surface parity: present exactly when `SystemPromptInput.agentListing` was given -- the
+   * sorted agentType set THIS render saw (`renderAgentListing`'s own return), so the caller can hand
+   * it back as next turn's `agentListing.priorAgentTypes` without re-deriving the sort/dedupe itself.
+   * Absent when `agentListing` was absent, matching every other field on this shape's own "absent
+   * means the input didn't ask for it" convention.
+   */
+  agentListingTypes?: string[];
 }
 
 export interface SystemPromptAssembler {

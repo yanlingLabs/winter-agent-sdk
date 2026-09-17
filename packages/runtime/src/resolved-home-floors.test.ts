@@ -186,13 +186,13 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
     // from that root and its user AGENT definitions from `~/.winter/agents`: two halves of one user
     // configuration in two places. Lane S's concern 4, filed as a spine bug.
     mkdirSync(join(home, "agents"), { recursive: true });
-    writeFileSync(join(home, "agents", "i1probe.md"), "---\ndescription: an I1 probe agent\n---\nYou are the I1 probe persona.\n");
+    writeFileSync(join(home, "agents", "i1probe.md"), "---\nname: i1probe\ndescription: an I1 probe agent\n---\nYou are the I1 probe persona.\n");
     const { loadAgentDefinitions } = await import("./subagents/definitions.ts");
-    const defs = loadAgentDefinitions({ cwd, home: homedir(), winterHome: home, trustedWorkspace: false });
+    const defs = loadAgentDefinitions({ cwd, home: homedir(), winterHome: home, trustedWorkspace: false, builtinAgents: {} });
     expect(defs.get("i1probe")?.prompt).toBe("You are the I1 probe persona.");
     // And the OS-home fallback still works when no resolved root is supplied -- every pre-existing
     // caller is unchanged.
-    const withoutRoot = loadAgentDefinitions({ cwd, home, trustedWorkspace: false });
+    const withoutRoot = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, builtinAgents: {} });
     expect(withoutRoot.get("i1probe"), "without the resolved root, `<home>/.winter/agents` is the tier").toBeUndefined();
   });
 });

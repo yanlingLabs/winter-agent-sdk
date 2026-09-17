@@ -55,6 +55,30 @@ describe("createWorkspace (WS-10 §8)", () => {
     if (!result.ok) expect(result.error).toContain("git repository");
   });
 
+  test("the refusal wording matches research §A5 verbatim (Winter has no env var to substitute in it)", async () => {
+    const cwd = mkdtempRepoDir();
+    const result = await createWorkspace({ parentCwd: cwd, isolation: "worktree", agentId: "a1" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("Cannot create agent worktree: not in a git repository and no WorktreeCreate hooks are configured.");
+      expect(result.error).toContain("Configure WorktreeCreate/WorktreeRemove hooks in settings.json to use worktree isolation with other VCS systems.");
+    }
+  });
+
+  test("a configured WorktreeCreate hook (research §A5) counts as valid outside git -- no refusal", async () => {
+    const cwd = mkdtempRepoDir(); // deliberately NOT git-initialized
+    const result = await createWorkspace({ parentCwd: cwd, isolation: "worktree", agentId: "a1", hasWorktreeCreateHooks: true });
+    expect(result).toEqual({ ok: true, workspace: { root: cwd, isolationType: "normal", cleanupPolicy: "keep" } });
+  });
+
+  test("hasWorktreeCreateHooks is IGNORED when a real git repo already exists -- the git worktree path still wins", async () => {
+    const cwd = mkdtempRepoDir();
+    await initFixtureRepo(cwd);
+    const result = await createWorkspace({ parentCwd: cwd, isolation: "worktree", agentId: "a1", hasWorktreeCreateHooks: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.workspace.isolationType).toBe("worktree");
+  });
+
   test("isolation:worktree inside a real repo creates .winter/worktrees/agent-<id> on a fresh branch", async () => {
     const cwd = mkdtempRepoDir();
     await initFixtureRepo(cwd);
