@@ -126,7 +126,7 @@ import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
 import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";
 import { buildForkInitialMessages, buildForkDirectiveText } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
-import { validateAgentDefinition } from "./definitions.ts";
+import { validateAgentDefinition, allowedAgentTypesFromTools } from "./definitions.ts";
 import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
 // Phase 5 Task 8: the parent's assembler and skill index reach a child through the factory deps --
 // see ChildEngineFactoryDeps for why each one is a real gap rather than a nicety.
@@ -519,6 +519,18 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const allowSet = new Set(effectiveTools);
     const complementDeny = allToolNames.filter((name) => !allowSet.has(name));
     const disallowedTools = [...new Set([...complementDeny, ...(req.definition?.disallowedTools ?? [])])];
+
+    // SDK 0.0.16 Lane P (R3b §4): the about-to-be-spawned child's own `Agent(a,b)` restriction,
+    // parsed straight off its RAW `tools` list -- BEFORE `effectiveTools` (above) ever sees it. A
+    // non-registered-tool-name string like `"Agent(Explore, Plan)"` simply never matches any
+    // canonical tool name, so it is silently absent from `effectiveTools`/`allowSet`/`disallowedTools`
+    // either way; this reads the SAME source data one step earlier, which is the only place the
+    // restriction survives (see `allowedAgentTypesFromTools`'s own header for the full rationale,
+    // including the disclosed "no bare Agent/`*` at all" gap). Threaded onto `RuntimeConfig.
+    // allowedAgentTypes` below so the child's OWN engine instance -- which sees only its own
+    // `RuntimeConfig`, never `req` -- can filter its own listing/`init.agents`/Agent-tool resolution
+    // to it (engine.ts's `sessionAvailableAgentDefinitions`).
+    const allowedAgentTypes = allowedAgentTypesFromTools(req.definition?.tools);
 
     // A capability-gated tool (WebSearch/LSP/Agent itself/etc.) is excluded from a session's own
     // advertised set unless its own `capabilityRequirements` are satisfied (registry.ts's own
@@ -1170,6 +1182,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(req.fork === true && inherit.effectiveThinking !== undefined ? { thinking: inherit.effectiveThinking } : {}),
       disallowedTools,
       capabilities,
+      // SDK 0.0.16 Lane P (R3b §4): see the `allowedAgentTypes` const's own header above.
+      ...(allowedAgentTypes !== undefined ? { allowedAgentTypes } : {}),
       forwardSubagentText: deps.forwardSubagentText === true,
       // Fix wave follow-up (8), whole-branch M7: the session's own programmatic `Options.agents`
       // map, mirrored down so a GRANDCHILD spawn can resolve a `subagent_type` the host declared --
