@@ -567,16 +567,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
 
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
-    // Research §A5: a configured `WorktreeCreate` hook makes worktree isolation outside git a valid
-    // request rather than a refusal -- the session's hook callbacks (`parentHooks`) and its
-    // settings-file/plugin hook entries (`extraHookEntries`) both count.
-    const hasWorktreeCreateHooks = (deps.parentHooks?.["WorktreeCreate"]?.length ?? 0) > 0 || (deps.extraHookEntries ?? []).some((entry) => entry.event === "WorktreeCreate");
+    // Review r2 finding 5 (whole-branch): NO "a configured WorktreeCreate hook counts" carve-out
+    // here any more -- see workspace.ts's own header for why. Worktree isolation outside a git
+    // repository always refuses.
     const workspaceResult = await createWorkspace({
       parentCwd: inherit.sessionRoot,
       ...(req.isolation !== undefined ? { isolation: req.isolation } : {}),
       agentId,
       ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}),
-      hasWorktreeCreateHooks,
     });
     if (!workspaceResult.ok) {
       // R-S4: the refusal reaches the model as claude's own message text (workspace.ts already words

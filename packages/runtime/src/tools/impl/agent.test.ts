@@ -833,6 +833,31 @@ describe("Agent tool: spawn-surface parity (research §A4/§A7/§A8, R-S5)", () 
     expect(reqs[0]?.fork).toBe(true);
   });
 
+  // Review r2 finding 8: `isFork` used to be decided from the RAW `subagent_type` string
+  // (`requestedType === "fork"`), before `findAgentByType`'s own case-insensitive normalization ran
+  // -- so a differently-cased request resolved to the SAME fork definition (tools: ["*"], the
+  // placeholder prompt) while every fork-specific behavior (the two refusals, ignoring `model`,
+  // `SpawnChildRequest.fork`) silently did not apply, because the string comparison had already
+  // failed. "fork" and "Fork" must behave identically.
+  test.each(["fork", "Fork"])("fork gate ON: subagent_type %p resolves to the fork definition byte-identically to 'fork'", async (requestedType) => {
+    const { ctx, reqs } = capturing();
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, model: "opus" }, { ...ctx, forkSubagentEnabled: true, env: {} });
+    expect(result.isError).toBeUndefined();
+    expect(reqs[0]?.fork).toBe(true);
+    expect(reqs[0]?.model).toBeUndefined();
+    expect(reqs[0]?.definition?.maxTurns).toBe(200);
+  });
+
+  test.each(["fork", "Fork"])("fork refusals fire for subagent_type %p (case must not bypass them)", async (requestedType) => {
+    const { ctx, reqs } = capturing();
+    const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType }, { ...ctx, forkSubagentEnabled: true, insideFork: true });
+    expect(inside).toEqual({ output: "Fork is not available inside a forked worker. Complete your task directly using your tools.", isError: true });
+    const remote = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: requestedType, isolation: "remote" }, { ...ctx, forkSubagentEnabled: true });
+    expect(remote.isError).toBe(true);
+    expect(remote.output).toStartWith('Fork cannot use isolation: "remote" — ');
+    expect(reqs).toHaveLength(0);
+  });
+
   test("fork refusals: a fork inside a fork, and a fork with isolation:remote -- claude's wording, nothing spawned", async () => {
     const { ctx, reqs } = capturing();
     const inside = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "fork" }, { ...ctx, forkSubagentEnabled: true, insideFork: true });

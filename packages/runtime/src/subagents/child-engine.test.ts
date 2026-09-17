@@ -3336,7 +3336,7 @@ describe("child-engine.ts: spawn-surface parity -- the child's tool pool, and pr
     expect(progressCalls[1]).toMatchObject({ toolUses: 3, lastToolName: "StructuredOutput" });
   });
 
-  test("research §A5: worktree isolation outside git is refused -- unless the session configures a WorktreeCreate hook", async () => {
+  test("review r2 finding 5: worktree isolation outside git is refused, even when the session configures a WorktreeCreate hook", async () => {
     const outsideGit = mkdtempSync(join(tmpdir(), "winter-l2b-nogit-"));
     try {
       const spawnResult = async (deps: Partial<ChildEngineFactoryDeps>): Promise<string> => {
@@ -3369,7 +3369,11 @@ describe("child-engine.ts: spawn-surface parity -- the child's tool pool, and pr
       const refused = await spawnResult({});
       expect(refused).toStartWith("refused:Cannot create agent worktree: not in a git repository and no WorktreeCreate hooks are configured.");
       expect(refused).not.toContain("winter: Agent spawn failed"); // R-S4: claude's text, no product prefix
-      expect(await spawnResult({ parentHooks: { WorktreeCreate: [{ hookCount: 1, source: "sdk" }] } })).toBe("spawned:completed");
+      // Review r2 finding 5 (whole-branch): REVERTED -- a configured WorktreeCreate hook no longer
+      // buys a silent "normal" workspace at the parent's real cwd. Nothing invokes the hook, so the
+      // refusal must still fire exactly as if no hook were configured at all.
+      const withHook = await spawnResult({ parentHooks: { WorktreeCreate: [{ hookCount: 1, source: "sdk" }] } });
+      expect(withHook).toStartWith("refused:Cannot create agent worktree: not in a git repository and no WorktreeCreate hooks are configured.");
     } finally {
       rmSync(outsideGit, { recursive: true, force: true });
     }

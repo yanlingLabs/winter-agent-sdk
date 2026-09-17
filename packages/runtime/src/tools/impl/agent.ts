@@ -365,12 +365,9 @@ export const agentExecutor: ToolExecutor = {
     const env = ctx.env ?? process.env;
     const agentsBrand = ctx.brand ?? WINTER_BRAND;
 
-    // R-S5: the fork gate (the session's resolved RuntimeConfig/env verdict) and its refusals. With
-    // the gate OFF, "fork" is an ordinary name that no definition carries -- the not-found error below.
+    // R-S5: the fork gate (the session's resolved RuntimeConfig/env verdict). With the gate OFF,
+    // "fork" is an ordinary name that no definition carries -- the not-found error below.
     const forkEnabled = ctx.forkSubagentEnabled ?? resolveForkSubagentEnabled(env, agentsBrand);
-    const isFork = forkEnabled && requestedType === "fork";
-    if (isFork && ctx.insideFork === true) return refusal(FORK_INSIDE_FORK_REFUSAL);
-    if (isFork && isolation === "remote") return refusal(FORK_REMOTE_REFUSAL);
 
     // WS-10 §2: the session's subagent_type set -- built-ins (lowest tier), plugin, user, project
     // (trust-gated, RULING R4-7) and programmatic -- read with the SESSION's env so the built-in kill
@@ -409,6 +406,21 @@ export const agentExecutor: ToolExecutor = {
       definition = found.definition;
       subagentType = found.name;
     }
+
+    // Review r2 finding 8 (whole-branch): `isFork` is decided from the RESOLVED name
+    // (`subagentType`, `findAgentByType`'s own normalized `found.name`), never the raw
+    // `requestedType` string. The old `requestedType === "fork"` exact-string check missed a
+    // differently-cased request ("Fork") that `findAgentByType`'s own case-insensitive
+    // normalization resolves to the SAME fork definition (definitions.ts's own `normalizeAgentTypeName`
+    // lowercases before comparing) -- so a model asking for "Fork" got the fork definition's `tools:
+    // ["*"]` pool and its placeholder prompt as an ORDINARY child (isFork false): the two refusals
+    // below never ran, `model` was not ignored, and the child was never forced into the fork's own
+    // inheritance/background/nesting semantics. Run AFTER resolution, and before the isolation
+    // "remote" fallback below -- a Fork+remote request must refuse outright, not silently become a
+    // worktree child.
+    const isFork = forkEnabled && subagentType === "fork";
+    if (isFork && ctx.insideFork === true) return refusal(FORK_INSIDE_FORK_REFUSAL);
+    if (isFork && isolation === "remote") return refusal(FORK_REMOTE_REFUSAL);
 
     // Research §A5 / R-S8: `remote` stays advertised but has no backend -- claude's SILENT fallback:
     // a worktree when the session root is inside a git repository, else a plain local agent (a debug
