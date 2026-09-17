@@ -547,3 +547,45 @@ describe("rider 22 / P5-G: a project-tier style may APPEND but not DELETE, and s
     expect(out.replacementDowngraded).toBeUndefined();
   });
 });
+
+// --- Spawn-surface parity (research §A3, scope item 3): the Agent-tool listing --------------------
+
+describe("assembler -- agentListing (spawn-surface parity)", () => {
+  test("absent agentListing contributes nothing, and reports no agentListingTypes -- byte-identical to every pre-parity caller", () => {
+    const out = assemble();
+    expect(out.userContextBlocks.some((b) => b.includes("Agent tool"))).toBe(false);
+    expect(out.agentListingTypes).toBeUndefined();
+  });
+
+  test("a first listing (no priorAgentTypes) lands as the LAST user-context block", () => {
+    const out = assemble({ agentListing: { entries: [{ agentType: "general-purpose", whenToUse: "General.", tools: ["*"] }] } });
+    expect(out.userContextBlocks.at(-1)).toContain("Available agent types for the Agent tool:");
+    expect(out.userContextBlocks.at(-1)).toContain("- general-purpose: General. (Tools: All tools)");
+    expect(out.agentListingTypes).toEqual(["general-purpose"]);
+  });
+
+  test("priorAgentTypes with no real change yields no block at all, and agentListingTypes still reports the current set", () => {
+    const entries = [{ agentType: "claude", whenToUse: "Catch-all.", tools: ["*"] }];
+    const out = assemble({ agentListing: { entries, priorAgentTypes: ["claude"] } });
+    expect(out.userContextBlocks.some((b) => b.includes("Agent tool"))).toBe(false);
+    expect(out.agentListingTypes).toEqual(["claude"]);
+  });
+
+  test("an empty entries list with priorAgentTypes given renders the removal delta, not the full header", () => {
+    const out = assemble({ agentListing: { entries: [], priorAgentTypes: ["Explore"] } });
+    expect(out.userContextBlocks.at(-1)).toContain("The following agent types are no longer available:");
+    expect(out.userContextBlocks.at(-1)).toContain("- Explore");
+    expect(out.userContextBlocks.at(-1)).not.toContain("Available agent types for the Agent tool:");
+  });
+
+  test("region.excludeDynamicSections=true still puts the listing AFTER the moved dynamic block", () => {
+    const out = assemble({
+      config: cfg({ systemPrompt: { type: "preset", preset: "claude_code", excludeDynamicSections: true } }),
+      agentListing: { entries: [{ agentType: "claude", whenToUse: "Catch-all.", tools: ["*"] }] },
+    });
+    const dynamicIdx = out.userContextBlocks.findIndex((b) => b.includes(DYNAMIC_SECTIONS_HEADING));
+    const listingIdx = out.userContextBlocks.findIndex((b) => b.includes("Available agent types"));
+    expect(dynamicIdx).toBeGreaterThanOrEqual(0);
+    expect(listingIdx).toBeGreaterThan(dynamicIdx);
+  });
+});

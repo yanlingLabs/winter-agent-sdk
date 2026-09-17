@@ -40,6 +40,7 @@ import { autoMemoryEnabled, renderMemoryBlock } from "./memory.ts";
 import { memoryDirFor } from "./memory-key.ts";
 import { resolveOutputStyle, type ResolvedOutputStyle } from "./output-styles.ts";
 import { renderPlanModeBlock } from "./plan-mode.ts";
+import { renderAgentListing } from "./agent-listing.ts";
 
 export interface SystemPromptAssemblerDeps {
   /**
@@ -244,6 +245,21 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
       if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir, brand.instructionsFile));
 
+      // Spawn-surface parity (research §A3, scope item 3): the Agent-tool listing, LAST among the
+      // user-context blocks -- WINTER.md/the memory index are file content describing the project and
+      // the user's own accumulated context, which reads naturally before "here is what you can spawn
+      // right now"; nothing in R5-9/the seam's own ordering rule pins this one specifically, so this
+      // is a disclosed ordering choice, not a spec-pinned position the way "the moved dynamic block is
+      // FIRST" is. Absent `agentListing` (every pre-existing caller, and any turn where `Agent` is not
+      // advertised) contributes nothing -- see `SystemPromptInput.agentListing`'s own header for why
+      // that decision belongs to the caller, not this function.
+      let agentListingTypes: string[] | undefined;
+      if (input.agentListing !== undefined) {
+        const listing = renderAgentListing(input.agentListing.entries, input.agentListing.priorAgentTypes);
+        if (listing.text !== undefined) userContextBlocks.push(listing.text);
+        agentListingTypes = listing.agentTypes;
+      }
+
       // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,
       // not only on `resolveOutputStyle`'s return value -- which no host calls and no frame carries,
       // so the ruling's "observable" clause held nowhere a caller could see it. Present only when a
@@ -254,6 +270,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         userContextBlocks,
         ...(region.presetVersion !== undefined ? { presetVersion: region.presetVersion } : {}),
         ...(style?.replacementDowngraded === true ? { replacementDowngraded: true } : {}),
+        ...(agentListingTypes !== undefined ? { agentListingTypes } : {}),
       };
     },
   };
