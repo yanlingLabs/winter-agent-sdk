@@ -31,13 +31,22 @@ type EnvBrand = Pick<BrandProfile, "envPrefix">;
 // background-task-runtime.ts's own module-level task Map) -- a second, fully concurrent daemon host
 // sharing one process is a later WS-15 concern, not this phase's.
 
+// Spawn-surface parity (research §A6, scope item 7): claude's own two limit-refusal MESSAGES are
+// MODEL-FACING -- they are what reaches the transcript when a spawn is refused, telling the model
+// what to do next rather than just stating a fact -- so the wording below follows claude's own,
+// Winter's env names substituted where claude names its own.
 export class SpawnDepthExceededError extends Error {
   constructor(
     public readonly depth: number,
     public readonly max: number,
     varName: string = envName(WINTER_BRAND, "MAX_SUBAGENT_SPAWN_DEPTH"),
   ) {
-    super(`winter: subagent spawn refused -- nesting depth ${depth} exceeds ${varName} (${max})`);
+    // Research §A6, verbatim structure: "Subagent nesting limit reached (depth D of M). Complete this
+    // task directly using your tools instead of spawning another agent. If the user explicitly
+    // requested deeper nesting, ask them to raise <the env var>."
+    super(
+      `Subagent nesting limit reached (depth ${depth} of ${max}). Complete this task directly using your tools instead of spawning another agent. If the user explicitly requested deeper nesting, ask them to raise ${varName}.`,
+    );
     this.name = "SpawnDepthExceededError";
   }
 }
@@ -48,7 +57,12 @@ export class SpawnConcurrencyExceededError extends Error {
     public readonly max: number,
     varName: string = envName(WINTER_BRAND, "MAX_CONCURRENT_SUBAGENTS"),
   ) {
-    super(`winter: subagent spawn refused -- ${running} subagent(s) already running, at ${varName} (${max})`);
+    // Research §A6 TRUNCATES claude's own string with an ellipsis ("Concurrent subagent limit
+    // reached. You can run N subagents at once. Do not retry. …") -- there is no verbatim text past
+    // "Do not retry." to copy, so the completion below is WINTER-AUTHORED (disclosed in this lane's
+    // report), following the fragment's own stated idea (don't retry immediately; wait or reduce
+    // concurrency) rather than presented as claude's own words.
+    super(`Concurrent subagent limit reached. You can run ${max} subagent(s) at once (${running} already running). Do not retry immediately -- wait for one to finish, or reduce how many you launch at once.`);
     this.name = "SpawnConcurrencyExceededError";
   }
 }

@@ -31,14 +31,46 @@ export type CreateWorkspaceResult = { ok: true; workspace: Workspace } | { ok: f
 // convention (WS-01 §2.4) with the child's own identity as the name, never a model-supplied string
 // (a child's own isolation worktree is not named BY the model the way EnterWorktree's `name` input
 // is).
-export async function createWorkspace(opts: { parentCwd: string; isolation?: "worktree"; agentId: string; brand?: Pick<BrandProfile, "projectDirName"> }): Promise<CreateWorkspaceResult> {
+export async function createWorkspace(opts: {
+  parentCwd: string;
+  isolation?: "worktree";
+  agentId: string;
+  brand?: Pick<BrandProfile, "projectDirName">;
+  /**
+   * Spawn-surface parity (research §A5): "not in a git repository and no WorktreeCreate hooks are
+   * configured" is claude's OWN compound condition for the refusal below -- a configured
+   * `WorktreeCreate` hook (checked by the CALLER, against the session's own `HookRegistry.matching
+   * ("WorktreeCreate")`, since this module has no hook registry of its own to consult) counts as a
+   * valid non-git isolation path and the refusal does not fire.
+   *
+   * DISCLOSED SCOPE LIMIT: Winter's hook VOCABULARY already supports `WorktreeCreate`/
+   * `WorktreeRemove` (`hooks/registry.ts`'s own event set, `hooks/runner.ts`'s `interpretGeneric`
+   * handlers for both), but nothing in this module can actually INVOKE a hook and wait on its
+   * result -- a real `HookInvoker` is only reachable from inside `engine.ts`'s own closure (the
+   * bridge to a live host callback), which this lane's file boundary excludes. So this flag only
+   * stops the REFUSAL; it does not (cannot, from here) run the hook and adopt whatever root it
+   * creates. The workspace returned in that branch is `isolationType: "normal"` at the parent's own
+   * cwd -- an honest "no git worktree was created, and none was refused either" rather than a
+   * fabricated isolated root. Actually firing `WorktreeCreate`/`WorktreeRemove` around a hook-backed
+   * isolation is a further lane's wiring (the same one that threads this flag in at all).
+   */
+  hasWorktreeCreateHooks?: boolean;
+}): Promise<CreateWorkspaceResult> {
   if (opts.isolation === undefined) {
     return { ok: true, workspace: { root: opts.parentCwd, isolationType: "normal", cleanupPolicy: "keep" } };
   }
 
   const repoCheck = await runGit(["rev-parse", "--show-toplevel"], opts.parentCwd);
   if (!repoCheck.ok) {
-    return { ok: false, error: `isolation:"worktree" requires the session's cwd to be inside a git repository (${opts.parentCwd} is not: ${repoCheck.stderr})` };
+    if (opts.hasWorktreeCreateHooks === true) {
+      return { ok: true, workspace: { root: opts.parentCwd, isolationType: "normal", cleanupPolicy: "keep" } };
+    }
+    // Research §A5, Winter-named (the message never named a claude env var to begin with -- nothing
+    // to substitute here besides dropping the product name from the subject).
+    return {
+      ok: false,
+      error: `Cannot create agent worktree: not in a git repository and no WorktreeCreate hooks are configured. Configure WorktreeCreate/WorktreeRemove hooks in settings.json to use worktree isolation with other VCS systems. (${opts.parentCwd} is not a git repository: ${repoCheck.stderr})`,
+    };
   }
 
   const worktreesDir = join(opts.parentCwd, (opts.brand ?? WINTER_BRAND).projectDirName, "worktrees");
