@@ -96,7 +96,16 @@ RuntimeConfig field always wins over its own env fallback in either direction wh
 - **`Settings.includeGitInstructions`** (default `true`) — the setting `WINTER_DISABLE_GIT_INSTRUCTIONS` overrides above.
 - **`Options.forkSubagent`** (`boolean`, default unset → env fallback) — the RuntimeConfig field behind `WINTER_FORK_SUBAGENT`.
 - **`Options.backgroundByDefault`** (`boolean`, default unset → env fallback) — the RuntimeConfig field behind `WINTER_BACKGROUND_BY_DEFAULT`, above.
-- **`Options.allowedAgentTypes`** (`string[]`, default unset = unrestricted) — restricts which `subagent_type` values a session (or, threaded onto a child's own RuntimeConfig, that one child) may spawn at all; a name outside the list reads as not-found, the same shape as an unknown type.
+
+`RuntimeConfig.allowedAgentTypes` (`string[]`) is a different shape of field, not a host-settable
+one: there is no `Options.allowedAgentTypes` and no env fallback to win over. It exists only on the
+wire `RuntimeConfig`, and the engine — never a host — populates it: when a running agent's own
+definition restricts `tools` with an `Agent(a, b)` entry, `allowedAgentTypesFromTools` parses that
+restriction and threads the resulting list onto the CHILD it spawns for that agent's own
+`RuntimeConfig`, so the child's listing / `init.agents` / Agent-tool resolution sees only `[a, b]`,
+never the full universe of types its parent session could otherwise reach. Absent (every top-level
+session, and any child whose parent definition named no `Agent(...)` restriction) means
+unrestricted, the behavior every session had before this field existed.
 
 ### The 0.0.16 background-default change
 
