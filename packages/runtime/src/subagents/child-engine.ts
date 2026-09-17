@@ -124,7 +124,7 @@ import { checkAndRegisterSpawn, releaseSpawn, resolveMaxSpawnDepth } from "./lim
 import { applySubagentToolPool } from "./tool-pools.ts";
 import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
 import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";
-import { resolveForkInitialMessages } from "./fork.ts";
+import { buildForkInitialMessages, buildForkDirectiveText } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
 import { validateAgentDefinition } from "./definitions.ts";
 import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
@@ -1027,6 +1027,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // first user turn -- see the resolution site below for the full note. Conditionally spread so
         // a child with no definition prompt sends nothing, exactly as before.
         ...(agentSystemPrompt !== undefined && agentSystemPrompt.length > 0 ? { agentSystemPrompt } : {}),
+        // SDK 0.0.16 (P16-7): a FORK's exact inherited request layout -- captured once, at spawn, by
+        // `engine.ts`'s own `buildChildInheritance` fork branch, and handed to every generation this
+        // handle ever runs (spawn AND resume both call `startGeneration`, and both close over the SAME
+        // `inherit`). A resumed fork therefore keeps sending the layout it was BORN with rather than
+        // re-capturing the parent's (possibly since-changed) one -- consistent with a fork being a
+        // frozen snapshot of the parent at fork time, and disclosed rather than silently assumed.
+        ...(req.fork === true && inherit.requestLayout !== undefined ? { exactRequestLayout: inherit.requestLayout } : {}),
         // Spawn-surface parity (research §A1 `omitClaudeMd`): an Explore/Plan-style definition drops
         // the project instructions files and the git summary from this child's own context.
         ...(req.definition?.omitProjectContext === true ? { omitProjectContext: true } : {}),
@@ -1142,6 +1149,25 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       isolationPinnedCwd: req.isolation === "worktree",
       // Spawn-surface parity (R-S5): a forked worker may not fork again -- its own Agent tool reads this.
       ...(req.fork === true ? { insideFork: true } : {}),
+      // SDK 0.0.16 (P16-7, WS-10 §3.5 "inherits... thinking, and effective effort"): a fork's own
+      // resolved reasoning configuration -- `inherit.effectiveEffort`/`effectiveThinking` are the
+      // PARENT's real `config.effort`/`config.thinking` (engine.ts's own `buildChildInheritance`,
+      // Phase 6 Task 3), set on `ChildInheritance` for every child but never previously read here --
+      // an existing, disclosed, non-fork-specific gap (`effort`/`thinking` above stay the REQUESTED
+      // placeholder chain, "inherit"/`undefined`, which is right for a definition-backed child but
+      // was silently ALSO the fork's own outcome, dropping the parent's real reasoning config from
+      // every fork request). Gated to `req.fork === true` deliberately: fixing it for every child type
+      // is the same one-line change, but that touches shared, non-fork child behaviour this lane does
+      // not own -- left for the owner of the general child-inheritance path, disclosed in this lane's
+      // own report.
+      //
+      // `typeof !== "number"` narrows deliberately: `ChildInheritance.effectiveEffort`'s own type is
+      // WIDER than `RuntimeConfig.effort` (`EffortLevel`, five string levels only -- no numeric
+      // effort concept exists on `RuntimeConfig` at all). A numeric parent effort is silently
+      // dropped here rather than forwarded as something `RuntimeConfig` cannot express; the field
+      // stays absent, matching a fork whose parent never resolved one.
+      ...(req.fork === true && inherit.effectiveEffort !== undefined && typeof inherit.effectiveEffort !== "number" ? { effort: inherit.effectiveEffort } : {}),
+      ...(req.fork === true && inherit.effectiveThinking !== undefined ? { thinking: inherit.effectiveThinking } : {}),
       disallowedTools,
       capabilities,
       forwardSubagentText: deps.forwardSubagentText === true,
@@ -1190,7 +1216,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       };
     }
 
-    const initialMessages = resolveForkInitialMessages(inherit);
+    const initialMessages = buildForkInitialMessages(inherit, req.parentToolUseId);
     // Fix round 1 (finding C1, CRITICAL, RULING P4-J): `AgentDefinition.prompt` -- WS-10 §2's
     // "System prompt of the child" -- is delivered as the LEADING, clearly-delimited block of the
     // child's first turn, layered onto `inherit.systemPrompt` (engine.ts's own `buildChildInheritance`
@@ -1222,8 +1248,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // system prompt, reaching the provider on `agentSystemPrompt` below. `req.fork === true` skips
     // it entirely: `resolvedSystemPrompt` collapses to `""`, and `agentSystemPrompt` is omitted from
     // the child's own runEngine() call a few lines down (its own `agentSystemPrompt.length > 0`
-    // guard) -- an honest "no system prompt was set for this fork" until a later release wires the
-    // parent's actual rendered one through (r3a §2's own byte-exact design, not this minimal fix).
+    // guard) -- correct AND sufficient now that this lane wires the parent's actual rendered system
+    // prompt through a SEPARATE, exact channel (`inherit.requestLayout` ->
+    // `EngineOptions.exactRequestLayout`, below): a fork's `agentSystemPrompt` staying empty is not a
+    // gap any more, it is simply "this channel carries nothing for a fork, because the exact one
+    // does" (r3a §2's own byte-exact design, delivered by this lane).
     const resolvedSystemPrompt = [inherit.systemPrompt, req.fork === true ? undefined : req.definition?.prompt]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
@@ -1237,9 +1266,24 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // `initialPrompt` and the definition warnings STAY in the first user turn -- neither is a system
     // prompt. WS-10 §2 calls `initialPrompt` a "first user message seed," and a warning is a note to
     // the model about its own configuration.
-    const firstTurnText = [req.definition?.initialPrompt, req.prompt, definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined]
-      .filter((s): s is string => s !== undefined && s.length > 0)
-      .join("\n\n");
+    //
+    // SDK 0.0.16 (P16-7): a FORK's own first live turn is never this composition -- `req.definition`
+    // is the `fork` built-in's placeholder (its own `initialPrompt` is unset, and its validation
+    // warnings, if any, are about a placeholder definition nobody should ever see reflected back at
+    // them). `buildForkDirectiveText` is the fork's whole first turn: the Winter-authored boilerplate
+    // (+ the worktree note, when isolated), then claude's own `"Your directive: "` prefix immediately
+    // followed by `req.prompt` verbatim. Delivered the SAME way as every other child's first turn
+    // (the live "user" frame `startGeneration` writes below) -- `context/request-layout.ts`'s own
+    // message-merge logic then folds it into the SAME wire message as the placeholder `tool_result`
+    // `buildForkInitialMessages` appended to `initialMessages` above (consecutive user-role history
+    // entries merge, and a `"tool"`-role message is user-role for that purpose), reproducing claude's
+    // own single "tool_result + directive text" wire message without a bespoke merge here.
+    const firstTurnText =
+      req.fork === true
+        ? buildForkDirectiveText({ prompt: req.prompt, ...(req.isolation === "worktree" ? { worktreeRoot: workspace.root } : {}) })
+        : [req.definition?.initialPrompt, req.prompt, definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined]
+            .filter((s): s is string => s !== undefined && s.length > 0)
+            .join("\n\n");
 
     const handle: ChildHandle = {
       record,

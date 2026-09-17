@@ -244,10 +244,10 @@ const ROWS: ConformanceRow[] = [
   {
     id: "WS10-17",
     spec: "WS-10 §16 / §3.5",
-    bullet: "fork FULL inheritance (conversation copied at spawn; a model override ignored by contract)",
+    bullet: "fork FULL inheritance (history minus any unanswered assistant message, copied at spawn -- verbatim for everything ELSE; a model override ignored by contract; SDK 0.0.16 P16-7 corrects this to d2-report.md's ground truth: the in-flight message is filtered and replaced by this fork's own clone + placeholder, never copied verbatim)",
     status: "covered",
     citations: [
-      { file: "./fork.test.ts", testName: "fork messages are copied verbatim, in order" },
+      { file: "./fork.test.ts", testName: "an EARLIER assistant message with an already-answered tool_use is kept untouched -- only the unanswered one is dropped" },
       { file: "./fork.test.ts", testName: "the returned array is a genuine COPY -- mutating it never touches the original inherit.messages" },
       { file: "../engine.test.ts", testName: "(b) inherit.messages is present iff fork:true, both directions, within the same run" },
     ],

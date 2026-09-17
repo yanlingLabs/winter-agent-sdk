@@ -1,104 +1,120 @@
 import { describe, test, expect } from "bun:test";
 import type { ContentBlock, ProviderMessage } from "../engine.ts";
-import { FORK_PLACEHOLDER_TOOL_RESULT, isForkRequest, resolveForkInitialMessages } from "./fork.ts";
-// Review r2 finding 1's own end-to-end proof: drive a fork-seeded history through BOTH real wire
-// mappers (not a hand-rolled stand-in for either) and assert neither sees a dangling tool_use.
-// Deep relative imports into provider-runtime's own adapter modules, not the package barrel
-// (`@yanlinglabs/winter-provider-runtime`'s `index.ts` is FROZEN and never re-exports these --
-// `runtime → provider-runtime` is the declared dependency direction (provider-runtime/src/index.ts's
-// own header), and existing tests in this package already reach into provider-runtime's adapters
-// this same way, e.g. brand-rebrand.test.ts).
+import { FORK_PLACEHOLDER_TOOL_RESULT, ForkRequestLayoutUnavailableError, buildForkDirectiveText, buildForkInitialMessages, isForkRequest } from "./fork.ts";
+// Review r2 finding 1's own end-to-end proof (0.0.15), carried forward: drive a fork-seeded history
+// through BOTH real wire mappers (not a hand-rolled stand-in for either) and assert neither sees a
+// dangling tool_use. Deep relative imports into provider-runtime's own adapter modules, not the
+// package barrel (see the 0.0.15 header this replaces for why).
 import { toWireMessages } from "../../../provider-runtime/src/adapters/anthropic/messages.ts";
 import { mapResponsesInput } from "../../../provider-runtime/src/adapters/openai/responses.ts";
 
-describe("resolveForkInitialMessages (WS-10 §3.5)", () => {
+describe("buildForkInitialMessages (WS-10 §3.5, SDK 0.0.16 P16-7, ground truth per d2-report.md)", () => {
   test("no messages on the inheritance -> empty array (a bare/definition-backed child)", () => {
-    expect(resolveForkInitialMessages({})).toEqual([]);
+    expect(buildForkInitialMessages({}, "toolu_x")).toEqual([]);
   });
 
-  test("fork messages are copied verbatim, in order, when the last message carries no tool_use", () => {
+  test("messages present but nothing matches forkToolUseId -> the filtered history, unchanged, no clone/placeholder appended", () => {
     const messages = [
       { role: "user" as const, content: "hi" },
       { role: "assistant" as const, content: "hello" },
     ];
-    expect(resolveForkInitialMessages({ messages })).toEqual(messages);
+    expect(buildForkInitialMessages({ messages }, "toolu_never_called")).toEqual(messages);
   });
 
   test("the returned array is a genuine COPY -- mutating it never touches the original inherit.messages", () => {
-    const messages = [{ role: "user" as const, content: "hi" }];
+    const toolUse: ContentBlock = { type: "tool_use", id: "call-1", name: "Agent", input: { subagent_type: "fork" } };
+    const messages: ProviderMessage[] = [{ role: "assistant", content: [toolUse] }];
     const inherit = { messages };
-    const result = resolveForkInitialMessages(inherit);
+    const result = buildForkInitialMessages(inherit, "call-1");
     result.push({ role: "assistant", content: "mutated" });
-    expect(inherit.messages).toEqual([{ role: "user", content: "hi" }]);
-    expect(result.length).toBe(2);
+    expect(inherit.messages).toEqual([{ role: "assistant", content: [toolUse] }]);
+    expect(result.length).toBe(3); // [] (the whole msg was unanswered -> dropped) + clone + tool_result
   });
 
-  // Review r2 finding 1 (whole-branch): at fork time the parent's own live `messages` always ends
-  // on the assistant message that batched THIS round's tool_use blocks (the Agent(fork) call
-  // itself, plus any sibling calls the model issued in the same turn) -- engine.ts's own round loop
-  // pushes that assistant message before executing any of its calls, and files this round's own
-  // tool_results only after every one of them (including this spawn) returns. Handed to a provider
-  // unmodified, that history ends on a dangling tool_use with no tool_result -- both the Anthropic
-  // and the OpenAI Responses wire mappers reject a request shaped that way.
-  describe("synthetic tool_result for every unanswered tool_use in the LAST assistant message", () => {
-    test("a single trailing tool_use gets one synthetic tool_result, appended as a new tool message", () => {
+  describe("history shape: filter -> clone (own tool_use only) -> placeholder tool_result", () => {
+    test("a solo tool_use: the whole assistant message is dropped from history, then reappears as a 1-block clone + a tool_result answering it", () => {
       const toolUse: ContentBlock = { type: "tool_use", id: "call-1", name: "Agent", input: { subagent_type: "fork" } };
       const messages: ProviderMessage[] = [{ role: "user", content: "go" }, { role: "assistant", content: [toolUse] }];
-      const result = resolveForkInitialMessages({ messages });
+      const result = buildForkInitialMessages({ messages }, "call-1");
       expect(result).toHaveLength(3);
-      expect(result[2]).toEqual({
-        role: "tool",
-        content: [{ type: "tool_result", tool_use_id: "call-1", content: FORK_PLACEHOLDER_TOOL_RESULT }],
-      });
+      expect(result[0]).toEqual(messages[0]); // history minus the unanswered assistant message
+      expect(result[1]).toEqual({ role: "assistant", content: [toolUse] }); // the clone (identical here: only one block existed)
+      expect(result[2]).toEqual({ role: "tool", content: [{ type: "tool_result", tool_use_id: "call-1", content: FORK_PLACEHOLDER_TOOL_RESULT }] });
     });
 
-    test("SIBLING tool_use calls in the same batched round each get their own synthetic tool_result", () => {
-      const calls: Array<Extract<ContentBlock, { type: "tool_use" }>> = [
-        { type: "tool_use", id: "call-fork", name: "Agent", input: {} },
-        { type: "tool_use", id: "call-sibling-1", name: "Bash", input: { command: "echo hi" } },
-        { type: "tool_use", id: "call-sibling-2", name: "Read", input: { file_path: "/x" } },
-      ];
-      const messages: ProviderMessage[] = [{ role: "assistant", content: calls }];
-      const result = resolveForkInitialMessages({ messages });
-      expect(result).toHaveLength(2);
-      const synthetic = result[1]!;
-      expect(synthetic.role).toBe("tool");
-      const blocks = synthetic.content as ContentBlock[];
-      expect(blocks).toHaveLength(3);
-      for (const call of calls) {
-        const match = blocks.find((b) => b.type === "tool_result" && b.tool_use_id === call.id);
-        expect(match).toEqual({ type: "tool_result", tool_use_id: call.id, content: FORK_PLACEHOLDER_TOOL_RESULT });
-      }
-      // No `is_error` -- the fork genuinely started; this is a placeholder, not a failure report.
-      for (const block of blocks) expect((block as { is_error?: boolean }).is_error).toBeUndefined();
+    // d2-report.md's own CORRECTION over r3a §2's original ("ALL BLOCKS KEPT") claim, pinned against
+    // the real pinned binary and against fork-request-bytes-differential.test.ts's own
+    // `cloneBlocks.length === 1` assertion: each fork's own clone keeps ONLY its own tool_use block.
+    test("SIBLING tool_use calls batched in the SAME message: this fork's own clone drops the sibling entirely", () => {
+      const forkCall: ContentBlock = { type: "tool_use", id: "call-fork", name: "Agent", input: { subagent_type: "fork", prompt: "mine" } };
+      const siblingCall: ContentBlock = { type: "tool_use", id: "call-sibling", name: "Agent", input: { subagent_type: "fork", prompt: "not mine" } };
+      const messages: ProviderMessage[] = [{ role: "user", content: "spawn two forks" }, { role: "assistant", content: [forkCall, siblingCall] }];
+
+      const result = buildForkInitialMessages({ messages }, "call-fork");
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual(messages[0]);
+      const clone = result[1]!;
+      expect(clone.role).toBe("assistant");
+      const cloneBlocks = clone.content as ContentBlock[];
+      expect(cloneBlocks).toHaveLength(1); // NOT 2 -- the sibling's own tool_use is gone, not merely unanswered
+      expect(cloneBlocks[0]).toEqual(forkCall);
+      expect(result[2]).toEqual({ role: "tool", content: [{ type: "tool_result", tool_use_id: "call-fork", content: FORK_PLACEHOLDER_TOOL_RESULT }] });
+
+      // The OTHER sibling's own build (a second, independent spawn off the SAME parent message)
+      // clones the OTHER block -- proving the two sibling clones genuinely diverge from each other,
+      // not just from the original message.
+      const siblingResult = buildForkInitialMessages({ messages }, "call-sibling");
+      const siblingClone = siblingResult[1]!;
+      expect((siblingClone.content as ContentBlock[])[0]).toEqual(siblingCall);
+      expect(siblingResult[1]).not.toEqual(clone);
     });
 
-    test("a trailing assistant message with only TEXT (no tool_use) is left alone -- nothing to answer", () => {
-      const messages: ProviderMessage[] = [{ role: "assistant", content: "just text, no calls" }];
-      expect(resolveForkInitialMessages({ messages })).toEqual(messages);
+    test("a non-tool_use block (text) accompanying this fork's own tool_use in the same message is ALSO dropped from the clone -- ONLY the tool_use survives", () => {
+      const text: ContentBlock = { type: "text", text: "I'll delegate this." };
+      const forkCall: ContentBlock = { type: "tool_use", id: "call-1", name: "Agent", input: {} };
+      const messages: ProviderMessage[] = [{ role: "assistant", content: [text, forkCall] }];
+      const result = buildForkInitialMessages({ messages }, "call-1");
+      const clone = result[0]!; // the whole original message was unanswered -> dropped; nothing precedes the clone
+      expect((clone.content as ContentBlock[])).toEqual([forkCall]);
     });
 
-    test("a trailing assistant message whose content array has no tool_use blocks is left alone", () => {
-      const messages: ProviderMessage[] = [{ role: "assistant", content: [{ type: "text", text: "hello" }] }];
-      expect(resolveForkInitialMessages({ messages })).toEqual(messages);
+    test("drops nativeState from the clone (adapter-owned continuation state a partial clone cannot honestly carry) but keeps origin", () => {
+      const forkCall: ContentBlock = { type: "tool_use", id: "call-fork", name: "Agent", input: {} };
+      const siblingCall: ContentBlock = { type: "tool_use", id: "call-sibling", name: "Bash", input: {} };
+      const original: ProviderMessage = {
+        role: "assistant",
+        content: [forkCall, siblingCall],
+        origin: { providerId: "openai", modelKey: "openai/gpt-x", family: "openai" },
+        nativeState: { family: "openai", continuationDomain: "openai:responses", items: [{ type: "function_call", call_id: "call-fork" }, { type: "function_call", call_id: "call-sibling" }] },
+      };
+      const result = buildForkInitialMessages({ messages: [original] }, "call-fork");
+      const clone = result[0]!;
+      expect(clone.origin).toEqual(original.origin);
+      expect(clone.nativeState).toBeUndefined();
     });
 
-    test("a last message that is NOT the assistant's (already answered / a plain user turn) is left alone", () => {
+    test("uuid is never copied onto the clone -- it is a genuinely new message, not a replay", () => {
+      const forkCall: ContentBlock = { type: "tool_use", id: "call-1", name: "Agent", input: {} };
+      const original: ProviderMessage = { role: "assistant", content: [forkCall], uuid: "original-uuid" };
+      const result = buildForkInitialMessages({ messages: [original] }, "call-1");
+      expect(result[0]!.uuid).toBeUndefined();
+    });
+
+    test("an EARLIER assistant message with an already-answered tool_use is kept untouched -- only the unanswered one is dropped", () => {
+      const earlierCall: ContentBlock = { type: "tool_use", id: "call-earlier", name: "Bash", input: {} };
+      const forkCall: ContentBlock = { type: "tool_use", id: "call-fork", name: "Agent", input: {} };
       const messages: ProviderMessage[] = [
-        { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Bash", input: {} }] },
-        { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "done" }] },
+        { role: "user", content: "first, run a command" },
+        { role: "assistant", content: [earlierCall] },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "call-earlier", content: "ok" }] },
+        { role: "user", content: "now fork" },
+        { role: "assistant", content: [forkCall] },
       ];
-      expect(resolveForkInitialMessages({ messages })).toEqual(messages);
-    });
-
-    test("does not mutate the original inherit.messages array or its assistant message", () => {
-      const toolUse: ContentBlock = { type: "tool_use", id: "call-1", name: "Agent", input: {} };
-      const assistantMsg: ProviderMessage = { role: "assistant", content: [toolUse] };
-      const messages = [assistantMsg];
-      const result = resolveForkInitialMessages({ messages });
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toBe(assistantMsg);
-      expect(result).toHaveLength(2);
+      const result = buildForkInitialMessages({ messages }, "call-fork");
+      // history minus the unanswered assistant message (index 4) = the first 4 entries, untouched
+      expect(result.slice(0, 4)).toEqual(messages.slice(0, 4));
+      expect(result[4]).toEqual({ role: "assistant", content: [forkCall] });
+      expect(result[5]).toEqual({ role: "tool", content: [{ type: "tool_result", tool_use_id: "call-fork", content: FORK_PLACEHOLDER_TOOL_RESULT }] });
     });
   });
 });
@@ -110,14 +126,60 @@ describe("isForkRequest", () => {
   });
 });
 
-// Review r2 finding 1, end-to-end proof: a fork-seeded history run through the SAME wire mappers
-// the real provider adapters use, for BOTH families this fix must hold on -- Anthropic (nested
-// blocks, merged by role) and the OpenAI Responses API (a flat item list, no roles at all). Both
-// reject or corrupt a request whose last tool_use has no answering result; this proves neither does
-// once `resolveForkInitialMessages` has run.
+describe("buildForkDirectiveText (Winter-authored boilerplate + claude's own 'Your directive: ' prefix)", () => {
+  test("ends with 'Your directive: <prompt>', nothing trailing (fork-request-bytes-differential.test.ts's own pinned suffix)", () => {
+    const text = buildForkDirectiveText({ prompt: "investigate the first half" });
+    expect(text.endsWith("Your directive: investigate the first half")).toBe(true);
+  });
+
+  test("two calls with the SAME prompt/no worktree produce byte-identical text (the boilerplate is a constant)", () => {
+    const a = buildForkDirectiveText({ prompt: "same task" });
+    const b = buildForkDirectiveText({ prompt: "same task" });
+    expect(a).toBe(b);
+  });
+
+  test("the boilerplate PREFIX (everything before 'Your directive:') is identical across two DIFFERENT prompts -- the sibling-cache-sharing property", () => {
+    const a = buildForkDirectiveText({ prompt: "investigate the first half" });
+    const b = buildForkDirectiveText({ prompt: "investigate the second half" });
+    const aPrefix = a.slice(0, a.indexOf("Your directive:"));
+    const bPrefix = b.slice(0, b.indexOf("Your directive:"));
+    expect(aPrefix).toBe(bPrefix);
+    expect(aPrefix.length).toBeGreaterThan(0);
+  });
+
+  test("a worktree fork's text names the worktree root and still ends with the directive", () => {
+    const text = buildForkDirectiveText({ prompt: "task", worktreeRoot: "/tmp/winter-worktree-abc" });
+    expect(text).toContain("/tmp/winter-worktree-abc");
+    expect(text.endsWith("Your directive: task")).toBe(true);
+  });
+
+  test("a worktree note changes the shared prefix -- two DIFFERENT worktree roots do NOT share a byte-identical prefix (disclosed, not a claim this design makes)", () => {
+    const a = buildForkDirectiveText({ prompt: "x", worktreeRoot: "/tmp/wt-a" });
+    const b = buildForkDirectiveText({ prompt: "y", worktreeRoot: "/tmp/wt-b" });
+    expect(a.slice(0, a.indexOf("Your directive:"))).not.toBe(b.slice(0, b.indexOf("Your directive:")));
+  });
+
+  test("Winter-authored: never contains an Anthropic/claude product name (R-S3)", () => {
+    const text = buildForkDirectiveText({ prompt: "x" });
+    expect(text.toLowerCase()).not.toContain("claude");
+    expect(text.toLowerCase()).not.toContain("anthropic");
+  });
+});
+
+describe("ForkRequestLayoutUnavailableError", () => {
+  test("is a real Error with a legible, typed name", () => {
+    const err = new ForkRequestLayoutUnavailableError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("ForkRequestLayoutUnavailableError");
+    expect(err.message.length).toBeGreaterThan(0);
+  });
+});
+
+// Review r2 finding 1, end-to-end proof (0.0.15, carried forward under the new d2-corrected shape): a
+// fork-seeded history run through the SAME wire mappers the real provider adapters use, for BOTH
+// families this fix must hold on. Both reject or corrupt a request whose last tool_use has no
+// answering result; this proves neither does once `buildForkInitialMessages` has run.
 describe("fork history through the real wire adapters (no unanswered tool_use reaches either)", () => {
-  // A realistic parent turn: the model batched the fork spawn ALONGSIDE two sibling calls in one
-  // round (exactly the shape engine.ts's own round loop produces -- see fork.ts's own header).
   function buildForkedParentHistory(): ProviderMessage[] {
     const calls: ContentBlock[] = [
       { type: "tool_use", id: "toolu_fork", name: "Agent", input: { subagent_type: "fork", description: "d", prompt: "carry on" } },
@@ -129,20 +191,19 @@ describe("fork history through the real wire adapters (no unanswered tool_use re
     ];
   }
 
-  // The fork directive itself: child-engine.ts's own `startGeneration` writes this as a fresh
-  // `{type:"user", text: liveText}` frame AFTER `initialMessages` has seeded the history (see
-  // child-engine.ts:~1050/1225) -- never folded into the synthetic tool_result message itself.
-  function withDirective(initial: ProviderMessage[]): ProviderMessage[] {
-    return [...initial, { role: "user", content: "Your directive: carry on" }];
+  // child-engine.ts's own `startGeneration` writes the directive as a fresh `{type:"user", text}`
+  // frame AFTER `initialMessages` has seeded the history -- `context/request-layout.ts`'s own
+  // message-merge logic (consecutive user-role entries merge, tool_result hoisted first) folds it
+  // into the SAME wire message as the placeholder tool_result, which is what this helper simulates.
+  function withDirective(initial: ProviderMessage[], directive: string): ProviderMessage[] {
+    return [...initial, { role: "user", content: directive }];
   }
 
   test("Anthropic: every tool_use in the wire request has an answering tool_result, and roles still alternate", () => {
-    const initial = resolveForkInitialMessages({ messages: buildForkedParentHistory() });
-    const full = withDirective(initial);
+    const initial = buildForkInitialMessages({ messages: buildForkedParentHistory() }, "toolu_fork");
+    const full = withDirective(initial, buildForkDirectiveText({ prompt: "carry on" }));
     const wire = toWireMessages(full);
 
-    // No two consecutive entries share a role -- the merge did its job, so this is a request a real
-    // Anthropic endpoint accepts shape-wise (it rejects consecutive same-role turns outright).
     for (let i = 1; i < wire.length; i++) expect(wire[i]!.role).not.toBe(wire[i - 1]!.role);
 
     const toolUseIds = new Set<string>();
@@ -153,38 +214,38 @@ describe("fork history through the real wire adapters (no unanswered tool_use re
         if (block["type"] === "tool_result") toolResultIds.add(block["tool_use_id"] as string);
       }
     }
-    expect([...toolUseIds].sort()).toEqual(["toolu_fork", "toolu_sibling"]);
-    // Every tool_use answered -- the property this whole fix exists for.
+    // The SIBLING's own tool_use is gone entirely from this fork's own history (d2: dropped, not
+    // merely unanswered) -- only THIS fork's own call reaches the wire at all.
+    expect([...toolUseIds]).toEqual(["toolu_fork"]);
     expect(toolResultIds.has("toolu_fork")).toBe(true);
-    expect(toolResultIds.has("toolu_sibling")).toBe(true);
+    expect(toolResultIds.has("toolu_sibling")).toBe(false);
 
-    // The tool_result content is the constant placeholder, riding the entry immediately after the
-    // assistant's tool_use turn (merged with the directive's own user text into ONE wire entry --
-    // Anthropic's dialect has no separate "tool" role, so `role:"tool"` collapses into `user`).
     const assistantIdx = wire.findIndex((e) => e.role === "assistant");
     const answerEntry = wire[assistantIdx + 1]!;
     expect(answerEntry.role).toBe("user");
     const forkResult = answerEntry.content.find((b) => b["type"] === "tool_result" && b["tool_use_id"] === "toolu_fork");
     expect(forkResult).toMatchObject({ content: FORK_PLACEHOLDER_TOOL_RESULT });
+    // The directive text rides the SAME entry as the placeholder tool_result (the merge this file's
+    // own header describes), never a separate assistant/user pair.
+    const directiveBlock = answerEntry.content.find((b) => b["type"] === "text");
+    expect(typeof directiveBlock?.["text"]).toBe("string");
+    expect((directiveBlock!["text"] as string).endsWith("Your directive: carry on")).toBe(true);
   });
 
-  test("OpenAI Responses: every function_call has a matching function_call_output later in the item list", () => {
-    const initial = resolveForkInitialMessages({ messages: buildForkedParentHistory() });
-    const full = withDirective(initial);
+  test("OpenAI Responses: every function_call has a matching function_call_output later in the item list, and the dropped sibling never appears", () => {
+    const initial = buildForkInitialMessages({ messages: buildForkedParentHistory() }, "toolu_fork");
+    const full = withDirective(initial, buildForkDirectiveText({ prompt: "carry on" }));
     const items = mapResponsesInput(full) as Array<Record<string, unknown>>;
 
     const callIds = items.filter((i) => i["type"] === "function_call").map((i) => i["call_id"] as string);
     const outputIds = new Set(items.filter((i) => i["type"] === "function_call_output").map((i) => i["call_id"] as string));
-    expect(callIds.sort()).toEqual(["toolu_fork", "toolu_sibling"]);
-    for (const id of callIds) expect(outputIds.has(id)).toBe(true);
+    expect(callIds).toEqual(["toolu_fork"]);
+    expect(outputIds.has("toolu_fork")).toBe(true);
+    expect(outputIds.has("toolu_sibling")).toBe(false);
 
-    // Ordering: each function_call_output appears strictly AFTER its own function_call -- the
-    // property the Responses API actually enforces (an output preceding its call 400s).
-    for (const id of callIds) {
-      const callIdx = items.findIndex((i) => i["type"] === "function_call" && i["call_id"] === id);
-      const outputIdx = items.findIndex((i) => i["type"] === "function_call_output" && i["call_id"] === id);
-      expect(outputIdx).toBeGreaterThan(callIdx);
-    }
+    const callIdx = items.findIndex((i) => i["type"] === "function_call" && i["call_id"] === "toolu_fork");
+    const outputIdx = items.findIndex((i) => i["type"] === "function_call_output" && i["call_id"] === "toolu_fork");
+    expect(outputIdx).toBeGreaterThan(callIdx);
 
     const forkOutput = items.find((i) => i["type"] === "function_call_output" && i["call_id"] === "toolu_fork");
     expect(forkOutput).toMatchObject({ output: FORK_PLACEHOLDER_TOOL_RESULT });
@@ -192,7 +253,7 @@ describe("fork history through the real wire adapters (no unanswered tool_use re
 
   test("a fork with NO sibling calls: the single tool_use is answered on both adapters", () => {
     const solo: ProviderMessage[] = [{ role: "assistant", content: [{ type: "tool_use", id: "toolu_solo", name: "Agent", input: {} }] }];
-    const full = withDirective(resolveForkInitialMessages({ messages: solo }));
+    const full = withDirective(buildForkInitialMessages({ messages: solo }, "toolu_solo"), buildForkDirectiveText({ prompt: "x" }));
 
     const wire = toWireMessages(full);
     const wireResultIds = wire.flatMap((e) => e.content).filter((b) => b["type"] === "tool_result").map((b) => b["tool_use_id"]);

@@ -129,7 +129,7 @@ import { getChildEngineFactory, transformChildFrame, type ChildHandle, type Chil
 import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-adapter.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
-import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
+import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
@@ -176,6 +176,7 @@ import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-
 import { resolveProjectDirName } from "./paths/project-dir-name.ts";
 import { createAgentDefinitionRejectionReporter, loadAgentDefinitions, toAgentInfoList, type PluginAgentDefinition, type SourcedAgentDefinition } from "./subagents/definitions.ts";
 import { resolveForkSubagentEnabled } from "./subagents/builtin-agents.ts";
+import { ForkRequestLayoutUnavailableError } from "./subagents/fork.ts";
 import { resolveBackgroundTasksDisabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
 import type { AgentListingEntry } from "./context/agent-listing.ts";
@@ -185,6 +186,7 @@ import {
   buildRequestMessages,
   buildSystemBlocks,
   clearSessionRequestLayout,
+  getSessionRequestLayout,
   joinSystemBlocks,
   recordSessionRequestLayout,
   registerSessionContextReload,
@@ -192,6 +194,7 @@ import {
   renderUserContext,
   unregisterSessionContextReload,
   type ContextEntry,
+  type SessionRequestLayout,
 } from "./context/request-layout.ts";
 import { computeGitStatus } from "./context/git-status.ts";
 import { renderSkillListingContent } from "./skills/listing.ts";
@@ -1117,6 +1120,19 @@ export interface EngineOptions {
    */
   omitProjectContext?: boolean;
   /**
+   * SDK 0.0.16 (P16-7, R3a §2): a FORK child's exact inherited request layout -- set ONLY by
+   * `subagents/child-engine.ts`'s own fork branch, from `ChildInheritance.requestLayout`, never by a
+   * top-level host. When present, this run's system prompt, tool specs and userContext are sent
+   * EXACTLY as captured (`assemblePrompt`/`ensureSessionContext`/`requestSystem`/`providerToolSpecs`
+   * below all short-circuit to it) -- never re-rendered, however faithfully, because WS-10 §3.5's
+   * "inherits... system prompt... tool pool... verbatim" cannot survive a second independent render
+   * (a different registry snapshot, a different git status, a different local clock all touch the
+   * SAME bytes claude's own fork keeps frozen). `systemPromptAssembler`/`agentSystemPrompt` are never
+   * consulted while this is set -- not even to build the FIRST-turn input, which a fork never needs
+   * one for (its own directive rides `initialMessages`, not `agentSystemPrompt`).
+   */
+  exactRequestLayout?: SessionRequestLayout;
+  /**
    * R5-14: slash-command resolution (Lane S owns the filesystem half; the engine owns the built-ins
    * and the ordering between them). Consulted BEFORE the model sees a prompt. ABSENT => only the
    * built-ins resolve and every other prompt passes through verbatim.
@@ -1741,6 +1757,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     systemPromptAssembler,
     agentSystemPrompt,
     omitProjectContext,
+    exactRequestLayout,
     attachmentProducers,
     describeModel,
     now: engineClock,
@@ -2808,7 +2825,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // re-derive the identical chain with real alias resolution layered on top without this function
   // needing to know about that layer at all).
   function resolveChildModel(req: SpawnChildRequest): string {
-    if (req.fork === true) return config.model; // WS-10 §3.5: fork ignores a model override by contract
+    // WS-10 §3.5: fork ignores a model override by contract -- and "inherits... model" means the
+    // parent's CURRENT model, not its startup one: `currentModel` is the live, mutable binding
+    // `set_model`/resolution/resume reassign (`let currentModel = config.model` above), while
+    // `config.model` stays the session's original value for its whole run. A fork spawned after a
+    // `set_model` landed must run on the model the parent is actually generating with right now --
+    // using `config.model` here would send a fork's first request on a model the parent stopped using
+    // turns ago, while `currentAgentModelRender()` (below) and the parent's own last real request both
+    // already key off `currentModel`. SDK 0.0.16 (P16-7) fix -- fork-only; the non-fork chain below is
+    // untouched (its own `config.model` fallback is a different, non-fork-specific question).
+    if (req.fork === true) return currentModel;
     // P7a (D19): the env NAME derives from the session's prefix and is read HERE, per spawn -- never
     // spelled and never at module load (brand-gate rules 9 and 10).
     const envModel = (engineEnv ?? process.env)[envName(sessionBrand, "SUBAGENT_MODEL")];
@@ -2884,7 +2910,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const childSlot = resolveChildSlot(req);
     const parentState = policyStateStore.getState();
     const requestedMode = req.definition?.permissionMode;
-    const validMode = requestedMode !== undefined && isPermissionMode(requestedMode) ? requestedMode : undefined;
+    // SDK 0.0.16 (P16-7): "bubble" (claude's own fork agent, `permissionMode:"bubble"`) is an
+    // EXPLICIT alias for "no override" -- excluded here BEFORE `isPermissionMode` gets a look, so it
+    // can never collide with a genuine future addition to `PERMISSION_MODES` and reads, at this call
+    // site, as the deliberate value it is rather than as an accident of falling through the "not a
+    // known mode" branch below. See permissions/policy-state.ts's own header on `BUBBLE_PERMISSION_MODE`
+    // for why the child keeping the parent's mode is already everything "bubble" means.
+    const validMode = requestedMode !== undefined && requestedMode !== BUBBLE_PERMISSION_MODE && isPermissionMode(requestedMode) ? requestedMode : undefined;
     // RULING P2-M (permissions/auto/inheritance.ts): computeChildPolicy needs no per-axis change of
     // its own for this call site -- WS-07 §11's forced-mode table is a fixed set-membership check,
     // not a "which is stricter" comparison; the per-axis comparator only matters at RESUME
@@ -2980,6 +3012,28 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // that rebuilt each element as `{role, content}` would strip exactly the annotations that tell
       // the child which provider produced the history it inherited, and it would do so silently.
       ...(req.fork === true ? { messages: [...messages] } : {}),
+      // SDK 0.0.16 (P16-7, R3a §2): the parent's own exact request layout -- its last rendered system
+      // prompt/blocks, tool specs and userContext entries, captured verbatim by
+      // `context/request-layout.ts`'s per-session memo at the moment this fork's own tool_use was
+      // sent (`recordSessionRequestLayout`, this file's own round loop, a few thousand lines down).
+      // `child-engine.ts` hands this straight to the child's own `runEngine()` as
+      // `EngineOptions.exactRequestLayout`, bypassing its system-prompt assembly, tool-spec render and
+      // userContext build entirely -- see that field's own doc for why a second render, however
+      // faithful, cannot be byte-exact.
+      //
+      // THROWN, never omitted, when nothing is recorded yet (`ForkRequestLayoutUnavailableError`,
+      // fork.ts) -- structurally unreachable in production (a fork's own tool_use can only exist
+      // after the model's own turn already sent at least one real request), so this is a defensive
+      // refusal, not a silent "fork with no exact layout" degrade path.
+      ...(req.fork === true
+        ? {
+            requestLayout: (() => {
+              const layout = getSessionRequestLayout(config.sessionId, config.agentId);
+              if (layout === undefined) throw new ForkRequestLayoutUnavailableError();
+              return layout;
+            })(),
+          }
+        : {}),
       // Phase 6 Task 3 (R6-17): the parent's RESOLVED provider identity and its EFFECTIVE reasoning
       // configuration. `model`/`effort`/`thinking` above are the REQUESTED values (a definition's own
       // override, or the placeholder base); these are what a bare child model id resolves against and
@@ -5098,6 +5152,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
 
   const assemblePrompt = (input: SystemPromptInput): AssembledPrompt => {
+    // SDK 0.0.16 (P16-7): a fork's own EXACT layout makes this call's whole result unused --
+    // `requestSystem`/`ensureSessionContext` below both short-circuit to `exactRequestLayout`
+    // directly and never read `assembled`. Short-circuited HERE too (never calling the assembler at
+    // all) rather than merely ignoring its result: the assembler reads project instructions files,
+    // the memory index and settings, none of which a fork -- whose whole point is to send the
+    // PARENT's own bytes, not a fresh render of its own cwd/settings -- has any business triggering.
+    if (exactRequestLayout !== undefined) return { system: "" };
     if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "" };
     return systemPromptAssembler.assemble(input);
   };
@@ -5126,6 +5187,25 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
   const ensureSessionContext = async (assembled: AssembledPrompt, input: SystemPromptInput): Promise<SessionContext> => {
     if (sessionContext !== undefined) return sessionContext;
+    // SDK 0.0.16 (P16-7): a fork's own exact userContext -- the PARENT's captured entries, rendered
+    // through the SAME `renderUserContext` the parent's own request used, so the text is
+    // byte-identical without needing to capture the rendered string itself (a pure function of the
+    // entries). Never `computeGitStatus(config.cwd)` (this fork may be running in an isolated
+    // worktree; its OWN git status would differ from the parent's captured one, and gitStatus already
+    // rides inside `exactRequestLayout.system`/`systemBlocks` for the `"system"` placement claude uses
+    // -- recomputing it here would be a second, possibly-divergent copy) and never the assembler's own
+    // `userContext()` (same reasoning as `assemblePrompt` above).
+    //
+    // `date` is left `undefined` deliberately, not copied from a captured `currentDate` entry: it
+    // exists only to drive `dateChangeAttachment`'s own "has the local date rolled since this context
+    // was built" fold, and a fork is a one-shot worker (WS-10 §3.5's own "report back once") that has
+    // no business re-announcing a date change mid-run -- `undefined` makes that fold a permanent no-op
+    // for this session, the simplest correct answer, rather than seeding a real date that could fire a
+    // spurious `date_change` attachment the parent's own captured bytes never anticipated.
+    if (exactRequestLayout !== undefined) {
+      sessionContext = { userContext: exactRequestLayout.userContext, userContextText: renderUserContext(exactRequestLayout.userContext), systemContextText: undefined, date: undefined };
+      return sessionContext;
+    }
     const placement = assembled.systemContextPlacement ?? "none";
     const gitStatus = placement !== "none" ? await computeGitStatus(config.cwd) : undefined;
     let userContext: ContextEntry[] = systemPromptAssembler?.userContext?.(input) ?? [];
@@ -5152,6 +5232,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * double that reports no `systemParts` keeps the plain `system` string and sends no blocks.
    */
   const requestSystem = (assembled: AssembledPrompt, context: SessionContext): { system: string; systemBlocks?: SystemPromptBlock[] } => {
+    // SDK 0.0.16 (P16-7): a fork's own exact system prompt -- the PARENT's captured `system`/
+    // `systemBlocks` verbatim. `context.systemContextText` is ALWAYS `undefined` here (the
+    // `ensureSessionContext` exact branch above never sets it), so there is no risk of
+    // double-appending the parent's own gitStatus line: it already rode inside `exactRequestLayout`'s
+    // captured blocks (the pin's own placement -- systemContext appended to the LAST/dynamic block,
+    // `context/request-layout.ts`'s `buildSystemBlocks` header) the moment they were captured.
+    if (exactRequestLayout !== undefined) {
+      return { system: exactRequestLayout.system ?? "", ...(exactRequestLayout.systemBlocks.length > 0 ? { systemBlocks: exactRequestLayout.systemBlocks } : {}) };
+    }
     if (assembled.systemParts === undefined) {
       return { system: [assembled.system, context.systemContextText].filter((p): p is string => p !== undefined && p.length > 0).join("\n\n") };
     }
@@ -5329,6 +5418,23 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
 
   const providerToolSpecs = (): ProviderToolSpec[] => {
+    // SDK 0.0.16 (P16-7): a fork's own exact tool pool -- the PARENT's last advertised specs
+    // verbatim (names, order AND schemas), never this run's own `advertisedPartition`/gate render.
+    // This is what fixes d2-report.md's own "AskUserQuestion missing from the re-rendered pool" RED:
+    // a fresh render here gates the Agent tool's own description/schema on THIS run's `insideFork`
+    // (the fork itself), which differs from what the PARENT actually advertised.
+    //
+    // A fork that later ToolSearch-loads a deferred tool of its own still gets fresh specs appended
+    // for THAT (loadedToolSet changes are a real, later event this exact snapshot cannot have
+    // anticipated) -- see the loop below, reached only past this early return on the FIRST call; a
+    // later call re-enters this same short-circuit and returns the frozen list again, so a
+    // newly-loaded deferred tool from THIS run never actually reaches the wire under exact mode. That
+    // is a deliberate choice, not an oversight: the alternative (appending fresh specs after the exact
+    // ones) would make request 2 differ in SHAPE from request 1 by the appended count, and this run
+    // has no way to know whether the PARENT would render an identical spec for the same tool anyway
+    // (a fork's own `insideFork` gates differ from the parent's). A fork that needs a deferred tool it
+    // was not already using at fork time is the disclosed edge of this design.
+    if (exactRequestLayout !== undefined) return exactRequestLayout.tools;
     const specs: ProviderToolSpec[] = [];
     for (const descriptor of advertisedPartition.eager) {
       specs.push(toolSpecFor(descriptor));

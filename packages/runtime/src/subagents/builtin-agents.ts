@@ -24,6 +24,7 @@
 // text (none of which is in the research file, and this lane's own brief forbids going looking for
 // it in the pinned binary or the leaked reference).
 import { WINTER_BRAND, envName, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
+import { BUBBLE_PERMISSION_MODE } from "../permissions/policy-state.ts";
 
 /** The one brand slice every reader/prompt-builder in this module needs. */
 type BuiltinAgentBrand = Pick<BrandProfile, "envPrefix" | "productName">;
@@ -285,16 +286,28 @@ export function resolveBuiltinAgents(opts?: { env?: Record<string, string | unde
       tools: ["*"],
       maxTurns: 200,
       model: "inherit",
-      // DEVIATION (disclosed, R-S1 item f): claude's own fork definition carries
-      // `permissionMode: "bubble"` -- `permissions/policy-state.ts`'s own `PERMISSION_MODES` set
-      // (`default`/`acceptEdits`/`bypassPermissions`/`plan`/`dontAsk`/`auto`) has no such mode, and
-      // WS-07's product-facing vocabulary (`plan | dont-ask | ask | accept-edits | auto | bypass`)
-      // has no equivalent either -- "bubble" (permission decisions bubble up to whatever the parent
-      // session's own mode already resolves them to) is not a mode Winter's permission engine
-      // models as a distinct value. Left UNSET rather than guessing at the nearest of the six: an
-      // absent `permissionMode` already means "inherit the parent's own resolved mode" end to end
-      // (`engine.ts`'s own `buildChildInheritance`: `requestedMode` undefined -> `computeChildPolicy`
-      // falls through to the parent's state), which is the closest existing behavior to "bubble".
+      // SDK 0.0.16 (P16-7): claude's own fork definition (`Ex`) carries `permissionMode: "bubble"` --
+      // no longer left unset. `BUBBLE_PERMISSION_MODE` is NOT a member of `PERMISSION_MODES`
+      // (`permissions/policy-state.ts`'s own closed 6-value union, read exhaustively elsewhere) and
+      // is never widened into one; `engine.ts`'s `buildChildInheritance` recognizes this exact
+      // constant as an explicit alias for "no override" -- the fork keeps whatever mode the parent
+      // session is CURRENTLY running, and its own approval prompts already surface through the
+      // parent's approval path (the existing forwarded-control-request mechanism every child uses).
+      // Setting it here, spelled out, documents the value's INTENT rather than leaving it an accident
+      // of an unrecognized string falling through `isPermissionMode`'s own false case -- see that
+      // constant's own header for the full reasoning; this replaces the prior DEVIATION note.
+      permissionMode: BUBBLE_PERMISSION_MODE,
+      // SDK 0.0.16 (P16-7, WS-10 §5): a fork is ALWAYS background, unconditionally -- the one
+      // standalone rule `subagents/policy.ts`'s own `resolveForegroundBackground` already applies
+      // BEFORE consulting either the fork-mode base default or the invocation's own
+      // `run_in_background` request ("AgentDefinition.background:true... overrides even an explicit
+      // invocation run_in_background:false, matching 'force' read literally"), and still yields to the
+      // one thing that outranks it, `WINTER_DISABLE_BACKGROUND_TASKS` -- exactly claude's own
+      // formula, whose kill switch a fork-mode base default cannot override either. This is what
+      // makes "forks are always background" true WITHOUT this lane touching `subagents/policy.ts` (a
+      // different lane's file) or `tools/impl/agent.ts`'s own launch control flow at all: the
+      // definition-level force is the one lever already reachable from here.
+      background: true,
     };
   }
 
