@@ -835,6 +835,17 @@ async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTr
 // calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
 const AGENT_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
 
+// Task-frames parity (2026-09-17 contract §4): a foreground Agent spawn now emits its own
+// task_started/task_updated/task_notification/task_progress frames (§4's own correction -- it used
+// to emit NONE at all, "deliberately SILENT"), so these five frame types now appear in cross-leg
+// scenarios that never carried one before. `task_id` (randomUUID()-derived per leg's own independent
+// spawn), `output_file` (a path under that leg's own unique tempDir) and task_updated's own
+// `patch.end_time` (Date.now()) are exactly as volatile, per-leg, as `agentId`/`taskId` already are
+// inside a JSON tool_result below -- scrubbed the SAME scenario-local way, on the frame's own
+// top-level payload rather than a JSON string nested inside one. `background_tasks_changed`'s own
+// `tasks[].task_id` gets the identical treatment.
+const TASK_FRAME_SUBTYPES = new Set(["task_started", "task_updated", "task_notification", "task_progress"]);
+
 function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
   const scrubValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(scrubValue);
@@ -846,6 +857,21 @@ function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTrac
     return out;
   };
   return entries.map((entry) => {
+    const systemPayload = entry.payload as { type?: string; subtype?: string; task_id?: string; output_file?: string; patch?: Record<string, unknown>; tasks?: Array<Record<string, unknown>> } | undefined;
+    if (systemPayload?.type === "system" && systemPayload.subtype === "background_tasks_changed" && Array.isArray(systemPayload.tasks)) {
+      return { ...entry, payload: { ...systemPayload, tasks: systemPayload.tasks.map((t) => (t["task_id"] !== undefined ? { ...t, task_id: "<scrubbed>" } : t)) } };
+    }
+    if (systemPayload?.type === "system" && systemPayload.subtype !== undefined && TASK_FRAME_SUBTYPES.has(systemPayload.subtype)) {
+      return {
+        ...entry,
+        payload: {
+          ...systemPayload,
+          ...(systemPayload.task_id !== undefined ? { task_id: "<scrubbed>" } : {}),
+          ...(systemPayload.output_file !== undefined ? { output_file: "<scrubbed>" } : {}),
+          ...(systemPayload.patch !== undefined && "end_time" in systemPayload.patch ? { patch: { ...systemPayload.patch, end_time: "<scrubbed>" } } : {}),
+        },
+      };
+    }
     const message = (entry.payload as { message?: { content?: unknown } } | undefined)?.message;
     if (!message || !Array.isArray(message.content)) return entry;
     const content = message.content.map((block) => {
@@ -1576,7 +1602,22 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(compareTraces(scrubJsonToolResults(a.trace), scrubJsonToolResults(b.trace))).toEqual([]);
     expect(a.thrown).toBeUndefined();
     expect(b.thrown).toBeUndefined();
-    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+    // Task-frames parity (2026-09-17 contract §4): a foreground Agent spawn now registers AND
+    // terminates through the same task-frame doors a background one does (task_started right after
+    // spawnChild resolves, task_updated + task_notification once the child settles, before this
+    // executor call returns) -- so these three land between the Agent tool_use and its own
+    // tool_result, on every leg identically.
+    expect(a.trace.map((e) => e.kind)).toEqual([
+      "system/init",
+      "assistant",
+      "system/task_started",
+      "system/task_updated",
+      "system/task_notification",
+      "user",
+      "assistant",
+      "result",
+      "exit",
+    ]);
 
     const toolUse = a.trace[1]!.payload as { message: { content: Array<{ type: string; name: string }> } };
     expect(toolUse.message.content[0]).toMatchObject({ type: "tool_use", name: "Agent" });
@@ -1590,7 +1631,8 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
 
     // The Agent tool genuinely spawned and completed a real child -- not the "no child engine
     // factory is registered" error every leg produced before this task's entrypoint registration.
-    const toolResult = a.trace[2]!.payload as { message: { content: Array<{ content: string }> } };
+    // Index 5, not 2: the three new task-frames above shift the tool_result "user" entry down.
+    const toolResult = a.trace[5]!.payload as { message: { content: Array<{ content: string }> } };
     const payload = JSON.parse(toolResult.message.content[0]!.content) as { agentId: string; content: Array<{ text: string }>; prompt: string };
     expect(payload.content[0]!.text).toBe("child finished");
     expect(payload.prompt).toBe(SUBAGENT_CHILD_PROBE_TEXT);
