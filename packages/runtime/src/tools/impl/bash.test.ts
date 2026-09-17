@@ -638,6 +638,22 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(getTask(taskId)?.status).toBe("stopped");
     });
 
+    // Review r1 finding 13: TaskStop, then the SIGKILLed process's own exit handler.
+    t("TaskStop on a running BACKGROUND command: exactly one task_updated {killed} + one notification in total, even after the process's own exit runs", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      const res = await bash()({ command: "sleep 30", description: "bg sleep", run_in_background: true }, ctx);
+      const taskId = /background task (\S+) started/.exec(res.output)![1]!;
+      for (let i = 0; i < 40 && getTask(taskId)?.pid === undefined; i++) await new Promise((r) => setTimeout(r, 25));
+      await taskStopExecutor.execute({ task_id: taskId }, ctx);
+      await new Promise((r) => setTimeout(r, 400));
+      const own = frames.filter((f) => (f as { task_id?: string }).task_id === taskId && f.subtype !== "task_started");
+      expect(own.map((f) => f.subtype)).toEqual(["task_updated", "task_notification"]);
+      expect(own[1]).toMatchObject({ status: "stopped", summary: 'Background command "bg sleep" was stopped' });
+      // The listed set changed (the task left it): exactly one background_tasks_changed follows the stop.
+      expect(frames.filter((f) => f.subtype === "background_tasks_changed")).toHaveLength(2);
+    });
+
     t("a timed-out background command reports failed WITHOUT a fabricated exit code", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });

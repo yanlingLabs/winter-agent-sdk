@@ -720,6 +720,24 @@ describe("Monitor executor: command half", () => {
     expect(getTask(taskId)?.status).toBe("stopped");
   });
 
+  // Review r1 finding 13: the killed process's OWN exit handler runs after TaskStop -- the wire must
+  // still carry exactly one task_updated and one task_notification for the task, in that order.
+  t("TaskStop then the killed command's own exit: exactly one task_updated {killed} + one kill-worded notification in total", async () => {
+    await import("./task-stop.ts");
+    const { getRegisteredTool: getTool } = await import("../registry.ts");
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+    const res = await monitor()({ description: "tail logs", timeout_ms: 30000, persistent: false, command: "sleep 20" }, ctx);
+    const { taskId } = JSON.parse(res.output);
+    await waitFor(() => getTask(taskId)?.pid !== undefined);
+    await getTool("TaskStop")!.executor!.execute({ task_id: taskId }, ctx);
+    await new Promise((r) => setTimeout(r, 400)); // the SIGKILLed process's own completion handler
+    const own = frames.filter((f) => (f as { task_id?: string }).task_id === taskId && f.subtype !== "task_started");
+    expect(own.map((f) => f.subtype)).toEqual(["task_updated", "task_notification"]);
+    expect((own[0] as unknown as { patch: { status?: string } }).patch.status).toBe("killed");
+    expect(own[1]).toMatchObject({ status: "stopped", summary: 'Monitor "tail logs" stopped' });
+  });
+
   t("bad args are a tool error, never a throw", async () => {
     const res = await monitor()({}, fakeCtx());
     expect(res.isError).toBe(true);

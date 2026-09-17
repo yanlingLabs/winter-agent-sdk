@@ -3394,3 +3394,66 @@ describe("child-engine.ts: spawn-surface parity -- the child's tool pool, and pr
     expect(progressCalls[0]!.activity).toBe("Finding *");
   });
 });
+
+// Review r1 findings 3 + 13: a RESUMED child (SendMessage to a finished foreground child) runs a new
+// generation under the original request -- its tool calls must not produce task_progress for a task
+// whose notification already went out. Through the REAL Agent and SendMessage tools.
+describe("child-engine.ts + Agent tool: no task_progress after the task's notification (review r1 finding 3)", () => {
+  test("a resumed child's tool turn emits no task_progress for the finished task", async () => {
+    const WAIT = "t_r1_wait_probe";
+    registerTool({
+      descriptor: { canonicalName: WAIT, advertisedName: WAIT, source: "builtin", inputSchema: { type: "object" }, description: "waits", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+      executor: {
+        async execute() {
+          await new Promise((r) => setTimeout(r, 400));
+          return { output: "waited" };
+        },
+      },
+    });
+    cleanupToolNames.push(WAIT);
+    let resumedChildToolCalls = 0;
+    const provider: Provider = {
+      async generate({ messages }) {
+        const firstUser = messages.find((m) => m.role === "user");
+        const firstText = typeof firstUser?.content === "string" ? firstUser.content : JSON.stringify(firstUser?.content ?? "");
+        // The child's first generation: no tools. Its RESUMED generation (no store, so its history is
+        // just the resume message): one tool turn, then done.
+        if (firstText.includes("CHILD-R1")) return { kind: "text", text: "first generation done" };
+        if (firstText.includes("resume-now")) {
+          if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "resumed done" };
+          resumedChildToolCalls++;
+          return { kind: "tool_use", calls: [{ id: "rc1", name: "Glob", input: { pattern: "*" } }] };
+        }
+        const toolTurns = messages.filter((m) => m.role === "tool").length;
+        if (toolTurns === 0) return { kind: "tool_use", calls: [{ id: "agent-r1", name: "Agent", input: { description: "resumable", prompt: "CHILD-R1" } }] };
+        if (toolTurns === 1) {
+          let agentId = "missing";
+          for (const m of messages) {
+            if (!Array.isArray(m.content)) continue;
+            for (const b of m.content) if (b.type === "tool_result" && b.tool_use_id === "agent-r1" && typeof b.content === "string") agentId = (JSON.parse(b.content) as { agentId: string }).agentId;
+          }
+          return { kind: "tool_use", calls: [{ id: "send-r1", name: "SendMessage", input: { to: agentId, message: "resume-now" } }] };
+        }
+        if (toolTurns === 2) return { kind: "tool_use", calls: [{ id: "wait-r1", name: WAIT, input: {} }] };
+        return { kind: "text", text: "parent done" };
+      },
+    };
+    // One provider serves the parent and the child (driveParent scripts the parent separately, so
+    // this scenario builds its own run).
+    registerChildEngineFactory(createChildEngineFactory({ provider }));
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig({ sessionId: `r1-resume-${randomUUID()}`, capabilities: ["winter.subagents"] }), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const all: WinterFrame[] = [];
+    for await (const f of host.input) all.push(f);
+    expect(await done).toBe(0);
+    expect(resumedChildToolCalls, "the resumed generation really made its tool call").toBe(1);
+    const messages = dataMessages(all) as unknown as Array<{ type: string; subtype?: string; task_id?: string }>;
+    const notificationIndex = messages.findIndex((m) => m.subtype === "task_notification");
+    expect(notificationIndex).toBeGreaterThan(-1);
+    const taskId = messages[notificationIndex]!.task_id;
+    const lateProgress = messages.slice(notificationIndex).filter((m) => m.subtype === "task_progress" && m.task_id === taskId);
+    expect(lateProgress).toEqual([]);
+  }, 20_000);
+});
