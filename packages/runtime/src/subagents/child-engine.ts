@@ -100,7 +100,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine, createContextAccountant, type ContextAccountant, type EngineSettingsRuleSeed, type Provider, type ProviderMessage } from "../engine.ts";
+import { runEngine, createContextAccountant, type ContextAccountant, type EngineSettingsRuleSeed, type Provider, type ProviderMessage, type ProviderUsage } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { getRegisteredTool, listRegisteredTools } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
@@ -109,6 +109,7 @@ import type {
   ChildHandle,
   ChildSessionRecord,
   ChildResult,
+  ChildTaskProgress,
   SpawnChildRequest,
   ChildInheritance,
   ChildEngineDeps,
@@ -376,7 +377,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
   // a rejected spawn should be cheap and side-effect-free.
   // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
   // why `parentSessionId` alone would now read depth 0 at every nesting level.
-  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
+  // Task-frames parity (contract §4): `spawnDepth` is exactly this call's own `{depth}` return --
+  // 1 for a top-level spawn, N+1 inside a depth-N agent (limits.ts's own header). Captured once,
+  // here, for `record.spawnDepth` below; `resume()`'s own later call to this same function (its own
+  // header note) is a concurrency re-check on the SAME childKey, never a fresh depth for the record.
+  const { depth: spawnDepth } = checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
   let spawnRegistered = true;
 
   try {
@@ -596,6 +601,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       model: modelEffort,
       permission: inherit.policy,
       ...(req.name !== undefined ? { name: req.name } : {}),
+      spawnDepth,
     };
     void writer?.writeMetadata({ ...record });
 
@@ -631,6 +637,21 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let totalToolUseCount = 0;
       let lastAssistantText = "";
       let generationSettled = false;
+      // Task-frames parity (contract §4): the SAME counting `task_progress`/the final
+      // `task_notification.usage` both use. `latestUsage` is the LAST turn's own reported usage
+      // (never accumulated -- the pin's own formula reads only the latest message's input/cache
+      // counters); `cumulativeOutputTokens` sums every turn's `output_tokens`, because the pin's
+      // formula is explicit that the OUTPUT half accumulates while the input half does not. Both are
+      // updated by `childAccountant.record()` below, which fires synchronously inside the nested
+      // `runEngine()` call BEFORE it writes the corresponding assistant frame onto `channel.runtime.
+      // output` -- so by the time this generation's own pump (the `for await` loop further down)
+      // processes that frame, the counters it reads are already current for it.
+      let latestUsage: ProviderUsage | undefined;
+      let cumulativeOutputTokens = 0;
+      function currentTaskProgressUsage(): { total_tokens: number; tool_uses: number; duration_ms: number } {
+        const latestTotal = latestUsage === undefined ? 0 : latestUsage.inputTokens + (latestUsage.cacheWriteTokens ?? 0) + (latestUsage.cacheReadTokens ?? 0);
+        return { total_tokens: latestTotal + cumulativeOutputTokens, tool_uses: totalToolUseCount, duration_ms: Date.now() - startedAt };
+      }
 
       const watchdog = createStallWatchdog(resolveStallTimeoutMs(env, deps.parentBrand), (err) => {
         settle("failed", err.message); // settle() itself now owns calling abortGeneration()
@@ -725,6 +746,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           totalToolUseCount,
           totalDurationMs: Date.now() - startedAt,
           ...(structuredOutput !== undefined ? { structuredOutput: structuredOutput.value } : {}),
+          // Task-frames parity (contract §4): the SAME counters `task_progress` reads, one last time
+          // -- a trailing text-only turn (no tool_use block) never fires `onProgress` at all, so this
+          // is the only place a caller (tools/impl/agent.ts) can read a usage total that includes it.
+          usage: { totalTokens: currentTaskProgressUsage().total_tokens, toolUses: totalToolUseCount, durationMs: Date.now() - startedAt },
         });
       }
       currentSettle = settle;
@@ -733,14 +758,27 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // nothing" stay distinguishable -- the seam's own contract is that absence means fall back to
       // the text re-parse, and a bare `undefined` would make a legitimate result look like absence.
       let structuredOutput: { value: unknown } | undefined;
-      function observe(frame: WinterFrame): void {
-        if (frame.type !== "data") return;
-        const message = frame.message as ResultLikeMessage & { message?: { content?: Array<{ type?: string; text?: string; [k: string]: unknown }> } };
+      // Task-frames parity (contract §4): returns the progress signal for THIS frame, or `undefined`
+      // when this frame is not a qualifying one ("no tool_use block" or not an assistant/result
+      // message at all) -- the caller (the pump loop below) turns a defined return into an
+      // `onProgress` call, AFTER it forwards the frame, so a host sees the forwarded assistant
+      // message before the progress frame describing it (contract's own "after each child assistant
+      // message" ordering).
+      function observe(frame: WinterFrame): ChildTaskProgress | undefined {
+        if (frame.type !== "data") return undefined;
+        const message = frame.message as ResultLikeMessage & { message?: { content?: Array<{ type?: string; text?: string; name?: string; [k: string]: unknown }> } };
         if (message.type === "assistant") {
+          let lastToolName: string | undefined;
           for (const block of message.message?.content ?? []) {
-            if (block["type"] === "tool_use") totalToolUseCount += 1;
+            if (block["type"] === "tool_use") {
+              totalToolUseCount += 1;
+              if (typeof block["name"] === "string") lastToolName = block["name"];
+            }
             if (block["type"] === "text" && typeof block["text"] === "string") lastAssistantText = block["text"] as string;
           }
+          if (lastToolName === undefined) return undefined;
+          const usage = currentTaskProgressUsage();
+          return { toolUses: totalToolUseCount, totalTokens: usage.total_tokens, durationMs: usage.duration_ms, lastToolName };
         } else if (message.type === "result") {
           const isError = message.is_error === true;
           const resultText = typeof message.result === "string" ? message.result : lastAssistantText;
@@ -752,6 +790,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           if ("structured_output" in message) structuredOutput = { value: message["structured_output"] };
           settle(isError ? "failed" : "completed", resultText);
         }
+        return undefined;
       }
 
       const correlation = { parentToolUseId: req.parentToolUseId, agentId };
@@ -759,7 +798,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         try {
           for await (const frame of channel.host.input) {
             watchdog.poke();
-            observe(frame);
+            const progress = observe(frame);
             // `UnknownFrame`'s own wide `type: string` (frames.ts) defeats plain discriminated
             // narrowing here (same reason engine.ts's own pump casts at its identical check) -- an
             // explicit cast, matching that established, frozen precedent exactly.
@@ -790,6 +829,17 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             } catch {
               /* a torn-down parent stream must never crash this read loop -- and must never pause the clock */
             }
+            // Task-frames parity (contract §4): fired AFTER the forward above, so a host that
+            // correlates by arrival order sees the forwarded assistant message (and, when
+            // forwardSubagentText is on, its own tool_use blocks) before the task_progress frame
+            // describing it -- never the reverse.
+            if (progress !== undefined) {
+              try {
+                req.onProgress?.(progress);
+              } catch {
+                /* a caller's own frame-emission failure (a torn-down parent session) must never crash this read loop */
+              }
+            }
           }
         } catch {
           /* the channel ending is not itself an error */
@@ -812,31 +862,40 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // its own `contextTokens()` for its own compaction arithmetic, and the parent needs the tokens
       // counted against the session's budget -- adding a child's usage to the PARENT's context
       // reading would make the parent compact on a window it does not have.
+      //
+      // Task-frames parity: now built UNCONDITIONALLY (not only when `rollUp` exists) -- `record()`
+      // is the ONE synchronous point this file sees the child's own PER-TURN `ProviderUsage`, which
+      // `currentTaskProgressUsage()` above needs regardless of whether a roll-up target exists.
+      // `rollUp?.(usage)` degrades to a no-op exactly as the old `undefined` branch did; the
+      // `own` accountant built here is byte-identical to what `runEngine` builds for itself when no
+      // `contextAccountant` is supplied (`injectedContextAccountant ?? createContextAccountant(...)`,
+      // engine.ts), so a run with no `recordDescendantUsage` sees no behavioural change at all.
       const rollUp = runCtx.recordDescendantUsage;
-      const childAccountant: ContextAccountant | undefined =
-        rollUp === undefined
-          ? undefined
-          : (() => {
-              const own = createContextAccountant(config.contextWindowTokens !== undefined ? { limit: config.contextWindowTokens } : {});
-              return {
-                contextTokens: () => own.contextTokens(),
-                limit: () => own.limit(),
-                spentTokens: () => own.spentTokens(),
-                record(usage) {
-                  own.record(usage);
-                  rollUp(usage);
-                },
-                recordDescendantUsage(usage) {
-                  // A GRANDCHILD's usage: counted once here and forwarded up, so the owning session's
-                  // total is the whole tree's rather than one level of it.
-                  own.recordDescendantUsage(usage);
-                  rollUp(usage);
-                },
-              };
-            })();
+      const childAccountant: ContextAccountant = (() => {
+        const own = createContextAccountant(config.contextWindowTokens !== undefined ? { limit: config.contextWindowTokens } : {});
+        return {
+          contextTokens: () => own.contextTokens(),
+          limit: () => own.limit(),
+          spentTokens: () => own.spentTokens(),
+          record(usage) {
+            own.record(usage);
+            latestUsage = usage;
+            cumulativeOutputTokens += usage.outputTokens;
+            rollUp?.(usage);
+          },
+          recordDescendantUsage(usage) {
+            // A GRANDCHILD's usage: counted once here and forwarded up, so the owning session's
+            // total is the whole tree's rather than one level of it. Deliberately NOT folded into
+            // `latestUsage`/`cumulativeOutputTokens` -- task-frames progress/usage counts THIS
+            // child's own turns only, never a descendant's.
+            own.recordDescendantUsage(usage);
+            rollUp?.(usage);
+          },
+        };
+      })();
       void runEngine({
         config,
-        ...(childAccountant !== undefined ? { contextAccountant: childAccountant } : {}),
+        contextAccountant: childAccountant,
         // Phase 6 Task 3 (R6-17): the PARENT's resolved provider identity, threaded onto the child's
         // own engine.
         //

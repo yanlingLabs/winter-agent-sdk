@@ -34,6 +34,15 @@ export interface ChildSessionRecord {
   model: RecordedModelEffort;
   permission: { effectiveMode: PermissionMode; parentPolicyHash: string; parentPolicyVersion: number };
   name?: string;
+  /**
+   * Task-frames parity (2026-09-17 contract §4): 1 for a top-level spawn, N+1 when spawned inside a
+   * depth-N agent -- `limits.ts`'s own `checkAndRegisterSpawn` already computes exactly this value
+   * (its own header: "depth 1 for its direct children, depth 2 for their own, etc.") and this is
+   * simply where child-engine.ts records it, once, at spawn. Absent only for a hand-built
+   * `ChildSessionRecord` (every pre-existing `impl/*.test.ts` fixture) that never went through the
+   * real spawn path at all.
+   */
+  spawnDepth?: number;
 }
 
 // WS-10 §1.4's own 3-branch AgentOutput union, narrowed to the "completed"/local-terminal cases a
@@ -63,6 +72,34 @@ export interface ChildResult {
    * then -- never treat unvalidated data as validated (the ruling's own wording).
    */
   structuredOutput?: unknown;
+  /**
+   * Task-frames parity (2026-09-17 contract §4): the SAME counting `task_progress` uses, taken at
+   * settle() -- `total_tokens` is the LAST recorded turn's (input + cache_write + cache_read) plus
+   * the SUM of every turn's output_tokens; `tool_uses` is every `tool_use` block seen across the
+   * child's own assistant messages; `duration_ms` is settle time minus spawn time. Needed here (not
+   * only on the last `task_progress` frame) because the pin's FINAL `task_notification.usage` must
+   * include the child's LAST turn too -- a trailing text-only turn (no tool_use block) never fires
+   * `onProgress` at all, so tools/impl/agent.ts has nowhere else to read a complete total from.
+   *
+   * Always present once a generation actually started (even a zero-turn child reports zeroed
+   * counters) -- never fabricated for a child that never ran at all, which cannot reach settle().
+   */
+  usage?: { totalTokens: number; toolUses: number; durationMs: number };
+}
+
+/**
+ * Task-frames parity (2026-09-17 contract §4): what `SpawnChildRequest.onProgress` (below) is called
+ * with -- one call per child ASSISTANT message that carries at least one `tool_use` block, foreground
+ * and background alike, synchronous with the frame reaching the parent's own stream.
+ */
+export interface ChildTaskProgress {
+  /** `tool_uses` accumulated so far this generation -- the running total, not a per-message delta. */
+  toolUses: number;
+  /** `total_tokens` per the contract's own formula (see `ChildResult.usage`'s own comment). */
+  totalTokens: number;
+  durationMs: number;
+  /** The name of the LAST `tool_use` block in the qualifying message. */
+  lastToolName: string;
 }
 
 export interface ChildHandle {
@@ -100,6 +137,21 @@ export interface SpawnChildRequest {
   //
   // Typed as the pinned `OutputFormat` union rather than a bare schema so the two cannot drift.
   outputFormat?: OutputFormat;
+  /**
+   * Task-frames parity (2026-09-17 contract §4): fired synchronously after each child ASSISTANT
+   * message whose content holds at least one `tool_use` block -- foreground and background alike.
+   * `tools/impl/agent.ts` is the one caller with a `ctx.emitFrame` to turn this into a real
+   * `task_progress` frame (a `task_id` only exists once agent.ts has spawned and, for a background
+   * task, called `createBackgroundTask` -- this request is built and handed to `spawnChild` BEFORE
+   * either of those, so the callback closes over a variable assigned once they are known, rather
+   * than the id being a field of the request itself).
+   *
+   * child-engine.ts is the one caller: its own pump already counts `tool_use` blocks per assistant
+   * message (`ChildResult.totalToolUseCount`'s own producer) and already wraps the child's
+   * `ContextAccountant` (for `ChildResult.usage`'s own identical counting) -- this is that SAME
+   * bookkeeping, surfaced per qualifying message instead of only once at settle().
+   */
+  onProgress?: (progress: ChildTaskProgress) => void;
 }
 
 export interface ChildInheritance {
