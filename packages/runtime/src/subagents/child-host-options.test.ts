@@ -20,6 +20,8 @@ import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "
 import { resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
 import { registerDefaultChildEngineFactory } from "./register-default-factory.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
+import { resolveBuiltinAgents } from "./builtin-agents.ts";
+import "../tools/descriptors/index.ts";
 import { createSystemPromptAssembler } from "../context/assembler.ts";
 import { AUTO_MEMORY_HEADING } from "../context/memory.ts";
 import { resetWebSessionRuntimesForTest, webSessionRuntimeFor } from "../web/session-runtime.ts";
@@ -29,7 +31,8 @@ const WEB_PROBE = "HostOptionsWebProbe";
 const descriptor = (name: string) => ({ canonicalName: name, advertisedName: name, source: "builtin" as const, inputSchema: { type: "object" }, description: name, exposure: "eager" as const, permissionClass: "read" as const, availability: {}, capabilityRequirements: [], disposition: "implement-now" as const });
 
 let home: string | undefined;
-afterEach(() => {
+/** Everything one `drive()` leaves behind. Also called BETWEEN drives by a test that makes several. */
+function cleanup(): void {
   unregisterToolForTest(SPAWN);
   unregisterToolForTest(WEB_PROBE);
   resetChildEngineFactoryForTest();
@@ -37,7 +40,8 @@ afterEach(() => {
   resetWebSessionRuntimesForTest();
   if (home !== undefined) rmSync(home, { recursive: true, force: true });
   home = undefined;
-});
+}
+afterEach(cleanup);
 
 const CHILD_MARK = "you are the host-options probe child";
 
@@ -53,7 +57,7 @@ interface Driven {
  * carries the child definition's own prompt. The parent spawns the child (foreground) from a probe
  * tool; the child optionally calls `WEB_PROBE` first.
  */
-async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?: boolean; dropRootRegistrationBeforeSpawn?: boolean; childModel?: string; engine?: Partial<EngineOptions>; factory?: Record<string, unknown> | ((provider: Provider) => Record<string, unknown>) } = {}): Promise<Driven> {
+async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?: boolean; dropRootRegistrationBeforeSpawn?: boolean; childModel?: string; childDefinition?: SpawnChildRequest["definition"]; childMark?: string; background?: boolean; engine?: Partial<EngineOptions>; factory?: Record<string, unknown> | ((provider: Provider) => Record<string, unknown>) } = {}): Promise<Driven> {
   home = mkdtempSync(join(tmpdir(), "winter-child-host-options-"));
   const requests: ProviderRequest[] = [];
   const childRequests: ProviderRequest[] = [];
@@ -62,14 +66,14 @@ async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?
   const provider: Provider = {
     async generate(input): Promise<ProviderTurn> {
       requests.push(input);
-      if ((input.system ?? "").includes(CHILD_MARK)) {
+      if ((input.system ?? "").includes(opts.childMark ?? CHILD_MARK)) {
         childRequests.push(input);
         childTurns += 1;
         if (opts.childCallsWebProbe === true && childTurns === 1) return { kind: "tool_use", calls: [{ id: "w1", name: WEB_PROBE, input: {} }], usage: { inputTokens: 300, outputTokens: 3 } };
         return { kind: "text", text: "child done", usage: { inputTokens: 300, outputTokens: 3 } };
       }
       parentTurns += 1;
-      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do the thing", runInBackground: false, name: "prober", definition: { description: "probe", prompt: CHILD_MARK, ...(opts.childModel !== undefined ? { model: opts.childModel } : {}) } };
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do the thing", runInBackground: opts.background === true, name: "prober", definition: opts.childDefinition ?? { description: "probe", prompt: CHILD_MARK, ...(opts.childModel !== undefined ? { model: opts.childModel } : {}) } };
       return parentTurns === 1 ? { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN, input: req }], usage: { inputTokens: 1000, outputTokens: 10 } } : { kind: "text", text: "parent done", usage: { inputTokens: 1000, outputTokens: 10 } };
     },
   };
@@ -272,5 +276,35 @@ describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop st
     expect(r.rootRequests).toBe(1);
     expect(r.result.subtype).toBe("error_max_budget_usd");
     expect(r.result.total_cost_usd).toBe(1010 + 303 + 2 * 101);
+  });
+});
+
+// WHAT SWITCHED ON WITH THE REAL EXECUTORS. The built-in `web-fetch` agent, the background-agent
+// allowlist and the child tool pools were all written while `WebFetch`/`WebSearch` were descriptor-only
+// stubs that no session advertised. These read the tools a REAL child is actually sent.
+describe("the web tools inside subagents, now that they are real", () => {
+  const toolNames = (request: ProviderRequest | undefined): string[] => (request?.tools ?? []).map((t) => t.name);
+
+  test("the built-in `web-fetch` agent (opt-in gate on) is offered, and its child is sent WebFetch -- the one tool it exists to use -- and not WebSearch", async () => {
+    expect(resolveBuiltinAgents({ env: {} })["web-fetch"]).toBeUndefined();
+    const definition = resolveBuiltinAgents({ env: { WINTER_WEB_FETCH_AGENT: "1" } })["web-fetch"]!;
+    expect(definition.tools).toEqual(["WebFetch"]);
+    const r = await drive({}, { childDefinition: definition as SpawnChildRequest["definition"], childMark: "You are a web-reading specialist" });
+    expect(r.childRequests).toHaveLength(1);
+    expect(toolNames(r.childRequests[0])).toContain("WebFetch");
+    expect(toolNames(r.childRequests[0])).not.toContain("WebSearch");
+    expect(toolNames(r.childRequests[0])).not.toContain("Bash");
+  });
+
+  test("an ordinary child and a BACKGROUND child are both sent both web tools; `web.search.enabled: false` withdraws WebSearch from the child too", async () => {
+    for (const background of [false, true]) {
+      const on = await drive({}, { background });
+      expect(toolNames(on.childRequests[0])).toEqual(expect.arrayContaining(["WebFetch", "WebSearch"]));
+      cleanup();
+      const off = await drive({ web: { search: { enabled: false } } }, { background });
+      expect(toolNames(off.childRequests[0])).toContain("WebFetch");
+      expect(toolNames(off.childRequests[0])).not.toContain("WebSearch");
+      cleanup();
+    }
   });
 });
