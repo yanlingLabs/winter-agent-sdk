@@ -84,6 +84,7 @@ build (`BrandProfile.envPrefix`); a rebranded host reads the identical suffix un
 | `WINTER_DISABLE_EXPLORE_INHERIT_CAP` | off | Truthy opts a first-party Anthropic session out of the Explore built-in's own model cap (which otherwise caps a Fable-tier session's Explore spawn down to Opus). |
 | `WINTER_FORK_SUBAGENT` | off | Truthy enables `subagent_type: "fork"` for the session (mirrors `CLAUDE_CODE_FORK_SUBAGENT`). `Options.forkSubagent` (below) wins over this variable in either direction. |
 | `WINTER_WEB_FETCH_AGENT` | off | Truthy makes the `web-fetch` built-in agent type available (off by default, like claude's own). |
+| `WINTER_MAX_WEB_SEARCHES_PER_SESSION` | `200` | How many `WebSearch` calls one session may make, counted before each search and shared with every descendant subagent (the analogue of `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`). Past it, a call answers with a plain refusal result rather than an error. |
 | `WINTER_AGENT_SDK_DISABLE_BUILTIN_AGENTS` | off | Truthy withholds every built-in `subagent_type` (gated or not) for the session. |
 | `WINTER_DISABLE_EXPLORE_PLAN_AGENTS` | off | Truthy withholds the `Explore` and `Plan` built-ins together. |
 | `WINTER_DISABLE_AGENT_VIEW` | off | Truthy withholds the `claude` catch-all built-in (mirrors `CLAUDE_CODE_DISABLE_AGENT_VIEW`). |
@@ -106,6 +107,43 @@ restriction and threads the resulting list onto the CHILD it spawns for that age
 never the full universe of types its parent session could otherwise reach. Absent (every top-level
 session, and any child whose parent definition named no `Agent(...)` restriction) means
 unrestricted, the behavior every session had before this field existed.
+
+### The built-in web tools (since 0.0.17)
+
+`WebFetch` and `WebSearch` ship in every default `init.tools`, as copies of the pinned `claude`
+runtime's own — same descriptions, same input schemas, same inner-call prompts, same output assembly.
+
+- **`WebFetch`** takes `{url, prompt}`, fetches the page from this machine (`http` is upgraded to
+  `https` unconditionally, and a hostname with fewer than two dot-separated labels is refused — so
+  `localhost` and IPv6 literals are not fetchable, exactly as in claude), converts HTML to markdown,
+  and answers `prompt` over it with a small fast model. Responses are cached for 15 minutes per
+  session. Rules are `WebFetch(domain:<host>)`; an allow rule naming an exact host is standing consent
+  for that host wherever it resolves.
+- **`WebSearch`** takes `{query, allowed_domains?, blocked_domains?}` and runs one inner pass over the
+  search backend, returning titles and urls only. The budget is 200 calls per session
+  (`WINTER_MAX_WEB_SEARCHES_PER_SESSION`), shared with every descendant. Its only rule form is the
+  bare `WebSearch`; a scoped `WebSearch(...)` in `Options.allowedTools`/`disallowedTools` throws at
+  startup (a settings file drops it and warns).
+
+Withdraw either with `disallowedTools`. `WebSearch` can also be switched off at the backend with
+`web.search.enabled: false`.
+
+- **`Options.web`** — `search.enabled`, `search.authRef` (the backend key, used only once the
+  anonymous tier is exhausted), `search.maxSearchesPerCall` / `search.anonymousMaxSearchesPerCall`,
+  `fetch.digestModel` / `fetch.authRef` (the page-digest model and its own credential),
+  `fetch.privateAddressPolicy` (`"ask"` by default, `"deny"` / `"allow"`), and one `blockedDomains`
+  floor both tools honour (suffix match on a label boundary: `example.com` covers
+  `docs.example.com`). Every field is optional; `resolveWebToolsConfig` + `WEB_TOOLS_DEFAULTS` are
+  exported for a host that wants the resolved shape. **An unattended host should set
+  `fetch.privateAddressPolicy: "deny"`** — under the default a private or loopback target raises a real
+  permission prompt, and a session that cannot prompt refuses the call.
+- **`Options.autoMemory`** — `enabled` and `directory` for the auto-memory section, for a host that
+  runs with `settingSources: []` and therefore cannot reach `autoMemoryEnabled` /
+  `autoMemoryDirectory` in a settings file. Precedence per field: this option, then the settings key,
+  then the computed default (`<home>/projects/<memory-key>/memory`, enabled). A relocated directory
+  under the home's own `projects/` tree stays write-denied.
+
+Subagents inherit both.
 
 ### The 0.0.16 background-default change
 

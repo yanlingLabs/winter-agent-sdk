@@ -4,6 +4,103 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.17
+
+Two new built-in tools, `WebFetch` and `WebSearch`, copied from the pinned `claude` 0.3.250 — its
+descriptions, its input schemas, its inner-call prompts, its output assembly and its refusal texts,
+measured byte-for-byte against the binary where a loopback can drive it. Both are **on by default**.
+Session cost now covers the whole agent tree, and an interrupt really stops a running foreground Bash.
+
+### BREAKING
+
+- **`modelUsage` rows are keyed by the qualified `provider/model` catalog key**, not by the raw model
+  string the host passed. A host that matched its own `options.model` against a row key now misses on
+  every session: match on `system/init`'s `winter_provider.modelKey` (it always equals the row key),
+  fall back to the row whose key ends with `/${init.model}`, and never sum the rows.
+- **The root session's `total_cost_usd` and `modelUsage` now cover the whole agent tree** — every
+  subagent at every depth, plus the web tools' own inner model passes. Each level folds once and
+  reports upward once, so a host must NOT add `task_notification.usage` on top. `error_max_budget_usd`
+  therefore fires earlier, descendants stop on the root's ceiling too (and now say so in their own
+  failure text), and a parent on an unpriced (subscription) row can carry cost fields for the first
+  time. Exa key-tier spend is **not** in `total_cost_usd`: the search backend is billed outside the
+  model ledger and the runtime has no price for it.
+- **An interrupt now kills a running foreground Bash command** rather than abandoning it. The
+  executor wrapper forwards its abort signal, so the process dies; expect a
+  `task_notification{status:"stopped"}` **after** the interrupted `result` (the previous shape
+  delivered a late "completed" notification instead, so hosts already tolerate a trailing frame).
+- **`WebFetch` and `WebSearch` are in every default `init.tools`.** `WebSearch` reaches its backend
+  (Exa) anonymously with no credential; opt out with `disallowedTools` or `web.search.enabled: false`
+  (any defined value other than boolean `true` reads as off).
+- **`Options.allowedTools`/`disallowedTools` containing `WebSearch(<anything but *>)` throws at
+  startup**: the tool has no specifier grammar, so a scoped rule could only ever be a silent no-op.
+  A settings file drops such a rule and warns instead of failing the session.
+- **`WebFetch(domain:…)` rules now match real calls.** The grammar was live before the tool was, so a
+  rule that had been inert starts taking effect. An allow rule naming an EXACT host is standing
+  consent for that host **wherever it resolves**: the DNS-rebinding / private-address check is off for
+  that fetch, deliberately, because the user named the address. A glob (`domain:*`, `domain:*.corp`)
+  never qualifies.
+
+### Added
+
+- `WebFetch`: fetches from this machine (http upgraded to https, its own redirect walk, 10 MiB body
+  cap, 60 s per hop), converts HTML to markdown, and answers the caller's `prompt` over it with a
+  small fast model; a 15-minute per-session cache, claude's 92 preapproved documentation hosts (auto
+  allow after deny and ask rules, permissive guidelines, verbatim markdown passthrough), and claude's
+  REDIRECT DETECTED / non-2xx / `Invalid URL` texts. Never relays a server-supplied status phrase.
+- `WebSearch`: one inner pass on the session's model over a search backend, assembled into claude's
+  own `tool_result` string (titles and urls only — no snippet, no page age, no encrypted content), a
+  200-call-per-session budget shared with every descendant, and per-call bounds.
+- `Options.web` (`RuntimeConfig.web`): `search.enabled` / `search.authRef` / `search.maxSearchesPerCall`
+  / `search.anonymousMaxSearchesPerCall`, `fetch.digestModel` / `fetch.authRef` /
+  `fetch.privateAddressPolicy`, and one `blockedDomains` floor both tools honour (suffix match on a
+  label boundary). `resolveWebToolsConfig` + `WEB_TOOLS_DEFAULTS` are exported for a host that needs
+  to read the resolved shape. **An unattended host should set `fetch.privateAddressPolicy: "deny"`**:
+  the default `"ask"` raises a real permission prompt for a private or loopback target, and a session
+  that cannot prompt refuses.
+- `Options.autoMemory` (`RuntimeConfig.autoMemory`): `enabled` and `directory` for the auto-memory
+  section, for a host that turns settings files off. A relocated directory under the home's
+  `projects/` tree stays write-denied.
+- Subagents inherit `web` and `autoMemory`.
+- On Anthropic's own API (an API key **or** a Console profile), `claude-opus-4-8` and `claude-opus-5`
+  are advertised the lean Agent-listing and web-tool texts, and both web tools carry claude's own
+  schema bytes (`$schema`, `additionalProperties: false`, `format: "uri"`); every other provider gets
+  the portable schema and the full texts.
+
+### Fixed
+
+- A `console/*` (Anthropic Console) session was treated as third-party: it got the full tool texts,
+  the portable schemas, no Explore model cap and no `apiProvider` in its usage rows.
+- Two fail-open edges in the `blockedDomains` floor: a search hit whose URL named no host passed the
+  local filter, and a cache hit re-checked only the input host, not the URL actually fetched.
+- The web tools' per-session state (search budget, fetch cache, saved-binary budget, search client) is
+  released when the root run ends, so an in-process `query()` host no longer accumulates it and a
+  resumed session starts with a fresh budget and a cold cache.
+- A wrong-typed `allowed_domains`/`blocked_domains` searched **unfiltered**; it is refused now, as is
+  a list past 1,000 entries. A megabyte-long query can no longer defeat the 100,000-character result
+  cap.
+
+### New environment variables
+
+`WINTER_MAX_WEB_SEARCHES_PER_SESSION` (default `200`) — the per-session `WebSearch` call budget, the
+analogue of `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`.
+
+### Known differences from claude
+
+- This runtime has **no schema-validation step in front of its executors**, so an input claude's
+  schema refuses (a 1-character or empty `query`, an unparseable `url`) reaches the tool and is
+  refused by its own text (`Error: Missing query`, `Error: Invalid URL "…". …`) rather than by an
+  `InputValidationError`. A query is never trimmed on either side: a whitespace-only one that clears
+  the 2-character minimum is accepted and searched raw, as in claude.
+- An empty digest answer returns `No response from model`, where claude returns the empty string and
+  lets its main loop render a placeholder.
+- `WebSearch` is backed by Exa rather than Anthropic's server-side search: hit titles and urls are
+  identical in shape, and the anonymous-vs-keyed per-call bounds have no claude analogue. A search
+  backend failure adds one actionable sentence (e.g. "add an Exa API key") claude never needs.
+- `WebFetch`'s domain floor is the host's own `blockedDomains`; Winter never calls Anthropic's
+  `domain_info` preflight.
+- `modelUsage.webSearchRequests` is always `0`: Winter's searches are the tool's own, and the count is
+  not available where a generation is priced.
+
 ## 0.0.16
 
 Request/response parity with the pinned `claude` 0.3.250 for everything that is on by default in a headless
