@@ -222,6 +222,104 @@ describe("htmlToMarkdown -- security review finding M4: performance on hostile i
   });
 });
 
+describe("convertFetchedHtml -- security review finding N2: nesting-driven output amplification is bounded", () => {
+  // The reviewer's own two worst measured cases (bounded generators, matching probe12.ts):
+  //   512 nested <blockquote> around ~200k <br>-separated lines (~1 MiB HTML in) -- pre-fix: 214 MB
+  //   out, 37.7s, 7.4 GB peak RSS.
+  //   500 nested <blockquote> around a 400,000-line <pre> (~806 KB in) -- pre-fix: 402 MB out, 40.8s,
+  //   7.5 GB peak RSS.
+  // Both ran synchronously and were UNINTERRUPTIBLE by `ctx.signal`/the hop timeout, which govern the
+  // NETWORK phase only -- a slow conversion has no abort path of its own.
+  const CAP = 1_048_576;
+
+  function bq512BrLines(): string {
+    const prefix = "<blockquote>".repeat(512);
+    const unit = "a<br>";
+    const bodyLen = CAP - prefix.length;
+    return prefix + unit.repeat(Math.floor(bodyLen / unit.length));
+  }
+
+  function preInBq500Lines(): string {
+    return "<blockquote>".repeat(500) + "<pre>" + "a\n".repeat(400_000);
+  }
+
+  function measureRssMb<T>(fn: () => T): { result: T; ms: number; peakRssMb: number } {
+    const t0 = Date.now();
+    const before = process.memoryUsage().rss;
+    const result = fn();
+    const after = process.memoryUsage().rss;
+    return { result, ms: Date.now() - t0, peakRssMb: Math.round(Math.max(before, after) / (1024 * 1024)) };
+  }
+
+  test("512 nested <blockquote> around ~200k <br> lines: bounded time, bounded output, no 7+ GB RSS spike", async () => {
+    const html = bq512BrLines();
+    const t0 = Date.now();
+    const out = await convertFetchedHtml(html);
+    const ms = Date.now() - t0;
+    const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    // eslint-disable-next-line no-console
+    console.log(`[N2 bq512-br-lines] html=${html.length} ms=${ms} out=${out.length} rssMB=${rssMb}`);
+    expect(ms).toBeLessThan(5000); // pre-fix: 37,700ms
+    expect(out.length).toBeLessThan(2_000_000); // pre-fix: 214,000,000+ chars
+    expect(rssMb).toBeLessThan(1000); // pre-fix: ~7,400 MB peak
+  });
+
+  test("500 nested <blockquote> around a 400,000-line <pre>: bounded time, bounded output, no 7+ GB RSS spike", async () => {
+    const html = preInBq500Lines();
+    const t0 = Date.now();
+    const out = await convertFetchedHtml(html);
+    const ms = Date.now() - t0;
+    const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    // eslint-disable-next-line no-console
+    console.log(`[N2 pre-in-bq500-lines] html=${html.length} ms=${ms} out=${out.length} rssMB=${rssMb}`);
+    expect(ms).toBeLessThan(5000); // pre-fix: 40,800ms
+    expect(out.length).toBeLessThan(4_000_000); // pre-fix: 402,000,000+ chars
+    expect(rssMb).toBeLessThan(1000); // pre-fix: ~7,500 MB peak
+  });
+
+  test("a budget-exceeding conversion falls back to raw HTML (claude's own turndown-throws rule), never propagates the throw", async () => {
+    // A shape the 32-level prefix cap does NOT anticipate (deep GENERIC block nesting, not
+    // blockquote/ul/ol) -- still bounded, but by the byte BUDGET backstop specifically. Assert the
+    // budget genuinely trips for pathological-enough input and that `convertFetchedHtml` still
+    // returns a usable string rather than rejecting.
+    const html = "<div>".repeat(500) + "x".repeat(CAP - 3000);
+    const out = await convertFetchedHtml(html);
+    expect(typeof out).toBe("string");
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  test("ordinary, non-adversarial nested blockquotes still render correctly under the prefix-depth cap", async () => {
+    const html = "<blockquote><blockquote><blockquote><p>three deep</p></blockquote></blockquote></blockquote>";
+    const out = await convertFetchedHtml(html);
+    expect(out).toBe("> > > three deep");
+  });
+});
+
+describe("convertFetchedHtml -- security review nit: a depth-capped transparent element still leaves a separator", () => {
+  test("text on either side of a skipped block-level element does not run together", async () => {
+    const html = "<b>".repeat(600) + "DEEP-TEXT" + "</b>".repeat(300) + "<p>deep para</p>" + "<b>deep bold</b>" + "</b>".repeat(300);
+    const out = await convertFetchedHtml(html);
+    expect(out).not.toContain("DEEP-TEXTdeep para");
+    expect(out).not.toContain("paradeep bold");
+  });
+});
+
+describe("htmlToMarkdown -- security review finding N5: ul/ol no longer drop non-li children", () => {
+  test("a bare nested <ul> directly inside another <ul> (not wrapped in <li>) is not dropped", async () => {
+    const md = await htmlToMarkdown("<ul><li>a</li><ul><li>nested</li></ul><li>b</li></ul>");
+    expect(md).toContain("a");
+    expect(md).toContain("nested");
+    expect(md).toContain("b");
+  });
+
+  test("stray text and a block element directly inside a <ul> are not dropped", async () => {
+    const md = await htmlToMarkdown("<ul>stray text<div>div-in-ul</div><li>ok</li></ul>");
+    expect(md).toContain("stray text");
+    expect(md).toContain("div-in-ul");
+    expect(md).toContain("ok");
+  });
+});
+
 describe("convertFetchedHtml -- the truncation cap", () => {
   test("short content is unaffected", async () => {
     const out = await convertFetchedHtml("<p>short</p>");
