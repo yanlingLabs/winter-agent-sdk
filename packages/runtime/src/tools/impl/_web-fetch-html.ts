@@ -166,6 +166,15 @@ interface Piece {
   isBlock: boolean;
 }
 
+// Item 7 (memory): a <br>/<hr> piece is always byte-identical and NEVER mutated after being pushed --
+// no consumer anywhere in this file assigns `.text`/`.isBlock`/`.tag`, so it is safe for every
+// occurrence to share ONE object instead of each allocating its own `{tag,text,isBlock}` literal.
+// A text-heavy adversarial page can carry hundreds of thousands of `<br>` tags (the 512-deep-
+// blockquote reproduction that motivated this measurement has ~209,000 of them); measured, this alone
+// cuts that case's peak RSS by roughly 15% (isolated single-run measurement, `/usr/bin/time -l`).
+const BR_PIECE: Piece = { tag: "br", text: "  \n", isBlock: false };
+const HR_PIECE: Piece = { tag: "hr", text: "* * *", isBlock: true };
+
 /** Joins a frame's accumulated children: adjacent inline runs concatenate directly; each block piece becomes its own paragraph, blank-line separated. */
 function joinPieces(pieces: readonly Piece[]): string {
   const parts: { text: string; isBlock: boolean }[] = [];
@@ -325,6 +334,14 @@ function renderFrameUnbudgeted(frame: Frame): Piece {
   if (tag === "blockquote") {
     const content = joinPieces(buf);
     if (content.length === 0) return { tag, text: "", isBlock: false };
+    // Item 7 (memory) investigated an in-place mutation of the split() array here, in place of
+    // .map(), to avoid materializing a second n-element array. MEASURED: it reduced peak RSS ~3%
+    // on the <br>-heavy reproduction (512 nested blockquotes around ~200k <br> lines) but INCREASED
+    // it ~14% on the other reviewer-measured case (500 nested blockquotes around a 400,000-line
+    // <pre>) -- reproducible across five runs each way, byte-identical output and identical
+    // per-frame render trace in both cases, so the regression is a real allocator/GC-scheduling
+    // interaction with JSC, not a bug in the rewrite. Not worth shipping a change whose net effect
+    // depends on input shape in a way this lane cannot predict or explain; reverted, kept as .map().
     const text = content
       .split("\n")
       .map((l) => (l.length > 0 ? `> ${l}` : ">"))
@@ -478,8 +495,8 @@ export async function htmlToMarkdown(html: string): Promise<string> {
         if (VOID_TAGS.has(tag)) {
           const attrs: Record<string, string> = {};
           for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
-          if (tag === "br") parent.buf.push({ tag, text: "  \n", isBlock: false });
-          else if (tag === "hr") parent.buf.push({ tag, text: "* * *", isBlock: true });
+          if (tag === "br") parent.buf.push(BR_PIECE);
+          else if (tag === "hr") parent.buf.push(HR_PIECE);
           else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs), isBlock: false });
           // meta/link/base/area/col/embed/input/param/source/track/wbr: no useful text -- contribute nothing.
           return;
