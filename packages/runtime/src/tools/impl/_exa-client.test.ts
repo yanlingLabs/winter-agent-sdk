@@ -691,6 +691,28 @@ describe("review fixes: bounds, answered errors, single-flight connect, key re-r
     });
   });
 
+  test("a hit whose URL names no host is DROPPED, not passed for want of a matching block entry (MINOR 5)", async () => {
+    // Every one of these is unreadable by the floor's own normaliser, so it matched no block entry and
+    // used to survive the filter untouched -- a fail-open edge, and a link the model could not fetch.
+    const respond = () => advancedPayload([
+      { title: "relative", url: "/just/a/path" },
+      { title: "data", url: "data:text/html,<p>hi</p>" },
+      { title: "empty", url: "" },
+      { title: "scheme only", url: "https://" },
+      { title: "real", url: "https://fine.example/a" },
+    ]);
+    await withExaFixture({ respond }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, { blockedDomains: ["blocked.example"] });
+      try {
+        const result = await client.search({ query: "q" });
+        if (!result.ok) throw new Error("expected the search to succeed");
+        expect(result.hits.map((h) => h.url)).toEqual(["https://fine.example/a"]);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   test("the KEYED connection refuses redirects: `x-api-key` never follows one to another origin", async () => {
     const elsewhere: Array<string | null> = [];
     const other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (elsewhere.push(req.headers.get("x-api-key")), new Response("{}", { status: 200 })) });

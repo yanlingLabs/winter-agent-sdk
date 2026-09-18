@@ -776,6 +776,58 @@ describe("cache", () => {
     });
   });
 
+  // Whole-branch review MINOR 5: the cache is keyed on the INPUT url, and what it holds may have come
+  // from another host (the fetch loop auto-follows a same-host-modulo-`www.` redirect). Checking only
+  // the input host let a HIT serve content from a host the floor or the policy refuses now.
+  describe("a cache HIT re-checks the url that was actually FETCHED, not only the input url", () => {
+    const CACHED = { bytes: 4, code: 200, codeText: "OK", content: "cached body", contentType: "text/plain", finalUrl: "https://www.blocked.example/x" };
+
+    /** A session whose cache already holds an entry for `input` that was fetched from `CACHED.finalUrl`. */
+    function seeded(sessionId: string, input: string, overrides: Parameters<typeof fakeRuntime>[1] = {}): { cache: WebFetchCache; ctx: ToolExecutionContext; provider: ReturnType<typeof recordingProvider> } {
+      const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+      registerWebSessionRuntime(sessionId, fakeRuntime(provider, overrides));
+      const cache = new WebFetchCache();
+      cache.set(sessionId, input, CACHED);
+      return { cache, ctx: makeCtx({ sessionId }), provider };
+    }
+
+    test("the FLOOR applies to it: a cached page fetched from a now-blocked host is not served", async () => {
+      const input = "https://served.example/page";
+      const { cache, ctx, provider } = seeded("s-cache-final-floor", input, { blockedDomains: ["blocked.example"] });
+      const executor = createWebFetchExecutor({ cache, resolveHost: async () => ["93.184.216.34"] });
+      const result = await runFetch(executor, { url: input, prompt: "p" }, ctx);
+      expect(result).toEqual({ output: "Winter is unable to fetch from www.blocked.example", isError: true });
+      expect(provider.requests).toHaveLength(0);
+    });
+
+    test("the PRIVATE-ADDRESS policy applies to it, and the refusal names the host that was fetched", async () => {
+      const input = "https://served.example/page";
+      const { cache, ctx, provider } = seeded("s-cache-final-private", input, { fetch: { privateAddressPolicy: "deny" } });
+      // The input host is public; the host the content came from resolves to loopback.
+      const executor = createWebFetchExecutor({ cache, resolveHost: async (hostname) => (hostname === "served.example" ? ["93.184.216.34"] : ["127.0.0.1"]) });
+      const result = await runFetch(executor, { url: input, prompt: "p" }, ctx);
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("www.blocked.example");
+      expect(result.output).toContain("policy denies WebFetch access to private addresses");
+      expect(provider.requests).toHaveLength(0);
+    });
+
+    test("no second resolution when the two hosts agree -- the ordinary case is untouched", async () => {
+      const input = "https://www.blocked.example/x"; // same host as CACHED.finalUrl
+      const { cache, ctx } = seeded("s-cache-final-same", input);
+      const resolved: string[] = [];
+      const executor = createWebFetchExecutor({
+        cache,
+        resolveHost: async (hostname) => {
+          resolved.push(hostname);
+          return ["93.184.216.34"];
+        },
+      });
+      expect(await runFetch(executor, { url: input, prompt: "p" }, ctx)).toEqual({ output: "digested" });
+      expect(resolved).toEqual(["www.blocked.example"]);
+    });
+  });
+
   test("a cache hit re-runs the digest model but never refetches", async () => {
     const provider = recordingProvider([{ kind: "text", text: "first digest" }, { kind: "text", text: "second digest" }]);
     const runtime = fakeRuntime(provider);

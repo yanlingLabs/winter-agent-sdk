@@ -46,7 +46,7 @@ import { connectMcpServer, McpConnectError, type ConnectedMcpClient, type McpToo
 import { createElicitationAsker } from "../../mcp/elicitation.ts";
 import type { ToolSecretResult } from "../../provider/tool-secret.ts";
 import type { WebSessionRuntime } from "../../web/session-runtime.ts";
-import { backendExcludableDomains, isDomainBlocked, mergeDomainLists } from "./_domains.ts";
+import { backendExcludableDomains, isDomainBlocked, mergeDomainLists, normalizeDomain } from "./_domains.ts";
 
 // --- named constants ------------------------------------------------------------------------------
 
@@ -615,7 +615,14 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
         // Parsed from the FULL text (a JSON payload cut mid-way would not parse at all), capped for
         // what is handed on; each hit's own highlight is already capped.
         // Sliced to what was ASKED FOR: a backend that ignores `numResults` cannot widen the bound.
-        const hits = parseExaHits(full).filter((hit) => !isDomainBlocked(hit.url, localExclude)).slice(0, numResults);
+        // A hit whose URL NAMES NO HOST (`normalizeDomain` cannot read it -- a relative string, a
+        // `data:` url, a truncated payload) used to pass the local floor, because `hostMatchesDomain`
+        // answers false for an unreadable host against every entry: a fail-OPEN edge (whole-branch
+        // review MINOR 5). It is dropped instead. Nothing is lost by it either -- a hit the model
+        // cannot fetch and cannot cite is not a search result.
+        const hits = parseExaHits(full)
+          .filter((hit) => normalizeDomain(hit.url) !== undefined && !isDomainBlocked(hit.url, localExclude))
+          .slice(0, numResults);
         return { ok: true, hits, tier, tool, rawText: capText(full, maxResultChars), truncated: full.length > maxResultChars };
       };
 

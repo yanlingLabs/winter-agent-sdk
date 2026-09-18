@@ -82,6 +82,16 @@ function normalizePrivateAddressPolicy(policy: WebPrivateAddressPolicy | string 
   return "ask";
 }
 
+/** A cached entry's own `finalUrl` as a hostname -- `undefined` for anything that names no host (never a throw: a cache entry is this module's own data, but it is still parsed rather than trusted). */
+function webFetchHostnameOfCached(finalUrl: string): string | undefined {
+  try {
+    const hostname = new URL(finalUrl).hostname;
+    return hostname.length > 0 ? hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function brandNameFor(ctx: ToolExecutionContext): string {
   return ctx.brand?.productName ?? WINTER_BRAND.productName;
 }
@@ -402,6 +412,23 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       if (addressVerdict.class === "private") {
         const refusal = privateAddressRefusal(originalUrl.hostname, policy, addressVerdict.reason);
         if (refusal !== undefined) return refusal;
+      }
+      // ...AND AGAIN ON THE URL THAT WAS ACTUALLY FETCHED (whole-branch review MINOR 5). The cache is
+      // keyed on the INPUT url, and what it stores may have come from a different host: the fetch loop
+      // auto-follows a redirect to the same host modulo a leading `www.`, so `www.` can appear or
+      // disappear between the key and `finalUrl`. Checking only the input host meant a cache HIT served
+      // content from a host the floor or the policy would refuse NOW -- both checks re-run here, on the
+      // fresh url, exactly as the miss path re-runs them per hop. Skipped when the two hosts agree,
+      // which is the ordinary case and needs no second resolution.
+      const cachedHost = webFetchHostnameOfCached(cached.finalUrl);
+      if (cachedHost !== undefined && cachedHost !== originalUrl.hostname) {
+        if (isDomainBlocked(cachedHost, blockedDomains)) return { output: `${brand} is unable to fetch from ${cachedHost}`, isError: true };
+        const finalVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(cachedHost), resolveHost), ctx.signal);
+        if (finalVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
+        if (finalVerdict.class === "private") {
+          const refusal = privateAddressRefusal(cachedHost, policy, finalVerdict.reason);
+          if (refusal !== undefined) return refusal;
+        }
       }
       content = cached.content;
       contentType = cached.contentType;
