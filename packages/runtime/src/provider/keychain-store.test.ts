@@ -164,7 +164,13 @@ describe("the REPO-WIDE Bun.secrets tripwire", () => {
 
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir)) {
-        if (entry === "node_modules" || entry === ".git" || entry === "dist" || entry === "third_party") continue;
+        // `.worktrees` joins the skip list for a different reason than the rest: it is not build
+        // output, it is OTHER CHECKOUTS OF THIS SAME REPOSITORY (git worktrees, locally excluded via
+        // `.git/info/exclude`, absent in CI). Each one runs its own copy of this sweep over its own
+        // files, so scanning them here checks nothing twice -- what it does instead is report a
+        // SIBLING branch's `keychain-store.ts` as an offender of THIS branch's tripwire, which is how
+        // a real finding would get lost in 23 lines of noise.
+        if (entry === "node_modules" || entry === ".git" || entry === "dist" || entry === "third_party" || entry === ".worktrees") continue;
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) {
           walk(full);
