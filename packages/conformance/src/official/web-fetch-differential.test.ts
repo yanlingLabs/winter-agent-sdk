@@ -26,6 +26,21 @@
 //
 // Every assertion states ONE contract for both sides; a difference is a finding to report.
 //
+// KNOWN RED as of 2026-09-18 (findings, reported -- the assertions are deliberately left strict; a red
+// here is NOT a broken harness). The digest TEMPLATE, the digest cap, every REDIRECT DETECTED variant,
+// every non-2xx message TEXT and both fetch-time `Invalid URL` rejects are green.
+//   - the three HTML CONTENT tests ([html-page], [redirect-same-host], [redirect-relative]): the
+//     binary's conversion keeps the `<title>` text as the first paragraph and writes list items as
+//     `*   item` (three spaces); Winter's drops the title and writes `* item`.
+//   - [empty-digest]: for an EMPTY text answer the binary's tool returns the empty string as-is (its
+//     main loop then shows its generic empty-output placeholder); Winter substitutes
+//     `No response from model`, which the binary reserves for an answer with no text block at all.
+//   - the four non-2xx results and [redirect-blank]: identical text, but the binary returns them as
+//     ordinary (non-error) results and Winter marks them `isError`.
+//   - [invalid-url-unparseable]: the binary's SCHEMA (`format: uri`) refuses it first, with
+//     `InputValidationError: [...] "Invalid URL"`; Winter answers the tool-level
+//     `Error: Invalid URL "...". The URL provided could not be parsed.`
+//
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family.
 import { describe, test, expect, afterAll } from "bun:test";
 import { resolvePinnedClaudeBinary, makeOfficialRoots, cleanupRoots, sseResponse, sseTextTurn, sseToolUseTurn, OFFICIAL_MODEL, CLAUDE_VERSION, type OfficialRoots, type RawFrame } from "./differential-harness.ts";
@@ -61,6 +76,8 @@ function pageHandler(port: () => number): (req: Request) => Response {
         return new Response(BIG_PAGE, { headers: { "content-type": "text/plain" } });
       case "/empty-digest":
         return new Response("Page whose digest comes back empty.", { headers: { "content-type": "text/plain" } });
+      case "/no-block-digest":
+        return new Response("Page whose digest comes back with no text block.", { headers: { "content-type": "text/plain" } });
       case "/missing":
         return new Response("the body is never read", { status: 404, statusText: INJECTED_REASON });
       case "/busy":
@@ -103,6 +120,7 @@ const SCENARIOS: Scenario[] = [
   { id: "big-page", what: "a page over 100,000 chars: the digest cap and the truncation notice", target: "/big", prompt: "Summarise the big page.", digests: true },
   { id: "html-page", what: "an HTML page: the template around the converted content, and the conversion itself", target: "/page", prompt: 'What is the heading? Quote "exactly".', digests: true },
   { id: "empty-digest", what: "the digest model answers with empty text", target: "/empty-digest", prompt: "Answer with nothing.", digests: true },
+  { id: "no-block-digest", what: "the digest model answers with NO TEXT BLOCK (a lone thinking block)", target: "/no-block-digest", prompt: "Answer with no blocks.", digests: true },
   { id: "redirect-same-host", what: "an absolute same-host, same-port redirect is FOLLOWED", target: "/redirect-same-host", prompt: "Follow the same-host redirect.", digests: true },
   { id: "redirect-relative", what: "a relative redirect is FOLLOWED", target: "/redirect-relative", prompt: "Follow the relative redirect.", digests: true },
   { id: "http-404-injected-reason", what: "non-2xx: the reason phrase comes from a fixed table, never the wire", target: "/missing", prompt: "Read the missing page.", digests: false },
@@ -118,7 +136,23 @@ const SCENARIOS: Scenario[] = [
   { id: "invalid-url-one-label", what: "a hostname with a single label (a fetch-time reject)", target: "https://intranet/page", raw: true, prompt: "One-label prompt.", digests: false },
 ];
 
-const DIGEST_ANSWER = (prompt: string): string => (prompt === "Answer with nothing." ? "" : `DIGEST for: ${prompt}`);
+const EMPTY_DIGEST_PROMPTS = new Set(["Answer with nothing.", "Answer with no blocks."]);
+/** What the scripted digest model says. Winter's provider seam has one shape for "no text" (an empty string), so both empty cases answer `""` there; on the wire they are two different responses (see `digestResponse`). */
+const DIGEST_ANSWER = (prompt: string): string => (EMPTY_DIGEST_PROMPTS.has(prompt) ? "" : `DIGEST for: ${prompt}`);
+
+/** The wire response for a digest: a text turn -- except the one scenario whose assistant message carries NO TEXT BLOCK (a lone thinking block), the only shape that reaches the tool's own "no text block" fallback. */
+function digestResponse(prompt: string | undefined): Response {
+  if (prompt !== "Answer with no blocks.") return sseResponse(sseTextTurn(DIGEST_ANSWER(prompt ?? "UNSCRIPTED")));
+  return sseResponse([
+    { event: "message_start", data: { type: "message_start", message: { id: `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model: OFFICIAL_MODEL, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 8, output_tokens: 1 } } } },
+    { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } } },
+    { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "thinking only" } } },
+    { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "c2ln" } } },
+    { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+    { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } } },
+    { event: "message_stop", data: { type: "message_stop" } },
+  ]);
+}
 const toolUseIdFor = (id: string): string => `toolu_wf_${id.replace(/[^a-z0-9]/gi, "_")}`;
 
 // --- the page servers + the OFFICIAL run (one spawn for the whole table) ----------------------------------
@@ -181,7 +215,7 @@ function official(): Promise<OfficialRun> {
     roots: roots!,
     extraEnv: { NODE_EXTRA_CA_CERTS: caCertPath },
     route(messages, body) {
-      if (isInnerFetchRequest(body)) return sseResponse(sseTextTurn(DIGEST_ANSWER(callerPromptOf(firstUserText(body)) ?? "UNSCRIPTED")));
+      if (isInnerFetchRequest(body)) return digestResponse(callerPromptOf(firstUserText(body)));
       if (hasToolResult(messages)) return sseResponse(sseTextTurn("done"));
       return sseResponse(sseToolUseTurn(SCENARIOS.map((s) => ({ id: toolUseIdFor(s.id), name: "WebFetch", input: { url: urlFor(s), prompt: s.prompt } }))));
     },
@@ -379,9 +413,15 @@ describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned
         const run = await official();
         const result = officialResult(run, scenario.id);
         const w = await winter(scenario);
-        console.log(`\n--- [${scenario.id}] result, official (isError=${result.isError}) ---\n${JSON.stringify(result.content)}\n--- winter (isError=${w.result.isError === true}) ---\n${JSON.stringify(w.result.output)}`);
+        console.log(`\n--- [${scenario.id}] result, official (isError=${result.isError}) ---\n${JSON.stringify(result.content)} (the tool's own structured result: ${JSON.stringify((result.structured as { result?: unknown } | undefined)?.result)})\n--- winter (isError=${w.result.isError === true}) ---\n${JSON.stringify(w.result.output)}`);
         expect(w.result.isError === true).toBe(result.isError);
-        expect(w.result.output).toBe(result.content);
+        // The TOOL's own result string is the structured `result` field. The stdout/wire `content`
+        // equals it -- except that the binary's MAIN LOOP replaces an empty (or whitespace-only) tool
+        // output with its own generic placeholder, which is loop decoration like the error tag, not
+        // WebFetch's text.
+        const toolOwn = String((result.structured as { result?: unknown } | undefined)?.result);
+        expect(result.content).toBe(toolOwn.trim() === "" ? "(WebFetch completed with no output)" : toolOwn);
+        expect(w.result.output).toBe(toolOwn);
         const following = run.requests.find((r) => toolResultsFromRequest(r).has(toolUseIdFor(scenario.id)))!;
         expect(wireMatchesPure(toolResultsFromRequest(following).get(toolUseIdFor(scenario.id))!, result.content)).toBe(true);
       },

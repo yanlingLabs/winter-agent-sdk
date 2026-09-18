@@ -17,6 +17,19 @@
 //     binary; this test asserts whether they appear in THIS configuration and compares accordingly.
 // Anything else is a finding: the assertion stays strict and the difference is reported.
 //
+// SCHEMAS are compared as canonical JSON, so the ORDER of keys inside a property (`description` before
+// `type` in the binary, the reverse in Winter) is not a difference; the order of the property NAMES and
+// of `required` is asserted separately.
+//
+// KNOWN RED as of 2026-09-18 (findings, reported -- the assertions are deliberately left strict; a red
+// here is NOT a broken harness). All four description comparisons on the haiku and fable tiers are green.
+//   - every `input_schema` test: the binary's schemas carry `"$schema"` (draft 2020-12) and
+//     `"additionalProperties": false`, and WebFetch's `url` carries `"format": "uri"`; Winter's carry none
+//     of the three.
+//   - the opus-5 tier's two description tests: the binary advertises its LEAN texts for `claude-opus-5`
+//     (its catalog marks it lean); Winter's rule is lean only ABOVE the opus tier, so an opus-tier
+//     session is advertised the FULL texts.
+//
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family.
 import { describe, test, expect } from "bun:test";
 import { resolvePinnedClaudeBinary, sseResponse, sseTextTurn, CLAUDE_VERSION, type RawFrame } from "./differential-harness.ts";
@@ -231,6 +244,8 @@ describe.skipIf(skipReason !== undefined)(`web tool descriptions + input schemas
             const [os, ws] = name === "WebSearch" ? [o.search.schema, w.search.schema] : [o.fetch.schema, w.fetch.schema];
             const differences = schemaDifferences(os, ws);
             console.log(`\n--- [${tier.id}] ${name} input_schema differences (${differences.length}) ---\n${differences.join("\n") || "(none)"}`);
+            const names = (schema: unknown): string => JSON.stringify([Object.keys((schema as { properties?: object }).properties ?? {}), (schema as { required?: unknown }).required]);
+            expect(names(ws), "property NAME order and `required`").toBe(names(os));
             expect(canonical(ws)).toBe(canonical(os));
           },
           180_000,

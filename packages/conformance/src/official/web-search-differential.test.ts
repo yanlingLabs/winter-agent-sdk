@@ -23,6 +23,15 @@
 // Every assertion states ONE contract for both sides. A difference is a finding to report, never a
 // reason to loosen the assertion or to touch the tool.
 //
+// KNOWN RED as of 2026-09-18 (findings, reported -- the assertions are deliberately left strict; a red
+// here is NOT a broken harness). Every assembly scenario and every inner-request assertion is green.
+//   - [one-character-query] / [empty-query]: the binary's SCHEMA (`minLength: 2`) refuses these before
+//     the tool's own validation runs, with `InputValidationError: [...] "Too small: expected string to
+//     have >=2 characters"`; Winter answers `Error: Missing query`. (That text was never observed from
+//     the binary for any string input: the schema refuses the short ones and the tool ACCEPTS the rest.)
+//   - the whitespace-only query: the binary accepts a two-space query and searches with it, raw;
+//     Winter's executor trims first and refuses.
+//
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family; permission mode
 // `bypassPermissions`, as everywhere else here. See `web-tools-script.ts` for the hermeticity guard.
 import { describe, test, expect } from "bun:test";
@@ -205,6 +214,11 @@ const VALIDATION: ValidationCase[] = [
 /** A model the pinned binary's own catalog marks as rejecting `thinking: disabled`. */
 const LEAN_TIER_MODEL = "claude-fable-5";
 
+// A query of two spaces: long enough for the binary's schema (`minLength: 2`), and blank once trimmed.
+const WHITESPACE_QUERY = "  ";
+const WHITESPACE_ID = "whitespace-query";
+const WHITESPACE_BLOCKS: ScriptedSearchBlock[] = [{ kind: "search", query: "blank", hits: [{ title: "Blank", url: "https://a.example/blank" }] }];
+
 const toolUseIdFor = (id: string): string => `toolu_ws_${id.replace(/[^a-z0-9]/gi, "_")}`;
 
 // --- the OFFICIAL side: one spawn for the whole table -------------------------------------------------
@@ -218,6 +232,7 @@ function official(): Promise<OfficialRun> {
     route(messages, body) {
       if (isInnerSearchRequest(body)) {
         const query = firstUserText(body).slice(INNER_SEARCH_USER_PREFIX.length);
+        if (query === WHITESPACE_QUERY) return sseResponse(sseInnerSearchTurn(WHITESPACE_BLOCKS));
         const scenario = SCENARIOS.find((s) => s.query === query);
         return sseResponse(scenario ? sseInnerSearchTurn(scenario.blocks) : sseTextTurn(`UNSCRIPTED inner query: ${query}`));
       }
@@ -230,6 +245,7 @@ function official(): Promise<OfficialRun> {
             input: { query: s.query, ...(s.allowed_domains ? { allowed_domains: s.allowed_domains } : {}), ...(s.blocked_domains ? { blocked_domains: s.blocked_domains } : {}) },
           })),
           ...VALIDATION.map((v) => ({ id: toolUseIdFor(v.id), name: "WebSearch", input: v.input })),
+          { id: toolUseIdFor(WHITESPACE_ID), name: "WebSearch", input: { query: WHITESPACE_QUERY } },
         ]),
       );
     },
@@ -298,7 +314,8 @@ describe.skipIf(skipReason !== undefined)(`WebSearch output assembly: Winter's a
       const run = await official();
       expect(run.trapHits, "nothing may try to leave the box").toEqual([]);
       const innerQueries = run.requests.filter(isInnerSearchRequest).map((r) => firstUserText(r).slice(INNER_SEARCH_USER_PREFIX.length)).sort();
-      expect(innerQueries, "one inner request per scenario, none for a validation failure").toEqual(SCENARIOS.map((s) => s.query).sort());
+      // (The whitespace-only query is its own test below; whether it reaches the inner call is that test's subject.)
+      expect(innerQueries.filter((q) => q !== WHITESPACE_QUERY), "one inner request per scenario, none for a validation failure").toEqual(SCENARIOS.map((s) => s.query).sort());
     },
     180_000,
   );
@@ -410,6 +427,23 @@ describe.skipIf(skipReason !== undefined)(`WebSearch output assembly: Winter's a
       const officialSystem = (officialInner.system as Array<{ text?: unknown }>).at(-1)!.text;
       expect(flatText(winterInner.system)).toBe(String(officialSystem));
       expect(flatText(winterInner.messages[0]!.content)).toBe(firstUserText(officialInner));
+    },
+    180_000,
+  );
+
+  // --- a whitespace-only query: accepted or refused? ------------------------------------------------------
+  test(
+    "a whitespace-only query (two spaces): both sides make the SAME accept/refuse decision, and an accepted one renders the RAW query in the header",
+    async () => {
+      const run = await official();
+      const result = officialResult(run, WHITESPACE_ID);
+      const searched = run.requests.some((r) => isInnerSearchRequest(r) && firstUserText(r) === INNER_SEARCH_USER_PREFIX + WHITESPACE_QUERY);
+      const winter = await createWebSearchExecutor().execute({ query: WHITESPACE_QUERY }, minimalCtx("websearch-whitespace-query"));
+      console.log(`\n--- [${WHITESPACE_ID}] official (isError=${result.isError}, searched=${searched}) ---\n${JSON.stringify(result.content)}\n--- winter executor (isError=${winter.isError === true}) ---\n${JSON.stringify(winter.output)}`);
+      // The ASSEMBLER, given the raw query, reproduces whatever the binary rendered for it.
+      if (searched) expect(assembleWebSearchOutput(WHITESPACE_QUERY, toWinterEvents(WHITESPACE_BLOCKS))).toBe(result.content);
+      // The EXECUTOR's decision must match the binary's.
+      expect(winter.isError === true, `the binary ${searched ? "ACCEPTED the query and searched" : "refused the query"}; Winter's executor must decide the same`).toBe(result.isError);
     },
     180_000,
   );
