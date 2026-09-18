@@ -98,6 +98,10 @@ export interface DefaultChildEngineFactoryOptions {
   settingsRules?: EngineSettingsRuleSeed;
   /** SDK 0.0.16: the catalog's model display names, for a child's own `# Environment` line. */
   describeModel?: EngineOptions["describeModel"];
+  /** The session's pricing and the web tools' two wiring-level seams -- see `ChildEngineFactoryDeps.priceUsage`. */
+  priceUsage?: EngineOptions["priceUsage"];
+  resolveAuxiliaryModel?: EngineOptions["resolveAuxiliaryModel"];
+  resolveToolSecret?: EngineOptions["resolveToolSecret"];
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -159,6 +163,9 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       // always present on a config `query()` built; absent only for the hand-built configs this
       // repository's tests use, where the child correctly keeps Winter's own names.
       ...(config.brand !== undefined ? { parentBrand: config.brand } : {}),
+      // The host's auto-memory and web options travel the same way -- see the deps' own note.
+      ...(config.autoMemory !== undefined ? { parentAutoMemory: config.autoMemory } : {}),
+      ...(config.web !== undefined ? { parentWeb: config.web } : {}),
       // Phase 5 Task 8: see this interface's own fields for why each is a real gap.
       ...(opts.systemPromptAssembler !== undefined ? { systemPromptAssembler: opts.systemPromptAssembler } : {}),
       ...(opts.skillRuntime !== undefined ? { skillRuntime: opts.skillRuntime } : {}),
@@ -170,6 +177,9 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.skillListing !== undefined ? { skillListing: opts.skillListing } : {}),
       ...(opts.settingsRules !== undefined ? { settingsRules: opts.settingsRules } : {}),
       ...(opts.describeModel !== undefined ? { describeModel: opts.describeModel } : {}),
+      ...(opts.priceUsage !== undefined ? { priceUsage: opts.priceUsage } : {}),
+      ...(opts.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: opts.resolveAuxiliaryModel } : {}),
+      ...(opts.resolveToolSecret !== undefined ? { resolveToolSecret: opts.resolveToolSecret } : {}),
     }),
   );
 }

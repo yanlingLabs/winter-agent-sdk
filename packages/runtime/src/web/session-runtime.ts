@@ -67,6 +67,13 @@ export interface WebSessionRuntime {
    * request, so it must not move the context reading compaction triggers on.
    */
   accountUsage(modelKey: string | undefined, usage: ProviderUsage): void;
+  /**
+   * Has this run crossed `maxBudgetUsd`? The main loop asks this only before ITS OWN requests, so an
+   * inner pass asks it before each of its generations -- otherwise a bounded inner loop is the one
+   * place a session could keep spending past its ceiling. OPTIONAL and additive: absent (a hand-built
+   * runtime, a run with no budget) reads as "no".
+   */
+  budgetExceeded?(): boolean;
   /** Resolves a tool's secret from a ref. ABSENT for an engine run with no provider wiring (a bare `runEngine` over a double). */
   resolveToolSecret?: ToolSecretResolver;
 }

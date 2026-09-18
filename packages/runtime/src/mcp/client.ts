@@ -129,6 +129,8 @@ export interface ConnectMcpServerOptions {
   // see transports/sdk.ts's own header for why a host-supplied `Options.mcpServers` entry of this
   // type never reaches this parameter at all (T3's sdk_mcp_call bridge owns that path completely).
   inProcessServer?: InProcessMcpServer;
+  /** `type: "http"` only: fail rather than follow a redirect -- see `buildHttpTransport`. For a direct caller whose headers carry a credential. */
+  refuseHttpRedirects?: boolean;
 }
 
 // --- Error classification (WS-09 §2.1's failed/needsAuth split, plus a small diagnostic taxonomy
@@ -206,7 +208,7 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
       }
       transport = await buildSdkTransport(opts.inProcessServer);
     } else if (config.type === "http") {
-      transport = buildHttpTransport(config);
+      transport = buildHttpTransport(config, opts.refuseHttpRedirects === true ? { refuseRedirects: true } : {});
     } else if (config.type === "sse") {
       transport = buildSseTransport(config);
     } else {

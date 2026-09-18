@@ -262,6 +262,27 @@ export interface ChildEngineFactoryDeps {
    * branded. Omitted = `WINTER_BRAND`, which is byte-identical to the behaviour before this field.
    */
   parentBrand?: BrandProfile;
+  /**
+   * The host's `Options.autoMemory` and `Options.web`, mirrored down like `parentBrand` and for the
+   * same reason: a child's config is HAND-BUILT, so a host option that is not threaded reads as its
+   * DEFAULT inside the child. For `autoMemory` that meant a child rendering the memory section at the
+   * computed path under a host that had turned memory off or moved it (the child shares the
+   * production assembler). For `web` it is the fail-closed half: a child normally inherits the web
+   * configuration from the root's registration, and one that cannot see it must land on the HOST's
+   * block-list and policy, not on "search on, no block-list, ask".
+   */
+  parentAutoMemory?: RuntimeConfig["autoMemory"];
+  parentWeb?: RuntimeConfig["web"];
+  /**
+   * The session's pricing, stated-model and tool-secret seams, so a CHILD's engine has what its
+   * parent's has. `priceUsage` is what makes a child's generations priced at all; the cost then
+   * climbs through `ChildEngineRunContext.recordDescendantCost`. The two resolvers are also
+   * inherited through the web session registry -- threading them here is the fail-closed half, for a
+   * child that cannot see the root's registration.
+   */
+  priceUsage?: EngineOptions["priceUsage"];
+  resolveAuxiliaryModel?: EngineOptions["resolveAuxiliaryModel"];
+  resolveToolSecret?: EngineOptions["resolveToolSecret"];
   // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
   // recorded vs. current parent policy" is structurally unreachable in production today --
   // `resolveChildResumeMode` (permissions/auto/inheritance.ts) has ZERO call sites anywhere in this
@@ -1070,6 +1091,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // had nothing to place, so every child ran with an empty one.
         ...(deps.skillListing !== undefined ? { skillListing: deps.skillListing } : {}),
         ...(deps.describeModel !== undefined ? { describeModel: deps.describeModel } : {}),
+        // A child's generations are PRICED like its parent's, and each priced one climbs to the
+        // owning run's ledger -- see `ChildEngineFactoryDeps.priceUsage`.
+        ...(deps.priceUsage !== undefined ? { priceUsage: deps.priceUsage } : {}),
+        ...(runCtx.recordDescendantCost !== undefined ? { onPricedGeneration: runCtx.recordDescendantCost } : {}),
+        ...(deps.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: deps.resolveAuxiliaryModel } : {}),
+        ...(deps.resolveToolSecret !== undefined ? { resolveToolSecret: deps.resolveToolSecret } : {}),
         // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already
         // existed on the factory and was read ONLY for transcript paths (`childTranscriptSubpath`);
         // the engine needs it to derive `buildBaselineDenyRules(resolvedWinterHome)`, which is what
@@ -1153,6 +1180,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // no `brand`, so its assembler, its tool contexts and any grandchild it spawns would all fall
       // back to Winter's names inside a reuser's session.
       ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}),
+      // The host's auto-memory and web options -- see `ChildEngineFactoryDeps.parentAutoMemory`.
+      ...(deps.parentAutoMemory !== undefined ? { autoMemory: deps.parentAutoMemory } : {}),
+      ...(deps.parentWeb !== undefined ? { web: deps.parentWeb } : {}),
       model: resolvedModel.effectiveModel,
       permissionMode: inherit.policy.effectiveMode,
       allowDangerouslySkipPermissions: inherit.policy.effectiveMode === "bypassPermissions",

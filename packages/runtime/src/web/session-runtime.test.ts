@@ -115,6 +115,32 @@ async function initTools(config: Partial<RuntimeConfig>, options: Partial<Engine
   return init.tools;
 }
 
+describe("the registration never outlives its run", () => {
+  test("a run that THROWS after registering still withdraws its runtime (it holds a live provider and a secret resolver)", async () => {
+    const sessionId = "web-runtime-leak-probe";
+    const { host, runtime } = createInMemoryChannel();
+    let sawRegistration = false;
+    // The sink fails on the FIRST data frame -- `system/init`, written well after the registration --
+    // so the body throws in the long stretch between registering and its own ordinary teardown.
+    const output = {
+      ...runtime.output,
+      write(frame: WinterFrame) {
+        if (frame.type === "data") {
+          sawRegistration = getWebSessionRuntime(sessionId) !== undefined;
+          throw new Error("sink failure mid-run");
+        }
+        return runtime.output.write(frame);
+      },
+    };
+    const done = runEngine({ config: { sessionId, cwd: process.cwd(), model: "prova/m", persistSession: false } as RuntimeConfig, input: runtime.input, output: output as typeof runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    await done.catch(() => {});
+    expect(sawRegistration).toBe(true);
+    expect(getWebSessionRuntime(sessionId)).toBeUndefined();
+  });
+});
+
 describe("`winter.search-backend` / `winter.fetch-extractor` are DERIVED: executor present AND the session fact", () => {
   const originals = new Map<string, RegisteredTool>();
   /** Installs a throwaway executor over the descriptor-only stub, exactly as `impl/web-*.ts` will at module load. */

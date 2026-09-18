@@ -122,11 +122,23 @@ function positiveIntegerOr(value: number | undefined, fallback: number): number 
  * default rather than to a value no consumer can act on (a bound of `0` would make a tool that is
  * advertised and can never search; disabling search is `search.enabled: false`).
  */
+const PRIVATE_ADDRESS_POLICIES: readonly WebPrivateAddressPolicy[] = ["allow", "ask", "deny"];
+
 export function resolveWebToolsConfig(web: WebToolsConfig | undefined): ResolvedWebToolsConfig {
-  const digestModel = web?.fetch?.digestModel?.trim();
+  // COERCED, not trusted: this value crosses a process boundary as JSON, so the declared types say
+  // nothing about what is actually here. Two fields fail OPEN if read naively -- `enabled: "false"`
+  // is truthy, and an unknown policy string would reach a consumer's `switch` with no arm -- so this
+  // ONE reader settles both: only the boolean `false` disables search, and only the three known
+  // policies pass; anything else is the default.
+  const rawDigest: unknown = web?.fetch?.digestModel;
+  const digestModel = typeof rawDigest === "string" ? rawDigest.trim() : undefined;
+  const rawPolicy: unknown = web?.fetch?.privateAddressPolicy;
+  const privateAddressPolicy = PRIVATE_ADDRESS_POLICIES.find((policy) => policy === rawPolicy) ?? WEB_TOOLS_DEFAULTS.privateAddressPolicy;
+  const rawEnabled: unknown = web?.search?.enabled;
+  const rawBlocked: unknown = web?.blockedDomains;
   return {
     search: {
-      enabled: web?.search?.enabled ?? WEB_TOOLS_DEFAULTS.searchEnabled,
+      enabled: rawEnabled === false ? false : WEB_TOOLS_DEFAULTS.searchEnabled,
       ...(web?.search?.authRef !== undefined ? { authRef: web.search.authRef } : {}),
       maxSearchesPerCall: positiveIntegerOr(web?.search?.maxSearchesPerCall, WEB_TOOLS_DEFAULTS.maxSearchesPerCall),
       anonymousMaxSearchesPerCall: positiveIntegerOr(web?.search?.anonymousMaxSearchesPerCall, WEB_TOOLS_DEFAULTS.anonymousMaxSearchesPerCall),
@@ -134,9 +146,9 @@ export function resolveWebToolsConfig(web: WebToolsConfig | undefined): Resolved
     fetch: {
       ...(digestModel !== undefined && digestModel.length > 0 ? { digestModel } : {}),
       ...(web?.fetch?.authRef !== undefined ? { authRef: web.fetch.authRef } : {}),
-      privateAddressPolicy: web?.fetch?.privateAddressPolicy ?? WEB_TOOLS_DEFAULTS.privateAddressPolicy,
+      privateAddressPolicy,
     },
-    blockedDomains: (web?.blockedDomains ?? []).filter((d): d is string => typeof d === "string" && d.trim().length > 0),
+    blockedDomains: (Array.isArray(rawBlocked) ? rawBlocked : []).filter((d): d is string => typeof d === "string" && d.trim().length > 0),
   };
 }
 
