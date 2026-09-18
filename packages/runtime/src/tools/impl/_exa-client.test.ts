@@ -6,9 +6,12 @@ import {
   EXA_ANONYMOUS_COOLDOWN_MS,
   EXA_ANONYMOUS_MIN_INTERVAL_MS,
   EXA_HIGHLIGHTS_MAX_CHARACTERS,
+  EXA_MAX_NUM_RESULTS,
   EXA_MCP_ENDPOINT,
   EXA_SEARCH_TOOL,
   EXA_TEXT_MAX_CHARACTERS,
+  EXA_TITLE_MAX_CHARACTERS,
+  EXA_URL_MAX_CHARACTERS,
   anonymousBreakerOpen,
   createExaBackendState,
   createExaSearchClient,
@@ -388,6 +391,196 @@ describe("timeouts, abort, reconnect, and the output cap -- all owned here, beca
   });
 });
 
+describe("review fixes: bounds, answered errors, single-flight connect, key re-resolution, a narrower rate-limit reading", () => {
+  test("`numResults` is CLAMPED (a count, not just each hit, reaches the inner model) and a non-finite value falls back to the default", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ title: `t${i}`, url: `https://r${i}.example/`, highlights: ["h"] }));
+    await withExaFixture({ respond: () => advancedPayload(many) }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, { blockedDomains: ["x.example"] });
+      try {
+        const big = await client.search({ query: "q", numResults: 1000 });
+        const nan = await client.search({ query: "q", numResults: Number.NaN });
+        if (!big.ok || !nan.ok) throw new Error("expected both to succeed");
+        expect(fixture.calls[0]!.args["numResults"]).toBe(EXA_MAX_NUM_RESULTS);
+        expect(fixture.calls[1]!.args["numResults"]).toBe(8);
+        // ...and a backend that ignores the bound still cannot hand on more hits than were asked for.
+        expect(big.hits).toHaveLength(EXA_MAX_NUM_RESULTS);
+        expect(nan.hits).toHaveLength(8);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("an error the backend ANSWERED as a JSON-RPC error, or with an HTTP 5xx, is final -- only a DROPPED SESSION earns the reconnect", async () => {
+    let n = 0;
+    await withExaFixture(
+      {
+        respond: () => {
+          if (++n === 1) return advancedPayload([{ url: "https://ok.example/" }]);
+          throw new Error("internal backend failure");
+        },
+      },
+      async (fixture) => {
+        const { client } = clientFor(fixture.endpoint);
+        try {
+          expect(await client.search({ query: "one" })).toMatchObject({ ok: true });
+          expect(await client.search({ query: "two" })).toMatchObject({ ok: false, code: "backend-error" });
+          expect(fixture.calls).toHaveLength(2);
+        } finally {
+          await client.close();
+        }
+      },
+    );
+    let fail5xx = false;
+    await withExaFixture({ gate: (r) => (fail5xx && r.method === "POST" ? new Response("upstream exploded", { status: 503 }) : undefined) }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint);
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: true });
+        fail5xx = true;
+        const postsBefore = fixture.requests.filter((r) => r.method === "POST").length;
+        expect((await client.search({ query: "two" })).ok).toBe(false);
+        // ONE failed POST -- not a second attempt, and not a fresh `initialize` either.
+        expect(fixture.requests.filter((r) => r.method === "POST").length).toBe(postsBefore + 1);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("two CONCURRENT first searches share ONE connection (single-flight connect)", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint);
+      try {
+        const [a, b] = await Promise.all([client.search({ query: "a" }), client.search({ query: "b" })]);
+        expect(a.ok && b.ok).toBe(true);
+        expect(fixture.requests.filter((r) => r.method === "POST" && r.sessionId === null)).toHaveLength(1);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("a caller that stops waiting DURING CONNECT abandons the attempt: the search is NOT run later behind the caller's back", async () => {
+    await withExaFixture({ gate: async (r) => (r.sessionId === null ? (await new Promise((resolve) => setTimeout(resolve, 400)), undefined) : undefined) }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, { callTimeoutMs: 50, connectTimeoutMs: 1_500 });
+      try {
+        // The race timer here is only ever as long as the caller's own bound: abort it early.
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 100);
+        expect(await client.search({ query: "must not run" }, { signal: controller.signal })).toMatchObject({ ok: false, code: "aborted" });
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        expect(fixture.calls).toEqual([]);
+      } finally {
+        await client.close();
+      }
+    });
+  }, 15_000);
+
+  test("a key that was MISSING is re-resolved on the next call (a key added mid-session is seen); a FOUND key is resolved once", async () => {
+    await withExaFixture({ gate: anonymousIs429 }, async (fixture) => {
+      let resolutions = 0;
+      const { client } = clientFor(fixture.endpoint, { resolveKey: async () => (++resolutions === 1 ? { status: "missing" as const } : await found()) });
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: false, code: "quota-exhausted" });
+        expect(await client.search({ query: "two" })).toMatchObject({ ok: true, tier: "key" });
+        expect(await client.search({ query: "three" })).toMatchObject({ ok: true, tier: "key" });
+        expect(resolutions).toBe(2);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("a `resolveKey` that REJECTS is `key-unreadable` -- a value, exposing the error's name only", async () => {
+    await withExaFixture({ gate: anonymousIs429 }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, {
+        resolveKey: async () => {
+          throw new RangeError(`keychain exploded near ${KEY}`);
+        },
+      });
+      try {
+        const result = await client.search({ query: "q" });
+        expect(result).toMatchObject({ ok: false, code: "key-unreadable" });
+        expect(JSON.stringify(result)).toContain("RangeError");
+        expect(JSON.stringify(result)).not.toContain(KEY);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("an `isError` text that merely ECHOES THE USER'S QUERY does not open the process-wide breaker", async () => {
+    const query = "why does my API return 429 quota exceeded rate limit errors";
+    await withExaFixture({ respond: (call) => ({ content: [{ type: "text", text: `No results found for: ${String(call.args["query"])} (${String(call.args["objective"])})` }], isError: true }) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query })).toMatchObject({ ok: false, code: "backend-error" });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(false);
+        expect(fixture.calls.every((call) => call.apiKey === null)).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("the timeout message states the bound that was ACTUALLY applied", async () => {
+    await withExaFixture({ respond: () => new Promise(() => {}) }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, { callTimeoutMs: 1_000, connectTimeoutMs: 2_000 });
+      try {
+        const result = await client.search({ query: "q" });
+        if (result.ok) throw new Error("unreachable");
+        expect(result.code).toBe("timeout");
+        // No connection existed, so the bound was connect + call = 3 s -- and the message says 3.
+        expect(result.message).toContain("3 seconds");
+      } finally {
+        await client.close();
+      }
+    });
+  }, 15_000);
+
+  test("an AUTH refusal on the anonymous tier is not described as an exhausted quota", async () => {
+    await withExaFixture({ gate: (r) => (r.apiKey === null ? new Response("", { status: 401 }) : undefined) }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint);
+      try {
+        const result = await client.search({ query: "q" });
+        if (result.ok) throw new Error("unreachable");
+        expect(result.code).toBe("quota-exhausted");
+        expect(result.message).not.toContain("quota is exhausted");
+        expect(result.message).toContain("refused anonymous access");
+        expect(result.message).toContain("add an Exa API key");
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("a BACKWARDS clock step cannot hold the breaker open, or the pacer asleep, for longer than one period", () => {
+    const state = createExaBackendState();
+    state.anonymousRateLimitedAt = 10_000_000;
+    // The clock stepped back by an hour: without a clamp the breaker would stay open for cooldown + 1h.
+    expect(anonymousBreakerOpen(state, 10_000_000 - 3_600_000)).toBe(true);
+    expect(anonymousBreakerOpen(state, 10_000_000 - 3_600_000 + EXA_ANONYMOUS_COOLDOWN_MS)).toBe(false);
+  });
+
+  test("the KEYED connection refuses redirects: `x-api-key` never follows one to another origin", async () => {
+    const elsewhere: Array<string | null> = [];
+    const other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (elsewhere.push(req.headers.get("x-api-key")), new Response("{}", { status: 200 })) });
+    try {
+      await withExaFixture({ gate: (r) => (r.apiKey === null ? tooManyRequests() : new Response(null, { status: 307, headers: { location: `http://127.0.0.1:${other.port}/mcp` } })) }, async (fixture) => {
+        const { client } = clientFor(fixture.endpoint, { resolveKey: found });
+        try {
+          expect((await client.search({ query: "q" })).ok).toBe(false);
+          expect(elsewhere).toEqual([]);
+        } finally {
+          await client.close();
+        }
+      });
+    } finally {
+      other.stop(true);
+    }
+  });
+});
+
 describe("parseExaHits -- both measured payload shapes, tolerantly", () => {
   test("the advanced tool's JSON: `highlights` is a string ARRAY; a result with no url is dropped; an `id` that is a URL stands in for a missing `url`", () => {
     const text = JSON.stringify({ requestId: "r", results: [{ id: "https://a.example/1", url: "https://a.example/1", title: " A ", publishedDate: "2026-09-05T05:39:32.000Z", highlights: ["one", "two"], text: "ignored when highlights exist" }, { title: "no url" }, { id: "https://b.example/2" }, "not-an-object"] });
@@ -403,6 +596,18 @@ describe("parseExaHits -- both measured payload shapes, tolerantly", () => {
       { title: "Bun v1.4.2 | Bun Blog", url: "https://bun.com/blog/bun-v1.4.2", highlight: "Bun v1.4.2 | Bun Blog\n...\nThis release fixes two regressions.", publishedDate: "2026-09-05T05:39:32.000Z" },
       { title: "Releases · oven-sh/bun", url: "https://github.com/oven-sh/bun/releases", highlight: "URL: not a field, this is highlight text\n- Bun v1.4" },
     ]);
+  });
+
+  test("BOTH paths require an http(s) URL, drop an over-long one, and cap the title", () => {
+    const longUrl = `https://long.example/${"a".repeat(EXA_URL_MAX_CHARACTERS)}`;
+    const json = JSON.stringify({ results: [{ url: "javascript:alert(1)", title: "js" }, { url: "ftp://files.example/x", title: "ftp" }, { id: "data:text/html,x" }, { url: longUrl, title: "long" }, { url: "https://ok.example/", title: "T".repeat(5_000) }] });
+    const hits = parseExaHits(json);
+    expect(hits.map((h) => h.url)).toEqual(["https://ok.example/"]);
+    expect(hits[0]!.title.length).toBe(EXA_TITLE_MAX_CHARACTERS);
+    const text = `Title: js\nURL: javascript:alert(1)\nHighlights:\nx\n\n---\n\nTitle: ${"T".repeat(5_000)}\nURL: https://ok.example/\nHighlights:\nh\n\n---\n\nTitle: long\nURL: ${longUrl}\nHighlights:\nh`;
+    const fromText = parseExaHits(text);
+    expect(fromText.map((h) => h.url)).toEqual(["https://ok.example/"]);
+    expect(fromText[0]!.title.length).toBe(EXA_TITLE_MAX_CHARACTERS);
   });
 
   test("anything else -- prose, truncated JSON, an empty payload -- is NO hits, never a throw", () => {

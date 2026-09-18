@@ -21,6 +21,13 @@
 // round trip per search. With no key and the breaker open the answer is a typed `quota-exhausted`
 // result -- without touching the network -- that says how to add a key.
 //
+// A CLIENT IS PER SESSION, AND SHORT-LIVED (one per `WebSearch` call is the intended use). It caches
+// the resolved key and holds the KEYED connection, so sharing one across sessions would send one
+// session's key on another's searches. What IS shared across the process is only `ExaBackendState`
+// (the breaker and the pacer), which holds no credential. Key caching: a FOUND key is resolved once
+// per client (every resolution can be a keychain prompt); a `missing` or `unreadable` answer is NOT
+// cached, so a key the user adds mid-session is seen by the very next search.
+//
 // LIVE SCHEMA this was built against (server `exa-search-server` 3.2.1, probed 2026-09-18):
 //   `web_search_exa`           requires `query` AND `objective`; optional `numResults`. No domain filter.
 //   `web_search_advanced_exa`  requires `query`; accepts `numResults`, `type`, `includeDomains`,
@@ -56,6 +63,11 @@ export const EXA_ANONYMOUS_MIN_INTERVAL_MS = 500;
 export const EXA_CONNECT_TIMEOUT_MS = 10_000;
 export const EXA_CALL_TIMEOUT_MS = 25_000;
 export const EXA_DEFAULT_NUM_RESULTS = 8;
+/** The ceiling on `numResults`, and on the hits handed on. Each hit is capped; without this the COUNT was not. */
+export const EXA_MAX_NUM_RESULTS = 20;
+export const EXA_TITLE_MAX_CHARACTERS = 300;
+/** A hit with a longer URL is DROPPED, never truncated -- a cut URL is a different, wrong URL. */
+export const EXA_URL_MAX_CHARACTERS = 2_000;
 /** Per-result highlight budget asked of the server, and enforced again on what comes back. */
 export const EXA_HIGHLIGHTS_MAX_CHARACTERS = 1_200;
 /** The advanced tool returns the whole page as `text` unless told otherwise; highlights are what is used. */
@@ -108,6 +120,8 @@ export type ExaSearchResult =
 export interface ExaBackendState {
   /** When the anonymous tier last answered rate-limited; `undefined` while it is believed usable. */
   anonymousRateLimitedAt?: number;
+  /** WHY it was last refused -- so a keyless caller is told the truth (an auth refusal is not an exhausted quota). Absent reads as `rate-limited`. */
+  anonymousRefusal?: "rate-limited" | "auth";
   /** The earliest time the next anonymous call may START (pacing). */
   nextAnonymousCallAt: number;
 }
@@ -120,7 +134,12 @@ export const sharedExaBackendState: ExaBackendState = createExaBackendState();
 
 /** True while the anonymous tier is being skipped. After the cooldown it reads `false`, and the next call is the re-probe. */
 export function anonymousBreakerOpen(state: ExaBackendState, now: number): boolean {
-  return state.anonymousRateLimitedAt !== undefined && now - state.anonymousRateLimitedAt < EXA_ANONYMOUS_COOLDOWN_MS;
+  if (state.anonymousRateLimitedAt === undefined) return false;
+  // A wall clock can step BACKWARDS (NTP, a manual change). Unclamped, the stamp would then sit in the
+  // future and hold the breaker open for the cooldown PLUS the size of the step. Re-stamping to `now`
+  // bounds the damage at one cooldown from the moment the step is noticed.
+  if (now < state.anonymousRateLimitedAt) state.anonymousRateLimitedAt = now;
+  return now - state.anonymousRateLimitedAt < EXA_ANONYMOUS_COOLDOWN_MS;
 }
 
 export interface ExaSearchClientOptions {
@@ -160,8 +179,12 @@ export function exaKeyResolverFor(runtime: Pick<WebSessionRuntime, "web" | "reso
 
 // --- classification -------------------------------------------------------------------------------
 
-const RATE_LIMIT_PATTERN = /\b429\b|\b402\b|rate.?limit|too many requests|quota|credits? (?:exhausted|exceeded)|limit (?:reached|exceeded)/i;
-const AUTH_PATTERN = /\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid api.?key|api.?key (?:is )?(?:invalid|required|missing)/i;
+// WORDS ARE THE FALLBACK, and deliberately narrow: opening the breaker is PROCESS-WIDE and locks a
+// keyless user out for the whole cooldown, so a loose match is expensive. No bare `429` / `quota`
+// (either can sit inside an echoed query), only phrases a server uses ABOUT ITSELF. The HTTP status,
+// when there is one, is read first and decides on its own.
+const RATE_LIMIT_PATTERN = /rate.?limit(?:ed| exceeded| reached)?\b|too many requests|quota (?:exceeded|exhausted|reached)|credits? (?:exhausted|exceeded)|free tier/i;
+const AUTH_PATTERN = /unauthori[sz]ed|forbidden|invalid api.?key|api.?key (?:is )?(?:invalid|required|missing)/i;
 const UNREACHABLE_PATTERN = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed|unable to connect|network/i;
 
 type Classified = "rate-limited" | "auth" | "timeout" | "other";
@@ -187,6 +210,32 @@ function classifyError(err: unknown): Classified {
   return "other";
 }
 
+/**
+ * Did the CALL ITSELF fail to reach an answer -- a dropped session, a closed socket -- so that a
+ * reconnect-and-retry costs nothing? Anything the backend ANSWERED is final: a JSON-RPC error and an
+ * HTTP 5xx may both follow a search that already ran and already counted against the allowance.
+ *
+ * Read off `code`, which both error families carry as a number: the transport's is the HTTP STATUS
+ * (only 404 -- "session not found" -- means the session is gone), the protocol's is a JSON-RPC code
+ * (only -32000, connection closed, is a transport failure). An error with no numeric code at all is a
+ * socket-level failure.
+ */
+function isTransportFailure(err: unknown): boolean {
+  if (err instanceof McpConnectError) return false;
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code !== "number") return true;
+  return code === 404 || code === -32000;
+}
+
+/** `text` with the request's own string arguments removed, so a backend ECHOING the query cannot trip a pattern meant for the backend's own words. */
+function withoutEchoes(text: string, args: Record<string, unknown>): string {
+  let out = text;
+  for (const value of Object.values(args)) {
+    if (typeof value === "string" && value.length > 0) out = out.split(value).join(" ");
+  }
+  return out;
+}
+
 function resultText(result: McpToolCallResult): string {
   return result.content
     .map((block) => (typeof block === "object" && block !== null && (block as { type?: unknown }).type === "text" && typeof (block as { text?: unknown }).text === "string" ? (block as { text: string }).text : ""))
@@ -206,14 +255,19 @@ function highlightFrom(value: unknown): string {
   return "";
 }
 
+/** What may be handed on as a link: http(s) only (never `javascript:`/`data:`), and not absurdly long. Applied on BOTH parsing paths. */
+function isLinkableUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) && url.length <= EXA_URL_MAX_CHARACTERS;
+}
+
 function hitFromRecord(record: Record<string, unknown>): ExaSearchHit | undefined {
-  const url = typeof record["url"] === "string" ? record["url"] : typeof record["id"] === "string" && /^https?:\/\//i.test(record["id"]) ? record["id"] : undefined;
-  if (url === undefined || url.trim().length === 0) return undefined;
-  const title = typeof record["title"] === "string" && record["title"].trim().length > 0 ? record["title"].trim() : url;
+  const url = [record["url"], record["id"]].map((v) => (typeof v === "string" ? v.trim() : "")).find(isLinkableUrl);
+  if (url === undefined) return undefined;
+  const title = capText(typeof record["title"] === "string" && record["title"].trim().length > 0 ? record["title"].trim() : url, EXA_TITLE_MAX_CHARACTERS);
   // Highlights are what was asked for; `summary` and the (capped) page `text` are what is left when the backend sent none.
   const highlight = highlightFrom(record["highlights"]) || highlightFrom(record["summary"]) || highlightFrom(record["text"]);
   const published = typeof record["publishedDate"] === "string" && record["publishedDate"].length > 0 ? record["publishedDate"] : undefined;
-  return { title, url: url.trim(), highlight: capText(highlight.trim(), EXA_HIGHLIGHTS_MAX_CHARACTERS), ...(published !== undefined ? { publishedDate: published } : {}) };
+  return { title, url, highlight: capText(highlight.trim(), EXA_HIGHLIGHTS_MAX_CHARACTERS), ...(published !== undefined ? { publishedDate: published } : {}) };
 }
 
 const FIELD_LINE = /^(Title|URL|Published(?: Date)?|Author|Highlights|Text|Summary|Content):[ \t]*(.*)$/i;
@@ -238,9 +292,9 @@ function hitsFromPlainText(text: string): ExaSearchHit[] {
       else if (name.startsWith("published")) published = value;
       else if (name !== "author") body = value.length > 0 ? [value] : [];
     }
-    if (url === undefined || !/^https?:\/\//i.test(url)) continue;
+    if (url === undefined || !isLinkableUrl(url)) continue;
     hits.push({
-      title: title !== undefined && title.length > 0 ? title : url,
+      title: capText(title !== undefined && title.length > 0 ? title : url, EXA_TITLE_MAX_CHARACTERS),
       url,
       highlight: capText((body ?? []).join("\n").trim(), EXA_HIGHLIGHTS_MAX_CHARACTERS),
       ...(published !== undefined && published.length > 0 && published.toUpperCase() !== "N/A" ? { publishedDate: published } : {}),
@@ -296,7 +350,7 @@ type CallOutcome =
   | { kind: "ok"; result: McpToolCallResult }
   | { kind: "rate-limited"; detail: string }
   | { kind: "auth"; detail: string }
-  | { kind: "timeout" }
+  | { kind: "timeout"; afterMs: number }
   | { kind: "aborted" }
   /**
    * `transport: true` -- the CALL ITSELF threw (a dropped session, a closed socket): nothing was
@@ -318,7 +372,11 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
   const url = exaEndpointUrl(options.endpoint);
 
   const connections: Partial<Record<ExaTier, ConnectedMcpClient>> = {};
-  let key: Promise<ToolSecretResult> | undefined;
+  // SINGLE-FLIGHT: two concurrent first searches share ONE connect. Without it each opened its own
+  // session, the second overwrote the first in `connections`, and the first was never closed.
+  const connecting: Partial<Record<ExaTier, Promise<ConnectedMcpClient>>> = {};
+  // Only a FOUND key is kept (see the header): a `missing`/`unreadable` answer is asked again next time.
+  let foundKey: string | undefined;
   let closed = false;
 
   const drop = async (tier: ExaTier): Promise<void> => {
@@ -327,18 +385,36 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
     if (connection !== undefined) await connection.close().catch(() => {});
   };
 
-  const connectionFor = async (tier: ExaTier, apiKey: string | undefined): Promise<ConnectedMcpClient> => {
+  const connectionFor = (tier: ExaTier, apiKey: string | undefined): Promise<ConnectedMcpClient> => {
     const existing = connections[tier];
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) return Promise.resolve(existing);
+    const pending = connecting[tier];
+    if (pending !== undefined) return pending;
     const config: McpServerConfigForProcessTransport = { type: "http", url, ...(tier === "key" && apiKey !== undefined ? { headers: { [EXA_API_KEY_HEADER]: apiKey } } : {}) };
-    // The always-declining asker: a search backend has no business eliciting input from the user.
-    const connection = await connect({ name: MCP_SERVER_NAME, config, connectTimeoutMs, elicitationAsk: createElicitationAsker(undefined) });
-    if (closed) {
-      await connection.close().catch(() => {});
-      throw new Error("the search client was closed while connecting");
-    }
-    connections[tier] = connection;
-    return connection;
+    const started = (async (): Promise<ConnectedMcpClient> => {
+      const connection = await connect({
+        name: MCP_SERVER_NAME,
+        config,
+        connectTimeoutMs,
+        // The always-declining asker: a search backend has no business eliciting input from the user.
+        elicitationAsk: createElicitationAsker(undefined),
+        // The KEYED connection never follows a redirect: fetch strips only `Authorization` across
+        // origins, so `x-api-key` would be replayed to wherever the endpoint pointed.
+        ...(tier === "key" ? { refuseHttpRedirects: true } : {}),
+      });
+      if (closed) {
+        await connection.close().catch(() => {});
+        throw new Error("the search client was closed while connecting");
+      }
+      connections[tier] = connection;
+      return connection;
+    })();
+    connecting[tier] = started;
+    const clear = (): void => {
+      if (connecting[tier] === started) delete connecting[tier];
+    };
+    started.then(clear, clear);
+    return started;
   };
 
   /** ONE attempt on one tier: connect if needed, call, race the call against our own timer and the abort signal. */
@@ -350,10 +426,18 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
     // server ever echoes the credential it was sent.
     const detailOf = (text: string): string => capText(apiKey !== undefined && apiKey.length > 0 ? text.split(apiKey).join("***") : text, 300);
     if (isAborted()) return { kind: "aborted" };
+    // THE BOUND ACTUALLY APPLIED: the call's own, plus the connect's when there is no connection yet.
+    // It is what the timeout MESSAGE reports -- a message naming the call bound alone understated a
+    // cold search's real wait by the whole connect timeout.
+    const boundMs = callTimeoutMs + (connections[tier] === undefined ? connectTimeoutMs : 0);
+    // Set when the caller stopped waiting. The work below may still be mid-CONNECT at that moment; when
+    // the connect lands it must NOT go on to run the search -- that would spend a real query, against
+    // a small allowance, for a caller that has already been told "timed out" or "interrupted".
+    let abandoned = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     const interrupted = new Promise<"timeout" | "aborted">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), callTimeoutMs + connectTimeoutMs);
+      timer = setTimeout(() => resolve("timeout"), boundMs);
       if (signal !== undefined) {
         onAbort = () => resolve("aborted");
         signal.addEventListener("abort", onAbort, { once: true });
@@ -362,11 +446,16 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
     try {
       const work = (async (): Promise<CallOutcome> => {
         const connection = await connectionFor(tier, apiKey);
+        if (abandoned) return { kind: "aborted" };
         const result = await connection.callTool(tool, args, { timeoutMs: callTimeoutMs });
         if (result.isError === true) {
           const text = resultText(result);
-          if (RATE_LIMIT_PATTERN.test(text)) return { kind: "rate-limited", detail: detailOf(text) };
-          if (AUTH_PATTERN.test(text)) return { kind: "auth", detail: detailOf(text) };
+          // Read with the caller's OWN words removed: a backend that echoes the query back ("no
+          // results for ...") must not open a process-wide breaker because the user asked about
+          // rate limits.
+          const about = withoutEchoes(text, args);
+          if (RATE_LIMIT_PATTERN.test(about)) return { kind: "rate-limited", detail: detailOf(text) };
+          if (AUTH_PATTERN.test(about)) return { kind: "auth", detail: detailOf(text) };
           return { kind: "failed", detail: detailOf(text), unreachable: false, transport: false };
         }
         return { kind: "ok", result };
@@ -375,9 +464,10 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
       work.catch(() => {});
       const settled = await Promise.race([work, interrupted]);
       if (settled === "timeout" || settled === "aborted") {
+        abandoned = true;
         // `callTool` takes no signal, so the only way to stop the in-flight request is to close its connection.
         await drop(tier);
-        return { kind: settled };
+        return settled === "timeout" ? { kind: "timeout", afterMs: boundMs } : { kind: "aborted" };
       }
       return settled;
     } catch (err) {
@@ -387,8 +477,8 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
       await drop(tier);
       if (classified === "rate-limited") return { kind: "rate-limited", detail: detailOf(errorText(err)) };
       if (classified === "auth") return { kind: "auth", detail: detailOf(errorText(err)) };
-      if (classified === "timeout") return { kind: "timeout" };
-      return { kind: "failed", detail: detailOf(errorText(err)), unreachable: err instanceof McpConnectError || UNREACHABLE_PATTERN.test(errorText(err)), transport: true };
+      if (classified === "timeout") return { kind: "timeout", afterMs: boundMs };
+      return { kind: "failed", detail: detailOf(errorText(err)), unreachable: err instanceof McpConnectError || UNREACHABLE_PATTERN.test(errorText(err)), transport: isTransportFailure(err) };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
@@ -409,12 +499,18 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
   const pace = async (signal: AbortSignal | undefined): Promise<void> => {
     const start = Math.max(now(), state.nextAnonymousCallAt);
     state.nextAnonymousCallAt = start + EXA_ANONYMOUS_MIN_INTERVAL_MS;
+    // Never longer than ONE interval per queued call is possible by construction -- unless the clock
+    // stepped backwards and left the reservation far in the future. Clamp, and re-base the reservation.
     const wait = start - now();
+    if (wait > EXA_ANONYMOUS_MIN_INTERVAL_MS * 64) {
+      state.nextAnonymousCallAt = now() + EXA_ANONYMOUS_MIN_INTERVAL_MS;
+      return;
+    }
     if (wait > 0) await sleep(wait, signal);
   };
 
   const failureFrom = (outcome: Exclude<CallOutcome, { kind: "ok" } | { kind: "rate-limited" } | { kind: "auth" }>): ExaSearchResult => {
-    if (outcome.kind === "timeout") return { ok: false, code: "timeout", message: `the search backend did not answer within ${Math.round(callTimeoutMs / 1000)} seconds` };
+    if (outcome.kind === "timeout") return { ok: false, code: "timeout", message: `the search backend did not answer within ${Math.max(1, Math.round(outcome.afterMs / 1000))} seconds` };
     if (outcome.kind === "aborted") return { ok: false, code: "aborted", message: "the search was interrupted" };
     return outcome.unreachable
       ? { ok: false, code: "unreachable", message: `the search backend could not be reached: ${outcome.detail}` }
@@ -438,7 +534,10 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
         return { ok: false, code: "blocked-domains", message: "every domain in the allow-list is blocked by this host's configuration, so there is nothing that may be searched" };
       }
       const exclude = include.length > 0 ? [] : mergeDomainLists(floor, params.excludeDomains);
-      const numResults = Math.max(1, Math.floor(params.numResults ?? EXA_DEFAULT_NUM_RESULTS));
+      // CLAMPED, and total: each hit is capped, so without a ceiling on the COUNT a caller (the inner
+      // model picks this) could still pull a thousand capped hits; `NaN` would serialise to `null`.
+      const requested = typeof params.numResults === "number" && Number.isFinite(params.numResults) ? Math.floor(params.numResults) : EXA_DEFAULT_NUM_RESULTS;
+      const numResults = Math.min(EXA_MAX_NUM_RESULTS, Math.max(1, requested));
       const filtered = include.length > 0 || exclude.length > 0;
       const tool = filtered ? EXA_ADVANCED_SEARCH_TOOL : EXA_SEARCH_TOOL;
       const args: Record<string, unknown> = filtered
@@ -456,7 +555,8 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
         const full = resultText(result);
         // Parsed from the FULL text (a JSON payload cut mid-way would not parse at all), capped for
         // what is handed on; each hit's own highlight is already capped.
-        const hits = parseExaHits(full).filter((hit) => !isDomainBlocked(hit.url, floor));
+        // Sliced to what was ASKED FOR: a backend that ignores `numResults` cannot widen the bound.
+        const hits = parseExaHits(full).filter((hit) => !isDomainBlocked(hit.url, floor)).slice(0, numResults);
         return { ok: true, hits, tier, tool, rawText: capText(full, maxResultChars), truncated: full.length > maxResultChars };
       };
 
@@ -467,20 +567,33 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
         const outcome = await callTier("anonymous", undefined, tool, args, signal);
         if (outcome.kind === "ok") {
           delete state.anonymousRateLimitedAt;
+          delete state.anonymousRefusal;
           return succeed("anonymous", outcome.result);
         }
         if (outcome.kind !== "rate-limited" && outcome.kind !== "auth") return failureFrom(outcome);
         // Rate-limited (or the anonymous tier now demands a credential): OPEN the breaker and fall to the key.
         state.anonymousRateLimitedAt = now();
+        state.anonymousRefusal = outcome.kind;
         anonymousDetail = outcome.detail;
       }
 
       // --- the key, as fallback -----------------------------------------------------------------
-      key ??= options.resolveKey?.() ?? Promise.resolve<ToolSecretResult>({ status: "missing" });
-      const secret = await key;
+      let secret: ToolSecretResult;
+      if (foundKey !== undefined) {
+        secret = { status: "found", key: foundKey };
+      } else {
+        try {
+          secret = (await options.resolveKey?.()) ?? { status: "missing" };
+        } catch (err) {
+          // A custom resolver that REJECTS must not throw out of `search()`. Its NAME only.
+          secret = { status: "unreadable", code: "io", message: `the key resolver failed with ${err instanceof Error ? err.name : "an unknown error"}` };
+        }
+        if (secret.status === "found") foundKey = secret.key;
+      }
       if (secret.status !== "found") {
         const retryMinutes = Math.max(1, Math.ceil((EXA_ANONYMOUS_COOLDOWN_MS - (now() - (state.anonymousRateLimitedAt ?? now()))) / 60_000));
-        const exhausted = `The free web search quota is exhausted${anonymousDetail !== undefined ? ` (${anonymousDetail})` : ""}; the free tier will be tried again in about ${retryMinutes} minute${retryMinutes === 1 ? "" : "s"}.`;
+        const why = state.anonymousRefusal === "auth" ? "The web search backend refused anonymous access" : "The free web search quota is exhausted";
+        const exhausted = `${why}${anonymousDetail !== undefined && anonymousDetail.length > 0 ? ` (${anonymousDetail})` : ""}; the free tier will be tried again in about ${retryMinutes} minute${retryMinutes === 1 ? "" : "s"}.`;
         return secret.status === "missing"
           ? { ok: false, code: "quota-exhausted", message: `${exhausted} No search API key is configured -- add an Exa API key to keep searching without waiting.` }
           : { ok: false, code: "key-unreadable", message: `${exhausted} A search API key is configured but could not be used: ${secret.message}` };

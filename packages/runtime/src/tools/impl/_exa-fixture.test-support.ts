@@ -28,7 +28,7 @@ export interface ExaFixtureOptions {
   /** Answer for a tool call. Default: a two-result advanced-shaped JSON payload / basic-shaped text payload. */
   respond?: (call: ExaFixtureCall) => FixtureToolResult | Promise<FixtureToolResult>;
   /** Return a Response to short-circuit the HTTP request BEFORE it reaches MCP (a 429, a 401, a hang). */
-  gate?: (request: ExaFixtureHttpRequest) => Response | Promise<Response> | undefined;
+  gate?: (request: ExaFixtureHttpRequest) => Response | undefined | Promise<Response | undefined>;
 }
 
 export interface ExaFixture {
