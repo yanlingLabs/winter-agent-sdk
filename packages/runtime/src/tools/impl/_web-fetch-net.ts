@@ -250,7 +250,7 @@ export type BodyReadResult =
  * measured against this exact Bun version (a 400 ms `AbortSignal.timeout` on a stalled body returned
  * a catchable `TimeoutError` in ~400 ms; a mid-body socket reset returned in ~50 ms; neither hung).
  */
-async function readBodyCapped(response: Response, contentEncoding: string): Promise<BodyReadResult> {
+async function readBodyCapped(response: Response, contentEncoding: string, signal?: AbortSignal): Promise<BodyReadResult> {
   if (response.body === null || response.body === undefined) return { kind: "ok", body: new Uint8Array(0) };
 
   const tokens = contentEncoding
@@ -294,12 +294,43 @@ async function readBodyCapped(response: Response, contentEncoding: string): Prom
     }
   };
 
+  // THE DEADLINE IS ENFORCED HERE, BY US -- never by trusting the runtime to reject the read (finding
+  // N5). MEASURED, bun 1.3.14 vs 1.4.2, same darwin machine, same stalled socket: the WEB stream's own
+  // reader rejects (`TimeoutError`/`AbortError`) on BOTH, but `Readable.fromWeb`'s node-stream adapter
+  // forwards that rejection on 1.3.14 and SWALLOWS it on 1.4.2 -- there, the node stream simply ENDS,
+  // normally, with the bytes received so far. `pipeline()` then resolves, and a body cut short by the
+  // hop timeout or by the user's own interrupt was reported as `{kind:"ok"}`: a TRUNCATED page handed to
+  // the digest model as if it were the whole thing, and an abort the fetch ignored. Two independent
+  // guards, because either alone has a hole:
+  //   - the RACE bounds the wait even if some runtime neither errors nor ends the stream (the original
+  //     N1 hang, one layer up);
+  //   - the POST-CHECK is what actually catches 1.4.2: the source ends at the same moment the signal
+  //     fires, so `Promise.race` can legitimately see the pipeline settle first. If our own deadline
+  //     fired, this read is not a success, whatever the stream did.
+  // The thrown reason reaches `performWebFetch`'s own catch, which classifies aborted-vs-timeout from
+  // the signals it already holds -- one classification site, unchanged.
+  const abortedRace: Promise<never> | undefined =
+    signal === undefined
+      ? undefined
+      : new Promise<never>((_resolve, reject) => {
+          const fail = (): void => reject(signal.reason ?? new Error("WebFetch: the body read was aborted"));
+          if (signal.aborted) {
+            fail();
+            return;
+          }
+          // Never REMOVED: removing an abort listener from a timeout/`any` signal disables that
+          // signal's future abort delivery in Bun (measured -- see `raceResolveAgainstSignal`'s header).
+          // `Promise.race` attaches a handler to this promise immediately, so a rejection that arrives
+          // after the pipeline already won is handled, never an unhandled rejection.
+          signal.addEventListener("abort", fail, { once: true });
+        });
   try {
-    await pipeline(source, meter, ...decoders, sink);
+    await (abortedRace === undefined ? pipeline(source, meter, ...decoders, sink) : Promise.race([pipeline(source, meter, ...decoders, sink), abortedRace]));
   } catch (err) {
     if (verdict !== undefined) return { kind: verdict };
     throw err;
   }
+  if (signal?.aborted === true) throw signal.reason ?? new Error("WebFetch: the body read was aborted");
   return { kind: "ok", body: new Uint8Array(Buffer.concat(chunks, total)) };
 }
 
@@ -594,7 +625,7 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
         const retryAfter = rawRetryAfter !== null && RETRY_AFTER_RE.test(rawRetryAfter) ? rawRetryAfter : undefined;
         outcome = { kind: "http-error", status: response.status, statusText: reasonPhrase(response.status), ...(retryAfter !== undefined ? { retryAfter } : {}) };
       } else {
-        const bodyResult = await readBodyCapped(response, response.headers.get("content-encoding") ?? "");
+        const bodyResult = await readBodyCapped(response, response.headers.get("content-encoding") ?? "", signal);
         switch (bodyResult.kind) {
           case "ok":
             outcome = {

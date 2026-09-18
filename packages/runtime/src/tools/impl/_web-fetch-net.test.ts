@@ -650,6 +650,66 @@ describe("performWebFetch -- N1: a body-phase failure on an ENCODED (Content-Enc
   });
 });
 
+// --- N5: the deadline is OURS, not the runtime's ------------------------------------------------------
+//
+// The four B1/N1 stall/abort cases above are driven through a REAL socket, so what they prove depends on
+// what the installed Bun does with an aborted body stream -- and that changed underneath them: on bun
+// 1.3.14 `Readable.fromWeb` forwards the web stream's `TimeoutError`/`AbortError`, on 1.4.2 it swallows
+// it and ENDS the node stream normally with the bytes received so far (measured on one darwin machine
+// with both binaries). Under 1.4.2 all four returned `success` carrying a TRUNCATED body.
+//
+// These two tests pin the guard itself on ANY runtime, by handing the module a body stream that behaves
+// the way 1.4.2's adapter does no matter which Bun is running: one chunk, then a clean close the moment
+// the signal fires, never an error. A `success` here would mean a page cut short by the hop timeout, or
+// by the user's own interrupt, was reported as complete.
+describe("performWebFetch -- N5: a body that ENDS CLEANLY on abort is never reported as success", () => {
+  /** A `fetchImpl` whose response body emits one chunk and then closes NORMALLY as soon as `init.signal` aborts -- no error, ever. */
+  function cleanlyEndingOnAbortFetchImpl(): NonNullable<WebFetchNetDeps["fetchImpl"]> {
+    return async (_url, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("partial-data-then-nothing"));
+          init.signal.addEventListener("abort", () => controller.close(), { once: true });
+          // ...and nothing else is ever enqueued: without the abort this stream stays open forever.
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/plain", "content-length": "1000000" } });
+    };
+  }
+
+  test("the HOP TIMEOUT: a cleanly-ended truncated body is a timeout, not a success", async () => {
+    const t0 = Date.now();
+    const outcome = await performWebFetch("https://ends-cleanly.example/", "p", baseOpts(), { fetchImpl: cleanlyEndingOnAbortFetchImpl(), resolveHost: async () => ["93.184.216.34"], timeoutMs: 150 });
+    expect(outcome.kind).toBe("timeout");
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  test("a TURN ABORT: a cleanly-ended truncated body is aborted, not a success", async () => {
+    const controller = new AbortController();
+    const t0 = Date.now();
+    const promise = performWebFetch("https://ends-cleanly.example/", "p", { ...baseOpts(), signal: controller.signal }, { fetchImpl: cleanlyEndingOnAbortFetchImpl(), resolveHost: async () => ["93.184.216.34"], timeoutMs: 8000 });
+    setTimeout(() => controller.abort(), 40);
+    const outcome = await promise;
+    expect(outcome.kind).toBe("aborted");
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  test("CONTROL: the same stream shape that CLOSES on its own, with no abort, is an ordinary success", async () => {
+    const fetchImpl: NonNullable<WebFetchNetDeps["fetchImpl"]> = async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("the whole body"));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/plain" } });
+    };
+    const outcome = await performWebFetch("https://ends-cleanly.example/", "p", baseOpts(), { fetchImpl, resolveHost: async () => ["93.184.216.34"], timeoutMs: 8000 });
+    expect(outcome.kind).toBe("success");
+    if (outcome.kind === "success") expect(new TextDecoder().decode(outcome.body)).toBe("the whole body");
+  });
+});
+
 describe("performWebFetch -- B2: streaming decompression is capped by OUTPUT bytes, not input", () => {
   test("a gzip bomb (a few KB in, 50 MB of zeros out) is refused quickly, never materialised", async () => {
     const big = Buffer.alloc(50 * 1024 * 1024, 0);
