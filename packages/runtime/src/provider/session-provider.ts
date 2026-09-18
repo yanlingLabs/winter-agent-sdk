@@ -52,7 +52,8 @@ import {
   createShippedAdapters,
 } from "@yanlinglabs/winter-provider-runtime";
 import type { MessageOrigin } from "@yanlinglabs/winter-provider-runtime";
-import { createKeychainCredentialStore } from "./keychain-store.ts";
+import { createKeychainCredentialStore, createKeychainSecretReader, type KeychainSecretReader } from "./keychain-store.ts";
+import { createToolSecretResolver, type ToolSecretResolver } from "./tool-secret.ts";
 import { providerCredentialRef } from "./credential-api.ts";
 import { adapterAsProvider, type HistoryRenderer } from "./bridge.ts";
 import { testProviderForNamespace } from "./mock.ts";
@@ -204,7 +205,25 @@ export interface SessionProviderOptions {
    * builds a wiring directly with a fixed credential store.
    */
   credentialEpoch?: () => number;
+  /**
+   * The keychain's RAW reader, for `resolveToolSecret` (a tool's key may be a bare string, which the
+   * credential store rightly refuses -- see `tool-secret.ts`).
+   *
+   * DEFAULTS TO THE REAL ONE ONLY WHEN `credentials` IS ALSO DEFAULTED. A caller that injects a
+   * credential store (every test) has said "this is the only source", and quietly reading the real
+   * keychain beside it would be exactly the test-touches-the-login-keychain hazard the store's own
+   * injection exists to prevent. Such a caller passes a reader over a fake backend, or none at all.
+   */
+  readKeychainSecret?: KeychainSecretReader;
 }
+
+/**
+ * What `resolveAuxiliaryModel` answers: a BUILT, non-streaming provider for the tag, or a typed
+ * refusal. A VALUE in both arms -- the consumer is a tool executor, which must never throw.
+ */
+export type AuxiliaryModelResolution =
+  | { ok: true; provider: Provider; modelKey: string }
+  | { ok: false; code: string; message: string };
 
 export interface SessionProviderWiring {
   /** What `runEngine` is handed. Either the catalog-resolved adapter chain or the reserved namespace's scripted double. */
@@ -257,6 +276,35 @@ export interface SessionProviderWiring {
    * resolve against, and a fabricated answer would be worse than the honest "no reviewer".
    */
   resolveReviewer?: (currentModelKey?: string) => { provider: Provider; model: string } | undefined;
+  /**
+   * A TOOL'S OWN INNER MODEL, by tag -- `WebFetch`'s page-digest model is the first consumer.
+   *
+   * `tag` is a provider-qualified key or a slot name and goes through the SAME slot resolver
+   * `set_model`, a child spawn and the advisor use, then `registry.resolve`, then `buildProvider`
+   * under Ruling E-1: `opts.authRef` is the ROUTE's own credential (step 1); without it a target on
+   * the session's provider uses the session's material and a target on ANOTHER provider gets its own
+   * `<providerId>:default` record, verified at its first generation with a typed
+   * `no-credential-for-provider`. The session's key is never sent to another provider.
+   *
+   * The provider is wrapped `withoutStreaming` (R6-G: an auxiliary generation emits no
+   * `stream_event`s) and MEMOISED per `(tag, authRef, session model key, credential epoch)`, so the
+   * capability check that asks "does the digest model resolve" on every tool-list read costs one
+   * resolution per credential/settings view, and a repeated call reuses one provider object.
+   *
+   * It answers with a REFUSAL VALUE, unlike `resolveReviewer` (whose throw is a documented
+   * workaround for a pinned return type). "The session's own model" is NOT a tag and never comes
+   * here: the engine already holds that provider, live, and re-resolving it would be a second
+   * opinion about a decision `set_model` and the fallback already made.
+   *
+   * ABSENT on the two arms with no catalog identity (the reserved test namespace, a refused
+   * session): a stated tag is then simply unresolvable, and the consumer says so.
+   */
+  resolveAuxiliaryModel?: (tag: string, opts?: { authRef?: CredentialRef; currentModelKey?: string }) => AuxiliaryModelResolution;
+  /**
+   * Resolves a TOOL's secret from an arbitrary ref -- see `tool-secret.ts`. Present on EVERY arm: it
+   * depends on the credential store, not on the session having a model.
+   */
+  resolveToolSecret: ToolSecretResolver;
   /**
    * Builds a `Provider` for any resolved model against THAT TARGET's material (Ruling E-1), the
    * session's renderer and the session's chain.
@@ -504,6 +552,11 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   const credentials = opts.credentials ?? createProductionCredentialStore(config, env, opts.home ?? env["HOME"] ?? "");
   const registry = createRegistry(catalog);
   for (const adapter of createShippedAdapters(catalog)) registry.register(adapter);
+
+  // A TOOL's secret. The raw keychain reader is the REAL one only when the credential store is the
+  // production one too -- see `SessionProviderOptions.readKeychainSecret`.
+  const readKeychainSecret = opts.readKeychainSecret ?? (opts.credentials === undefined ? createKeychainSecretReader(sessionKeychainService) : undefined);
+  const resolveToolSecret = createToolSecretResolver({ credentials, ...(readKeychainSecret !== undefined ? { readKeychainSecret } : {}) });
 
   // Lane C's renderer, NOT `createIdentityHistoryRenderer` — the T3 identity renderer is the
   // conservative placeholder its own header says it is (no decoration at all), so selecting it here
@@ -826,6 +879,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       resolveModelSwitch,
       fallbackModelKeys: [],
       priceUsage: () => undefined,
+      resolveToolSecret,
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -853,6 +907,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       resolveModelSwitch,
       fallbackModelKeys: [],
       priceUsage: () => undefined,
+      resolveToolSecret,
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -1051,6 +1106,51 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     return reviewer;
   };
 
+  // --- A TOOL'S INNER MODEL (see `SessionProviderWiring.resolveAuxiliaryModel`) ---------------------
+  //
+  // One memo entry PER KEY rather than the reviewer's single pin: two tools may name two models, and
+  // a single slot would make them evict each other on every call. Bounded by the number of distinct
+  // tags a host configures, which is a handful; cleared wholesale when the credential epoch moves so
+  // a cold answer cannot outlive the view it was taken on (the reviewer memo's own M-1 lesson).
+  const auxiliaryMemo = new Map<string, AuxiliaryModelResolution>();
+  // NEVER READ AT CONSTRUCTION: production's epoch counter is declared BELOW this wiring's own call
+  // site (see `production-wiring.ts`'s comment on the forwarding closure), so calling the getter here
+  // is a temporal-dead-zone throw that fails every session start. First read is at first use.
+  let auxiliaryMemoEpoch: number | undefined;
+  const resolveAuxiliaryModel = (tag: string, auxOpts: { authRef?: CredentialRef; currentModelKey?: string } = {}): AuxiliaryModelResolution => {
+    const requested = tag.trim();
+    if (requested.length === 0) return { ok: false, code: "unknown-model", message: "no model tag was given" };
+    const sessionModelKey = auxOpts.currentModelKey ?? resolved.modelKey;
+    const epoch = opts.credentialEpoch?.() ?? 0;
+    if (epoch !== auxiliaryMemoEpoch) {
+      auxiliaryMemo.clear();
+      auxiliaryMemoEpoch = epoch;
+    }
+    // The ref is part of the key by its REDACTED rendering: a locator, never material (an inline
+    // value renders as `inline(***)`, so two different inline keys share an entry -- harmless, since
+    // an inline ref is fixed for a session's life).
+    const memoKey = `${requested}\u0000${auxOpts.authRef !== undefined ? redactCredentialRef(auxOpts.authRef) : ""}\u0000${sessionModelKey}`;
+    const memoised = auxiliaryMemo.get(memoKey);
+    if (memoised !== undefined) return memoised;
+    const answer = ((): AuxiliaryModelResolution => {
+      const slot = advisorSlotResolve(requested, sessionModelKey);
+      if (!slot.ok) return { ok: false, code: slot.code, message: slot.message };
+      const target = resolveUnder(slot.modelKey, slot.providerId);
+      if (target instanceof WinterProviderResolutionError) return { ok: false, code: target.code, message: target.message };
+      try {
+        const built = buildProvider(target, auxOpts.authRef !== undefined ? { authRef: auxOpts.authRef } : {});
+        return { ok: true, provider: withoutStreaming(built), modelKey: target.modelKey };
+      } catch (err) {
+        // `buildProvider` refuses TYPED for a target with nothing to reach (a per-tenant provider
+        // with no endpoint of its own). Anything else is a bug and must not be dressed as a refusal.
+        if (err instanceof WinterProviderResolutionError) return { ok: false, code: err.code, message: err.message };
+        throw err;
+      }
+    })();
+    auxiliaryMemo.set(memoKey, answer);
+    return answer;
+  };
+
   return {
     provider: selection.provider,
     registry,
@@ -1075,6 +1175,8 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     // session, the reserved test namespace) withhold it, which is what makes its absence mean
     // "there is nothing to ask" rather than "the answer was no".
     resolveReviewer,
+    resolveAuxiliaryModel,
+    resolveToolSecret,
     buildProvider,
     describeTargetMaterial,
     sessionProviderId,

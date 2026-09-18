@@ -116,6 +116,35 @@ export function createKeychainCredentialStore(service: string = DEFAULT_KEYCHAIN
   };
 }
 
+/** Reads ONE keychain item's stored string, uninterpreted. `null` when there is no such item. */
+export type KeychainSecretReader = (ref: Extract<CredentialRef, { kind: "keychain" }>) => Promise<string | null>;
+
+/**
+ * The RAW half of this store, for a TOOL's secret rather than a provider's credential.
+ *
+ * WHY IT EXISTS, AND WHY HERE. `get` above insists the item is JSON `CredentialMaterial` and throws
+ * `malformed` for anything else -- correct for a provider credential, which this SDK writes itself.
+ * A tool's key is different: a host may store it as the BARE KEY STRING because another client of
+ * the same keychain slot reads it that way, and that format is not this SDK's to change. So a reader
+ * that returns the item uninterpreted has to exist, and it has to live in THIS file -- the only one
+ * allowed to name the secrets backend (see the header, and the tripwire in the test beside it).
+ *
+ * It interprets NOTHING: `provider/tool-secret.ts` decides what the string means. It never logs and
+ * never quotes the value; a backend failure is the same typed, ref-redacted `io` error `get` raises.
+ * The ref's own `service` wins over the session's, exactly as in `get`.
+ */
+export function createKeychainSecretReader(service: string = DEFAULT_KEYCHAIN_SERVICE, opts: KeychainCredentialStoreOptions = {}): KeychainSecretReader {
+  const backend = (): SecretsBackend => opts.secrets ?? defaultSecretsBackend();
+  return async (ref) => {
+    try {
+      return await backend().get({ service: ref.service ?? service, name: ref.account });
+    } catch (err) {
+      if (err instanceof CredentialResolutionError) throw err;
+      throw new CredentialResolutionError("io", `keychain lookup failed for ${redactRef(ref)}`);
+    }
+  };
+}
+
 /** `account = "<providerId>:<accountId>"` (R6-10). One helper, so a caller never assembles the key by hand and drifts. */
 export function keychainAccountName(providerId: string, accountId: string): string {
   return `${providerId}:${accountId}`;

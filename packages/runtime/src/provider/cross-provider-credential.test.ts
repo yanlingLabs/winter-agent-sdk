@@ -592,3 +592,88 @@ describe("Ruling E-1: a refused cross-provider child is LOUD -- a stderr line an
     });
   });
 });
+
+// --- a TOOL's inner model (`resolveAuxiliaryModel`) follows the same rule -------------------------
+//
+// The consumer is a tool executor (WebFetch's page-digest model is the first), so the two things
+// that differ from the reviewer are asserted alongside the credential rule itself: a refusal is a
+// VALUE, never a throw, and a repeated resolution reuses one provider object.
+describe("Ruling E-1 for a tool's inner model: resolveAuxiliaryModel", () => {
+  test("a cross-provider tag WITH its own `authRef` sends that ref's key to the other provider -- never the session's", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const wiring = buildSessionProvider({ config: sessionConfig(), env: {}, catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(false) });
+      const aux = wiring.resolveAuxiliaryModel!("provb/bmodel", { authRef: { kind: "inline", value: "DIGEST-ROUTE-OWN-SECRET" } });
+      if (!aux.ok) throw new Error(aux.message);
+      expect(aux.modelKey).toBe("provb/bmodel");
+      await aux.provider.generate({ messages: [{ role: "user", content: "digest this" }] });
+      expect(fakeA.requests.length).toBe(0);
+      expect(fakeB.requests[0]!.authorization).toBe("Bearer DIGEST-ROUTE-OWN-SECRET");
+      assertNoSessionMaterial(fakeB.requests[0]!);
+    });
+  });
+
+  test("a cross-provider tag with NO ref uses the target provider's own keychain record", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const wiring = buildSessionProvider({ config: sessionConfig(), env: {}, catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(true) });
+      const aux = wiring.resolveAuxiliaryModel!("provb/bmodel");
+      if (!aux.ok) throw new Error(aux.message);
+      await aux.provider.generate({ messages: [{ role: "user", content: "digest this" }] });
+      expect(fakeB.requests[0]!.authorization).toBe(`Bearer ${SECRET_B_RECORD}`);
+      assertNoSessionMaterial(fakeB.requests[0]!);
+    });
+  });
+
+  test("...and with no record either, the FIRST GENERATION refuses typed `no-credential-for-provider` and nothing reaches any wire", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const wiring = buildSessionProvider({ config: sessionConfig(), env: {}, catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(false) });
+      const aux = wiring.resolveAuxiliaryModel!("provb/bmodel");
+      if (!aux.ok) throw new Error(aux.message);
+      const refusal = await aux.provider.generate({ messages: [{ role: "user", content: "x" }] }).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(WinterProviderResolutionError);
+      expect((refusal as WinterProviderResolutionError).code).toBe("no-credential-for-provider");
+      expect(fakeA.requests.length + fakeB.requests.length).toBe(0);
+    });
+  });
+
+  test("a SAME-provider tag rides the session's own material", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const wiring = buildSessionProvider({ config: sessionConfig(), env: {}, catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(false) });
+      const aux = wiring.resolveAuxiliaryModel!("prova/amodel");
+      if (!aux.ok) throw new Error(aux.message);
+      await aux.provider.generate({ messages: [{ role: "user", content: "x" }] });
+      expect(fakeA.requests[0]!.authorization).toBe(`Bearer ${SECRET_A}`);
+      expect(fakeB.requests.length).toBe(0);
+    });
+  });
+
+  test("an unresolvable tag is a refusal VALUE (never a throw, never a fallback onto the session's model)", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const wiring = buildSessionProvider({ config: sessionConfig(), env: {}, catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(true) });
+      const unknown = wiring.resolveAuxiliaryModel!("provb/no-such-model");
+      expect(unknown.ok).toBe(false);
+      if (unknown.ok) throw new Error("unreachable");
+      expect(unknown.code.length).toBeGreaterThan(0);
+      expect(unknown.message.length).toBeGreaterThan(0);
+      expect(wiring.resolveAuxiliaryModel!("   ")).toMatchObject({ ok: false });
+    });
+  });
+
+  test("a repeated resolution returns the SAME provider object; a moved credential epoch re-resolves", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      let epoch = 0;
+      const wiring = buildSessionProvider({ config: sessionConfig(), env: {}, catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(true), credentialEpoch: () => epoch });
+      const first = wiring.resolveAuxiliaryModel!("provb/bmodel");
+      const second = wiring.resolveAuxiliaryModel!("provb/bmodel");
+      if (!first.ok || !second.ok) throw new Error("expected both to resolve");
+      expect(second.provider).toBe(first.provider);
+      // A different route credential is a different provider, even for the same tag.
+      const withRef = wiring.resolveAuxiliaryModel!("provb/bmodel", { authRef: { kind: "env", name: "WINTER_TEST_DIGEST" } });
+      if (!withRef.ok) throw new Error("expected to resolve");
+      expect(withRef.provider).not.toBe(first.provider);
+      epoch = 1;
+      const third = wiring.resolveAuxiliaryModel!("provb/bmodel");
+      if (!third.ok) throw new Error("expected to resolve");
+      expect(third.provider).not.toBe(first.provider);
+    });
+  });
+});
