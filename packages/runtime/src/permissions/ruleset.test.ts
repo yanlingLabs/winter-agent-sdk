@@ -109,6 +109,25 @@ describe("sourceRule: constructs a SourcedRuleEntry, running add-time validation
 // ---------------------------------------------------------------------------------------------
 
 describe("add-time validation carry (a): MCP parenthetical rules are rejected, not silently inert", () => {
+  test("a SCOPED WebSearch rule is rejected at add time, on every behavior -- the bare name and WebSearch(*) are accepted", () => {
+    // WebSearch has no specifier grammar. Rejected LOUDLY here rather than parsed into something that
+    // silently never matches (a deny that denies nothing) or, worse, into a generic `query:` param
+    // rule that really fires for one literal query string and for no rephrasing of it.
+    for (const behavior of ["allow", "deny", "ask"] as const) {
+      for (const content of ["query:bun test runner", "bun test runner", "domain:bun.sh", "bun*"]) {
+        expect(() => sourceRule(rv("WebSearch", content), behavior, "user")).toThrow(PermissionRuleValidationError);
+      }
+      expect(() => sourceRule(rv("WebSearch"), behavior, "user")).not.toThrow();
+      expect(() => sourceRule(rv("WebSearch", "*"), behavior, "user")).not.toThrow();
+    }
+    try {
+      sourceRule(rv("WebSearch", "query:x"), "deny", "user");
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("WebSearch has no specifier grammar");
+    }
+  });
+
   test("an MCP tool with ANY parenthetical specifier throws PermissionRuleValidationError", () => {
     expect(() => sourceRule(rv("mcp__x__y", "param:1"), "deny", "user")).toThrow(PermissionRuleValidationError);
   });

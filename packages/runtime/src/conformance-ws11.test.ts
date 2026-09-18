@@ -727,12 +727,15 @@ describe("WS-11 §10: the rows this file closes directly", () => {
     const onlyInPin = pinnedUnderRequestNames.filter((n) => !winter.includes(n)).sort();
     const onlyInWinter = winter.filter((n) => !pinnedUnderRequestNames.includes(n)).sort();
 
-    // IN THE PIN, ABSENT FROM WINTER -- three, each with a stated reason:
+    // IN THE PIN, ABSENT FROM WINTER -- one, with a stated reason:
     //   DesignSync  -- a product surface WS-06 does not carry (correctly-absent by catalog).
-    //   WebFetch/WebSearch -- WS-06 rows with no executor at this phase; the task brief's own
-    //   "no P5 tool stays executorless except ProposeSkills/ProposeGoal, LSP, WebFetch/WebSearch"
-    //   names them as the sanctioned exceptions.
-    expect(onlyInPin).toEqual(["DesignSync", "WebFetch", "WebSearch"]);
+    // `WebFetch` and `WebSearch` are NO LONGER in this list. They were the sanctioned executorless
+    // exceptions of an earlier phase; both have real executors now and are in Winter's default
+    // advertised set, so the golden carries them and the pin-only difference shrinks to the one name
+    // Winter deliberately does not ship.
+    expect(onlyInPin).toEqual(["DesignSync"]);
+    expect(winter).toContain("WebFetch");
+    expect(winter).toContain("WebSearch");
 
     // IN WINTER, ABSENT FROM THE PIN -- ten, every one a WS-06 catalog row this branch implements.
     // `Skill` and `Workflow` are NO LONGER in this list: T8's own wiring put them in Winter's
@@ -741,9 +744,9 @@ describe("WS-11 §10: the rows this file closes directly", () => {
       "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Glob", "Grep",
       "ReadNotifications", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
     ]);
-    // Thirteen names differ, not fifteen: capture (4) counted `Skill` and `Workflow` among the
-    // pin-only five, and both are Winter's now.
-    expect(onlyInPin.length + onlyInWinter.length).toBe(13);
+    // Eleven names differ, not fifteen: capture (4) counted `Skill`, `Workflow`, `WebFetch` and
+    // `WebSearch` among the pin-only five, and all four are Winter's now.
+    expect(onlyInPin.length + onlyInWinter.length).toBe(11);
     expect(winter).toContain("Skill");
     expect(winter).toContain("Workflow");
     // And the alias is REAL on Winter's side too: it advertises `Agent` on init, where the pin says

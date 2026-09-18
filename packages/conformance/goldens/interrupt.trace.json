@@ -39,6 +39,8 @@
         "TaskOutput",
         "TaskStop",
         "TaskUpdate",
+        "WebFetch",
+        "WebSearch",
         "Workflow",
         "Write"
       ]
@@ -84,6 +86,8 @@
         "TaskOutput",
         "TaskStop",
         "TaskUpdate",
+        "WebFetch",
+        "WebSearch",
         "Workflow",
         "Write"
       ],

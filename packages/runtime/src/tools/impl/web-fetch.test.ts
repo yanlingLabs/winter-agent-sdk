@@ -13,7 +13,7 @@ import { resolveWebToolsConfig, type ResolvedWebToolsConfig } from "@yanlinglabs
 import type { Provider, ProviderRequest, ProviderTurn, ProviderUsage } from "../../engine.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { registerWebSessionRuntime, resetWebSessionRuntimesForTest, type WebSessionRuntime } from "../../web/session-runtime.ts";
-import { createWebFetchExecutor, PERMISSIVE_GUIDELINES, STRICT_GUIDELINES, type WebFetchExecutorDeps } from "./web-fetch.ts";
+import { createWebFetchExecutor, PERMISSIVE_GUIDELINES, STRICT_GUIDELINES, WEB_FETCH_BUDGET_STOP_MESSAGE, type WebFetchExecutorDeps } from "./web-fetch.ts";
 import { WEB_FETCH_MAX_BYTES } from "./_web-fetch-net.ts";
 import { WebFetchCache } from "./_web-fetch-cache.ts";
 import "./web-fetch.ts"; // self-sufficiency: installs the module-load default before getRegisteredTool below
@@ -106,6 +106,7 @@ beforeEach(() => {
       if (p === "/binary-9mb") return new Response(new Uint8Array(9_000_000), { headers: { "content-type": "application/octet-stream" } });
       if (p === "/xhtml") return new Response("<h1>Title</h1><p>Hello <b>world</b>.</p>", { headers: { "content-type": "application/xhtml+xml; charset=utf-8" } });
       if (p === "/404") return new Response("nf", { status: 404 });
+      if (p === "/redir-other-private") return new Response(null, { status: 302, headers: { location: "http://10.9.9.9/secret" } });
       if (p === "/big") return new Response(new Uint8Array(WEB_FETCH_MAX_BYTES + 10), { headers: { "content-type": "text/plain" } });
       if (p === "/hang") {
         await new Promise(() => {});
@@ -256,6 +257,148 @@ describe("private-address policy", () => {
     const result = await runFetch(executor, { url: "https://public-looking.example/html", prompt: "p" }, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toContain("public-looking.example");
+  });
+});
+
+describe("private-address policy 'ask': the executor honours the permission layer's explicit-approval marker", () => {
+  // The ASK happens before execution, in the permission layer; what reaches the executor is
+  // `ctx.permission.explicitApproval`. These rows pin the executor's half: proceed WITH the marker,
+  // keep refusing without it, and keep refusing the one case no pre-execution ask could have covered.
+  function askSession(sessionId: string, permission?: ToolExecutionContext["permission"]) {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const runtime = fakeRuntime(provider, { fetch: { privateAddressPolicy: "ask" } });
+    const ctx = makeCtx({ sessionId, ...(permission !== undefined ? { permission } : {}) });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    return { provider, ctx };
+  }
+
+  /** A `fetchImpl` that records every url the net layer actually asked for, then serves it from the local server. */
+  function recordingFetch() {
+    const fetched: string[] = [];
+    const inner = loopbackFetchImpl();
+    const fetchImpl: typeof inner = async (url, init) => {
+      fetched.push(url);
+      return inner(url, init);
+    };
+    return { fetched, fetchImpl };
+  }
+
+  test("a lexically-private target WITHOUT the marker keeps today's refusal, verbatim, and nothing is fetched", async () => {
+    const { ctx, provider } = askSession("s-ask-unmarked");
+    const { fetched, fetchImpl } = recordingFetch();
+    const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl } }), { url: "http://192.168.1.10/html", prompt: "p" }, ctx);
+    expect(result).toEqual({
+      output: "WebFetch cannot prompt for approval mid-call. 192.168.1.10 is a private/loopback address; the user must explicitly approve WebFetch(domain:192.168.1.10) before this URL can be fetched.",
+      isError: true,
+    });
+    expect(fetched).toHaveLength(0);
+    expect(provider.requests).toHaveLength(0);
+  });
+
+  test("a lexically-private target WITH the marker is fetched and digested -- by prompt, and by a rule naming the host", async () => {
+    for (const explicitApproval of ["prompt", "rule"] as const) {
+      for (const url of ["http://192.168.1.10/html", "http://api.localhost/html", "http://printer.local/html"]) {
+        const { ctx } = askSession(`s-ask-${explicitApproval}-${url}`, { explicitApproval });
+        const { fetched, fetchImpl } = recordingFetch();
+        const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl }, resolveHost: async () => ["127.0.0.1"] }), { url, prompt: "p" }, ctx);
+        expect([url, result]).toEqual([url, { output: "digested" }]);
+        expect(fetched).toHaveLength(1);
+      }
+    }
+  });
+
+  test("THE LATE CASE: a public-looking name that RESOLVES private is still refused after a PROMPT approval -- nobody was told -- and the refusal names the rule that permits it", async () => {
+    for (const permission of [undefined, { explicitApproval: "prompt" as const }]) {
+      const { ctx, provider } = askSession(`s-ask-late-${permission?.explicitApproval ?? "none"}`, permission);
+      const { fetched, fetchImpl } = recordingFetch();
+      const executor = createWebFetchExecutor({ net: { fetchImpl }, resolveHost: async () => ["127.0.0.1"] });
+      const result = await runFetch(executor, { url: "https://public-looking.example/html", prompt: "p" }, ctx);
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe(
+        "WebFetch will not reach public-looking.example: it resolves to a private/loopback address. That is only discoverable at fetch time, so no approval could be asked for it beforehand, and WebFetch cannot prompt for approval mid-call. An allow rule naming the host permits it: WebFetch(domain:public-looking.example).",
+      );
+      expect(fetched).toHaveLength(0);
+      expect(provider.requests).toHaveLength(0);
+    }
+  });
+
+  test("THE LATE CASE, with exactly the rule that refusal names: `WebFetch(domain:<host>)` arrives as 'rule' and the fetch proceeds", async () => {
+    const { ctx } = askSession("s-ask-late-rule", { explicitApproval: "rule" });
+    const { fetched, fetchImpl } = recordingFetch();
+    const executor = createWebFetchExecutor({ net: { fetchImpl }, resolveHost: async () => ["10.1.2.3"] });
+    const result = await runFetch(executor, { url: "https://intranet.example/html", prompt: "p" }, ctx);
+    expect(result).toEqual({ output: "digested" });
+    expect(fetched).toHaveLength(1);
+  });
+
+  test("approval of ONE private host never reaches ANOTHER: a redirect to a different private host is returned to the model, not followed", async () => {
+    for (const explicitApproval of ["prompt", "rule"] as const) {
+      const { ctx, provider } = askSession(`s-ask-redirect-${explicitApproval}`, { explicitApproval });
+      const { fetched, fetchImpl } = recordingFetch();
+      const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl } }), { url: "http://192.168.1.10/redir-other-private", prompt: "p" }, ctx);
+      expect(fetched).toHaveLength(1); // the approved host only -- 10.9.9.9 was never requested
+      expect(fetched[0]).toContain("192.168.1.10");
+      expect(result.output).toContain("10.9.9.9"); // relayed as a redirect for the model to re-request...
+      expect(provider.requests).toHaveLength(0); // ...which is a NEW call, back through the permission layer
+    }
+  });
+
+  test("the marker means nothing under 'deny' -- deny is absolute", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const runtime = fakeRuntime(provider, { fetch: { privateAddressPolicy: "deny" } });
+    for (const explicitApproval of ["prompt", "rule"] as const) {
+      const ctx = makeCtx({ sessionId: `s-deny-marked-${explicitApproval}`, permission: { explicitApproval } });
+      registerWebSessionRuntime(ctx.sessionId, runtime);
+      const { fetched, fetchImpl } = recordingFetch();
+      const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl } }), { url: "http://192.168.1.10/html", prompt: "p" }, ctx);
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("policy denies WebFetch access to private addresses");
+      expect(fetched).toHaveLength(0);
+    }
+  });
+
+  test("a cache HIT obeys the same rule: served with the marker, refused without it", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const runtime = fakeRuntime(provider, { fetch: { privateAddressPolicy: "ask" } });
+    registerWebSessionRuntime("s-ask-cache", runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const url = "http://192.168.1.10/html";
+    expect(await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId: "s-ask-cache", permission: { explicitApproval: "prompt" } }))).toEqual({ output: "digested" });
+    // Same session, same url, now cached -- but THIS call was not explicitly approved.
+    const unmarked = await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId: "s-ask-cache" }));
+    expect(unmarked.isError).toBe(true);
+    expect(unmarked.output).toContain("must explicitly approve WebFetch(domain:192.168.1.10)");
+    expect(await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId: "s-ask-cache", permission: { explicitApproval: "rule" } }))).toEqual({ output: "digested" });
+  });
+});
+
+describe("the digest pass stopped by the session's BUDGET is not reported as an interruption", () => {
+  test("a budget stop says the spending limit was reached and that retrying will not help", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "should never run" }]);
+    const runtime = { ...fakeRuntime(provider), budgetExceeded: () => true };
+    const ctx = makeCtx({ sessionId: "s-budget-stop" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } }), { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(result).toEqual({ output: WEB_FETCH_BUDGET_STOP_MESSAGE, isError: true });
+    expect(result.output).toContain("spending limit");
+    expect(result.output).toContain("Retrying will not help");
+    expect(result.output).not.toContain("interrupted");
+    expect(provider.requests).toHaveLength(0);
+  });
+
+  test("a genuine interruption of the digest pass keeps the 'was interrupted' wording", async () => {
+    const controller = new AbortController();
+    const provider: Provider = {
+      async generate() {
+        controller.abort();
+        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      },
+    };
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-digest-interrupted", signal: controller.signal });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } }), { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(result).toEqual({ output: "WebFetch was interrupted before it could answer.", isError: true });
   });
 });
 

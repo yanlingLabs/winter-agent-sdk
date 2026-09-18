@@ -14,6 +14,9 @@ import {
   PARSE_LIMIT,
   DANGEROUS_ASSIGNMENT_NAMES,
   FILE_RULE_TOOLS,
+  webFetchHostnameOf,
+  webFetchUrlOf,
+  isExactWebFetchDomainRule,
 } from "./grammar.ts";
 
 function call(toolName: string, input: Record<string, unknown>) {
@@ -445,28 +448,140 @@ describe("MCP rules (WS-07 §3)", () => {
 });
 
 describe("WebFetch domain rules (WS-07 §3)", () => {
-  test("matches case-insensitively", () => {
+  // EVERY call below is a real `{url, prompt}` shape. These rows used to hand-build `{domain}` -- a
+  // field no WebFetch call carries -- which is how a matcher that was dead in production stayed green.
+  const fetchCall = (url: unknown) => call("WebFetch", { url, prompt: "summarise this page" });
+
+  test("the domain is DERIVED from input.url -- allow, and denyAsk, against a real call shape", () => {
     const rule = parseRule("WebFetch(domain:example.com)");
-    expect(matchesRule(rule, call("WebFetch", { domain: "EXAMPLE.com" }), { direction: "allow" })).toBe(true);
-    expect(matchesRule(rule, call("WebFetch", { domain: "example.com" }), { direction: "allow" })).toBe(true);
-    expect(matchesRule(rule, call("WebFetch", { domain: "other.com" }), { direction: "allow" })).toBe(false);
+    expect(matchesRule(rule, fetchCall("https://example.com/a/b?c=d#e"), { direction: "allow" })).toBe(true);
+    expect(matchesRule(rule, fetchCall("https://example.com/a/b?c=d#e"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(rule, fetchCall("http://example.com:8080/"), { direction: "denyAsk" })).toBe(true); // scheme and port are not part of the domain
+    expect(matchesRule(rule, fetchCall("https://user:pw@example.com/"), { direction: "denyAsk" })).toBe(true); // nor is userinfo
+    expect(matchesRule(rule, fetchCall("https://other.com/"), { direction: "allow" })).toBe(false);
   });
 
-  test("domain:* is a wildcard glob (WS-07 §3 names this form explicitly)", () => {
-    const rule = parseRule("WebFetch(domain:*.example.com)");
-    expect(matchesRule(rule, call("WebFetch", { domain: "docs.example.com" }), { direction: "allow" })).toBe(true);
+  test("a hand-built `domain` field is NOT a match source -- it cannot vouch for a url that goes elsewhere", () => {
+    const rule = parseRule("WebFetch(domain:example.com)");
     expect(matchesRule(rule, call("WebFetch", { domain: "example.com" }), { direction: "allow" })).toBe(false);
+    expect(matchesRule(rule, call("WebFetch", { url: "https://evil.example/", domain: "example.com" }), { direction: "allow" })).toBe(false);
+  });
+
+  test("case: the rule and the url are both lowercased", () => {
+    expect(matchesRule(parseRule("WebFetch(domain:Example.COM)"), fetchCall("https://EXAMPLE.com/"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:example.com)"), fetchCall("HTTPS://ExAmPlE.CoM/Path"), { direction: "allow" })).toBe(true);
+  });
+
+  test("EXACT host: a rule for the apex does not cover a subdomain, nor a lookalike suffix or prefix", () => {
+    const rule = parseRule("WebFetch(domain:example.com)");
+    for (const direction of ["allow", "denyAsk"] as const) {
+      expect(matchesRule(rule, fetchCall("https://docs.example.com/"), { direction })).toBe(false);
+      expect(matchesRule(rule, fetchCall("https://www.example.com/"), { direction })).toBe(false);
+      expect(matchesRule(rule, fetchCall("https://example.com.evil.test/"), { direction })).toBe(false);
+      expect(matchesRule(rule, fetchCall("https://notexample.com/"), { direction })).toBe(false);
+      expect(matchesRule(rule, fetchCall("https://exampleXcom/"), { direction })).toBe(false); // the rule's `.` is a literal dot
+    }
+  });
+
+  test("domain:* is a wildcard glob (WS-07 §3 names this form explicitly) -- subdomains are opt-in, and the glob does not cover the apex", () => {
+    const rule = parseRule("WebFetch(domain:*.example.com)");
+    expect(matchesRule(rule, fetchCall("https://docs.example.com/x"), { direction: "allow" })).toBe(true);
+    expect(matchesRule(rule, fetchCall("https://a.b.example.com/x"), { direction: "allow" })).toBe(true);
+    expect(matchesRule(rule, fetchCall("https://example.com/x"), { direction: "allow" })).toBe(false);
+    expect(matchesRule(parseRule("WebFetch(domain:*)"), fetchCall("https://anything.test/"), { direction: "allow" })).toBe(true);
+  });
+
+  test("an unparseable, absent or non-string url matches NO domain rule -- and never throws", () => {
+    for (const source of ["WebFetch(domain:example.com)", "WebFetch(domain:*)"]) {
+      const rule = parseRule(source);
+      for (const bad of ["not a url", "example.com", "", "https://", "http://[::1", undefined, null, 42, { href: "https://example.com/" }]) {
+        for (const direction of ["allow", "denyAsk"] as const) {
+          expect(matchesRule(rule, fetchCall(bad), { direction })).toBe(false);
+        }
+      }
+      expect(matchesRule(rule, call("WebFetch", {}), { direction: "allow" })).toBe(false);
+    }
+  });
+
+  test("a url with an EMPTY host is not 'any website' -- domain:* must not pre-approve it", () => {
+    const rule = parseRule("WebFetch(domain:*)");
+    expect(matchesRule(rule, fetchCall("file:///etc/passwd"), { direction: "allow" })).toBe(false);
+    expect(matchesRule(rule, fetchCall("data:text/plain,hi"), { direction: "allow" })).toBe(false);
+  });
+
+  test("a trailing root dot names the same host on either side -- it cannot walk past a deny", () => {
+    expect(matchesRule(parseRule("WebFetch(domain:example.com)"), fetchCall("https://example.com./"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:example.com.)"), fetchCall("https://example.com/"), { direction: "denyAsk" })).toBe(true);
+  });
+
+  test("the rule's host is canonicalised the way the url parser canonicalises the call's (IDN, IPv4 shorthand, IPv6)", () => {
+    expect(matchesRule(parseRule("WebFetch(domain:münchen.de)"), fetchCall("https://münchen.de/"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:münchen.de)"), fetchCall("https://xn--mnchen-3ya.de/"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:127.0.0.1)"), fetchCall("http://127.1/"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:127.0.0.1)"), fetchCall("http://0x7f000001/"), { direction: "denyAsk" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:[::1])"), fetchCall("http://[::1]:3000/"), { direction: "allow" })).toBe(true);
+    expect(matchesRule(parseRule("WebFetch(domain:[::1])"), fetchCall("http://[::2]:3000/"), { direction: "allow" })).toBe(false);
+  });
+
+  test("a source that is more than a host is left as written and matches nothing -- never quietly widened to the whole host", () => {
+    // `:80` is the trap: it is http's DEFAULT port, which the url parser drops without a trace.
+    for (const source of ["WebFetch(domain:example.com/docs)", "WebFetch(domain:example.com:8080)", "WebFetch(domain:example.com:80)", "WebFetch(domain:[::1]:80)", "WebFetch(domain:https://example.com)"]) {
+      const rule = parseRule(source);
+      expect(rule.specifier?.kind).toBe("webFetchDomain");
+      expect(matchesRule(rule, fetchCall("https://example.com/docs"), { direction: "allow" })).toBe(false);
+      expect(matchesRule(rule, fetchCall("https://example.com:8080/docs"), { direction: "allow" })).toBe(false);
+      expect(matchesRule(rule, fetchCall("http://example.com:80/"), { direction: "allow" })).toBe(false);
+      expect(matchesRule(rule, fetchCall("http://[::1]:80/"), { direction: "allow" })).toBe(false);
+    }
+  });
+
+  test("webFetchHostnameOf / webFetchUrlOf: one parse for every consumer, never a throw", () => {
+    expect(webFetchHostnameOf({ url: "https://Docs.Example.com./x" })).toBe("docs.example.com");
+    expect(webFetchHostnameOf({ url: "nope" })).toBeUndefined();
+    expect(webFetchHostnameOf({ url: "file:///x" })).toBeUndefined();
+    expect(webFetchHostnameOf({})).toBeUndefined();
+    expect(webFetchUrlOf({ url: "https://example.com/p" })?.pathname).toBe("/p");
+    expect(webFetchUrlOf({ url: 7 })).toBeUndefined();
+  });
+
+  test("isExactWebFetchDomainRule: a glob matches a host without ever NAMING it", () => {
+    expect(isExactWebFetchDomainRule(parseRule("WebFetch(domain:192.168.1.10)"), "192.168.1.10")).toBe(true);
+    expect(isExactWebFetchDomainRule(parseRule("WebFetch(domain:192.168.1.*)"), "192.168.1.10")).toBe(false);
+    expect(isExactWebFetchDomainRule(parseRule("WebFetch(domain:*)"), "192.168.1.10")).toBe(false);
+    expect(isExactWebFetchDomainRule(parseRule("WebFetch(*)"), "192.168.1.10")).toBe(false);
+    expect(isExactWebFetchDomainRule(parseRule("WebFetch"), "192.168.1.10")).toBe(false);
+    expect(isExactWebFetchDomainRule(parseRule("WebFetch(domain:192.168.1.11)"), "192.168.1.10")).toBe(false);
   });
 
   test("WebFetch(*) is bare-equivalent, distinct from the domain family", () => {
     const rule = parseRule("WebFetch(*)");
     expect(rule.specifier).toEqual({ kind: "wildcardAll" });
     expect(rule.isBareEquivalent).toBe(true);
+    expect(matchesRule(rule, fetchCall("not a url"), { direction: "denyAsk" })).toBe(true); // a bare rule is about the TOOL, url or no url
+  });
+});
+
+describe("WebSearch rules -- bare name only", () => {
+  const searchCall = call("WebSearch", { query: "bun test runner", allowed_domains: ["bun.sh"] });
+
+  test("a bare WebSearch rule (and WebSearch(*)) matches a real call on both directions", () => {
+    for (const source of ["WebSearch", "WebSearch(*)"]) {
+      const rule = parseRule(source);
+      expect(rule.isBareEquivalent).toBe(true);
+      expect(matchesRule(rule, searchCall, { direction: "allow" })).toBe(true);
+      expect(matchesRule(rule, searchCall, { direction: "denyAsk" })).toBe(true);
+      expect(matchesRule(rule, call("WebFetch", { url: "https://bun.sh/" }), { direction: "denyAsk" })).toBe(false);
+    }
   });
 
-  test("works on the denyAsk side too (unlike generic param rules, domain is its own native family)", () => {
-    const rule = parseRule("WebFetch(domain:example.com)");
-    expect(matchesRule(rule, call("WebFetch", { domain: "example.com" }), { direction: "denyAsk" })).toBe(true);
+  test("a SCOPED WebSearch rule is `invalid` -- whatever its content looks like -- and never matches", () => {
+    for (const source of ["WebSearch(query:bun test runner)", "WebSearch(bun test runner)", "WebSearch(domain:bun.sh)", "WebSearch(bun*)", "WebSearch()"]) {
+      const rule = parseRule(source);
+      expect(rule.specifier?.kind).toBe("invalid");
+      expect(rule.isBareEquivalent).toBe(false);
+      expect(matchesRule(rule, searchCall, { direction: "allow" })).toBe(false);
+      expect(matchesRule(rule, searchCall, { direction: "denyAsk" })).toBe(false);
+    }
   });
 });
 

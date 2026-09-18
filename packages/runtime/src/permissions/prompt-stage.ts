@@ -55,9 +55,29 @@ import { randomUUID } from "node:crypto";
 import type { PermissionRequestPayload, PermissionResult, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { RpcBridge } from "../rpc/bridge.ts";
 import type { PermissionCall, EvaluationContext, PromptStage, PromptStageMeta, PromptDecision } from "./evaluator.ts";
+import { webFetchHostnameOf } from "./grammar.ts";
 
-function buildSuggestions(meta: PromptStageMeta): PermissionUpdate[] | undefined {
-  if (!meta.matchedAskRule) return undefined;
+// THE WEB TOOLS' OWN SUGGESTION, offered when no ask rule matched (an ask rule's own suggestion, below,
+// still wins when one did). It mirrors what the reference runtime proposes for the same prompts:
+//   WebFetch  -> `WebFetch(domain:<host>)` -- the rule that NAMES the host being asked about. For a
+//                private-address ask this is exactly the rule the evaluator accepts as standing
+//                consent, so "always allow" on that prompt really does stop it asking again.
+//   WebSearch -> the bare tool name; it has no specifier grammar to narrow it with.
+// Same `destination: "session"` as the ask-rule suggestion, for the same reason.
+function webToolSuggestion(call: PermissionCall): PermissionUpdate[] | undefined {
+  if (call.toolName === "WebSearch") {
+    return [{ type: "addRules", rules: [{ toolName: "WebSearch" }], behavior: "allow", destination: "session" }];
+  }
+  if (call.toolName === "WebFetch") {
+    const hostname = webFetchHostnameOf(call.input);
+    if (hostname === undefined) return undefined; // an unparseable url names no host to suggest
+    return [{ type: "addRules", rules: [{ toolName: "WebFetch", ruleContent: `domain:${hostname}` }], behavior: "allow", destination: "session" }];
+  }
+  return undefined;
+}
+
+function buildSuggestions(call: PermissionCall, meta: PromptStageMeta): PermissionUpdate[] | undefined {
+  if (!meta.matchedAskRule) return webToolSuggestion(call);
   const { toolName, ruleContent } = meta.matchedAskRule;
   return [
     {
@@ -70,7 +90,7 @@ function buildSuggestions(meta: PromptStageMeta): PermissionUpdate[] | undefined
 }
 
 function buildPayload(call: PermissionCall, ctx: EvaluationContext, meta: PromptStageMeta, requestId: string): PermissionRequestPayload {
-  const suggestions = buildSuggestions(meta);
+  const suggestions = buildSuggestions(call, meta);
   return {
     toolName: call.toolName,
     input: call.input,

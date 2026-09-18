@@ -44,6 +44,8 @@
         "TaskStop",
         "TaskUpdate",
         "ToolSearch",
+        "WebFetch",
+        "WebSearch",
         "Workflow",
         "Write"
       ],

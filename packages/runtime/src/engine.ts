@@ -299,7 +299,7 @@ import { aliasExclusionReasons, effectiveAliasTable, resolvePermissionIdentity, 
 import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 // The web tools' session seam (see that module's header for why it is a keyed registry and not the
 // advisor's per-run `replaceExecutor`). Type-only in the other direction, so there is no value cycle.
-import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, type WebSessionRuntime } from "./web/session-runtime.ts";
+import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
 // The web tools' per-session description choice (`toolSpecFor`) -- names and both variants come from
 // the descriptor modules, so neither tool name is ever a literal in this file.
 // TEARDOWN ONLY: the per-ROOT-session search client's closer. A module that registers nothing and
@@ -871,7 +871,9 @@ export interface ToolExecutor {
    * "a stopped child starts nothing new AND its in-flight Bash is killed" (R6-6), which was
    * previously impossible because the interrupt was a raced Promise with no channel into the tool.
    */
-  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal }): Promise<{ output: string; isError?: boolean }>;
+  // >>> WEB-PERMS HUNK 1 of 3 (permissions lane) -- `explicitApproval` added to `opts`; see `ToolExecutionContext.permission`.
+  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; isError?: boolean }>;
+  // <<< WEB-PERMS HUNK 1 of 3
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -2690,6 +2692,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // dispatch consults, so a live MCP registration (registerMcpServerTools) is reflected on the
       // very next evaluate() call with no engine-side caching to go stale.
       requiresInteraction: (toolName: string): boolean => getRegisteredTool(toolName)?.descriptor.interaction === "required",
+      // >>> WEB-PERMS HUNK 2 of 3 (permissions lane) -- the session's `web.fetch.privateAddressPolicy`, RAW:
+      // the evaluator normalises it and fails closed to "ask" (absent included). Read at call time
+      // through the same lookup every web tool executor uses, so the two can never see different values.
+      ...(() => {
+        const privateAddressPolicy = webSessionRuntimeFor({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) })?.web.fetch.privateAddressPolicy;
+        return privateAddressPolicy !== undefined ? { webFetchPrivateAddressPolicy: privateAddressPolicy } : {};
+      })(),
+      // <<< WEB-PERMS HUNK 2 of 3
     };
   };
 
@@ -7315,7 +7325,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
           // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
           // turn promptly; the signal is what stops the work the race walked away from.
-          const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal }), interruptSignal);
+          // >>> WEB-PERMS HUNK 3 of 3 (permissions lane) -- the decision's explicit-approval marker rides to the executor's context.
+          const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
+          // <<< WEB-PERMS HUNK 3 of 3
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;

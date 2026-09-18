@@ -608,6 +608,92 @@ function parseScalar(token: string): string | boolean {
   return token;
 }
 
+/** The one built-in whose rules are bare-name only -- see `parseRule`'s own branch for why a scoped one is `invalid`. */
+const WEB_SEARCH_RULE_TOOL = "WebSearch";
+
+// ---------------------------------------------------------------------------------------------
+// WebFetch: the hostname a `domain:` rule is matched against
+// ---------------------------------------------------------------------------------------------
+//
+// A real WebFetch call is `{url, prompt}`. It carries NO `domain` field, so the rule's content has to
+// be compared against something DERIVED from `url` -- the reference runtime derives it the same way
+// (`domain:${new URL(url).hostname}`). Everything in the permission layer that needs the call's
+// target (the `domain:` matcher below, and the evaluator's preapproved-host and private-address
+// checks) goes through these two helpers, so there is exactly one parse and one normalisation.
+
+/** The call's `url` as a parsed `URL`, or `undefined` when it is absent, not a string, or unparseable. NEVER throws. */
+export function webFetchUrlOf(input: Record<string, unknown>): URL | undefined {
+  const raw = input["url"];
+  if (typeof raw !== "string") return undefined;
+  try {
+    return new URL(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+/** One trailing dot (the DNS root) names the same host, so it must never distinguish a rule from a call. */
+function stripTrailingDot(hostname: string): string {
+  return hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+}
+
+/**
+ * A rule's hostname, brought to the SAME canonical form the URL parser gives the call's: lowercase,
+ * punycoded (`münchen.de` -> `xn--mnchen-3ya.de`), IPv4 shorthand expanded, one trailing dot
+ * dropped. A glob is only lowercased -- it is not a hostname and the URL parser would reject it.
+ *
+ * Canonicalised ONLY when the text is nothing but a host: `domain:example.com/docs` or
+ * `domain:example.com:8080` would otherwise be quietly rewritten to `example.com`, turning a rule
+ * that names something this grammar cannot express into a working rule for the whole host. Such a
+ * source is left as written, where it matches no hostname at all.
+ */
+function normalizeRuleHostname(source: string): string {
+  const lowered = stripTrailingDot(source.trim().toLowerCase());
+  if (lowered === "" || lowered.includes("*")) return lowered;
+  // A port is "more than a host" too, and the URL parser would DROP a scheme-default one silently
+  // (`example.com:80` round-trips to `example.com`), so it is caught here rather than by the
+  // round-trip check below. An IPv6 literal's colons are inside its brackets and are part of the host.
+  if (lowered.replace(/^\[[^\]]*\]/, "").includes(":")) return lowered;
+  try {
+    const parsed = new URL(`http://${lowered}/`);
+    if (parsed.href === `http://${parsed.hostname}/`) return stripTrailingDot(parsed.hostname);
+  } catch {
+    // not a parseable host -- left as written
+  }
+  return lowered;
+}
+
+/**
+ * The hostname a `WebFetch(domain:...)` rule is compared against: `new URL(url).hostname`, lowercase
+ * (the URL parser already lowercases and punycodes it), minus one trailing dot.
+ *
+ * `undefined` -- which matches NO domain rule, on either direction -- for an absent/unparseable `url`
+ * and for a URL with an EMPTY host (`file:///etc/passwd`, `data:`): `domain:*` compiles to a pattern
+ * that matches the empty string, so without this an allow rule written for "any website" would
+ * pre-approve a URL that names no website at all.
+ *
+ * The trailing dot is stripped on BOTH sides (here and at parse) because `https://example.com./` is
+ * the same host as `https://example.com/` and the URL parser keeps the dot: an exact compare would
+ * let that spelling walk past a deny rule.
+ */
+export function webFetchHostnameOf(input: Record<string, unknown>): string | undefined {
+  const url = webFetchUrlOf(input);
+  if (url === undefined) return undefined;
+  const hostname = stripTrailingDot(url.hostname.toLowerCase());
+  return hostname === "" ? undefined : hostname;
+}
+
+/**
+ * True when `rule` is a `WebFetch(domain:<host>)` rule that names `hostname` EXACTLY -- no `*`
+ * anywhere in it. This is what the evaluator means by "a rule naming that host": a glob
+ * (`domain:*`, `domain:*.corp`) matches a host without ever having named it, so it can allow a fetch
+ * but can never stand in for the user's consent to one specific address.
+ */
+export function isExactWebFetchDomainRule(rule: ParsedRule, hostname: string): boolean {
+  if (rule.toolName !== "WebFetch" || rule.specifier?.kind !== "webFetchDomain") return false;
+  return !rule.specifier.source.includes("*") && rule.specifier.source === hostname;
+}
+
 /** The one tool whose specifier is a skill identity + argument prefix (WS-07 §3). */
 const SKILL_RULE_TOOL = "Skill";
 
@@ -648,12 +734,32 @@ export function parseRule(raw: string): ParsedRule {
   if (toolName === "WebFetch") {
     const wf = /^domain:(.*)$/is.exec(content);
     if (wf) {
-      return { toolName, specifier: { kind: "webFetchDomain", source: wf[1]!.toLowerCase() }, isBareEquivalent: false };
+      return { toolName, specifier: { kind: "webFetchDomain", source: normalizeRuleHostname(wf[1]!) }, isBareEquivalent: false };
     }
     // No other WebFetch specifier grammar is documented; fall back to the generic pattern family
     // for forward compatibility rather than throwing (matches nothing useful today -- see
     // matchesRule's "pattern" case, which fails closed for tools with no known primary field).
     return { toolName, specifier: { kind: "pattern", source: content }, isBareEquivalent: false };
+  }
+
+  if (toolName === WEB_SEARCH_RULE_TOOL) {
+    // `WebSearch` HAS NO SPECIFIER GRAMMAR. The reference runtime's own permission check for it is a
+    // plain passthrough whose only suggested rule is the bare tool name -- there is no content form a
+    // scoped rule could be matched against. Left to the generic dispatch below, `WebSearch(query:x)`
+    // would parse as a `param` rule and really match a deny/ask for that one literal query string: a
+    // Winter-only behaviour that a user could mistake for a working filter, and that a one-word
+    // rephrase of the query walks straight past. And `WebSearch(anything else)` would parse as a
+    // `pattern` rule that silently never matches -- a deny that denies nothing.
+    //
+    // Both are closed the same way the MCP parenthetical is: `invalid`, which `ruleset.ts`'s
+    // `validateNewRule` REJECTS at load (loud, naming the rule) and which `matchesRule` treats as
+    // never-matching on either direction if one ever slips past that gate. `WebSearch(*)` never
+    // reaches here -- the `*` check above already made it bare-equivalent.
+    return {
+      toolName,
+      specifier: { kind: "invalid", reason: "WebSearch has no specifier grammar -- use the bare tool name `WebSearch`" },
+      isBareEquivalent: false,
+    };
   }
 
   if (toolName === "Bash") {
@@ -773,9 +879,24 @@ export function matchesRule(
       // equality compare would make that shape match nothing. Domain is WebFetch's own "native"
       // content-field grammar (not a generic param rule), so it is glob-capable and usable on
       // BOTH directions, unlike the generic "param" kind above.
-      const actual = call.input["domain"];
-      if (typeof actual !== "string") return false;
-      return compilePattern(rule.specifier.source, { caseInsensitive: true }).test(actual);
+      //
+      // MATCHED AGAINST THE HOSTNAME DERIVED FROM `input.url`, and from nothing else. This used to
+      // read `call.input["domain"]`, a field no real `{url, prompt}` call carries -- so every
+      // `WebFetch(domain:...)` rule, deny and ask included, was dead in production and passed its
+      // tests only because they hand-built `{domain}`. `domain` is deliberately NOT kept as a
+      // fallback: `{url: "https://evil.example", domain: "docs.python.org"}` would then satisfy an
+      // allow rule for a host the call never touches.
+      //
+      // EXACT HOST, NO IMPLICIT SUBDOMAINS. `domain:example.com` does not match `docs.example.com`
+      // (the reference runtime compares the whole hostname too); covering subdomains is opt-in, by
+      // writing the glob -- `domain:*.example.com` -- which in turn does not match the apex.
+      //
+      // Not `compilePattern`: that adds Bash's trailing `:*` / ` *` prefix sugar, which has no
+      // meaning for a hostname. `*` is the only metacharacter; everything else is literal, so an
+      // IPv6 rule (`domain:[::1]`) compares as written.
+      const hostname = webFetchHostnameOf(call.input);
+      if (hostname === undefined) return false;
+      return new RegExp(`^${globToRegExpSource(rule.specifier.source)}$`, "s").test(hostname);
     }
     case "pattern": {
       const raw = call.input["command"];
