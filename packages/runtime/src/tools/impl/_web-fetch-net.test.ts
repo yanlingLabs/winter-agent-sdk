@@ -56,7 +56,7 @@ beforeEach(() => {
       return new Response("default");
     },
   });
-  port = server.port;
+  port = server.port!;
 });
 
 afterEach(() => {

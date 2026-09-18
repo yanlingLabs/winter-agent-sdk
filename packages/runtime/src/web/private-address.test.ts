@@ -1,61 +1,56 @@
 import { describe, expect, test } from "bun:test";
-import { classifyHostname, classifyHostnameLexically, classifyIpv4, classifyIpv6, classifyResolvedAddress, stripIpv6Brackets } from "./private-address.ts";
+import { classifyHostname, classifyHostnameLexically, classifyIpLiteral, classifyResolvedAddress, stripIpv6Brackets } from "./private-address.ts";
 
-describe("classifyIpv4", () => {
+describe("classifyIpLiteral -- IPv4", () => {
   test("private/loopback/link-local/CGNAT ranges", () => {
-    expect(classifyIpv4("127.0.0.1")?.class).toBe("private");
-    expect(classifyIpv4("10.1.2.3")?.class).toBe("private");
-    expect(classifyIpv4("172.16.0.1")?.class).toBe("private");
-    expect(classifyIpv4("172.31.255.255")?.class).toBe("private");
-    expect(classifyIpv4("172.32.0.1")?.class).toBe("public"); // just outside 172.16.0.0/12
-    expect(classifyIpv4("192.168.1.1")?.class).toBe("private");
-    expect(classifyIpv4("169.254.1.1")?.class).toBe("private");
-    expect(classifyIpv4("100.64.0.1")?.class).toBe("private");
-    expect(classifyIpv4("100.127.255.255")?.class).toBe("private");
-    expect(classifyIpv4("100.128.0.1")?.class).toBe("public");
-    expect(classifyIpv4("0.0.0.0")?.class).toBe("private");
+    expect(classifyIpLiteral("127.0.0.1")?.class).toBe("private");
+    expect(classifyIpLiteral("10.1.2.3")?.class).toBe("private");
+    expect(classifyIpLiteral("172.16.0.1")?.class).toBe("private");
+    expect(classifyIpLiteral("172.31.255.255")?.class).toBe("private");
+    expect(classifyIpLiteral("172.32.0.1")?.class).toBe("public"); // just outside 172.16.0.0/12
+    expect(classifyIpLiteral("192.168.1.1")?.class).toBe("private");
+    expect(classifyIpLiteral("169.254.1.1")?.class).toBe("private");
+    expect(classifyIpLiteral("100.64.0.1")?.class).toBe("private");
+    expect(classifyIpLiteral("100.127.255.255")?.class).toBe("private");
+    expect(classifyIpLiteral("100.128.0.1")?.class).toBe("public");
+    expect(classifyIpLiteral("0.0.0.0")?.class).toBe("private");
   });
 
   test("public addresses", () => {
-    expect(classifyIpv4("8.8.8.8")?.class).toBe("public");
-    expect(classifyIpv4("1.1.1.1")?.class).toBe("public");
+    expect(classifyIpLiteral("8.8.8.8")?.class).toBe("public");
+    expect(classifyIpLiteral("1.1.1.1")?.class).toBe("public");
   });
 
-  test("not an IPv4 literal at all -> undefined", () => {
-    expect(classifyIpv4("example.com")).toBeUndefined();
-    expect(classifyIpv4("999.1.1.1")).toBeUndefined();
+  test("not an IP literal at all -> undefined", () => {
+    expect(classifyIpLiteral("example.com")).toBeUndefined();
   });
 });
 
-describe("classifyIpv6", () => {
+describe("classifyIpLiteral -- IPv6", () => {
   test("loopback and unspecified", () => {
-    expect(classifyIpv6("::1")?.class).toBe("private");
-    expect(classifyIpv6("::")?.class).toBe("private");
+    expect(classifyIpLiteral("::1")?.class).toBe("private");
+    expect(classifyIpLiteral("::")?.class).toBe("private");
   });
 
   test("unique local and link-local", () => {
-    expect(classifyIpv6("fc00::1")?.class).toBe("private");
-    expect(classifyIpv6("fd12:3456:789a::1")?.class).toBe("private");
-    expect(classifyIpv6("fe80::1")?.class).toBe("private");
+    expect(classifyIpLiteral("fc00::1")?.class).toBe("private");
+    expect(classifyIpLiteral("fd12:3456:789a::1")?.class).toBe("private");
+    expect(classifyIpLiteral("fe80::1")?.class).toBe("private");
   });
 
-  test("IPv4-mapped IPv6 classifies the embedded IPv4", () => {
-    expect(classifyIpv6("::ffff:127.0.0.1")?.class).toBe("private");
-    expect(classifyIpv6("::ffff:7f00:1")?.class).toBe("private"); // same address, hex-group form
-    expect(classifyIpv6("::ffff:8.8.8.8")?.class).toBe("public");
+  test("IPv4-mapped IPv6 classifies the embedded IPv4 -- both dotted-quad and hex-group forms", () => {
+    expect(classifyIpLiteral("::ffff:127.0.0.1")?.class).toBe("private");
+    expect(classifyIpLiteral("::ffff:7f00:1")?.class).toBe("private"); // same address, hex-group form
+    expect(classifyIpLiteral("::ffff:8.8.8.8")?.class).toBe("public");
   });
 
   test("public IPv6", () => {
-    expect(classifyIpv6("2606:4700:4700::1111")?.class).toBe("public"); // Cloudflare DNS
-  });
-
-  test("not an IPv6 literal at all -> undefined", () => {
-    expect(classifyIpv6("example.com")).toBeUndefined();
+    expect(classifyIpLiteral("2606:4700:4700::1111")?.class).toBe("public"); // Cloudflare DNS
   });
 });
 
 describe("classifyHostnameLexically", () => {
-  test("IP literals both families", () => {
+  test("IP literals both families, brackets stripped for IPv6", () => {
     expect(classifyHostnameLexically("127.0.0.1")?.class).toBe("private");
     expect(classifyHostnameLexically("[::1]")?.class).toBe("private");
     expect(stripIpv6Brackets("[::1]")).toBe("::1");
