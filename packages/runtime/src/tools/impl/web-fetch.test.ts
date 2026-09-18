@@ -6,7 +6,7 @@
 // binary handling, and "an executor never throws."
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveWebToolsConfig, type ResolvedWebToolsConfig } from "@yanlinglabs/winter-agent-sdk";
@@ -103,6 +103,8 @@ beforeEach(() => {
       if (p === "/text") return new Response("plain body text", { headers: { "content-type": "text/plain" } });
       if (p === "/markdown-doc") return new Response("# Real Docs\n\nSome real markdown.", { headers: { "content-type": "text/markdown; charset=utf-8" } });
       if (p === "/binary") return new Response(new Uint8Array([0, 1, 2, 3, 255, 254]), { headers: { "content-type": "application/octet-stream" } });
+      if (p === "/binary-9mb") return new Response(new Uint8Array(9_000_000), { headers: { "content-type": "application/octet-stream" } });
+      if (p === "/xhtml") return new Response("<h1>Title</h1><p>Hello <b>world</b>.</p>", { headers: { "content-type": "application/xhtml+xml; charset=utf-8" } });
       if (p === "/404") return new Response("nf", { status: 404 });
       if (p === "/big") return new Response(new Uint8Array(WEB_FETCH_MAX_BYTES + 10), { headers: { "content-type": "text/plain" } });
       if (p === "/hang") {
@@ -139,10 +141,10 @@ describe("input validation", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("an unparseable URL -- claude's exact error string", async () => {
+  test("an unparseable URL -- claude's exact error string, WITH the Error: prefix (security review corrections §4.2)", async () => {
     const executor = createWebFetchExecutor();
     const result = await runFetch(executor, { url: "not a url", prompt: "p" }, makeCtx());
-    expect(result).toEqual({ output: 'Invalid URL "not a url". The URL provided could not be parsed.', isError: true });
+    expect(result).toEqual({ output: 'Error: Invalid URL "not a url". The URL provided could not be parsed.', isError: true });
   });
 });
 
@@ -177,6 +179,35 @@ describe("domain floor", () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain("127.0.0.1");
     expect(provider.requests).toHaveLength(0);
+  });
+
+  test("the message has NO trailing period (security review corrections §4.6, measured against the binary)", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "should not run" }]);
+    const runtime = fakeRuntime(provider, { blockedDomains: ["127.0.0.1"] });
+    const ctx = makeCtx({ sessionId: "s-floor-period" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(result.output).toBe("Winter is unable to fetch from 127.0.0.1");
+    expect(result.output.endsWith(".")).toBe(false);
+  });
+
+  test("a cache HIT is re-gated against the private-address policy (a policy change since caching still applies)", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const runtime = fakeRuntime(provider, { fetch: { privateAddressPolicy: "allow" } });
+    const ctx = makeCtx({ sessionId: "s-cache-then-deny" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    // First call: allowed, populates the cache.
+    const first = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(first).toEqual({ output: "digested" });
+    // The session's policy is now "deny" (e.g. a live settings change) -- the SAME executor instance,
+    // same cache, same URL: the cached content must not be served past the new policy.
+    const denyingRuntime = fakeRuntime(provider, { fetch: { privateAddressPolicy: "deny" } });
+    registerWebSessionRuntime(ctx.sessionId, denyingRuntime);
+    const second = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(second.isError).toBe(true);
+    expect(second.output).toContain("127.0.0.1");
   });
 });
 
@@ -280,6 +311,102 @@ describe("binary content", () => {
     if (pathMatch === null) throw new Error(`no saved path found in: ${result.output}`);
     const saved = await readFile(pathMatch[1]!);
     expect([...saved]).toEqual([0, 1, 2, 3, 255, 254]);
+  });
+
+  test("security review minor: the saved file is 0o600 (owner-only)", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "should not run" }]);
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-binary-mode" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/binary`, prompt: "p" }, ctx);
+    const pathMatch = /saved to (\S+webfetch-\S+)\./.exec(result.output);
+    if (pathMatch === null) throw new Error(`no saved path found in: ${result.output}`);
+    const info = await stat(pathMatch[1]!);
+    expect(info.mode & 0o777).toBe(0o600);
+  });
+
+  test("security review minor: a per-session save budget bounds disk use -- a looping model cannot fill the disk", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "should not run" }]);
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-binary-budget" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    // Six 9 MB saves (54 MB) exceed the 50 MiB per-session budget on the sixth call; each is under
+    // WebFetch's own 10,485,760-byte BODY cap, which is a different limit than the save budget.
+    let lastOutput = "";
+    for (let i = 0; i < 6; i++) {
+      const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/binary-9mb`, prompt: "p" }, ctx);
+      lastOutput = result.output;
+      if (i < 5) expect(result.output).toContain("saved to");
+    }
+    expect(lastOutput).toContain("budget");
+    expect(lastOutput).not.toContain("saved to");
+  });
+});
+
+describe("security review fidelity #10: only text/html converts, not xhtml", () => {
+  test("application/xhtml+xml is passed through raw (as text), never markdown-converted", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "ok" }]);
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-xhtml" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    await runFetch(executor, { url: `http://127.0.0.1:${port}/xhtml`, prompt: "p" }, ctx);
+    const sent = provider.requests[0]!.messages[0]!.content as string;
+    // Raw markup survives (never converted to "Title\n=====" the way real text/html would be).
+    expect(sent).toContain("<h1>Title</h1>");
+    expect(sent).not.toContain("=====");
+  });
+});
+
+describe("security review finding M5: the digest model's failure message is never forwarded", () => {
+  test("a provider-error digest failure is a fixed sentence, never the underlying provider message", async () => {
+    const failingProvider: Provider = {
+      async generate() {
+        throw Object.assign(new Error("connect ECONNREFUSED proxy http://user:SECRETPASS@proxy.corp:8080"), { winterProviderFailure: true, name: "ProviderFailure" });
+      },
+    };
+    const runtime = fakeRuntime(failingProvider);
+    const ctx = makeCtx({ sessionId: "s-provider-error" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.output).not.toContain("SECRETPASS");
+    expect(result.output).not.toContain("proxy.corp");
+    expect(result.output).toBe("The digest model failed.");
+  });
+});
+
+describe("security review finding B1: the executor never throws, even when a dependency misbehaves", () => {
+  test("a fetchImpl that throws synchronously is still a result, not an unhandled rejection", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "x" }]);
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-b1-throw" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const executor = createWebFetchExecutor({
+      net: {
+        fetchImpl: () => {
+          throw new Error("synchronous failure, not even a rejected promise");
+        },
+      },
+    });
+    const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(result.isError).toBe(true);
+    expect(typeof result.output).toBe("string");
+  });
+
+  test("a cache whose get() throws is still a result, not a throw (the last-resort catch)", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "x" }]);
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-b1-cache-throw" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    const brokenCache = { get: () => { throw new Error("cache is on fire"); }, set: () => {} } as unknown as WebFetchCache;
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, cache: brokenCache });
+    const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("failed unexpectedly");
   });
 });
 

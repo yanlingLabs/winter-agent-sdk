@@ -83,7 +83,8 @@ export type WebFetchNetOutcome =
   | { kind: "network-error"; message: string }
   | { kind: "success"; finalUrl: string; status: number; statusText: string; contentType: string; body: Uint8Array };
 
-async function defaultResolveHost(hostname: string): Promise<readonly string[]> {
+/** Exported so `web-fetch.ts`'s own upfront (pre-cache) gate uses the SAME default resolver -- never a second, drifting copy. */
+export async function defaultResolveHost(hostname: string): Promise<readonly string[]> {
   const results = await dnsLookup(hostname, { all: true });
   return results.map((r) => r.address);
 }
