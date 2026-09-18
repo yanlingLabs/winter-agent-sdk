@@ -44,6 +44,8 @@
         "TaskStop",
         "TaskUpdate",
         "WaitForMcpServers",
+        "WebFetch",
+        "WebSearch",
         "Workflow",
         "Write",
         "mcp__t8mcpsdk__echo"

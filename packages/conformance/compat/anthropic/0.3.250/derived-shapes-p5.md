@@ -946,6 +946,12 @@ difference is substantive, not cosmetic, and belongs in a WS-06 reconciliation r
 
 - **in the pin, absent from Winter's default**: `DesignSync`, `WebFetch`, `WebSearch`, `Workflow`,
   `Skill` (the last two being P5's own deliverables, expected);
+  - *Superseded, recorded here rather than rewritten:* `Skill` and `Workflow` joined Winter's default
+    set when P5's own wiring landed, and `WebFetch` and `WebSearch` joined it when both tools gained
+    real executors. The goldens now carry 33 tools (`goldens/plain-query.trace.json`), and
+    `DesignSync` is the ONLY name in the pin that Winter's default set lacks. The name-by-name
+    reconciliation that holds this is `packages/runtime/src/conformance-ws11.test.ts`'s "rider 1" row,
+    which reads the committed golden and fails the moment either side moves.
 - **in Winter's default, absent from the pin**: `AskUserQuestion`, `Glob`, `Grep`, `EnterPlanMode`,
   `ExitPlanMode`, `ReadNotifications`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`;
 - **named differently**: the pin's `system/init` says `Task` where Winter says `Agent` — and the pin's
