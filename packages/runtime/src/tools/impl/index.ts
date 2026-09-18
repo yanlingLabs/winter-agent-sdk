@@ -94,6 +94,7 @@ import "./read-notifications.ts";
 // without leg 1). `tools/impl/partial-wiring.test.ts` pins each leg's own failure text.
 import "./skill.ts";
 import "./workflow.ts";
+import "./web-fetch.ts";
 
 // Named export mirroring `descriptors/index.ts`'s own `DESCRIPTORS_REGISTERED` precedent -- lets a
 // consumer force this module to evaluate at an explicit point, and lets a future test assert "the
