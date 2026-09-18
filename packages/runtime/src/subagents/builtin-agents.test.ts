@@ -1,6 +1,10 @@
 import { describe, test, expect } from "bun:test";
 import { resolveBuiltinAgents, resolveBuiltinAgentGates, resolveForkSubagentEnabled, BUILTIN_AGENT_NAMES } from "./builtin-agents.ts";
 import { BUBBLE_PERMISSION_MODE } from "../permissions/policy-state.ts";
+import "../tools/descriptors/index.ts"; // registers WebFetch's descriptor (data-only; no executor needed for availability)
+import { buildAdvertisedSet } from "../tools/registry.ts";
+import { availableAgentNames, isBuiltinAllToolsDenied } from "./availability.ts";
+import type { SourcedAgentDefinition } from "./definitions.ts";
 
 describe("resolveBuiltinAgentGates (R-S6 kill switches + R-S5 fork gate)", () => {
   test("every gate defaults off with no env at all", () => {
@@ -145,5 +149,65 @@ describe("Explore's whenToUseLean (SDK 0.0.16 Lane P, R3b §5)", () => {
       if (name === "Explore") continue;
       expect(defs[name]!.whenToUseLean, `${name} should not have a whenToUseLean`).toBeUndefined();
     }
+  });
+});
+
+// Item 4: "the web-fetch built-in can be offered with an empty tool pool -- its gate does not check
+// the winter.fetch-extractor capability." INVESTIGATION FINDING: `resolveBuiltinAgents` itself
+// SHOULD NOT gain a second, capability-aware gate -- that would be the "invented mechanism" the task
+// forbids. Every other built-in with an explicit `tools` list already expresses its dependency the
+// SAME way web-fetch does: `tools: ["WebFetch"]`, consulted by `availability.ts`'s
+// `isBuiltinAllToolsDenied` against the session's actually-advertised tool names (engine.ts composes
+// this exactly, at BOTH the listing (`sessionAvailableAgentDefinitions`) and the spawn-time
+// (`ctx.agentAvailability`) call sites). `WebFetch`'s own `capabilityRequirements: ["winter.fetch-
+// extractor"]` (descriptors/web-fetch.ts) is exactly what withdraws it from the advertised set when
+// a stated digest model does not resolve (`digestModelResolves`, web/session-runtime.ts, is the
+// session fact engine.ts's WEB_DERIVED_CAPABILITIES table calls) -- so the built-in's availability
+// ALREADY follows the tool's, through the one mechanism this codebase has for it. This composes the
+// production chain end-to-end (the same functions engine.ts calls, in the same order) to pin that;
+// no change was needed in builtin-agents.ts.
+describe("item 4: the web-fetch built-in's availability already follows WebFetch's own advertised-ness", () => {
+  function asSourced(defs: Record<string, ReturnType<typeof resolveBuiltinAgents>[string]>): Map<string, SourcedAgentDefinition> {
+    return new Map(Object.entries(defs).map(([name, def]) => [name, { ...def, _source: "builtin" as const }]));
+  }
+
+  test("gate on, WebFetch NOT advertised (capability withheld) -> web-fetch is excluded from the available listing", () => {
+    const defs = resolveBuiltinAgents({ env: { WINTER_WEB_FETCH_AGENT: "true" } });
+    expect(defs["web-fetch"]).toBeDefined(); // the definition exists (the gate alone decides THAT)...
+
+    // ...but the session's advertised set withholds WebFetch itself (as it would when a STATED
+    // digest model fails to resolve -- see web/session-runtime.test.ts's own digestModelResolves
+    // coverage for that fact in isolation).
+    const advertised = buildAdvertisedSet({ mode: "default", capabilities: [] }).map((d) => d.canonicalName);
+    expect(advertised).not.toContain("WebFetch");
+
+    const names = availableAgentNames(asSourced(defs), {
+      isDenied: () => false,
+      isAllToolsDenied: (d) => isBuiltinAllToolsDenied(d, advertised),
+    });
+    expect(names).not.toContain("web-fetch");
+  });
+
+  test("gate on, WebFetch IS advertised (capability present) -> web-fetch is offered", () => {
+    const defs = resolveBuiltinAgents({ env: { WINTER_WEB_FETCH_AGENT: "true" } });
+    const advertised = buildAdvertisedSet({ mode: "default", capabilities: ["winter.fetch-extractor"] }).map((d) => d.canonicalName);
+    expect(advertised).toContain("WebFetch");
+
+    const names = availableAgentNames(asSourced(defs), {
+      isDenied: () => false,
+      isAllToolsDenied: (d) => isBuiltinAllToolsDenied(d, advertised),
+    });
+    expect(names).toContain("web-fetch");
+  });
+
+  test("gate off -> web-fetch is absent regardless of WebFetch's own advertised-ness (the gate still governs existence)", () => {
+    const defs = resolveBuiltinAgents({ env: {} });
+    expect(defs["web-fetch"]).toBeUndefined();
+    const advertised = buildAdvertisedSet({ mode: "default", capabilities: ["winter.fetch-extractor"] }).map((d) => d.canonicalName);
+    const names = availableAgentNames(asSourced(defs), {
+      isDenied: () => false,
+      isAllToolsDenied: (d) => isBuiltinAllToolsDenied(d, advertised),
+    });
+    expect(names).not.toContain("web-fetch");
   });
 });
