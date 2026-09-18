@@ -148,6 +148,8 @@ const PRODUCT_ENV_SUFFIXES = [
   "DISABLE_EXPLORE_PLAN_AGENTS",
   "DISABLE_AGENT_VIEW",
   "WEB_FETCH_AGENT",
+  // The web tools' per-session search ceiling (`tools/impl/_search-budget.ts`, read through `envName`).
+  "MAX_WEB_SEARCHES_PER_SESSION",
 ] as const;
 const TOP_LEVEL_ENV_RE = new RegExp(`process\\.env\\.WINTER_(?:${PRODUCT_ENV_SUFFIXES.join("|")})\\b`, "g");
 
@@ -657,6 +659,10 @@ describe("P7a: rule 9's top-level scanner (plants)", () => {
       "rule 10b: a product env name spelled bare inside a STRING (envName(brand, ...))",
     ]);
     expect(rules("const v = e.WINTER_PROJECT_DIR_NAME;\n")).toHaveLength(1); // paths/project-dir-name.ts:28
+    // The web tools' per-session search ceiling (`tools/impl/_search-budget.ts` derives it with
+    // `envName`): a raw spelling -- property form or bare inside a string -- is caught like the rest.
+    expect(rules("const v = env.WINTER_MAX_WEB_SEARCHES_PER_SESSION;\n")).toHaveLength(1);
+    expect(rules('const hint = "set WINTER_MAX_WEB_SEARCHES_PER_SESSION to raise it";\n')).toHaveLength(1);
 
     // Near misses: an English sentence, a differently-suffixed file, another product's originator,
     // a token that merely STARTS with the brand, and a HARNESS env name on any receiver.
