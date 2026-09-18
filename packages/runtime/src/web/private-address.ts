@@ -67,9 +67,10 @@ export function classifyIpLiteral(address: string): PrivateAddressFinding | unde
   return { class: PRIVATE_CLASSES.has(cls) ? "private" : "public", reason: cls };
 }
 
-/** Reserved names RFC 6761 (`localhost`) and mDNS (`.local`) carve out -- private by NAME, whatever they resolve to. */
+/** Reserved names RFC 6761 (`localhost`) and mDNS (`.local`) carve out -- private by NAME, whatever they resolve to. A single trailing dot (the DNS root, `localhost.`/`a.localhost.`/`foo.local.`) is stripped first so it cannot defeat the check. */
 export function classifyReservedName(hostname: string): PrivateAddressFinding | undefined {
-  const h = hostname.toLowerCase();
+  let h = hostname.toLowerCase();
+  if (h.endsWith(".")) h = h.slice(0, -1);
   if (h === "localhost" || h.endsWith(".localhost")) return { class: "private", reason: "the localhost TLD (RFC 6761)" };
   if (h === "local" || h.endsWith(".local")) return { class: "private", reason: "the .local mDNS TLD" };
   return undefined;
@@ -96,11 +97,20 @@ export function classifyResolvedAddress(address: string): PrivateAddressFinding 
  * whole hostname private, because a caller reaches whichever address the OS connects to, not
  * necessarily the first one.
  *
- * DISCLOSED TOCTOU: this resolves once, before connecting; nothing here pins the connection to the
- * addresses it just classified (Bun's `fetch` re-resolves internally), so a rebinding attacker whose
- * DNS answer changes between this check and the actual TCP connect is not caught. Closing that gap
- * needs a custom `connect` hook this fetch surface does not have -- disclosed, not silently assumed
- * away.
+ * NOT the function that guards the actual connection any more (security review finding M6):
+ * `_web-fetch-net.ts`'s own `resolveTarget` now does its own single resolution and PINS the fetch
+ * to the exact address it classified (`Host` + `tls.serverName` carrying the logical name), closing
+ * the rebinding TOCTOU this function's own resolve-then-classify shape cannot by itself (a second,
+ * independent `fetch()`-internal resolution could still answer differently). This function remains
+ * the upfront, pre-cache gate in `web-fetch.ts` -- a decision, not a connection -- where that gap
+ * does not apply the same way (nothing here opens a socket).
+ *
+ * FAILS CLOSED on a resolution failure (security review finding M6): an EARLIER version of this
+ * function answered `PUBLIC` when `resolve` threw or answered nothing, on the reasoning that "the
+ * fetch step reports the real failure" -- but a caller that only asks THIS function before deciding
+ * whether to proceed (as `web-fetch.ts`'s own upfront gate does, ahead of a cache-hit) would treat an
+ * unresolvable name as safe to serve. There is no address to pin a decision to, so the honest answer
+ * is `private` (refuse), never `public` (silently proceed).
  */
 export async function classifyHostname(hostname: string, resolve: (hostname: string) => Promise<readonly string[]>): Promise<PrivateAddressFinding> {
   const lexical = classifyHostnameLexically(hostname);
@@ -109,10 +119,9 @@ export async function classifyHostname(hostname: string, resolve: (hostname: str
   try {
     addresses = await resolve(hostname);
   } catch {
-    // An unresolvable name cannot be connected to at all; that failure surfaces at the fetch step,
-    // not here -- this function only ever answers "public" or "private," never "unknown."
-    return PUBLIC;
+    return { class: "private", reason: "could not resolve any address for this host" };
   }
+  if (addresses.length === 0) return { class: "private", reason: "could not resolve any address for this host" };
   for (const address of addresses) {
     const verdict = classifyResolvedAddress(address);
     if (verdict.class === "private") return verdict;

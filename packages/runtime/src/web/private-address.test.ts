@@ -102,10 +102,23 @@ describe("classifyHostname (lexical, then resolved)", () => {
     expect(verdict.class).toBe("private");
   });
 
-  test("an unresolvable name is treated as public (the fetch step reports the real failure)", async () => {
+  test("an unresolvable name FAILS CLOSED -- private, never public (security review finding M6)", async () => {
     const verdict = await classifyHostname("nonexistent.invalid", async () => {
       throw new Error("ENOTFOUND");
     });
-    expect(verdict.class).toBe("public");
+    expect(verdict.class).toBe("private");
+  });
+
+  test("a resolver that answers no addresses at all also fails closed", async () => {
+    const verdict = await classifyHostname("empty-answer.example", async () => []);
+    expect(verdict.class).toBe("private");
+  });
+});
+
+describe("classifyReservedName -- trailing-dot names", () => {
+  test("a single trailing dot (the DNS root) does not defeat the reserved-name check", async () => {
+    expect(classifyHostnameLexically("localhost.")?.class).toBe("private");
+    expect(classifyHostnameLexically("a.localhost.")?.class).toBe("private");
+    expect(classifyHostnameLexically("foo.local.")?.class).toBe("private");
   });
 });

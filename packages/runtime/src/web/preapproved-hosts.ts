@@ -181,9 +181,21 @@ export function preapprovedScopeOf(url: URL): PreapprovedMatch | undefined {
   return prefix === undefined ? undefined : { host: hostname, pathPrefix: prefix };
 }
 
-/** Whether `url` still falls under the SAME preapproved scope `from` matched -- used by the redirect walk's "not leaving a preapproved path scope" gate. */
+/**
+ * Whether `url` still falls under the SAME preapproved scope `from` matched -- used by the redirect
+ * walk's "not leaving a preapproved path scope" gate.
+ *
+ * HOST comparison is the same three-way test claude's own code runs (security review corrections
+ * §4.8, measured): `[host, stripped, "www."+stripped]`, i.e. the scope's own host, that host with a
+ * leading `www.` stripped, and that stripped form with `www.` re-added -- so a scope matched on
+ * `claude.com/docs` still covers a redirect to `www.claude.com/docs/x`, and one matched on
+ * `www.example.com/docs` still covers a redirect to `example.com/docs/x`. An EXACT match only (this
+ * lane's earlier version) refused a same-site www-variant redirect claude itself follows.
+ */
 export function staysWithinScope(from: PreapprovedMatch, url: URL): boolean {
-  if (url.hostname !== from.host) return false;
+  const stripped = from.host.startsWith("www.") ? from.host.slice(4) : from.host;
+  const acceptableHosts = new Set([from.host, stripped, `www.${stripped}`]);
+  if (!acceptableHosts.has(url.hostname)) return false;
   if (from.pathPrefix === undefined) return true; // a hostname-only scope covers the whole host
   const { pathname } = url;
   if (ENCODED_TRAVERSAL.test(pathname)) return false;

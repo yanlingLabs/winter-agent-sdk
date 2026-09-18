@@ -1,7 +1,7 @@
 // "WebFetch" -- the REAL descriptor (T1's own header called this "captured, verbatim schema... T1
 // registers the descriptor only"; this file is that later registration). Interface strings below are
-// COPIED VERBATIM from the pinned claude 2.1.250 binary per the project owner's ruling (memory:
-// verbatim-claude-strings-allowed) -- only this comment block and the identifiers are Winter's own.
+// COPIED VERBATIM from the pinned claude 2.1.250 binary per the project owner's ruling -- only this
+// comment block and the identifiers are Winter's own.
 //
 // TWO DESCRIPTION VARIANTS, ONE STATIC REGISTRATION. claude selects lean vs. full per `leanPrompt
 // (model)`; this SDK's own equivalent lives in `engine.ts` (`sessionLeanModel`, used today only for
@@ -32,7 +32,7 @@ function cacheTtlLabel(): string {
 
 export const WEB_FETCH_DESCRIPTION_LEAN = `Fetches a URL, converts the page to markdown, and answers \`prompt\` against it using a small fast model.
 
-- Fails on authenticated/private URLs -- use an authenticated MCP tool or \`gh\` for those instead.
+- Fails on authenticated/private URLs — use an authenticated MCP tool or \`gh\` for those instead.
 - HTTP is upgraded to HTTPS. Cross-host redirects are returned to you rather than followed; call again with the redirect URL.
 - Responses are cached for ${cacheTtlLabel()} per URL.`;
 
@@ -54,7 +54,8 @@ Usage notes:
   - Results may be summarized if the content is very large
   - Includes a self-cleaning cache (entries expire after ${cacheTtlLabel()}) for faster responses when repeatedly accessing the same URL
   - When a URL redirects to a different host, the tool will inform you and provide the redirect URL in a special format. You should then make a new WebFetch request with the redirect URL to fetch the content.
-  - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).`;
+  - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).
+`;
 
 /** claude's own `leanPrompt(model)` gate, applied to WebFetch's description exactly as `sessionLeanModel` applies it to the Agent tool's `whenToUseLean` -- see the module header for the wiring gap this leaves for A4. */
 export function webFetchDescriptionFor(leanModel: boolean): string {

@@ -75,4 +75,18 @@ describe("preapprovedScopeOf / staysWithinScope", () => {
   test("no scope for an unlisted host", () => {
     expect(preapprovedScopeOf(new URL("https://example.com/"))).toBeUndefined();
   });
+
+  test("a www-variant of the scope's own host still counts -- security review corrections §4.8, measured against the binary", () => {
+    // claude.com/docs -> www.claude.com/docs/x IS followed by claude (the corrected fact); the
+    // reviewer's own probe.
+    const scope = preapprovedScopeOf(new URL("https://claude.com/docs"));
+    expect(scope).toEqual({ host: "claude.com", pathPrefix: "/docs" });
+    expect(staysWithinScope(scope!, new URL("https://www.claude.com/docs/x"))).toBe(true);
+    // and the reverse direction: a scope matched on a www-prefixed host still covers the bare host.
+    const wwwScope = preapprovedScopeOf(new URL("https://www.kaggle.com/docs/api"));
+    expect(wwwScope).toEqual({ host: "www.kaggle.com", pathPrefix: "/docs" });
+    expect(staysWithinScope(wwwScope!, new URL("https://kaggle.com/docs/other"))).toBe(true);
+    // an unrelated host is still refused.
+    expect(staysWithinScope(scope!, new URL("https://evil.example/docs"))).toBe(false);
+  });
 });
