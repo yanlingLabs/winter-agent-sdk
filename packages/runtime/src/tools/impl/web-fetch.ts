@@ -234,14 +234,14 @@ async function runDigest(ctx: ToolExecutionContext, runtime: WebSessionRuntime, 
     const result = await runInnerModel(ctx, { prompt: built, ...(model !== undefined ? { model } : {}) }, runtime);
     if (!result.ok) return { output: digestFailureMessage(result.code, result.message, result.detail), isError: true };
     // KNOWN, DISCLOSED DIFFERENCE. claude tells two empty answers apart: an assistant message with NO
-    // text block at all yields `No response from model`, while an EMPTY text block yields the empty
-    // string (which its main loop then shows the model as a generic "completed with no output"
-    // placeholder). Neither half can be reproduced from here: the provider seam folds a turn's text
-    // out of `text_delta` events, so both answers arrive as the identical `text: ""`, and this
-    // runtime's main loop has no empty-output placeholder -- an empty string would reach the next
-    // request as an empty tool_result. Both cases therefore get the one text claude has for "the
-    // digest model said nothing". Telling them apart needs a text-block-seen signal on the provider
-    // turn (every adapter), not a guess made in this executor.
+    // text block at all yields `No response from model` (matched here), while an EMPTY text block
+    // yields the empty string, which its main loop then shows the model as a generic "completed with
+    // no output" placeholder. The DISTINCTION cannot be drawn from here: the provider seam folds a
+    // turn's text out of `text_delta` events, so both answers arrive as the identical `text: ""`. And
+    // returning "" for both would be worse than either: this runtime's main loop has no empty-output
+    // placeholder, so an empty string would reach the next request as an empty tool_result. Both
+    // cases therefore get the one text claude has for "the digest model said nothing". Telling them
+    // apart needs a text-block-seen signal on the provider turn (every adapter), not a guess here.
     const text = result.text.trim();
     return { output: text.length > 0 ? result.text : "No response from model", isError: false };
   } catch (err) {

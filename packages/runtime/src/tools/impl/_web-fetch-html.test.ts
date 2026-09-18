@@ -85,28 +85,56 @@ describe("htmlToMarkdown -- paragraphs and inline formatting", () => {
 });
 
 describe("htmlToMarkdown -- removed subtrees", () => {
-  test("style/script/noscript/iframe/head produce no output at all", async () => {
+  test("style/script/noscript/iframe produce no output at all -- in `head` and in `body` alike", async () => {
     const md = await htmlToMarkdown(
-      "<html><head><title>Ignored Title</title><style>.x{color:red}</style></head><body><script>evil()</script><p>Real content</p><noscript>no js</noscript><iframe src=\"https://x\"></iframe></body></html>",
+      "<html><head><style>.x{color:red}</style><script>evil()</script><meta charset=\"utf-8\"><link rel=\"x\" href=\"y\"></head><body><script>evil()</script><p>Real content</p><noscript>no js</noscript><iframe src=\"https://x\"></iframe></body></html>",
     );
     expect(md).toBe("Real content");
   });
 });
 
+// claude converts the WHOLE document, not `document.body`, so the one piece of `head` that is prose
+// -- the title -- opens its output (measured against the pinned binary). This module used to skip
+// `head` whole and pinned "Ignored Title"; the title is now the first paragraph.
+describe("htmlToMarkdown -- the page title", () => {
+  test("the <title> text is the opening paragraph; the rest of head contributes nothing", async () => {
+    const md = await htmlToMarkdown("<!doctype html><html><head><meta charset=\"utf-8\"><title>  Page &amp; Title\n </title><style>.x{}</style><script>window.x = 1;</script></head><body><h1>Heading</h1><p>Body.</p></body></html>");
+    expect(md).toBe("Page & Title\n\nHeading\n=======\n\nBody.");
+  });
+
+  test("the title is its own paragraph even when the body opens with bare inline text", async () => {
+    expect(await htmlToMarkdown("<head><title>T</title></head><body>hello <b>x</b></body>")).toBe("T\n\nhello **x**");
+  });
+
+  test("markup-looking text inside <title> is text (it is an RCDATA element), and an empty title adds nothing", async () => {
+    expect(await htmlToMarkdown("<head><title>a <b>not bold</b></title></head><body><p>x</p></body>")).toBe("a <b>not bold</b>\n\nx");
+    expect(await htmlToMarkdown("<head><title> </title></head><body><p>x</p></body>")).toBe("x");
+  });
+});
+
+// Turndown's own `listItem` rule, byte for byte: `*` + THREE spaces, `N.` + TWO, and a FIXED
+// four-space continuation indent. (This block used to pin `* one`, `3. x` and a two-space nested
+// indent after a blank line -- a generic markdown shape, not Turndown's.)
 describe("htmlToMarkdown -- lists", () => {
-  test("an unordered list", async () => {
+  test("an unordered list: `*` and three spaces", async () => {
     const md = await htmlToMarkdown("<ul><li>one</li><li>two</li></ul>");
-    expect(md).toBe("* one\n* two");
+    expect(md).toBe("*   one\n*   two");
   });
 
-  test("an ordered list honours start=", async () => {
+  test("an ordered list honours start=: `N.` and two spaces", async () => {
     const md = await htmlToMarkdown('<ol start="3"><li>x</li><li>y</li></ol>');
-    expect(md).toBe("3. x\n4. y");
+    expect(md).toBe("3.  x\n4.  y");
   });
 
-  test("a nested list is indented under its parent item", async () => {
+  test("a nested list sits directly under its parent item, indented four spaces", async () => {
     const md = await htmlToMarkdown("<ul><li>outer<ul><li>inner</li></ul></li></ul>");
-    expect(md).toBe("* outer\n\n  * inner");
+    expect(md).toBe("*   outer\n    *   inner");
+    expect(await htmlToMarkdown("<ol><li>outer<ol><li>inner</li><li>two</li></ol></li><li>next</li></ol>")).toBe("1.  outer\n    1.  inner\n    2.  two\n2.  next");
+  });
+
+  test("the continuation indent is a FIXED four spaces, not the marker's width (item 10 and up)", async () => {
+    const md = await htmlToMarkdown(`<ol start="10"><li><p>first</p><p>second</p></li></ol>`);
+    expect(md).toBe("10.  first\n\n    second");
   });
 });
 
@@ -146,7 +174,7 @@ describe("htmlToMarkdown -- malformed markup", () => {
 describe("htmlToMarkdown -- security review finding M3: omitted end tags (everyday HTML) do not drop content", () => {
   test("<ul><li>a<li>b</ul> -- both bullets survive, correctly separated", async () => {
     const md = await htmlToMarkdown("<ul><li>a<li>b</ul>");
-    expect(md).toBe("* a\n* b");
+    expect(md).toBe("*   a\n*   b");
   });
 
   test("<table><tr><td>x<td>y</table> -- both cells survive", async () => {

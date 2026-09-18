@@ -27,17 +27,18 @@
 // Every assertion states ONE contract for both sides; a difference is a finding to report.
 //
 // KNOWN RED as of 2026-09-18 (findings, reported -- the assertions are deliberately left strict; a red
-// here is NOT a broken harness). The digest TEMPLATE, the digest cap, every REDIRECT DETECTED variant,
-// every non-2xx message TEXT and both fetch-time `Invalid URL` rejects are green.
-//   - the three HTML CONTENT tests ([html-page], [redirect-same-host], [redirect-relative]): the
-//     binary's conversion keeps the `<title>` text as the first paragraph and writes list items as
-//     `*   item` (three spaces); Winter's drops the title and writes `* item`.
+// here is NOT a broken harness). The digest TEMPLATE, the digest cap, the HTML conversion, every REDIRECT
+// DETECTED variant, every non-2xx result and both fetch-time `Invalid URL` rejects are green.
 //   - [empty-digest]: for an EMPTY text answer the binary's tool returns the empty string as-is (its
 //     main loop then shows its generic empty-output placeholder); Winter substitutes
 //     `No response from model`, which the binary reserves for an answer with no text block at all.
+//     Red BY CONSTRUCTION for now: Winter's provider seam hands the executor the same `text: ""` for
+//     both answers (see `DIGEST_ANSWER` below), and Winter's main loop has no empty-output placeholder.
 //   - [invalid-url-unparseable]: the binary's SCHEMA (`format: uri`) refuses it first, with
 //     `InputValidationError: [...] "Invalid URL"`; Winter answers the tool-level
 //     `Error: Invalid URL "...". The URL provided could not be parsed.`
+//     Red until Winter has a schema-validation step in front of its executors at all (it has none,
+//     for any tool); the same holds for the two short-query reds in the WebSearch differential.
 //
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family.
 import { describe, test, expect, afterAll } from "bun:test";

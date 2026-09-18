@@ -29,6 +29,8 @@
 //     the tool's own validation runs, with `InputValidationError: [...] "Too small: expected string to
 //     have >=2 characters"`; Winter answers `Error: Missing query`. (That text was never observed from
 //     the binary for any string input: the schema refuses the short ones and the tool ACCEPTS the rest.)
+//     Red until Winter has a schema-validation step in front of its executors at all -- it has none,
+//     for any tool, so `Error: Missing query` is Winter's reachable backstop for these inputs.
 //
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family; permission mode
 // `bypassPermissions`, as everywhere else here. See `web-tools-script.ts` for the hermeticity guard.
