@@ -592,14 +592,15 @@ describe("security review finding B1: the executor never throws, even when a dep
 });
 
 describe("non-2xx, size cap, timeout, abort -- wiring proof (mechanics fully covered in _web-fetch-net.test.ts)", () => {
-  test("a 404 is surfaced as an error result with the verbatim message shape", async () => {
+  test("a 404 is surfaced with the verbatim message shape -- as an ORDINARY result, never `isError` (claude's own measured posture)", async () => {
     const provider = recordingProvider([{ kind: "text", text: "x" }]);
     const runtime = fakeRuntime(provider);
     const ctx = makeCtx({ sessionId: "s-404" });
     registerWebSessionRuntime(ctx.sessionId, runtime);
     const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
     const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/404`, prompt: "p" }, ctx);
-    expect(result.isError).toBe(true);
+    expect(result.isError).toBe(false);
+    expect(provider.requests.length, "no digest pass for a non-2xx answer").toBe(0);
     expect(result.output).toContain("The server returned HTTP 404 Not Found.");
     expect(result.output).toContain("The response body was not retrieved.");
   });

@@ -35,8 +35,6 @@
 //   - [empty-digest]: for an EMPTY text answer the binary's tool returns the empty string as-is (its
 //     main loop then shows its generic empty-output placeholder); Winter substitutes
 //     `No response from model`, which the binary reserves for an answer with no text block at all.
-//   - the four non-2xx results and [redirect-blank]: identical text, but the binary returns them as
-//     ordinary (non-error) results and Winter marks them `isError`.
 //   - [invalid-url-unparseable]: the binary's SCHEMA (`format: uri`) refuses it first, with
 //     `InputValidationError: [...] "Invalid URL"`; Winter answers the tool-level
 //     `Error: Invalid URL "...". The URL provided could not be parsed.`

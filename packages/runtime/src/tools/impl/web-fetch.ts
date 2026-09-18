@@ -233,6 +233,15 @@ async function runDigest(ctx: ToolExecutionContext, runtime: WebSessionRuntime, 
   try {
     const result = await runInnerModel(ctx, { prompt: built, ...(model !== undefined ? { model } : {}) }, runtime);
     if (!result.ok) return { output: digestFailureMessage(result.code, result.message, result.detail), isError: true };
+    // KNOWN, DISCLOSED DIFFERENCE. claude tells two empty answers apart: an assistant message with NO
+    // text block at all yields `No response from model`, while an EMPTY text block yields the empty
+    // string (which its main loop then shows the model as a generic "completed with no output"
+    // placeholder). Neither half can be reproduced from here: the provider seam folds a turn's text
+    // out of `text_delta` events, so both answers arrive as the identical `text: ""`, and this
+    // runtime's main loop has no empty-output placeholder -- an empty string would reach the next
+    // request as an empty tool_result. Both cases therefore get the one text claude has for "the
+    // digest model said nothing". Telling them apart needs a text-block-seen signal on the provider
+    // turn (every adapter), not a guess made in this executor.
     const text = result.text.trim();
     return { output: text.length > 0 ? result.text : "No response from model", isError: false };
   } catch (err) {
@@ -395,7 +404,12 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
           const retryLine = outcome.retryAfter !== undefined ? `\nRetry-After: ${outcome.retryAfter}` : "";
           return {
             output: `The server returned HTTP ${outcome.status} ${outcome.statusText}.${retryLine}\n\nThe response body was not retrieved. If this URL requires authentication, use an authenticated tool (e.g. \`gh\` for GitHub, or an MCP-provided fetch tool) instead of WebFetch.`,
-            isError: true,
+            // NOT an error result, exactly like REDIRECT DETECTED above (measured against the pinned
+            // binary, for every non-2xx status and for a redirect with a blank/unparseable Location,
+            // which is this same outcome): the fetch itself WORKED and the server's answer is
+            // information the model acts on -- try an authenticated tool, wait out a Retry-After --
+            // not a failed tool call. `is_error` would also route it to PostToolUseFailure hooks.
+            isError: false,
           };
         }
         case "size-exceeded":
