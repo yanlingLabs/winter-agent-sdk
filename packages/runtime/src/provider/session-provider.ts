@@ -107,12 +107,22 @@ export interface AccountInfo {
  * into `'firstParty'`, whose JSDoc reserves it for Anthropic OAuth.
  */
 const API_PROVIDER_BY_PROVIDER_ID: Readonly<Record<string, AccountInfo["apiProvider"]>> = {
+  // Both Anthropic-own rows report `firstParty` (whole-branch review MINOR 3): `console` is the
+  // Anthropic Console profile at the same endpoint, and reporting nothing for it made a Console
+  // session's own `modelUsage` row omit `provider` entirely. `provider/first-party.ts` owns the
+  // membership; `session-provider.test.ts` pins this map against it so the two cannot drift.
   anthropic: "firstParty",
+  console: "firstParty",
   bedrock: "bedrock",
   vertex: "vertex",
   "azure-openai": "foundry",
   openrouter: "gateway",
 };
+
+/** The one read of the table above (exported for its own unit test, exactly as `apiKeySourceFor` is). `undefined` = this provider has no member of its own and reports nothing. */
+export function apiProviderFor(providerId: string | undefined): AccountInfo["apiProvider"] | undefined {
+  return providerId === undefined ? undefined : API_PROVIDER_BY_PROVIDER_ID[providerId];
+}
 
 export interface SessionProviderOptions {
   /** The session's EFFECTIVE config. */
@@ -819,7 +829,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     if (result.provider.pricingBasis !== "token") return undefined;
     const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}) }, result.descriptor);
     if (estimate.costBasis !== "list") return undefined;
-    const apiProvider = API_PROVIDER_BY_PROVIDER_ID[result.providerId];
+    const apiProvider = apiProviderFor(result.providerId);
     const contextWindow = result.descriptor.contextWindow?.value;
     const maxOutputTokens = result.descriptor.maxOutputTokens?.value;
     return {
@@ -1187,7 +1197,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     priceUsage,
     supportedModels: () => registry.listModelInfo(resolved.providerId),
     accountInfo: () => {
-      const apiProvider = API_PROVIDER_BY_PROVIDER_ID[resolved.providerId];
+      const apiProvider = apiProviderFor(resolved.providerId);
       return {
         apiKeySource: apiKeySourceFor(authRef),
         ...(apiProvider !== undefined ? { apiProvider } : {}),

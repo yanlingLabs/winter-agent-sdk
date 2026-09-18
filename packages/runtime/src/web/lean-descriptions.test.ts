@@ -124,6 +124,24 @@ describe("WebFetch / WebSearch advertise the description variant the SESSION's m
     expect(Object.keys(webSearchInputSchemaFor(true)["properties"] as object)).toContain("blocked_domains");
   });
 
+  // Whole-branch review MINOR 3: `console` is the Anthropic Console profile -- the same endpoint and
+  // the same models as an API key, so a Console session is first-party for every one of these
+  // decisions. It used to get the FULL texts and the portable schemas, because three sites read
+  // `providerId === "anthropic"` directly.
+  test("a CONSOLE session is first-party too: the lean texts and claude's own schemas", async () => {
+    const consoleSession = { providerIdentity: { providerId: "console", modelKey: "console/claude-opus-5", family: "claude" }, resolveSlot } as Partial<EngineOptions>;
+    const tools = await advertised({ model: "console/claude-opus-5" }, consoleSession);
+    expect(tools.fetch).toBe(WEB_FETCH_DESCRIPTION_LEAN);
+    expect(tools.search).toBe(webSearchDescription(true));
+    expect(tools.searchSchema).toEqual(webSearchInputSchemaFor(true));
+    expect(tools.fetchSchema).toEqual(webFetchInputSchemaFor(true));
+    // ...and a provider that merely SPEAKS the Anthropic dialect at its own endpoint is not.
+    const thirdParty = { providerIdentity: { providerId: "zai-anthropic", modelKey: "zai-anthropic/claude-opus-5", family: "claude" }, resolveSlot } as Partial<EngineOptions>;
+    const other = await advertised({ model: "zai-anthropic/claude-opus-5" }, thirdParty);
+    expect(other.fetch).toBe(WEB_FETCH_DESCRIPTION_FULL);
+    expect(other.searchSchema).toEqual(webSearchInputSchemaFor(false));
+  });
+
   test("WebSearch's month is computed AT ADVERTISE TIME, in both variants -- a process that lives across a month boundary advertises the new month", async () => {
     for (const [options, config, lean] of [[leanSession, { model: FABLE_KEY }, true], [{}, {}, false]] as const) {
       setSystemTime(new Date("2031-03-15T12:00:00Z"));

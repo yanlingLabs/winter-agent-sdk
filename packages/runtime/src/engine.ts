@@ -302,6 +302,7 @@ import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
 // The model-id half of the lean-prompt rule (`sessionLeanModel`).
 import { claudeModelTakesFullPrompt } from "./provider/lean-prompt.ts";
+import { isFirstPartyAnthropic } from "./provider/first-party.ts";
 // The web tools' per-session description choice (`toolSpecFor`) -- names and both variants come from
 // the descriptor modules, so neither tool name is ever a literal in this file.
 // TEARDOWN ONLY: the per-ROOT-session search client's closer. A module that registers nothing and
@@ -2970,14 +2971,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // membership; `_Ut` is therefore "first-party AND the model's tier is NOT haiku/sonnet/opus" --
   // i.e. Fable, the one tier above Opus in Winter's own four-tier Claude family.
   //
-  // WINTER MAPPING (recorded deviation from the research file's own "{anthropic, console, cc}"
-  // first-party set): this repo's own catalog (packages/provider-catalog) carries EXACTLY ONE
-  // Anthropic-family provider id, "anthropic" (`authKinds: ["api-key","oauth-approved"]` on one
-  // row -- verified directly in the compiled overlay, not assumed). claude's own "console"/"cc" arms
-  // belong to a DIFFERENT engine entirely (Anthropic's own `claude` binary via
-  // `@anthropic-ai/claude-agent-sdk`, CLAUDE.md's "official leg") -- they never appear as a
-  // `currentProviderIdentity.providerId` value in THIS package's own engine, so "first-party" here
-  // is simply `providerId === "anthropic"`.
+  // WINTER MAPPING, CORRECTED (whole-branch review MINOR 3 -- the earlier reading of this said the
+  // catalog carries exactly one Anthropic-family provider id and that "console" belongs to another
+  // engine entirely; both halves were wrong). The catalog carries TWO rows that ARE Anthropic's own
+  // API: `anthropic` (an API key) and `console` (the Anthropic Console profile) -- same endpoint, same
+  // models, and either can be a live `currentProviderIdentity.providerId` here. The membership is
+  // `provider/first-party.ts`'s `isFirstPartyAnthropic`, shared by every site that asks the question,
+  // and deliberately NOT the whole `family: "anthropic"` column (which is a DIALECT statement: seven
+  // third-party providers speak `anthropic-messages` at their own endpoints). `cc` does not ship.
   //
   // "which tier is modelKey" is answered by REVERSE-CHECKING `resolveSlot` (already used below for
   // real slot-name requests): resolving a tier NAME in modelKey's own context and comparing the
@@ -3023,7 +3024,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * for a model family these texts were not written for.
    */
   function sessionLeanModel(modelKey: string): boolean {
-    if (currentProviderIdentity?.providerId !== "anthropic") return false;
+    if (!isFirstPartyAnthropic(currentProviderIdentity?.providerId)) return false;
     return !claudeModelTakesFullPrompt(modelKey);
   }
 
@@ -3036,7 +3037,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   function exploreModelCap(parentModel: string): string | undefined {
     const env = engineEnv ?? process.env;
     if (isTruthyEnvValue(env[envName(sessionBrand, "DISABLE_EXPLORE_INHERIT_CAP")])) return undefined;
-    if (currentProviderIdentity?.providerId !== "anthropic") return undefined;
+    if (!isFirstPartyAnthropic(currentProviderIdentity?.providerId)) return undefined;
     if (isAtOrBelowOpusTier(parentModel)) return undefined;
     return "opus"; // resolveChildSlot (the caller's caller) resolves this slot name on the SAME provider
   }
@@ -6190,7 +6191,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // own API, the catalog's portable shape for every other provider -- see the descriptors for why.
     if (descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME || descriptor.canonicalName === WEB_SEARCH_CANONICAL_NAME) {
       const lean = sessionLeanModel(currentProviderIdentity?.modelKey ?? currentModel);
-      const firstParty = currentProviderIdentity?.providerId === "anthropic";
+      const firstParty = isFirstPartyAnthropic(currentProviderIdentity?.providerId);
       const isFetch = descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME;
       return {
         name: descriptor.advertisedName,
