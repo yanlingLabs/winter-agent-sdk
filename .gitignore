@@ -7,3 +7,7 @@ dist
 # only, built on demand via `bun run build:runtime -- --platform-package` (or verify:compiled's
 # own ephemeral temp-path build, which never touches this directory at all).
 packages/platform/*/bin/
+
+# stray bun build --compile cache artifact when --outfile is a path outside cwd (a real leak this
+# branch hit once, see commit removing it)
+*.bun-build
