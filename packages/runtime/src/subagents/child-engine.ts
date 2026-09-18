@@ -1108,6 +1108,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             }
           : {}),
         ...(runCtx.recordDescendantCost !== undefined ? { onPricedGeneration: runCtx.recordDescendantCost } : {}),
+        // The session's spending limit reaches the CHILD's own loop through its spawner's answer --
+        // see `ChildEngineRunContext.budgetExceeded`.
+        ...(runCtx.budgetExceeded !== undefined ? { ancestorBudgetExceeded: () => runCtx.budgetExceeded!() } : {}),
         ...(deps.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: deps.resolveAuxiliaryModel } : {}),
         ...(deps.resolveToolSecret !== undefined ? { resolveToolSecret: deps.resolveToolSecret } : {}),
         // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already

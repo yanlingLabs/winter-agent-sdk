@@ -194,3 +194,83 @@ describe("a subagent's generations are PRICED, and roll up into the session's co
     expect(asked).not.toContain("haiku");
   });
 });
+
+describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop stops on it too", () => {
+  const GRANDCHILD_MARK = "you are the host-options probe GRANDCHILD";
+  const priceUsage: NonNullable<EngineOptions["priceUsage"]> = (key, usage) => ({ costUsd: usage.inputTokens + usage.outputTokens, costBasis: "list", canonicalModel: key });
+
+  /**
+   * root -> child -> grandchild. The grandchild would happily loop on a probe tool for six rounds
+   * (101 each); the root and the child spend 1010 + 303 before it starts.
+   */
+  async function driveTree(maxBudgetUsd: number | undefined): Promise<{ grandchildRequests: number; childRequests: number; rootRequests: number; result: Record<string, unknown>; grandchildStatus: unknown }> {
+    home = mkdtempSync(join(tmpdir(), "winter-child-budget-tree-"));
+    const counts = { root: 0, child: 0, grandchild: 0 };
+    const provider: Provider = {
+      async generate(input): Promise<ProviderTurn> {
+        const system = input.system ?? "";
+        if (system.includes(GRANDCHILD_MARK)) {
+          counts.grandchild += 1;
+          const usage = { inputTokens: 100, outputTokens: 1 };
+          return counts.grandchild <= 6 ? { kind: "tool_use", calls: [{ id: `g${counts.grandchild}`, name: WEB_PROBE, input: {} }], usage } : { kind: "text", text: "grandchild done", usage };
+        }
+        if (system.includes(CHILD_MARK)) {
+          counts.child += 1;
+          const usage = { inputTokens: 300, outputTokens: 3 };
+          const req: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "go deeper", runInBackground: false, name: "deeper", definition: { description: "deep probe", prompt: GRANDCHILD_MARK } };
+          return counts.child === 1 ? { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN, input: req }], usage } : { kind: "text", text: "child done", usage };
+        }
+        counts.root += 1;
+        const usage = { inputTokens: 1000, outputTokens: 10 };
+        const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do the thing", runInBackground: false, name: "prober", definition: { description: "probe", prompt: CHILD_MARK } };
+        return counts.root === 1 ? { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN, input: req }], usage } : { kind: "text", text: "root done", usage };
+      },
+    };
+    let grandchildStatus: unknown;
+    registerTool({
+      descriptor: descriptor(SPAWN),
+      executor: {
+        async execute(input: unknown, ctx: ToolExecutionContext) {
+          if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+          const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+          const result = await handle.result();
+          if ((input as SpawnChildRequest).parentToolUseId === "call-2") grandchildStatus = result.status;
+          return { output: JSON.stringify({ status: result.status }) };
+        },
+      },
+    });
+    registerTool({ descriptor: descriptor(WEB_PROBE), executor: { execute: async () => ({ output: "probed" }) } });
+    const full = { sessionId: `child-budget-tree-${Math.random().toString(36).slice(2)}`, cwd: home, model: "prova/main", persistSession: false, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}) } as RuntimeConfig;
+    const assembler = createSystemPromptAssembler({ home });
+    registerDefaultChildEngineFactory({ provider, config: full, env: {}, systemPromptAssembler: assembler, priceUsage } as never);
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: full, input: runtime.input, output: runtime.output, provider, systemPromptAssembler: assembler, priceUsage });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const frames: WinterFrame[] = [];
+    for await (const f of host.input) frames.push(f);
+    await done;
+    const result = frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message).filter((m) => m.type === "result").at(-1) as unknown as Record<string, unknown>;
+    return { grandchildRequests: counts.grandchild, childRequests: counts.child, rootRequests: counts.root, result, grandchildStatus };
+  }
+
+  test("CONTROL: with no budget the grandchild runs its whole loop (so the case below is not vacuous)", async () => {
+    const r = await driveTree(undefined);
+    expect(r.grandchildRequests).toBe(7);
+    expect(r.childRequests).toBe(2);
+    expect(r.rootRequests).toBe(2);
+  });
+
+  test("a GRANDCHILD stops at its next request once the ROOT's budget is crossed -- and so does every level above it", async () => {
+    // 1010 (root) + 303 (child) + 2 x 101 (grandchild) = 1515 > 1500: the grandchild's THIRD request
+    // never goes out. Nothing in the child's or grandchild's own config carries a ceiling -- each
+    // level's ledger is only its own subtree -- so the ROOT's answer is what stops them.
+    const r = await driveTree(1500);
+    expect(r.grandchildRequests).toBe(2);
+    // The child's second request and the root's second request are refused for the same reason.
+    expect(r.childRequests).toBe(1);
+    expect(r.rootRequests).toBe(1);
+    expect(r.result.subtype).toBe("error_max_budget_usd");
+    expect(r.result.total_cost_usd).toBe(1010 + 303 + 2 * 101);
+  });
+});

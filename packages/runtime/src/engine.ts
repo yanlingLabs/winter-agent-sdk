@@ -1480,6 +1480,16 @@ export interface EngineOptions {
    * (`recordDescendantUsage`) cannot do this job: it carries no model key, and a price is per model.
    */
   onPricedGeneration?: (entry: PricedGenerationEntry) => void;
+  /**
+   * A SUBAGENT run only: has an ANCESTOR crossed its `maxBudgetUsd`? ORed into this run's own
+   * `budgetExceeded()`. A child's config deliberately carries NO ceiling of its own -- its ledger is
+   * only its own subtree, so the root's number would be compared against the wrong total -- which left
+   * a child's main loop (and any inner-model pass inside it) the one place a session could keep
+   * spending past its limit. Costs fold upward SYNCHRONOUSLY (`onPricedGeneration`), so the owning
+   * run's answer is already true for the whole tree by the time a descendant asks. Each level hands
+   * its OWN `budgetExceeded` down, so the chain reaches the root through any depth.
+   */
+  ancestorBudgetExceeded?: () => boolean;
 }
 
 /** One PRICED generation, as it travels up the agent tree: the model it ran on, what it used, what that cost. */
@@ -1848,6 +1858,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     resolveModelSwitch,
     fallbackModels,
     priceUsage,
+    ancestorBudgetExceeded,
     classifierIdentity,
     autoAudit,
     // P7a LANE B (D29/D30): the advisor's reviewer route -- see EngineOptions.resolveReviewer.
@@ -2570,7 +2581,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
   /** The cost trio a result frame carries once anything was priced: `total_cost_usd` + `modelUsage` (`usage` stays absent, disclosed). */
   const costFields = (): Record<string, unknown> => (costLedger.priced ? { total_cost_usd: costLedger.totalUsd, modelUsage: Object.fromEntries(costLedger.models) } : {});
-  const budgetExceeded = (): boolean => config.maxBudgetUsd !== undefined && costLedger.priced && costLedger.totalUsd > config.maxBudgetUsd;
+  const budgetExceeded = (): boolean => {
+    if (config.maxBudgetUsd !== undefined && costLedger.priced && costLedger.totalUsd > config.maxBudgetUsd) return true;
+    // ...or any ANCESTOR's (see `EngineOptions.ancestorBudgetExceeded`). A probe that throws reads as
+    // "no": a torn-down parent must never end a child's turn with an exception from a budget check.
+    try {
+      return ancestorBudgetExceeded?.() === true;
+    } catch {
+      return false;
+    }
+  };
   // Phase 4 Task 3 (MUST 8): the live child roster this run's own spawns append to -- what
   // `MessagingRouterSeam.children()` (@yanlinglabs/winter-agent-sdk/messaging) is defined to read from. No routing
   // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
@@ -3442,6 +3462,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             recordDescendantCost: (entry: PricedGenerationEntry): void => {
               foldPricedGeneration(entry);
             },
+            // ...and the answer that spend produces, handed DOWN: this run's `budgetExceeded()`
+            // already includes its own ancestors', so a grandchild asking its parent is asking the root.
+            budgetExceeded: (): boolean => budgetExceeded(),
             // Phase 4 Task 8 (rider 26, RULING P4-J(e)): the parent's CURRENT live policy, read
             // fresh on every call (never a spawn-time snapshot) -- WS-10 §9's stricter-of comparison
             // is only meaningful against the policy in force at RESUME time. `computePolicyHash` is

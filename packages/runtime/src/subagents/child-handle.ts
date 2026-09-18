@@ -353,6 +353,14 @@ export interface ChildEngineRunContext {
    * no model key. Without it a subagent's spend was invisible to `total_cost_usd` and `maxBudgetUsd`.
    */
   recordDescendantCost?(entry: import("../engine.ts").PricedGenerationEntry): void;
+  /**
+   * Has the OWNING run (or any run above it) crossed its `maxBudgetUsd`? The child engine ORs this
+   * into its own budget check, so a descendant's main loop -- and any inner-model pass inside it,
+   * through `WebSessionRuntime.budgetExceeded` -- stops at its next request. `maxBudgetUsd` itself is
+   * deliberately NOT threaded into a child's config: a child's ledger is only its own subtree.
+   * Optional and additive: absent reads as "no".
+   */
+  budgetExceeded?(): boolean;
   // Phase 4 Task 8 (rider 26, PRECISED; RULING P4-J(e)): the parent's CURRENT live policy, for
   // WS-10 §9's "a child resume applies the stricter of the recorded and current parent policy".
   // Lane C's Q1 finding: `resolveChildResumeMode` had ZERO call sites anywhere in the repository and
