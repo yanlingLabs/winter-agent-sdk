@@ -19,7 +19,7 @@ import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { WEB_SEARCH_CANONICAL_NAME } from "../descriptors/web-search.ts"; // self-sufficiency: guarantees the stub is registered before replaceExecutor runs below.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-runtime.ts";
-import { INNER_TOOL_LIMIT_NOTICE, runInnerModel, type InnerModelFailure, type InnerModelStep, type InnerToolHandler } from "./_inner-model.ts";
+import { INNER_MODEL_BUDGET_EXCEEDED_DETAIL, INNER_TOOL_LIMIT_NOTICE, runInnerModel, type InnerModelFailure, type InnerModelStep, type InnerToolHandler } from "./_inner-model.ts";
 import { anonymousBreakerOpen, createExaSearchClient, EXA_DEFAULT_NUM_RESULTS, exaKeyResolverFor, sharedExaBackendState, type ExaBackendState, type ExaSearchClientOptions, type ExaSearchResult } from "./_exa-client.ts";
 import { exaSearchClientForSession } from "./_exa-session-client.ts";
 import { reserveWebSearchCall, resolveMaxWebSearchesPerSession, webSearchBudgetRefusalText } from "./_search-budget.ts";
@@ -92,17 +92,11 @@ function compactHitsForInnerModel(hits: readonly { title: string; url: string; h
 
 // --- failure text ----------------------------------------------------------------------------------
 
-/**
- * The literal `detail` `_inner-model.ts` reports when the SESSION's own spend ceiling (`maxBudgetUsd`,
- * checked between every inner generation, independent of this tool's own 200-call budget) is crossed
- * mid-pass. The spine (`sdk/web-tools-integration`) does not export a constant for this string -- it
- * is inlined at its one call site (`fail("aborted", ..., "budget-exceeded")`) -- so it is matched here
- * as a plain string literal; disclosed rather than silently assumed stable.
- */
-const BUDGET_EXCEEDED_DETAIL = "budget-exceeded";
-
+// A SESSION-BUDGET stop (`maxBudgetUsd`, checked between every inner generation, independent of this
+// tool's own 200-call budget) arrives as the inner helper's existing `aborted` code with the helper's
+// own exported `detail` constant -- matched through that constant, never a re-spelled literal.
 function isBudgetStop(failure: InnerModelFailure): boolean {
-  return failure.code === "aborted" && failure.detail === BUDGET_EXCEEDED_DETAIL;
+  return failure.code === "aborted" && failure.detail === INNER_MODEL_BUDGET_EXCEEDED_DETAIL;
 }
 
 function innerFailureText(failure: InnerModelFailure): string {

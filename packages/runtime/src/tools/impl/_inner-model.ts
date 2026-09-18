@@ -145,6 +145,14 @@ export type InnerModelRuntime = Pick<WebSessionRuntime, "sessionModel" | "resolv
 /** The notice an over-limit call is answered with. Exported so a caller can recognise (and not re-report) it. */
 export const INNER_TOOL_LIMIT_NOTICE = "The tool-call limit for this request has been reached. Do not call the tool again; answer now from the results you already have.";
 
+/**
+ * The `detail` a SESSION-BUDGET stop carries. A budget crossing is reported under the existing
+ * `aborted` code (the pass was stopped BY the session, not by a failure -- and the code union the two
+ * tools switch on does not grow), so this string is the ONLY thing that tells it from a genuine
+ * interrupt. Exported so a consumer matches the constant, never its own spelling of it.
+ */
+export const INNER_MODEL_BUDGET_EXCEEDED_DETAIL = "budget-exceeded";
+
 const ZERO_USAGE: ProviderUsage = { inputTokens: 0, outputTokens: 0 };
 
 function addUsage(total: ProviderUsage, usage: ProviderUsage): ProviderUsage {
@@ -281,7 +289,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
     } catch {
       overBudget = false;
     }
-    if (overBudget) return { failure: fail("aborted", "the inner model pass was stopped: this session has reached its spending limit", "budget-exceeded") };
+    if (overBudget) return { failure: fail("aborted", "the inner model pass was stopped: this session has reached its spending limit", INNER_MODEL_BUDGET_EXCEEDED_DETAIL) };
     const input: ProviderRequest = {
       messages: [...messages],
       ...(request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),

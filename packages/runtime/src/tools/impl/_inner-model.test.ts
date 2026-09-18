@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { WinterFrame, ProtocolSdkMessage as SdkMessage, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
-import { INNER_TOOL_LIMIT_NOTICE, runInnerModel, type InnerModelRuntime, type InnerToolSpec } from "./_inner-model.ts";
+import { INNER_MODEL_BUDGET_EXCEEDED_DETAIL, INNER_TOOL_LIMIT_NOTICE, runInnerModel, type InnerModelRuntime, type InnerToolSpec } from "./_inner-model.ts";
 import { ProviderTurnError, createContextAccountant, runEngine, type Provider, type ProviderRequest, type ProviderTurn, type ProviderUsage } from "../../engine.ts";
 import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../registry.ts";
 import { scriptedProvider } from "../../provider/mock.ts";
@@ -222,6 +222,9 @@ describe("runInnerModel -- the bounded tool loop (WebSearch's inner pass)", () =
     runtime.accountUsage = () => void generations++;
     const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 8, handler: async () => ({ output: "r" }) }, runtime);
     expect(result).toMatchObject({ ok: false, code: "aborted", detail: "budget-exceeded", toolCalls: 1 });
+    // THE NAMED CONSTANT is what a consumer matches on -- and it is the value actually reported.
+    expect(INNER_MODEL_BUDGET_EXCEEDED_DETAIL).toBe("budget-exceeded");
+    expect(!result.ok && result.detail).toBe(INNER_MODEL_BUDGET_EXCEEDED_DETAIL);
     expect(provider.requests).toHaveLength(1);
   });
 

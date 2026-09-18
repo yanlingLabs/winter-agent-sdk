@@ -15,6 +15,7 @@ import { maxWebSearchesPerSessionEnvName, resetWebSearchBudgetForTest, webSearch
 import { createExaBackendState, type ExaBackendState } from "./_exa-client.ts";
 import { advancedPayload, basicPayload, tooManyRequests, withExaFixture, type ExaFixture } from "./_exa-fixture.test-support.ts";
 import { resetExaSessionClientsForTest } from "./_exa-session-client.ts";
+import { INNER_MODEL_BUDGET_EXCEEDED_DETAIL } from "./_inner-model.ts";
 
 const SESSION_MODEL_KEY = "prova/session-model";
 
@@ -468,6 +469,12 @@ describe("abort and usage", () => {
 // =====================================================================================================
 
 describe("a session budget stop (distinct from a genuine abort)", () => {
+  test("the budget-stop detail is matched through `_inner-model.ts`'s exported constant, never a re-spelled literal", async () => {
+    const source = await Bun.file(new URL("./web-search.ts", import.meta.url)).text();
+    expect(source).toContain("INNER_MODEL_BUDGET_EXCEEDED_DETAIL");
+    expect(source).not.toContain(`"${INNER_MODEL_BUDGET_EXCEEDED_DETAIL}"`);
+  });
+
   test("over budget from the very first generation -> a plain, non-error result naming the spending limit, never the generic interrupt wording", async () => {
     const ctx = makeCtx("budget-from-start");
     runtimeWith("budget-from-start", scriptedProvider([{ kind: "text", text: "unreachable -- the budget check runs before round 1's own generate()" }]), { budgetExceeded: () => true });
