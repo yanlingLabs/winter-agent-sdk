@@ -394,9 +394,13 @@ describe("SDK 0.0.16 Lane P (R3b §5): lean vs normal Agent-listing text, end to
     }
   }
 
-  // Traced rule (engine.ts's own `sessionLeanModel`): lean is for Fable (the tier ABOVE Opus), never
-  // haiku/sonnet/opus -- confirmed against D2's own ground truth (OFFICIAL_MODEL = a haiku model;
-  // its captured listing carries Explore's FULL, non-lean whenToUse).
+  // The rule (engine.ts's own `sessionLeanModel`) reads the model ID, as claude's does: FULL for the
+  // claude-3 line, haiku, sonnet and the five named Opus 4.0-4.7 builds; LEAN for everything else on
+  // Anthropic's own API -- Opus 4.8 and Opus 5 included, not only the tier above Opus. Measured
+  // against the pinned binary (haiku is advertised the full texts, Opus 5 and the top tier the lean
+  // ones). This block used to pin "an opus-tier session renders the NORMAL whenToUse" for every Opus
+  // model; that was the old tier-based reading, and it is replaced below by the two Opus cases that
+  // sit on either side of the real line.
   test("a first-party Anthropic session at Fable tier renders Explore's LEAN whenToUse", async () => {
     const text = await firstRequestTextFor({ providerId: "anthropic", modelKey: FABLE_KEY, family: "claude" });
     expect(text).toContain(AGENTS_HEADER);
@@ -413,10 +417,26 @@ describe("SDK 0.0.16 Lane P (R3b §5): lean vs normal Agent-listing text, end to
     expect(text).not.toContain("broad fan-out searches");
   });
 
-  test("an opus-tier session renders the NORMAL whenToUse", async () => {
-    const text = await firstRequestTextFor({ providerId: "anthropic", modelKey: OPUS_KEY, family: "claude" });
+  test("an Opus 4.7 session (one of the five named builds) renders the NORMAL whenToUse", async () => {
+    const text = await firstRequestTextFor({ providerId: "anthropic", modelKey: "anthropic/claude-opus-4-7", family: "claude" });
     expect(text).toContain(AGENTS_HEADER);
     expect(text).toContain("- Explore:");
+    expect(text).toContain("Fast read-only search agent for locating code.");
+    expect(text).not.toContain("broad fan-out searches");
+  });
+
+  test("a newer Opus session (Opus 5, and the opus slot's own model here) renders the LEAN whenToUse", async () => {
+    for (const modelKey of ["anthropic/claude-opus-5", OPUS_KEY]) {
+      const text = await firstRequestTextFor({ providerId: "anthropic", modelKey, family: "claude" });
+      expect(text).toContain(AGENTS_HEADER);
+      expect(text).toContain("- Explore:");
+      expect(text).toContain("broad fan-out searches");
+      expect(text).not.toContain("Fast read-only search agent for locating code.");
+    }
+  });
+
+  test("off Anthropic's own API the listing is never lean, whatever the model id says", async () => {
+    const text = await firstRequestTextFor({ providerId: "bedrock", modelKey: "bedrock/claude-opus-5", family: "claude" });
     expect(text).toContain("Fast read-only search agent for locating code.");
     expect(text).not.toContain("broad fan-out searches");
   });

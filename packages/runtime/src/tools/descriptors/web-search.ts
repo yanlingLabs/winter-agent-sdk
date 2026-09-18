@@ -8,11 +8,9 @@ import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 import type { ToolDescriptor } from "../registry.ts";
 
 /**
- * Mirrors `provider/slots.ts`'s own `AGENT_TOOL_CANONICAL_NAME` precedent: a future `toolSpecFor`
- * branch (the engine.ts hook this file's own header names as the completion of real per-session lean
- * selection -- see below) needs to recognise this descriptor by canonical name WITHOUT spelling
- * `"WebSearch"` as a literal at its own call site. Exported for that integration lane; this file's own
- * `stub(descriptor)` call below is the only other place this name may legitimately originate.
+ * Mirrors `provider/slots.ts`'s own `AGENT_TOOL_CANONICAL_NAME` precedent: `engine.ts`'s `toolSpecFor`
+ * recognises this descriptor by canonical name WITHOUT spelling `"WebSearch"` as a literal at its own
+ * call site. This file's `stub(descriptor)` call below is the only other place the name originates.
  */
 export const WEB_SEARCH_CANONICAL_NAME = "WebSearch";
 
@@ -71,12 +69,43 @@ IMPORTANT - Use the correct year in search queries:
 
 /**
  * Renders WebSearch's description AT THE CALL SITE -- so the month is always today's, whether the
- * caller is `toolSpecFor` at advertise time, a test, or a future spine hook (see the header on the
- * `Object.defineProperty` below for why that hook does not exist yet). `now` is injectable for tests.
+ * caller is `toolSpecFor` at advertise time or a test. `now` is injectable for tests.
  */
 export function webSearchDescription(lean: boolean, now: () => Date = () => new Date()): string {
   const t = currentMonthYear(now);
   return lean ? leanWebSearchDescription(t) : fullWebSearchDescription(t);
+}
+
+// --- The input schema: one shape, two renderings ----------------------------------------------------
+//
+// claude's own schema carries the `$schema` dialect marker and `additionalProperties: false`; the rest
+// of this catalog deliberately carries neither. They are rendered ONLY for a session talking to
+// Anthropic's own API (chosen per request in engine.ts's `toolSpecFor`), where the advertised schema
+// is then byte-for-byte claude's; every other provider keeps the portable rendering. The reasoning is
+// spelled out once, on WebFetch's descriptor (`web-fetch.ts`): an eager tool's schema reaches every
+// provider untouched and some dialects refuse keywords they do not know, and nothing in this runtime
+// enforces a schema anyway -- so the keywords are advertisement, carried where they are claude's own
+// wire bytes. (`blocked_domains` is a DECLARED property, so a hook's `updatedInput` adding it stays
+// inside `additionalProperties: false` for any validator that one day reads this.)
+const WEB_SEARCH_PROPERTIES = {
+  query: { type: "string", minLength: 2, description: "The search query to use" },
+  allowed_domains: { type: "array", items: { type: "string" }, description: "Only include search results from these domains" },
+  blocked_domains: { type: "array", items: { type: "string" }, description: "Never include search results from these domains" },
+} as const;
+
+const WEB_SEARCH_INPUT_SCHEMA_PORTABLE = { type: "object", properties: WEB_SEARCH_PROPERTIES, required: ["query"] } as const;
+
+const WEB_SEARCH_INPUT_SCHEMA_FIRST_PARTY = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: WEB_SEARCH_PROPERTIES,
+  required: ["query"],
+  additionalProperties: false,
+} as const;
+
+/** The schema to ADVERTISE: claude's own bytes for a first-party Anthropic session, the portable rendering for every other provider. */
+export function webSearchInputSchemaFor(firstPartyAnthropic: boolean): Record<string, unknown> {
+  return firstPartyAnthropic ? WEB_SEARCH_INPUT_SCHEMA_FIRST_PARTY : WEB_SEARCH_INPUT_SCHEMA_PORTABLE;
 }
 
 // --- The descriptor -----------------------------------------------------------------------------
@@ -85,15 +114,7 @@ const descriptor: ToolDescriptor = {
   canonicalName: WEB_SEARCH_CANONICAL_NAME,
   advertisedName: WEB_SEARCH_CANONICAL_NAME,
   source: "builtin",
-  inputSchema: {
-    type: "object",
-    properties: {
-      query: { type: "string", minLength: 2, description: "The search query to use" },
-      allowed_domains: { type: "array", items: { type: "string" }, description: "Only include search results from these domains" },
-      blocked_domains: { type: "array", items: { type: "string" }, description: "Never include search results from these domains" },
-    },
-    required: ["query"],
-  },
+  inputSchema: WEB_SEARCH_INPUT_SCHEMA_PORTABLE,
   // Placeholder -- overridden by the accessor installed below BEFORE registration. Present so the
   // object literal satisfies `ToolDescriptor`'s `description: string` field at the type level; the
   // registry never reads this literal value (the accessor always runs first).
@@ -120,23 +141,12 @@ const descriptor: ToolDescriptor = {
  * (registry.ts) spreads the `RegisteredTool` wrapper, never the `descriptor` object inside it, so this
  * accessor survives `impl/web-search.ts` installing the real executor over this stub.
  *
- * WHAT THIS CANNOT DO, AND WHY (disclosed, not silently punted): claude's lean/full CHOICE depends on
- * which model the CURRENT SESSION is generating with (`engine.ts`'s own `sessionLeanModel`, a private
- * closure over `currentProviderIdentity`/`currentModel`). A descriptor accessor is invoked with NO
- * arguments and no session context -- there is no channel from "which session is asking" to "which
- * text to return" without either (a) an engine.ts change (the exact hook the Agent tool already uses:
- * `toolSpecFor`'s `canonicalName === AGENT_TOOL_CANONICAL_NAME` branch re-renders a descriptor clone
- * per call from session-derived gate state -- WebSearch would need the identical kind of branch,
- * keyed on `sessionLeanModel`), or (b) a global "which session is asking right now" side-channel,
- * which would be actively WRONG the moment two sessions run in one process concurrently. Neither is
- * available from a descriptor file alone, so this ships the FULL (non-lean) text as the static
- * default -- the SAME branch `sessionLeanModel` itself falls back to for every session that is not
- * Fable-tier-on-the-`anthropic`-provider (the overwhelming majority: every non-Claude-family model,
- * and haiku/sonnet/opus on Claude). `webSearchDescription(lean, now?)` (both variants) and
- * `WEB_SEARCH_CANONICAL_NAME` (above) are exported so a future one-line `toolSpecFor` branch
- * (mirroring the Agent tool's own `canonicalName === AGENT_TOOL_CANONICAL_NAME` gate) can render the
- * right variant with no changes on this side and no `"WebSearch"` literal at its own call site. Named
- * loudly in this lane's report as the one spine hook that would complete real per-session parity.
+ * THE LEAN / FULL CHOICE IS NOT MADE HERE. It depends on the model the CURRENT SESSION generates
+ * with, and an accessor is invoked with no arguments and no session -- so this static registration
+ * always renders the FULL text, and `engine.ts`'s `toolSpecFor` re-renders the description per
+ * request through `webSearchDescription(lean)` with its own `sessionLeanModel` answer (the same
+ * branch that picks this tool's schema rendering). A global "which session is asking" side-channel
+ * would be wrong the moment two sessions share a process.
  */
 Object.defineProperty(descriptor, "description", {
   enumerable: true,

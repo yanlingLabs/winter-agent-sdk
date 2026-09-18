@@ -3,19 +3,11 @@
 // COPIED VERBATIM from the pinned claude 2.1.250 binary per the project owner's ruling -- only this
 // comment block and the identifiers are Winter's own.
 //
-// TWO DESCRIPTION VARIANTS, ONE STATIC REGISTRATION. claude selects lean vs. full per `leanPrompt
-// (model)`; this SDK's own equivalent lives in `engine.ts` (`sessionLeanModel`, used today only for
-// the Agent tool's `whenToUseLean`) and is wired into the actual PROVIDER REQUEST by `toolSpecFor`
-// (engine.ts ~6079), which today special-cases exactly one canonical name (`AGENT_TOOL_CANONICAL_NAME`)
-// and has no general per-descriptor hook. Per this lane's own brief ("Do NOT edit the spine's
-// files... make the smallest possible one, and call it out loudly"), wiring `toolSpecFor` for a
-// SECOND tool is left to the lane that owns that file (plan: Phase A4, "both description variants
-// behind Winter's lean-prompt rule") -- this module ships everything that lane needs and nothing it
-// would have to redo: both verbatim texts, and the one pure selector function that applies the exact
-// same rule engine.ts's own `sessionLeanModel` does. The STATIC registration below (what every
-// session sees until that wiring lands) carries the FULL text -- `sessionLeanModel`'s own doc names
-// it "the fuller, safer text... when the tier can't be determined," which is exactly this situation
-// today: no consumer yet asks which tier a session is on.
+// TWO DESCRIPTION VARIANTS, ONE STATIC REGISTRATION. claude selects lean vs. full per
+// `leanPrompt(model)`; this SDK's equivalent is `engine.ts`'s `sessionLeanModel`, and the choice is
+// made per REQUEST in `toolSpecFor` (a descriptor is a process-wide singleton and cannot see a
+// session's model). This module ships both verbatim texts and the pure selector; the static
+// registration below carries the FULL text, which is also what any reader outside a session sees.
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 // `_web-fetch-cache.ts` REGISTERS NOTHING (an underscore module, per this lane's own impl-isolation
 // convention), so importing its constant here carries no registration side effect -- the reverse
@@ -60,23 +52,55 @@ Usage notes:
   - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).
 `;
 
-/** claude's own `leanPrompt(model)` gate, applied to WebFetch's description exactly as `sessionLeanModel` applies it to the Agent tool's `whenToUseLean` -- see the module header for the wiring gap this leaves for A4. */
+/** claude's own `leanPrompt(model)` gate, applied to WebFetch's description exactly as `sessionLeanModel` applies it to the Agent tool's `whenToUseLean`. */
 export function webFetchDescriptionFor(leanModel: boolean): string {
   return leanModel ? WEB_FETCH_DESCRIPTION_LEAN : WEB_FETCH_DESCRIPTION_FULL;
+}
+
+// --- The input schema: one shape, two renderings ----------------------------------------------------
+//
+// claude's own schema for this tool carries three keywords the rest of this catalog deliberately does
+// not: the `$schema` dialect marker, `additionalProperties: false`, and `format: "uri"` on `url`.
+//
+// They are rendered ONLY for a session talking to Anthropic's own API (`webFetchInputSchemaFor(true)`,
+// chosen per request in engine.ts's `toolSpecFor`, beside the lean/full description choice), where the
+// advertised schema is byte-for-byte what claude itself sends. Every other provider keeps the
+// PORTABLE rendering registered below. Two reasons, both about this runtime rather than claude:
+//   - an eager tool's schema rides EVERY request to EVERY provider, and the adapters forward it
+//     untouched; several function-calling dialects are an OpenAPI-style SUBSET that refuses keywords
+//     it does not know (`$schema` above all). A parity gain on one provider must not become a refused
+//     request on another.
+//   - nothing in this runtime validates a call against a descriptor's schema (see cron-list.ts's own
+//     note: `additionalProperties: false` was dropped catalog-wide as decorative for exactly that
+//     reason). The keywords are therefore ADVERTISEMENT, not enforcement -- worth carrying where they
+//     are claude's own wire bytes, and nowhere else.
+const URL_DESCRIPTION = "The URL to fetch content from";
+const PROMPT_PROPERTY = { type: "string", description: "The prompt to run on the fetched content" } as const;
+
+const WEB_FETCH_INPUT_SCHEMA_PORTABLE = {
+  type: "object",
+  properties: { url: { type: "string", description: URL_DESCRIPTION }, prompt: PROMPT_PROPERTY },
+  required: ["url", "prompt"],
+} as const;
+
+const WEB_FETCH_INPUT_SCHEMA_FIRST_PARTY = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: { url: { type: "string", format: "uri", description: URL_DESCRIPTION }, prompt: PROMPT_PROPERTY },
+  required: ["url", "prompt"],
+  additionalProperties: false,
+} as const;
+
+/** The schema to ADVERTISE: claude's own bytes for a first-party Anthropic session, the portable rendering for every other provider (see the block comment above). */
+export function webFetchInputSchemaFor(firstPartyAnthropic: boolean): Record<string, unknown> {
+  return firstPartyAnthropic ? WEB_FETCH_INPUT_SCHEMA_FIRST_PARTY : WEB_FETCH_INPUT_SCHEMA_PORTABLE;
 }
 
 stub({
   canonicalName: "WebFetch",
   advertisedName: "WebFetch",
   source: "builtin",
-  inputSchema: {
-    type: "object",
-    properties: {
-      url: { type: "string", description: "The URL to fetch content from" },
-      prompt: { type: "string", description: "The prompt to run on the fetched content" },
-    },
-    required: ["url", "prompt"],
-  },
+  inputSchema: WEB_FETCH_INPUT_SCHEMA_PORTABLE,
   description: WEB_FETCH_DESCRIPTION_FULL,
   searchHint: "fetch and extract content from a URL",
   exposure: "eager",

@@ -10,14 +10,14 @@ import "../tools/descriptors/index.ts";
 import { runEngine, type EngineOptions, type Provider, type ProviderRequest } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import type { SlotProviderResolution } from "../provider/slots.ts";
-import { WEB_FETCH_CANONICAL_NAME, WEB_FETCH_DESCRIPTION_FULL, WEB_FETCH_DESCRIPTION_LEAN, webFetchDescriptionFor } from "../tools/descriptors/web-fetch.ts";
-import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription } from "../tools/descriptors/web-search.ts";
+import { WEB_FETCH_CANONICAL_NAME, WEB_FETCH_DESCRIPTION_FULL, WEB_FETCH_DESCRIPTION_LEAN, webFetchDescriptionFor, webFetchInputSchemaFor } from "../tools/descriptors/web-fetch.ts";
+import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription, webSearchInputSchemaFor } from "../tools/descriptors/web-search.ts";
 import { getRegisteredTool } from "../tools/registry.ts";
 import { resetWebSessionRuntimesForTest } from "./session-runtime.ts";
 
 const FABLE_KEY = "anthropic/fable-fake";
 const TIER_KEYS: Record<string, string> = { haiku: "anthropic/haiku-fake", sonnet: "anthropic/sonnet-fake", opus: "anthropic/opus-fake" };
-/** Resolves a tier NAME to a fixed key, which is all `sessionLeanModel`'s reverse check needs. */
+/** Resolves a tier NAME to a fixed key. (`sessionLeanModel` itself reads the model ID, never the tier; the engine needs this only to resolve slot names.) */
 const resolveSlot = (requested: string): SlotProviderResolution => {
   const modelKey = TIER_KEYS[requested];
   if (modelKey === undefined) return { ok: false, code: "unknown-slot", message: `no such tier ${requested}`, wouldServe: [] };
@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 /** Runs one turn on the real engine and returns the description each web tool was ADVERTISED with. */
-async function advertised(config: Partial<RuntimeConfig>, options: Partial<EngineOptions> = {}): Promise<{ fetch: string | undefined; search: string | undefined }> {
+async function advertised(config: Partial<RuntimeConfig>, options: Partial<EngineOptions> = {}): Promise<{ fetch: string | undefined; search: string | undefined; fetchSchema: Record<string, unknown> | undefined; searchSchema: Record<string, unknown> | undefined }> {
   const requests: ProviderRequest[] = [];
   const provider: Provider = {
     async generate(input) {
@@ -53,7 +53,9 @@ async function advertised(config: Partial<RuntimeConfig>, options: Partial<Engin
   await done;
   expect(requests.length).toBeGreaterThan(0);
   const tools = requests[0]!.tools ?? [];
-  return { fetch: tools.find((t) => t.name === WEB_FETCH_CANONICAL_NAME)?.description, search: tools.find((t) => t.name === WEB_SEARCH_CANONICAL_NAME)?.description };
+  const fetchTool = tools.find((t) => t.name === WEB_FETCH_CANONICAL_NAME);
+  const searchTool = tools.find((t) => t.name === WEB_SEARCH_CANONICAL_NAME);
+  return { fetch: fetchTool?.description, search: searchTool?.description, fetchSchema: fetchTool?.inputSchema, searchSchema: searchTool?.inputSchema };
 }
 
 const leanSession = { providerIdentity: { providerId: "anthropic", modelKey: FABLE_KEY, family: "claude" }, resolveSlot } as Partial<EngineOptions>;
@@ -68,7 +70,7 @@ describe("WebFetch / WebSearch advertise the description variant the SESSION's m
     expect(webSearchDescription(true)).not.toBe(webSearchDescription(false));
   });
 
-  test("a LEAN-tier session (first-party Anthropic, above the Opus tier) is advertised BOTH lean texts", async () => {
+  test("a LEAN session (first-party Anthropic, a model id outside claude's full-text list) is advertised BOTH lean texts", async () => {
     setSystemTime(new Date("2031-03-15T12:00:00Z"));
     const tools = await advertised({ model: FABLE_KEY }, leanSession);
     expect(tools.fetch).toBe(WEB_FETCH_DESCRIPTION_LEAN);
@@ -82,6 +84,44 @@ describe("WebFetch / WebSearch advertise the description variant the SESSION's m
       expect(tools.fetch).toBe(WEB_FETCH_DESCRIPTION_FULL);
       expect(tools.search).toBe(webSearchDescription(false));
     }
+  });
+
+  // The line is drawn on the model ID, where claude draws it -- not above the whole Opus tier, which
+  // is what this rule used to say: Opus 5 is lean, Opus 4.7 (one of claude's five named builds) is not.
+  test("the Opus line is split where claude splits it: Opus 5 and the opus slot's own model are LEAN, Opus 4.7 is FULL", async () => {
+    const session = (modelKey: string): Partial<EngineOptions> => ({ providerIdentity: { providerId: "anthropic", modelKey, family: "claude" }, resolveSlot }) as Partial<EngineOptions>;
+    for (const modelKey of ["anthropic/claude-opus-5", "anthropic/claude-opus-4-8", TIER_KEYS["opus"]!]) {
+      const tools = await advertised({ model: modelKey }, session(modelKey));
+      expect(tools.fetch, modelKey).toBe(WEB_FETCH_DESCRIPTION_LEAN);
+      expect(tools.search, modelKey).toBe(webSearchDescription(true));
+    }
+    for (const modelKey of ["anthropic/claude-opus-4-7", "anthropic/claude-haiku-4-5-20251001"]) {
+      const tools = await advertised({ model: modelKey }, session(modelKey));
+      expect(tools.fetch, modelKey).toBe(WEB_FETCH_DESCRIPTION_FULL);
+      expect(tools.search, modelKey).toBe(webSearchDescription(false));
+    }
+  });
+
+  test("the SCHEMA is claude's own bytes on Anthropic's own API and the catalog's portable shape everywhere else", async () => {
+    const firstParty = await advertised({ model: TIER_KEYS["sonnet"]! }, sonnetSession);
+    expect(firstParty.searchSchema).toEqual(webSearchInputSchemaFor(true));
+    expect(firstParty.fetchSchema).toEqual(webFetchInputSchemaFor(true));
+    expect(firstParty.searchSchema).toMatchObject({ $schema: "https://json-schema.org/draft/2020-12/schema", additionalProperties: false });
+    expect(firstParty.fetchSchema).toMatchObject({ $schema: "https://json-schema.org/draft/2020-12/schema", additionalProperties: false, properties: { url: { format: "uri" } } });
+
+    // Any other provider: exactly what the descriptor registers -- no dialect marker, no closed
+    // object, no `format` -- because an eager tool's schema reaches every provider untouched.
+    const other = await advertised({});
+    expect(other.searchSchema).toEqual(getRegisteredTool(WEB_SEARCH_CANONICAL_NAME)!.descriptor.inputSchema as Record<string, unknown>);
+    expect(other.fetchSchema).toEqual(getRegisteredTool(WEB_FETCH_CANONICAL_NAME)!.descriptor.inputSchema as Record<string, unknown>);
+    expect(JSON.stringify([other.searchSchema, other.fetchSchema])).not.toMatch(/\$schema|additionalProperties|"format"/);
+    // The two renderings differ ONLY in those keywords: same properties, same order, same `required`.
+    for (const [a, b] of [[webSearchInputSchemaFor(true), webSearchInputSchemaFor(false)], [webFetchInputSchemaFor(true), webFetchInputSchemaFor(false)]] as const) {
+      expect(Object.keys(a["properties"] as object)).toEqual(Object.keys(b["properties"] as object));
+      expect(a["required"]).toEqual(b["required"]);
+    }
+    // `blocked_domains` is DECLARED, so a hook's `updatedInput` adding it stays inside the closed object.
+    expect(Object.keys(webSearchInputSchemaFor(true)["properties"] as object)).toContain("blocked_domains");
   });
 
   test("WebSearch's month is computed AT ADVERTISE TIME, in both variants -- a process that lives across a month boundary advertises the new month", async () => {
