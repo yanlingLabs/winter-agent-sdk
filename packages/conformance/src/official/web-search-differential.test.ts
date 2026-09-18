@@ -204,11 +204,26 @@ const SCENARIOS: Scenario[] = [
 interface ValidationCase {
   id: string;
   input: Record<string, unknown>;
+  /**
+   * A DOCUMENTED, REPORTED difference (see this file's own "KNOWN RED" header): the row is registered
+   * with `test.failing` instead of `test`, so the gated suite exits 0 while the assertion stays
+   * STRICT -- and flips to a real failure the day the difference is closed. `todo`/`skip` would be
+   * wrong: they stop exercising the assertion at all.
+   */
+  knownRed?: string;
 }
 const VALIDATION: ValidationCase[] = [
   { id: "both-domain-lists", input: { query: "differential both lists", allowed_domains: ["a.example"], blocked_domains: ["b.example"] } },
-  { id: "one-character-query", input: { query: "x" } },
-  { id: "empty-query", input: { query: "" } },
+  {
+    id: "one-character-query",
+    input: { query: "x" },
+    knownRed: "the binary's SCHEMA (`minLength: 2`) refuses it before the tool's own validation runs; Winter has no schema-validation step in front of any executor, so `Error: Missing query` is its reachable backstop",
+  },
+  {
+    id: "empty-query",
+    input: { query: "" },
+    knownRed: "the binary's SCHEMA (`minLength: 2`) refuses it before the tool's own validation runs; Winter has no schema-validation step in front of any executor, so `Error: Missing query` is its reachable backstop",
+  },
 ];
 
 /** A model the pinned binary's own catalog marks as rejecting `thinking: disabled`. */
@@ -506,8 +521,17 @@ describe.skipIf(skipReason !== undefined)(`WebSearch output assembly: Winter's a
 
   // --- input validation: no inner request, and the same error text -------------------------------------
 
+  // THE GUARD (whole-branch review MINOR 1). Two rows here and two in `web-fetch-differential.test.ts`
+  // are the branch's four documented reds. Each file guards its OWN rows: one guard covering both would
+  // have to import the other file, whose module body starts loopback servers and a `claude` spawn.
+  test("exactly two rows here are marked knownRed, and they are the two the header documents", () => {
+    const red = VALIDATION.filter((v) => v.knownRed !== undefined);
+    expect(red.map((v) => v.id)).toEqual(["one-character-query", "empty-query"]);
+    for (const v of red) expect(v.knownRed!.length).toBeGreaterThan(20);
+  });
+
   for (const v of VALIDATION) {
-    test(
+    (v.knownRed !== undefined ? test.failing : test)(
       `[${v.id}] input validation: the same refusal text on both sides, and no inner request`,
       async () => {
         const run = await official();

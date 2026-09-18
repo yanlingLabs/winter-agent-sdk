@@ -112,13 +112,30 @@ interface Scenario {
   prompt: string;
   /** Whether a digest pass is expected (a fetched 2xx page). */
   digests: boolean;
+  /**
+   * A DOCUMENTED, REPORTED difference (see this file's own "KNOWN RED" header): the row's
+   * RESULT-TEXT assertion is registered with `test.failing` instead of `test`, so the gated suite
+   * exits 0 while the assertion stays strict -- and flips to a real failure the day the difference is
+   * closed. The row's OTHER assertions (the digest prompt template, the page content) are green and
+   * stay plain `test`: a scenario is red in one specific comparison, never wholesale.
+   *
+   * `todo`/`skip` would be wrong here: they stop exercising the assertion at all.
+   */
+  knownRed?: string;
 }
 
 const SCENARIOS: Scenario[] = [
   { id: "plain-page", what: "a text/plain page (no conversion involved): the whole digest prompt", target: "/plain", prompt: "What does the plain page say?", digests: true },
   { id: "big-page", what: "a page over 100,000 chars: the digest cap and the truncation notice", target: "/big", prompt: "Summarise the big page.", digests: true },
   { id: "html-page", what: "an HTML page: the template around the converted content, and the conversion itself", target: "/page", prompt: 'What is the heading? Quote "exactly".', digests: true },
-  { id: "empty-digest", what: "the digest model answers with empty text", target: "/empty-digest", prompt: "Answer with nothing.", digests: true },
+  {
+    id: "empty-digest",
+    what: "the digest model answers with empty text",
+    target: "/empty-digest",
+    prompt: "Answer with nothing.",
+    digests: true,
+    knownRed: "the binary returns the empty string and lets its main loop render the placeholder; Winter substitutes `No response from model`, and its provider seam cannot tell an empty text block from no text block at all",
+  },
   { id: "no-block-digest", what: "the digest model answers with NO TEXT BLOCK (a lone thinking block)", target: "/no-block-digest", prompt: "Answer with no blocks.", digests: true },
   { id: "redirect-same-host", what: "an absolute same-host, same-port redirect is FOLLOWED", target: "/redirect-same-host", prompt: "Follow the same-host redirect.", digests: true },
   { id: "redirect-relative", what: "a relative redirect is FOLLOWED", target: "/redirect-relative", prompt: "Follow the relative redirect.", digests: true },
@@ -130,7 +147,15 @@ const SCENARIOS: Scenario[] = [
   { id: "redirect-other-port", what: "a same-host redirect to ANOTHER PORT: REDIRECT DETECTED", target: "/redirect-other-port", prompt: "Other-port prompt.", digests: false },
   { id: "redirect-javascript", what: "a redirect to a non-http(s) target: the URL line is withheld", target: "/redirect-javascript", prompt: "Non-http redirect prompt.", digests: false },
   { id: "redirect-blank", what: "a redirect with a BLANK Location", target: "/redirect-blank", prompt: "Blank-location prompt.", digests: false },
-  { id: "invalid-url-unparseable", what: "a url that cannot be parsed at all", target: "not a url", raw: true, prompt: "Unparseable prompt.", digests: false },
+  {
+    id: "invalid-url-unparseable",
+    what: "a url that cannot be parsed at all",
+    target: "not a url",
+    raw: true,
+    prompt: "Unparseable prompt.",
+    digests: false,
+    knownRed: "the binary's SCHEMA (`format: uri`) refuses it first with an InputValidationError; Winter has no schema-validation step in front of any executor, so its tool-level parse-failure text is what answers",
+  },
   { id: "invalid-url-credentials", what: "a url with embedded credentials (a fetch-time reject)", target: "https://user:secret@127.0.0.1:{port}/page", raw: true, prompt: "Credentials prompt.", digests: false },
   { id: "invalid-url-one-label", what: "a hostname with a single label (a fetch-time reject)", target: "https://intranet/page", raw: true, prompt: "One-label prompt.", digests: false },
 ];
@@ -321,6 +346,17 @@ describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned
     240_000,
   );
 
+  // THE GUARD (whole-branch review MINOR 1). Two rows here and two in `web-search-differential.test.ts`
+  // are the branch's four documented reds. Each file guards its OWN rows: one guard covering both would
+  // have to import the other file, whose module body starts loopback servers and a `claude` spawn.
+  // A fifth red therefore shows up as a plain failure, and a fixed red shows up as a `test.failing`
+  // that unexpectedly passed -- which is exactly the signal that this list needs editing.
+  test("exactly two rows here are marked knownRed, and they are the two the header documents", () => {
+    const red = SCENARIOS.filter((s) => s.knownRed !== undefined);
+    expect(red.map((s) => s.id)).toEqual(["empty-digest", "invalid-url-unparseable"]);
+    for (const s of red) expect(s.knownRed!.length).toBeGreaterThan(20);
+  });
+
   test(
     "the binary's own request headers: the documented Accept, and a Claude-User user agent",
     async () => {
@@ -406,7 +442,7 @@ describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned
       240_000,
     );
 
-    test(
+    (scenario.knownRed !== undefined ? test.failing : test)(
       `[${scenario.id}] ${scenario.what}: the tool_result is the digest model's answer, identically`,
       async () => {
         const run = await official();
@@ -443,7 +479,7 @@ describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned
   // --- results that never reach the digest model ---------------------------------------------------------------
 
   for (const scenario of SCENARIOS.filter((s) => !s.digests)) {
-    test(
+    (scenario.knownRed !== undefined ? test.failing : test)(
       `[${scenario.id}] ${scenario.what}: the same message on both sides, and no digest pass`,
       async () => {
         const run = await official();
