@@ -22,7 +22,7 @@
 // TURNDOWN-EQUIVALENT DEFAULTS (the extraction's own phrase), reproduced deliberately close to
 // Turndown's actual `options.js` defaults rather than a generic markdown renderer of this module's
 // own invention: `headingStyle: "setext"` (h1/h2 underlined, h3-h6 atx `#`), `hr: "* * *"`,
-// `bulletListMarker: "*"`, `codeBlockStyle: "indented"` (4-space, never fenced), `emDelimiter: "_"`,
+// `bulletListMarker: "*"` (rendered `*   item`; numbered `1.  item`), `codeBlockStyle: "indented"` (4-space, never fenced), `emDelimiter: "_"`,
 // `strongDelimiter: "**"`, inlined links/images. Turndown's OWN block-element list (no GFM plugin,
 // which this omits exactly as "default options" implies) includes `table`/`tr`/`td`/`th`/`thead`/
 // `tbody`/`tfoot` as ordinary generic blocks -- NOT a markdown table -- so that is what this module
@@ -115,11 +115,18 @@ export function decodeHtmlEntities(input: string): string {
 // --- tag classification -----------------------------------------------------------------------------
 
 const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
-// Subtree discarded entirely, whatever it contains -- `head` is added beyond the extraction's literal
-// "style/script/noscript/iframe" because Turndown itself only ever converts `document.body`; walking
-// this module over a full `<html><head>...` document with no equivalent split would otherwise leak a
-// stray `<title>` as a bogus opening paragraph, which real Turndown never produces.
-const SKIP_TAGS = new Set(["script", "style", "noscript", "iframe", "head", "template", "svg", "math"]);
+// Subtree discarded entirely, whatever it contains. claude removes `style`/`script`/`noscript`/
+// `iframe` before converting; `template`/`svg`/`math` are this module's own additions (markup, not
+// prose). `head` is deliberately NOT here: see `HEAD_TEXT_TAGS` below.
+const SKIP_TAGS = new Set(["script", "style", "noscript", "iframe", "template", "svg", "math"]);
+// THE PAGE TITLE SURVIVES, as the opening paragraph. claude hands Turndown the WHOLE document string,
+// not `document.body`, so the one piece of `head` that is text -- `<title>` -- comes out as the first
+// thing the digest model reads (measured against the pinned binary: its converted content BEGINS with
+// the title). Everything else in `head` is either void (`meta`/`link`/`base`) or already discarded
+// above, so rendering `head` and `title` as ordinary blocks reproduces exactly that and nothing more.
+// An earlier version of this module skipped `head` whole on the assumption that Turndown only ever
+// sees the body; the measurement says otherwise, and the title is useful context for the digest.
+const HEAD_TEXT_TAGS = new Set(["head", "title"]);
 const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 // Turndown's own block-element list minus the tags with a dedicated rule below (heading/hr/pre/
 // blockquote/ul/ol/li) -- every one of these gets the generic "join children, separate blocks with a
@@ -240,8 +247,23 @@ function wrapCode(text: string): string {
   return `${fence}${pad}${text}${pad}${fence}`;
 }
 
+/**
+ * Turndown's list-item shape, from its own `listItem` rule: the marker is `*` plus THREE spaces for a
+ * bullet and `N.` plus TWO for a numbered item, and every continuation line is indented by a FIXED
+ * four spaces -- not by the marker's width, so item 10's continuation still sits at four.
+ *
+ * ONE DISCLOSED DEVIATION, whitespace only: Turndown pads EVERY newline inside an item
+ * (`/\n/gm -> "\n    "`), so a blank line between two paragraphs of one item -- and the line after
+ * an item that ends in a paragraph -- comes out as four bare spaces. This module never emits a
+ * whitespace-only line (the same posture as its blockquote rule, which writes `>` where Turndown
+ * writes `> `): blank lines stay empty. Every non-blank line is byte-identical.
+ */
+const BULLET_MARKER = "*   ";
+const orderedMarker = (n: number): string => `${n}.  `;
+const LIST_CONTINUATION_INDENT = "    ";
+
 function indentContinuation(text: string, marker: string): string {
-  const pad = " ".repeat(marker.length);
+  const pad = LIST_CONTINUATION_INDENT;
   return text
     .split("\n")
     .map((line, i) => (i === 0 ? marker + line : line.length > 0 ? pad + line : line))
@@ -363,7 +385,7 @@ function renderFrameUnbudgeted(frame: Frame): Piece {
     const lines: string[] = [];
     for (const piece of buf) {
       if (piece.tag === "li") {
-        const marker = ordered ? `${n}. ` : "* ";
+        const marker = ordered ? orderedMarker(n) : BULLET_MARKER;
         n += 1;
         lines.push(indentContinuation(piece.text, marker));
       } else if (piece.isBlock) {
@@ -379,6 +401,15 @@ function renderFrameUnbudgeted(frame: Frame): Piece {
   }
 
   if (tag === "li") {
+    // Turndown's `list` rule: a list that CLOSES its parent item sits directly under the item's own
+    // text, one newline down -- never a blank line, which is what every other block gets.
+    let end = buf.length;
+    while (end > 0 && !buf[end - 1]!.isBlock && buf[end - 1]!.text.trim() === "") end -= 1;
+    const last = end > 0 ? buf[end - 1]! : undefined;
+    if (last !== undefined && (last.tag === "ul" || last.tag === "ol") && last.text.length > 0) {
+      const lead = joinPieces(buf.slice(0, end - 1));
+      return { tag, text: lead.length > 0 ? `${lead}\n${last.text}` : last.text, isBlock: true };
+    }
     return { tag, text: joinPieces(buf), isBlock: true };
   }
 
@@ -405,7 +436,7 @@ function renderFrameUnbudgeted(frame: Frame): Piece {
     return { tag, text: wrapCode(joinPieces(buf)), isBlock: false };
   }
 
-  if (GENERIC_BLOCK_TAGS.has(tag)) {
+  if (GENERIC_BLOCK_TAGS.has(tag) || HEAD_TEXT_TAGS.has(tag)) {
     return { tag, text: joinPieces(buf), isBlock: true };
   }
 

@@ -4,9 +4,10 @@
 // on the equivalent model tier.
 //
 // The binary picks a LEAN or a FULL description by model, so it is driven once per tier. Which model
-// ids are lean is the binary's own catalog flag; Winter's rule is its own (`sessionLeanModel`: lean
-// only for a first-party Anthropic session ABOVE the opus tier). The third tier below exists because
-// those two rules can disagree.
+// ids are lean is the binary's own selector (full for the claude-3 line, haiku, sonnet and five named
+// Opus 4.x builds; lean for everything else first-party); Winter's `sessionLeanModel` applies the same
+// test to its own model key. The third tier below exists because an earlier Winter rule drew the line
+// ABOVE the whole opus tier, and Opus 5 is where the two disagreed.
 //
 // SANCTIONED differences -- each asserted as EXACT SURGERY on the text (the binary's string must equal
 // Winter's string with precisely that one edit applied), never skipped and never a loose "contains":
@@ -21,14 +22,9 @@
 // `type` in the binary, the reverse in Winter) is not a difference; the order of the property NAMES and
 // of `required` is asserted separately.
 //
-// KNOWN RED as of 2026-09-18 (findings, reported -- the assertions are deliberately left strict; a red
-// here is NOT a broken harness). All four description comparisons on the haiku and fable tiers are green.
-//   - every `input_schema` test: the binary's schemas carry `"$schema"` (draft 2020-12) and
-//     `"additionalProperties": false`, and WebFetch's `url` carries `"format": "uri"`; Winter's carry none
-//     of the three.
-//   - the opus-5 tier's two description tests: the binary advertises its LEAN texts for `claude-opus-5`
-//     (its catalog marks it lean); Winter's rule is lean only ABOVE the opus tier, so an opus-tier
-//     session is advertised the FULL texts.
+// The Winter side is a first-party Anthropic session, which is the one configuration where Winter
+// advertises the binary's own schema keywords (`$schema`, `additionalProperties: false`, `format`);
+// every other provider is advertised the catalog's portable rendering of the same schema.
 //
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family.
 import { describe, test, expect } from "bun:test";

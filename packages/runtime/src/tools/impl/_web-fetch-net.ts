@@ -125,7 +125,16 @@ function upgradeToHttps(url: URL): URL {
   return upgraded;
 }
 
-/** `validateInput`'s own parse-failure text -- WITH the `Error: ` prefix (fidelity #2). */
+/**
+ * `validateInput`'s own parse-failure text -- WITH the `Error: ` prefix (fidelity #2).
+ *
+ * A real string in claude's binary that NO input can reach there: claude validates a call against the
+ * tool's input schema (`url: format uri`) BEFORE the tool's own validation, so an unparseable URL is
+ * refused by the schema (`InputValidationError: [...] "Invalid URL"`) and anything the schema lets
+ * through also parses here. This runtime has no schema-validation step in front of its executors, so
+ * the same text IS reachable, as the backstop for exactly the inputs claude's schema refuses. It
+ * stops being reachable the day such a step exists.
+ */
 export function parseFailureMessage(raw: string): string {
   return `Error: Invalid URL "${raw}". The URL provided could not be parsed.`;
 }

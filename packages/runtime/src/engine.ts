@@ -300,13 +300,15 @@ import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 // The web tools' session seam (see that module's header for why it is a keyed registry and not the
 // advisor's per-run `replaceExecutor`). Type-only in the other direction, so there is no value cycle.
 import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
+// The model-id half of the lean-prompt rule (`sessionLeanModel`).
+import { claudeModelTakesFullPrompt } from "./provider/lean-prompt.ts";
 // The web tools' per-session description choice (`toolSpecFor`) -- names and both variants come from
 // the descriptor modules, so neither tool name is ever a literal in this file.
 // TEARDOWN ONLY: the per-ROOT-session search client's closer. A module that registers nothing and
 // imports only a type, so this value import pulls in no tool (`tools/impl-isolation.test.ts`).
 import { closeExaSearchClientForSession } from "./tools/impl/_exa-session-client.ts";
-import { WEB_FETCH_CANONICAL_NAME, webFetchDescriptionFor } from "./tools/descriptors/web-fetch.ts";
-import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription } from "./tools/descriptors/web-search.ts";
+import { WEB_FETCH_CANONICAL_NAME, webFetchDescriptionFor, webFetchInputSchemaFor } from "./tools/descriptors/web-fetch.ts";
+import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription, webSearchInputSchemaFor } from "./tools/descriptors/web-search.ts";
 import type { AuxiliaryModelResolution } from "./provider/session-provider.ts";
 import type { ToolSecretResolver } from "./provider/tool-secret.ts";
 
@@ -2988,44 +2990,41 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return resolution.ok && resolution.modelKey === modelKey;
   }
 
-  /** Shared by `sessionLeanModel` and `exploreModelCap`: is `modelKey` at or below the Opus tier (haiku/sonnet/opus), as opposed to Fable, the one tier above it? */
+  /** `exploreModelCap`'s question (claude's `_Ut`): is `modelKey` at or below the Opus TIER (haiku/sonnet/opus), as opposed to Fable, the one tier above it? Not the lean-prompt rule, which reads the model ID -- see `sessionLeanModel`. */
   function isAtOrBelowOpusTier(modelKey: string): boolean {
     return claudeTierMatches(modelKey, "haiku") || claudeTierMatches(modelKey, "sonnet") || claudeTierMatches(modelKey, "opus");
   }
 
   /**
-   * claude's `whenToUseLean` gate (`Iu(mz(model))`, traced): `Iu(e){return d().leanPrompt(e)}` calls
-   * a memoized `B(e)`:
-   *   function B(e){ if(!e)return false; if(env-force-on)return true; if(env-force-off)return false;
-   *     if(!w(e))return true; if(flag)return true; return L("simple_system_prompt",Ye(e)) }
+   * claude's lean-prompt gate (`leanPrompt(model)`), the ONE rule behind every lean/full text choice
+   * in this engine: the Agent tool's `whenToUseLean` listing line and both web tools' descriptions.
+   *
+   * The deterministic core of claude's selector, from the pinned binary:
    *   function w(e){ if(xee(e))return false; let o=Ye(e);
    *     if(hg(o,"lean_prompt")||o==="claude-mythos-5")return false;
-   *     if(o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")||`five dated Opus 4.x
-   *     builds`)return true; return !qs() }
+   *     if(o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")
+   *        ||o==="claude-opus-4-0"||o==="claude-opus-4-1"||o==="claude-opus-4-5"
+   *        ||o==="claude-opus-4-6"||o==="claude-opus-4-7")return true;
+   *     return !qs() }                         // qs(): a first-party Anthropic session
+   * and `leanPrompt = !w(model)` (the remaining branches are env overrides and a remote experiment).
+   * So on Anthropic's own API a model gets the FULL text when its id names the claude-3 line, haiku,
+   * sonnet, or one of the five Opus 4.0-4.7 builds -- and EVERYTHING ELSE is lean: Opus 4.8, Opus 5,
+   * the tier above Opus, and any id the list does not know. Measured against the binary, not only
+   * read out of it: `claude-haiku-4-5` is advertised the full texts, `claude-opus-5` and
+   * `claude-fable-5` the lean ones.
    *
-   * READ CAREFULLY -- `leanPrompt = !w(e)` for the deterministic branch, which INVERTS the naive
-   * reading: `w(e)` is TRUE (ordinary/small-and-known tiers -- haiku, sonnet, claude-3-x, five
-   * dated Opus 4.x builds) means `!w(e)` is FALSE, so THOSE models are NOT unconditionally lean --
-   * they fall through to a default-off feature flag and then a REMOTE, statsig-gated experiment
-   * (`L("simple_system_prompt", ...)`) this repo cannot reproduce from a static binary. `w(e)` is
-   * FALSE only for a model tagged `hg(o,"lean_prompt")` (a per-model catalog attribute Winter's own
-   * catalog does not carry) OR the LITERAL id `"claude-mythos-5"` -- one tier ABOVE the five listed
-   * Opus 4.x builds, i.e. the same "beyond Opus" boundary `_Ut` (the Explore cap, immediately below)
-   * already draws as "Fable." For THOSE, `!w(e)` is TRUE and `B` returns lean UNCONDITIONALLY, no
-   * fallback needed. Confirmed against ground truth: D2's own differential captures ran
-   * `OFFICIAL_MODEL = "claude-haiku-4-5"`, and the official side's captured listing renders
-   * Explore's FULL (non-lean) `whenToUse` -- haiku is not lean.
+   * An earlier reading of the same function drew the line ABOVE the whole opus tier (lean for Fable
+   * only), by asking the slot resolver which TIER a model sits on. That is `_Ut`'s question (the
+   * Explore cap, below), not this one: this rule is a test on the model ID, and Opus 5 sits on the
+   * lean side of it.
    *
-   * DISCLOSED SIMPLIFICATION: Winter reproduces only the deterministic Fable-tier branch, mapped
-   * onto its own four-tier Claude family -- lean for Fable on the "anthropic" provider; normal (the
-   * fuller, safer text) for haiku/sonnet/opus, any non-Claude-family model, or when the tier can't
-   * be determined -- rather than guessing at an unreproducible remote experiment's outcome for
-   * every other model. `hg(o,"lean_prompt")`'s own per-model catalog flag has no Winter analogue
-   * either (disclosed, same reason).
+   * Off Anthropic's own API the answer stays what it has always been here -- never lean: claude's own
+   * `return !qs()` makes a non-first-party session "ordinary", and the fuller text is the safer one
+   * for a model family these texts were not written for.
    */
   function sessionLeanModel(modelKey: string): boolean {
     if (currentProviderIdentity?.providerId !== "anthropic") return false;
-    return !isAtOrBelowOpusTier(modelKey);
+    return !claudeModelTakesFullPrompt(modelKey);
   }
 
   /**
@@ -6186,11 +6185,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // choice is made here, per request, by the same `sessionLeanModel` rule and the same live key the
     // agent listing uses. Per REQUEST, not per run: a `set_model` across the tier boundary moves the
     // description with it, and WebSearch's month (`webSearchDescription` reads the clock when called)
-    // is computed at advertise time. Schema and advertised name are the descriptor's own, untouched.
+    // is computed at advertise time. The SCHEMA has two renderings on the same axis of "who is being
+    // told": claude's own bytes (dialect marker, closed object, `format`) for a session on Anthropic's
+    // own API, the catalog's portable shape for every other provider -- see the descriptors for why.
     if (descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME || descriptor.canonicalName === WEB_SEARCH_CANONICAL_NAME) {
       const lean = sessionLeanModel(currentProviderIdentity?.modelKey ?? currentModel);
-      const description = descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME ? webFetchDescriptionFor(lean) : webSearchDescription(lean);
-      return { name: descriptor.advertisedName, description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
+      const firstParty = currentProviderIdentity?.providerId === "anthropic";
+      const isFetch = descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME;
+      return {
+        name: descriptor.advertisedName,
+        description: isFetch ? webFetchDescriptionFor(lean) : webSearchDescription(lean),
+        inputSchema: isFetch ? webFetchInputSchemaFor(firstParty) : webSearchInputSchemaFor(firstParty),
+      };
     }
     if (descriptor.canonicalName !== AGENT_TOOL_CANONICAL_NAME) {
       return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };

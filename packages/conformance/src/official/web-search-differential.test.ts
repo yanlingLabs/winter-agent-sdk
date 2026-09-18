@@ -29,8 +29,8 @@
 //     the tool's own validation runs, with `InputValidationError: [...] "Too small: expected string to
 //     have >=2 characters"`; Winter answers `Error: Missing query`. (That text was never observed from
 //     the binary for any string input: the schema refuses the short ones and the tool ACCEPTS the rest.)
-//   - the whitespace-only query: the binary accepts a two-space query and searches with it, raw;
-//     Winter's executor trims first and refuses.
+//     Red until Winter has a schema-validation step in front of its executors at all -- it has none,
+//     for any tool, so `Error: Missing query` is Winter's reachable backstop for these inputs.
 //
 // GATED (`RUN_OFFICIAL_CAPTURE=1`) like every file in this family; permission mode
 // `bypassPermissions`, as everywhere else here. See `web-tools-script.ts` for the hermeticity guard.
@@ -438,12 +438,31 @@ describe.skipIf(skipReason !== undefined)(`WebSearch output assembly: Winter's a
       const run = await official();
       const result = officialResult(run, WHITESPACE_ID);
       const searched = run.requests.some((r) => isInnerSearchRequest(r) && firstUserText(r) === INNER_SEARCH_USER_PREFIX + WHITESPACE_QUERY);
-      const winter = await createWebSearchExecutor().execute({ query: WHITESPACE_QUERY }, minimalCtx("websearch-whitespace-query"));
+      // Winter's executor runs against a WIRED session (as in `winterInnerRequest`): an unwired one is
+      // refused for the missing wiring, which would say nothing about the INPUT decision under test.
+      const sessionId = `websearch-whitespace-${crypto.randomUUID()}`;
+      const winterPrompts: string[] = [];
+      const provider: Provider = {
+        async generate(input) {
+          winterPrompts.push(flatText(input.messages[0]!.content));
+          return { kind: "text", text: "no search", usage: { inputTokens: 1, outputTokens: 1 } };
+        },
+      };
+      registerWebSessionRuntime(sessionId, { web: resolveWebToolsConfig(undefined), sessionModel: () => ({ provider, model: "prova/session-model" }), accountUsage() {} });
+      let winter;
+      try {
+        winter = await createWebSearchExecutor().execute({ query: WHITESPACE_QUERY }, minimalCtx(sessionId));
+      } finally {
+        resetWebSessionRuntimesForTest();
+      }
       console.log(`\n--- [${WHITESPACE_ID}] official (isError=${result.isError}, searched=${searched}) ---\n${JSON.stringify(result.content)}\n--- winter executor (isError=${winter.isError === true}) ---\n${JSON.stringify(winter.output)}`);
       // The ASSEMBLER, given the raw query, reproduces whatever the binary rendered for it.
       if (searched) expect(assembleWebSearchOutput(WHITESPACE_QUERY, toWinterEvents(WHITESPACE_BLOCKS))).toBe(result.content);
       // The EXECUTOR's decision must match the binary's.
       expect(winter.isError === true, `the binary ${searched ? "ACCEPTED the query and searched" : "refused the query"}; Winter's executor must decide the same`).toBe(result.isError);
+      // ...and an accepted query reaches Winter's inner pass exactly as it reached the binary's: RAW.
+      expect(winterPrompts.length > 0, "Winter's executor must search exactly when the binary does").toBe(searched);
+      if (searched) expect(winterPrompts[0]).toBe(INNER_SEARCH_USER_PREFIX + WHITESPACE_QUERY);
     },
     180_000,
   );
