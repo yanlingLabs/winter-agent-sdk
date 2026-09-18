@@ -258,9 +258,45 @@ interface Frame {
   attrs: Readonly<Record<string, string>>;
   buf: Piece[];
   insidePre: boolean;
+  /** How many `blockquote`/`ul`/`ol` ancestors (inclusive of this frame, if it is one) are open -- security review finding N2. */
+  prefixDepth: number;
 }
 
-function renderFrame(frame: Frame): Piece {
+/**
+ * Security review finding N2: the running RENDERED-OUTPUT budget. Every level of `blockquote`/`ul`/
+ * `ol` nesting re-splits and re-prefixes EVERY LINE of its own content again (`> ` per blockquote
+ * level, marker+indent per list level) -- so N nesting levels cost O(N) work on the SAME growing
+ * text, not O(1). Two adversarial inputs measured before this fix: 512 nested `<blockquote>` around
+ * ~200k `<br>`-separated lines (1 MiB HTML in) produced 214 MB of output in 37.7s at 7.4 GB peak
+ * RSS; 500 nested `<blockquote>` around a 400,000-line `<pre>` (806 KB in) produced 402 MB in 40.8s
+ * at 7.5 GB. `MAX_DEPTH` (512) did not save either case -- both landed just inside it.
+ *
+ * THE FIX IS TWO-LAYERED, matching the report: (1) `MAX_PREFIX_DEPTH` below caps blockquote/ul/ol
+ * nesting SPECIFICALLY at 32 (deeper ones go transparent -- no additional prefix, but their content
+ * is not lost), which bounds the multiplication factor directly and is what actually stops the two
+ * cases above; (2) this budget is the BACKSTOP for whatever shape (1) does not anticipate: it is
+ * spent by the LENGTH of every frame's own rendered text as frames close, and throws
+ * `HtmlBudgetExceededError` the moment it goes negative. `convertFetchedHtml`'s existing `catch`
+ * already falls back to the raw HTML on ANY conversion throw (claude's own "turndown throws -> raw
+ * HTML" rule) -- and since only the first 100,000 characters of whatever comes back ever reach the
+ * digest model anyway, a hostile page that trips this budget costs no more than one bounded parse.
+ */
+const HTML_RENDER_BUDGET_BYTES = 6 * 1024 * 1024;
+
+export class HtmlBudgetExceededError extends Error {}
+
+/** `blockquote`/`ul`/`ol` nesting DEEPER than this goes transparent -- the frame is never pushed, so it adds no further `> `/marker+indent prefix layer, though its content still reaches its nearest tracked ancestor (never silently dropped). Independent of, and much narrower than, `MAX_DEPTH` below -- THESE THREE tags are the only ones whose prefix cost multiplies with every additional level. */
+const MAX_PREFIX_DEPTH = 32;
+const PREFIX_TAGS = new Set(["blockquote", "ul", "ol"]);
+
+function renderFrame(frame: Frame, budget: { remaining: number }): Piece {
+  const piece = renderFrameUnbudgeted(frame);
+  budget.remaining -= piece.text.length;
+  if (budget.remaining < 0) throw new HtmlBudgetExceededError("WebFetch: the HTML->markdown conversion's output budget was exceeded");
+  return piece;
+}
+
+function renderFrameUnbudgeted(frame: Frame): Piece {
   const { tag, attrs, buf, insidePre } = frame;
 
   if (SKIP_TAGS.has(tag)) return { tag, text: "", isBlock: false };
@@ -297,15 +333,30 @@ function renderFrame(frame: Frame): Piece {
   }
 
   if (tag === "ul" || tag === "ol") {
+    // Security review finding N5: this used to DROP every non-`li` piece outright
+    // (`if (piece.tag !== "li") continue`) -- a bare nested `<ul>` directly inside another `<ul>`
+    // (not wrapped in an `<li>`, which browsers and Turndown both still render) or stray text/a
+    // `<div>` sitting directly inside a list lost its content entirely. Every piece is now emitted:
+    // an `li` gets its marker and indent as before; another BLOCK piece (a bare nested list, a
+    // wrapped `<div>`, ...) becomes its own line; stray INLINE content (bare text, an anchor) is
+    // appended onto the previous line so it does not fabricate a spurious empty bullet.
     const ordered = tag === "ol";
     let n = Number.parseInt(attrs["start"] ?? "1", 10);
     if (!Number.isFinite(n)) n = 1;
     const lines: string[] = [];
     for (const piece of buf) {
-      if (piece.tag !== "li") continue;
-      const marker = ordered ? `${n}. ` : "* ";
-      n += 1;
-      lines.push(indentContinuation(piece.text, marker));
+      if (piece.tag === "li") {
+        const marker = ordered ? `${n}. ` : "* ";
+        n += 1;
+        lines.push(indentContinuation(piece.text, marker));
+      } else if (piece.isBlock) {
+        const t = piece.text.trim();
+        if (t.length > 0) lines.push(t);
+      } else {
+        if (piece.text.trim().length === 0) continue;
+        if (lines.length > 0) lines[lines.length - 1] += piece.text;
+        else lines.push(piece.text);
+      }
     }
     return { tag, text: lines.join("\n"), isBlock: true };
   }
@@ -383,6 +434,9 @@ function renderFrame(frame: Frame): Piece {
 // regardless of how deep the real markup goes.
 const MAX_DEPTH = 512;
 
+/** Tags whose transparent (depth-capped) skip should still leave a SEPARATOR behind (security review nit): without one, text on either side of a skipped block-level element runs together (`DEEP-TEXTdeep paradeep bold`), which is a smaller, cheaper fix than fully reconstructing the block it would have been. */
+const BLOCK_LIKE_TAGS = new Set<string>([...GENERIC_BLOCK_TAGS, ...HEADING_TAGS, "li", "ul", "ol", "blockquote", "pre", "hr"]);
+
 /** HTML5's own implied-end-tag rule, narrowly: does opening `newTag` close the CURRENT top frame first? */
 function closesOnSiblingOpen(topTag: string, newTag: string): boolean {
   if (topTag === "li") return newTag === "li";
@@ -396,12 +450,14 @@ function closesOnSiblingOpen(topTag: string, newTag: string): boolean {
 /**
  * Converts `html` to markdown using the rules above, driven by Bun's `HTMLRewriter` as a SAX walk
  * (see the module header). Never throws for malformed markup on its own -- `HTMLRewriter` tolerates
- * it the way a real HTML5 parser does -- but a genuine internal failure is caught and reported so the
- * caller can fall back to the raw HTML, matching claude's own "turndown throwing -> raw HTML" rule.
+ * it the way a real HTML5 parser does -- but a genuine internal failure (including
+ * `HtmlBudgetExceededError`, security review finding N2) is caught and reported so the caller can
+ * fall back to the raw HTML, matching claude's own "turndown throwing -> raw HTML" rule.
  */
 export async function htmlToMarkdown(html: string): Promise<string> {
-  const root: Frame = { tag: "#root", attrs: {}, buf: [], insidePre: false };
+  const root: Frame = { tag: "#root", attrs: {}, buf: [], insidePre: false, prefixDepth: 0 };
   const stack: Frame[] = [root];
+  const budget = { remaining: HTML_RENDER_BUDGET_BYTES };
 
   /** Closes every frame from the top of the stack down to and including `frame`, rendering each into its NEW top's buf. A no-op if `frame` was already closed (not found). */
   function closeFrame(frame: Frame): void {
@@ -409,7 +465,7 @@ export async function htmlToMarkdown(html: string): Promise<string> {
     if (idx === -1) return;
     while (stack.length > idx) {
       const closed = stack.pop()!;
-      stack[stack.length - 1]!.buf.push(renderFrame(closed));
+      stack[stack.length - 1]!.buf.push(renderFrame(closed, budget));
     }
   }
 
@@ -431,12 +487,29 @@ export async function htmlToMarkdown(html: string): Promise<string> {
 
         if (parent !== root && closesOnSiblingOpen(parent.tag, tag)) closeFrame(parent);
 
-        if (stack.length > MAX_DEPTH) return; // transparent: content attaches to the deepest tracked frame instead.
+        const top = stack[stack.length - 1]!;
+
+        if (stack.length > MAX_DEPTH) {
+          // Transparent: content attaches to the deepest tracked frame instead (security review
+          // finding M4, part 3) -- but leave a SEPARATOR so it does not run into its neighbours
+          // (security review nit).
+          if (BLOCK_LIKE_TAGS.has(tag)) top.buf.push({ tag: "#text", text: "\n\n", isBlock: false });
+          return;
+        }
+
+        const isPrefixTag = PREFIX_TAGS.has(tag);
+        const newPrefixDepth = top.prefixDepth + (isPrefixTag ? 1 : 0);
+        if (isPrefixTag && newPrefixDepth > MAX_PREFIX_DEPTH) {
+          // Security review finding N2: a blockquote/ul/ol past the prefix-depth cap is ALSO
+          // transparent -- its own content still reaches the nearest tracked ancestor, it just adds
+          // no further `> `/marker-and-indent layer, which is what bounds the multiplication.
+          top.buf.push({ tag: "#text", text: "\n\n", isBlock: false });
+          return;
+        }
 
         const attrs: Record<string, string> = {};
         for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
-        const top = stack[stack.length - 1]!;
-        const frame: Frame = { tag, attrs, buf: [], insidePre: top.insidePre || tag === "pre" };
+        const frame: Frame = { tag, attrs, buf: [], insidePre: top.insidePre || tag === "pre", prefixDepth: newPrefixDepth };
         stack.push(frame);
         el.onEndTag(() => closeFrame(frame));
       },

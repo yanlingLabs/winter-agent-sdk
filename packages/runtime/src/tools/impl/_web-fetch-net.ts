@@ -31,10 +31,39 @@
 //      otherwise re-resolve internally with its own cache, a SECOND, unpinned query an attacker's
 //      rebinding DNS answer can win. A resolution failure refuses outright (there is no address left
 //      to fail open onto).
+//
+// SECOND FIX ROUND (2026-09-18), against the first round's own regressions and residuals:
+//   N1 `source.pipe(decompressor)` never forwarded a SOURCE error to the decoder -- a hop timeout,
+//      `ctx.signal`, or a socket reset left the decoder waiting forever for an `end`/`error` it was
+//      never going to get, an INFINITE hang (not even the 60 s timeout saved it, since the timeout's
+//      own abort is exactly the source error that failed to propagate). `node:stream/promises`'
+//      `pipeline()` replaces `.pipe()` throughout: it forwards a source error to every downstream
+//      stream and guarantees every stream is destroyed, proven against this exact Bun version.
+//   N3 the byte-meter now sits BEFORE the decoder, capping COMPRESSED input independently of the
+//      (still-enforced) decompressed-output cap -- an endless stream of empty stored deflate blocks
+//      has near-infinite input and almost no output, so the output cap alone never trips. Encoded
+//      bodies get a LOWER input cap (`WEB_FETCH_MAX_ENCODED_BYTES`, 2 MiB) than identity ones: even
+//      capped at the full 10 MiB, empty-block input measurably cost ~1.4 GB of transient RSS inside
+//      Bun's own zlib binding, independent of this module's own bookkeeping.
+//   N4 pinning to `addresses[0]` had no fallback: a broken-IPv6 network turns every dual-stack site
+//      into a full 60 s timeout, because `dns.lookup(...,{all:true})` orders results (often IPv6
+//      first) and this module tried only the first one. Every classified-public address is now a
+//      CONNECT-phase candidate, tried in resolution order with a short per-candidate connect budget;
+//      a candidate is abandoned only before any `Response` comes back (a connect/TLS failure), never
+//      once bytes have arrived.
+//   Minor: `Content-Encoding` decodes MULTIPLE tokens in REVERSE (undo) order and refuses an
+//      unrecognised one outright rather than passing raw compressed bytes through as garbled "text";
+//      the `Host` header and TLS `tls.serverName` now use `current.host` (port included) with a
+//      single trailing dot stripped (RFC 6066 forbids it in SNI, and Bun's TLS layer refused the
+//      connection outright over it); a network-error message relays Bun's own structural `err.code`
+//      (`"ConnectionRefused"`, `"DEPTH_ZERO_SELF_SIGNED_CERT"`, ...) instead of the near-useless
+//      `err.name` (almost always the bare string `"Error"`), never `.message`; a sub-second timeout
+//      no longer rounds down to "0s".
 import { STATUS_CODES } from "node:http";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { isDomainBlocked } from "./_domains.ts";
@@ -168,6 +197,8 @@ function isEligibleAutoFollow(current: URL, target: URL, scope: PreapprovedMatch
   return true;
 }
 
+export const WEB_FETCH_MAX_ENCODED_BYTES = 2 * 1024 * 1024;
+
 function decompressorFor(token: string) {
   switch (token) {
     case "gzip":
@@ -182,45 +213,113 @@ function decompressorFor(token: string) {
   }
 }
 
+export type BodyReadResult =
+  | { kind: "ok"; body: Uint8Array }
+  | { kind: "output-cap-exceeded" }
+  | { kind: "input-cap-exceeded" }
+  | { kind: "unsupported-encoding"; encoding: string };
+
 /**
  * Reads up to `WEB_FETCH_MAX_BYTES` of DECOMPRESSED output, streaming through the matching decoder
- * (finding B2). The cap is enforced as bytes ARRIVE, never after fully materialising the body: for a
- * gzip/brotli bomb (a few KB of input, gigabytes of output) this reads only the handful of decoded
- * chunks needed to cross the cap before the stream is destroyed, bounding both time and peak memory
- * to the cap's own order of magnitude regardless of the compression ratio. `undefined` means
- * exceeded -- a caller error (network drop, abort, malformed compressed data) PROPAGATES instead of
- * being swallowed here, so the caller's own try/catch (B1) can classify it as aborted/timeout/
- * network-error using the SAME signal it already has in scope.
+ * chain (finding B2, and finding N1/N3 below). `undefined`-shaped results (the two `-cap-exceeded`
+ * kinds, and `unsupported-encoding`) are ORDINARY VALUES; a genuine stream error (network drop, the
+ * hop timeout, a turn abort, malformed compressed data) PROPAGATES instead of being swallowed here,
+ * so the caller's own try/catch (B1) classifies it as aborted/timeout/network-error using the SAME
+ * signal it already has in scope.
+ *
+ * `Content-Encoding` may list SEVERAL codings (`"gzip, br"`), applied in that order when the server
+ * encoded the body -- decoding undoes them in REVERSE, so the decoder chain is built over the
+ * REVERSED token list. An unrecognised coding is refused OUTRIGHT, before a single byte is read: the
+ * earlier version silently passed an unknown coding's raw compressed bytes through as "text," which a
+ * `TextDecoder` renders as garbled nonsense reaching the digest model -- wrong, not merely ugly.
+ *
+ * TWO independent caps, finding N3: `WEB_FETCH_MAX_BYTES` bounds the DECOMPRESSED output exactly as
+ * B2 already did, but for an ENCODED body that alone is not enough -- an endless stream of empty
+ * stored deflate blocks has near-infinite COMPRESSED input and almost no decompressed output, so the
+ * output cap never trips while the input read (and the decoder's own internal buffering) runs
+ * unbounded. `WEB_FETCH_MAX_ENCODED_BYTES` (2 MiB, well below `WEB_FETCH_MAX_BYTES`) caps the
+ * COMPRESSED bytes read off the wire for any body carrying a real `Content-Encoding`; identity bodies
+ * keep the full 10 MiB cap, since there is no decompression amplification to bound there.
+ *
+ * `pipeline()`, not `.pipe()` (finding N1): `.pipe()` never forwards a SOURCE stream's own `error`
+ * event to what it is piped into, so a source that errors (the hop timeout firing, `ctx.signal`
+ * aborting, a socket reset) left a downstream decoder waiting on an `end`/`error` it would never
+ * receive -- an unconditional hang, worse than any cap this function enforces itself. `pipeline()`
+ * forwards a source error to every stream in the chain and guarantees each one is destroyed,
+ * measured against this exact Bun version (a 400 ms `AbortSignal.timeout` on a stalled body returned
+ * a catchable `TimeoutError` in ~400 ms; a mid-body socket reset returned in ~50 ms; neither hung).
  */
-async function readBodyCapped(response: Response, contentEncoding: string): Promise<Uint8Array | undefined> {
-  if (response.body === null || response.body === undefined) return new Uint8Array(0);
-  const token = (contentEncoding.split(",")[0] ?? "").trim().toLowerCase();
-  const decompressor = decompressorFor(token);
+async function readBodyCapped(response: Response, contentEncoding: string): Promise<BodyReadResult> {
+  if (response.body === null || response.body === undefined) return { kind: "ok", body: new Uint8Array(0) };
+
+  const tokens = contentEncoding
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0 && t !== "identity");
+  const decoders: Transform[] = [];
+  for (const token of [...tokens].reverse()) {
+    const decoder = decompressorFor(token);
+    if (decoder === undefined) return { kind: "unsupported-encoding", encoding: token };
+    decoders.push(decoder);
+  }
+  const inputCap = decoders.length > 0 ? WEB_FETCH_MAX_ENCODED_BYTES : WEB_FETCH_MAX_BYTES;
+
   const source = Readable.fromWeb(response.body as unknown as WebReadableStream<Uint8Array>);
-  const stream: NodeJS.ReadableStream = decompressor !== undefined ? source.pipe(decompressor) : source;
+  let inBytes = 0;
+  let verdict: "input-cap-exceeded" | "output-cap-exceeded" | undefined;
+  const meter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      inBytes += chunk.byteLength;
+      if (inBytes > inputCap) {
+        verdict = "input-cap-exceeded";
+        cb(new Error("WebFetch: input cap exceeded"));
+      } else {
+        cb(null, chunk);
+      }
+    },
+  });
+
   const chunks: Buffer[] = [];
   let total = 0;
-  try {
-    for await (const chunk of stream) {
+  const sink = async (src: NodeJS.ReadableStream): Promise<void> => {
+    for await (const chunk of src) {
       const buf = chunk as Buffer;
       total += buf.byteLength;
-      if (total > WEB_FETCH_MAX_BYTES) return undefined;
+      if (total > WEB_FETCH_MAX_BYTES) {
+        verdict = "output-cap-exceeded";
+        throw new Error("WebFetch: output cap exceeded");
+      }
       chunks.push(buf);
     }
-  } finally {
-    // Destroying the SOURCE (not just the decompressor) stops the underlying HTTP read immediately;
-    // for the identity path `stream === source`, this is the same object.
-    source.destroy();
-    decompressor?.destroy();
+  };
+
+  try {
+    await pipeline(source, meter, ...decoders, sink);
+  } catch (err) {
+    if (verdict !== undefined) return { kind: verdict };
+    throw err;
   }
-  return new Uint8Array(Buffer.concat(chunks, total));
+  return { kind: "ok", body: new Uint8Array(Buffer.concat(chunks, total)) };
+}
+
+interface ConnectCandidate {
+  /** An IP literal, unbracketed. */
+  address: string;
+  family: 4 | 6;
 }
 
 interface ResolvedTarget {
-  /** What the fetch actually connects to -- an IP literal, unbracketed. */
-  connectAddress: string;
-  family: 4 | 6;
   verdict: PrivateAddressFinding;
+  /**
+   * Every candidate to CONNECT to, in resolution order (finding N4). Used only when `verdict` is
+   * public: `dns.lookup(..., {all:true})` orders its answers (often IPv6 first on a dual-stack
+   * machine), and pinning to `candidates[0]` alone means a network with broken IPv6 turns every
+   * dual-stack site into a full timeout instead of falling back to the next, working address --
+   * EVERY address here already went through the SAME classification `verdict` summarises (a private
+   * one among them refuses outright, before any candidate is ever tried), so advancing through this
+   * list on a connect failure never reaches an address the policy would have refused.
+   */
+  candidates: readonly ConnectCandidate[];
 }
 
 /**
@@ -230,20 +329,23 @@ interface ResolvedTarget {
  * (and possibly differently) resolved one. `undefined` means resolution genuinely failed or answered
  * no addresses -- the caller refuses outright; there is no address left to fail open onto.
  *
- * NIT, disclosed rather than fixed: Bun's `fetch` honours `HTTPS_PROXY`/`https_proxy` (and the http/
- * no_proxy equivalents) at the process level. Pinning the connection to a resolved IP says nothing
- * about where the request ACTUALLY goes when a proxy is configured -- the proxy, not this address, is
- * the real destination, and the proxy itself resolves `hostname` a second time, outside anything this
- * module can see or classify. This is an environment-level trust boundary the private-address policy
- * cannot reach into; a host that must guarantee the check's meaning under a proxy needs to control
- * (or refuse) proxy env vars itself.
+ * NIT, corrected (security review round 2 -- the FIRST round's version of this comment was factually
+ * wrong): Bun's `fetch` honours `HTTPS_PROXY`/`https_proxy` at the process level, but MEASURED against
+ * a real proxy, pinning to the resolved IP SURVIVES it -- the proxy receives `CONNECT
+ * [<pinned-ip>]:443`, not the logical hostname, so it never re-resolves `hostname` itself, and proxy
+ * auth (if any) reaches only the proxy, never the origin. The real caveat is narrower: a proxy that
+ * allowlists by HOSTNAME may refuse an IP-literal `CONNECT` outright, and its refusal (a 502) then
+ * reaches the caller as `WebFetch`'s own generic "the response body was not retrieved... if this URL
+ * requires authentication" wording -- a misattribution (the proxy refused the CONNECT, not the
+ * origin demanding credentials), disclosed here since nothing in this module can tell the two apart
+ * from a bare 502.
  */
 async function resolveTarget(hostname: string, resolveHost: (hostname: string) => Promise<readonly string[]>): Promise<ResolvedTarget | undefined> {
   const bare = stripIpv6Brackets(hostname);
   const literalFamily = isIP(bare);
   if (literalFamily !== 0) {
     const verdict = classifyIpLiteral(bare) ?? { class: "public" as const };
-    return { connectAddress: bare, family: literalFamily as 4 | 6, verdict };
+    return { verdict, candidates: [{ address: bare, family: literalFamily as 4 | 6 }] };
   }
   const reserved = classifyReservedName(hostname);
   let addresses: readonly string[];
@@ -253,23 +355,41 @@ async function resolveTarget(hostname: string, resolveHost: (hostname: string) =
     return undefined;
   }
   if (addresses.length === 0) return undefined;
-  const familyOf = (addr: string): 4 | 6 => {
-    const f = isIP(addr);
-    return f === 6 ? 6 : 4;
-  };
+  const familyOf = (addr: string): 4 | 6 => (isIP(addr) === 6 ? 6 : 4);
+  const candidates: ConnectCandidate[] = addresses.map((address) => ({ address, family: familyOf(address) }));
   if (reserved !== undefined) {
-    // A reserved NAME is private regardless of what it resolves to -- but a connect address is still
-    // needed if the policy ends up "allow," so resolution runs anyway, best-effort.
-    const first = addresses[0]!;
-    return { connectAddress: first, family: familyOf(first), verdict: reserved };
+    // A reserved NAME is private regardless of what it resolves to -- but candidates are still
+    // gathered in case the policy ends up "allow," best-effort.
+    return { verdict: reserved, candidates };
   }
   for (const address of addresses) {
     const verdict = classifyResolvedAddress(address);
-    if (verdict.class === "private") return { connectAddress: address, family: familyOf(address), verdict };
+    if (verdict.class === "private") return { verdict, candidates };
   }
-  const first = addresses[0]!;
-  return { connectAddress: first, family: familyOf(first), verdict: { class: "public" } };
+  return { verdict: { class: "public" }, candidates };
 }
+
+/** The DNS root's trailing dot (RFC 6066 forbids it in a TLS SNI `server_name`; Bun's own TLS layer refuses the handshake outright over it). Stripped for BOTH `tls.serverName` and the `Host` header -- a security review minor. */
+function stripTrailingDot(hostname: string): string {
+  return hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+}
+
+/** The `Host` header and TLS SNI name for `url` -- `url.host` (port included, security review minor: the earlier version used `.hostname` alone and silently dropped a non-default port), dot-stripped. */
+function hostAndSniFor(url: URL): { host: string; sni: string } {
+  const sni = stripTrailingDot(url.hostname);
+  const host = url.port !== "" ? `${sni}:${url.port}` : sni;
+  return { host, sni };
+}
+
+/** A connect-phase failure's safe label: Bun's own structural `err.code` (`"ConnectionRefused"`, `"DEPTH_ZERO_SELF_SIGNED_CERT"`, ...) when it is a non-empty string, else the error's NAME -- never `.message` (security review minor: `err.name` is almost always the bare string `"Error"`, which tells the model nothing; `.code` is what actually distinguishes a refused connection from a bad certificate). */
+function errorLabel(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && code.length > 0) return code;
+  return err instanceof Error ? err.name : "unknown error";
+}
+
+/** How long ONE candidate address gets to complete its TCP/TLS connect before this module gives up on it and tries the next (finding N4) -- short relative to the whole hop's own `timeoutMs`, so one unreachable address cannot eat the entire budget when a working one is still available. */
+const CONNECT_BUDGET_MS = 10_000;
 
 /**
  * Performs the whole fetch, including the manual redirect walk -- one HTTP request per hop, each
@@ -316,23 +436,66 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
 
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = opts.signal !== undefined ? AbortSignal.any([opts.signal, timeoutSignal]) : timeoutSignal;
-
-    // Pin the CONNECTION to the address just resolved and classified (finding M6): the logical
-    // hostname travels as `Host` (virtual hosting) and `tls.serverName` (certificate validation by
-    // name), never as the DNS name `fetch()` itself would otherwise resolve a SECOND, unpinned time.
-    const connectUrl = new URL(current.toString());
-    connectUrl.hostname = resolved.family === 6 ? `[${resolved.connectAddress}]` : resolved.connectAddress;
+    const { host: hostHeader, sni } = hostAndSniFor(current);
 
     let response: Response;
     let outcome: WebFetchNetOutcome | undefined;
     try {
-      response = await fetchImpl(connectUrl.toString(), {
-        redirect: "manual",
-        headers: { Accept: "text/markdown, text/html, */*", "User-Agent": opts.userAgent, Host: current.hostname },
-        signal,
-        decompress: false,
-        tls: { serverName: current.hostname },
-      });
+      // Try every classified candidate address in order (finding N4), abandoning one ONLY before a
+      // `Response` comes back (a connect/TLS failure) -- never once bytes have arrived. Every attempt
+      // carries the FULL hop `signal` (never a shortened one): the connect BUDGET is a separate,
+      // LOCAL race against a timer, not a second abort signal handed to `fetchImpl` -- an abort
+      // signal that fired the request itself, so shortening it for a candidate that goes on to
+      // SUCCEED would then wrongly cut its own BODY read short later, at the budget's 10 s mark
+      // rather than the real, full hop timeout. The losing side of a race (a candidate that is still
+      // connecting when the next one starts) keeps running in the background and is never awaited
+      // again; its own eventual settlement is swallowed so it can never become an unhandled rejection.
+      let connectFailure: unknown;
+      let connected: Response | undefined;
+      for (let i = 0; i < resolved.candidates.length; i++) {
+        const candidate = resolved.candidates[i]!;
+        const isLast = i === resolved.candidates.length - 1;
+        // Pin the CONNECTION to the address just resolved and classified (finding M6): the logical
+        // hostname travels as `Host` (virtual hosting) and `tls.serverName` (certificate validation by
+        // name), never as the DNS name `fetch()` itself would otherwise resolve a SECOND, unpinned time.
+        const connectUrl = new URL(current.toString());
+        connectUrl.hostname = candidate.family === 6 ? `[${candidate.address}]` : candidate.address;
+        const attempt = fetchImpl(connectUrl.toString(), {
+          redirect: "manual",
+          headers: { Accept: "text/markdown, text/html, */*", "User-Agent": opts.userAgent, Host: hostHeader },
+          signal,
+          decompress: false,
+          tls: { serverName: sni },
+        });
+        attempt.catch(() => {}); // see the comment above: a background loser must never surface as unhandled.
+        if (isLast) {
+          try {
+            connected = await attempt;
+          } catch (err) {
+            connectFailure = err;
+          }
+          break;
+        }
+        const settled = await Promise.race([
+          attempt.then((r): { ok: true; r: Response } => ({ ok: true, r })).catch((e: unknown): { ok: false; e: unknown } => ({ ok: false, e })),
+          new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), CONNECT_BUDGET_MS)),
+        ]);
+        if (settled === "timed-out") {
+          connectFailure = new Error("WebFetch: candidate connect budget exceeded");
+          continue;
+        }
+        if (!settled.ok) {
+          connectFailure = settled.e;
+          // The WHOLE hop is out of time or the turn was aborted -- stop trying candidates; the outer
+          // catch below classifies this exactly as it always has.
+          if (opts.signal?.aborted === true || timeoutSignal.aborted) break;
+          continue;
+        }
+        connected = settled.r;
+        break;
+      }
+      if (connected === undefined) throw connectFailure ?? new Error("WebFetch: no candidate address could be reached");
+      response = connected;
 
       if (REDIRECT_STATUSES.has(response.status)) {
         await response.body?.cancel().catch(() => {});
@@ -368,18 +531,27 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
         const retryAfter = rawRetryAfter !== null && RETRY_AFTER_RE.test(rawRetryAfter) ? rawRetryAfter : undefined;
         outcome = { kind: "http-error", status: response.status, statusText: reasonPhrase(response.status), ...(retryAfter !== undefined ? { retryAfter } : {}) };
       } else {
-        const body = await readBodyCapped(response, response.headers.get("content-encoding") ?? "");
-        if (body === undefined) {
-          outcome = { kind: "size-exceeded", message: `The response body exceeded WebFetch's ${WEB_FETCH_MAX_BYTES.toLocaleString("en-US")}-byte limit and was not retrieved.` };
-        } else {
-          outcome = {
-            kind: "success",
-            finalUrl: current.toString(),
-            status: response.status,
-            statusText: reasonPhrase(response.status),
-            contentType: response.headers.get("content-type") ?? "",
-            body,
-          };
+        const bodyResult = await readBodyCapped(response, response.headers.get("content-encoding") ?? "");
+        switch (bodyResult.kind) {
+          case "ok":
+            outcome = {
+              kind: "success",
+              finalUrl: current.toString(),
+              status: response.status,
+              statusText: reasonPhrase(response.status),
+              contentType: response.headers.get("content-type") ?? "",
+              body: bodyResult.body,
+            };
+            break;
+          case "output-cap-exceeded":
+            outcome = { kind: "size-exceeded", message: `The response body exceeded WebFetch's ${WEB_FETCH_MAX_BYTES.toLocaleString("en-US")}-byte limit and was not retrieved.` };
+            break;
+          case "input-cap-exceeded":
+            outcome = { kind: "size-exceeded", message: `The response's encoded body exceeded WebFetch's ${WEB_FETCH_MAX_ENCODED_BYTES.toLocaleString("en-US")}-byte limit for compressed content and was not retrieved.` };
+            break;
+          case "unsupported-encoding":
+            outcome = { kind: "network-error", message: `the response uses an unsupported Content-Encoding ("${bodyResult.encoding}") and could not be decoded` };
+            break;
         }
       }
     } catch (err) {
@@ -387,8 +559,11 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
       // (a torn socket, the hop timeout crossed mid-body, a turn abort) is classified exactly like a
       // header-phase one, never an unhandled rejection.
       if (opts.signal?.aborted === true) return { kind: "aborted" };
-      if (timeoutSignal.aborted) return { kind: "timeout", message: `WebFetch timed out after ${Math.round(timeoutMs / 1000)}s.` };
-      return { kind: "network-error", message: err instanceof Error ? err.name : "the fetch failed" };
+      if (timeoutSignal.aborted) {
+        const seconds = timeoutMs / 1000;
+        return { kind: "timeout", message: `WebFetch timed out after ${seconds < 1 ? `${timeoutMs}ms` : `${Math.round(seconds)}s`}.` };
+      }
+      return { kind: "network-error", message: errorLabel(err) };
     }
     return outcome;
   }

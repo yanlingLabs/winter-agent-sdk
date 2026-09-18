@@ -171,14 +171,37 @@ export interface PreapprovedMatch {
   pathPrefix?: string;
 }
 
+/** The scope's own host, that host with a leading `www.` stripped, and that stripped form with `www.` re-added -- the SAME three-way set `staysWithinScope` (below) already applies, deduplicated. */
+function candidateHosts(hostname: string): readonly string[] {
+  const stripped = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+  return [...new Set([hostname, stripped, `www.${stripped}`])];
+}
+
+/**
+ * Security review round 2, minor: this was EXACT-hostname-only, while `staysWithinScope` (below)
+ * already applied the three-way `[host, stripped, "www."+stripped]` match -- half of one fix. The
+ * gap is not cosmetic: a redirect chain `claude.com/docs/a` -> `www.claude.com/docs/a` (eligible,
+ * `staysWithinScope` says so) -> `www.claude.com/other` recomputes THIS function fresh at the top of
+ * the SECOND hop, on hostname `www.claude.com` -- which `PATH_PREFIXES` only ever keys by
+ * `claude.com`, so the old exact match returned `undefined` for it. An `undefined` scope makes
+ * `isEligibleAutoFollow`'s own `scope !== undefined && ...` check SHORT-CIRCUIT to "no restriction
+ * at all," so the THIRD hop (genuinely outside `/docs`) was auto-followed, not refused -- and because
+ * `claude.com/docs/a` (the ORIGINAL input URL) is still preapproved, that off-scope content got
+ * permissive guidelines and was eligible for the verbatim markdown passthrough. Matching hosts the
+ * same three-way way `staysWithinScope` does closes it: hop 2 now still resolves a scope (matched via
+ * the `claude.com` entry), and `staysWithinScope` correctly refuses hop 3's `/other` path.
+ */
 export function preapprovedScopeOf(url: URL): PreapprovedMatch | undefined {
-  const { hostname, pathname } = url;
-  if (HOSTNAME_ONLY.has(hostname)) return { host: hostname };
-  const prefixes = PATH_PREFIXES.get(hostname);
-  if (prefixes === undefined) return undefined;
-  if (ENCODED_TRAVERSAL.test(pathname)) return undefined;
-  const prefix = prefixes.find((p) => pathname === p || pathname.startsWith(`${p}/`));
-  return prefix === undefined ? undefined : { host: hostname, pathPrefix: prefix };
+  const { pathname } = url;
+  for (const host of candidateHosts(url.hostname)) {
+    if (HOSTNAME_ONLY.has(host)) return { host };
+    const prefixes = PATH_PREFIXES.get(host);
+    if (prefixes === undefined) continue;
+    if (ENCODED_TRAVERSAL.test(pathname)) return undefined;
+    const prefix = prefixes.find((p) => pathname === p || pathname.startsWith(`${p}/`));
+    if (prefix !== undefined) return { host, pathPrefix: prefix };
+  }
+  return undefined;
 }
 
 /**
