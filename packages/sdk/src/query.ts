@@ -706,6 +706,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(brand.keychainService !== WINTER_BRAND.keychainService || options.keychainService !== undefined ? { keychainService: brand.keychainService } : {}),
     ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
     ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
+    // The web tools' and auto-memory's own blocks: pure passthrough, same convention as `advisor`.
+    ...(options.web !== undefined ? { web: options.web } : {}),
+    ...(options.autoMemory !== undefined ? { autoMemory: options.autoMemory } : {}),
     // P7a (D19): UNCONDITIONAL, unlike every conditional spread above it. `brand` is not an
     // "unset option = absent wire key" field: the runtime never defaults it (see this file's own
     // resolution block and protocol/config.ts's `brand` comment), so an absent key would mean a

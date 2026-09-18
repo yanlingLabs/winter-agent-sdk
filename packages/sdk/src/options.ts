@@ -17,6 +17,10 @@ import type {
   EffortLevel,
   AutoClassifierConfig,
   AdvisorConfig,
+  WebToolsConfig,
+  WebPrivateAddressPolicy,
+  AutoMemoryConfig,
+  CredentialRef,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
@@ -31,6 +35,7 @@ export type { SdkPluginConfig, SystemPromptOption, OutputFormat, JsonSchemaOutpu
 // `Options` from — one import site for "the Options-facing provider surface" (the same convention
 // the MCP config union already follows below).
 export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig } from "./protocol/config.ts";
+export type { WebToolsConfig, WebSearchConfig, WebFetchConfig, WebPrivateAddressPolicy, AutoMemoryConfig } from "./protocol/config.ts";
 
 // --- Phase 5 Task 2 (derived-shapes-p5.md item (c)): the pinned block-array sentinel --------------
 //
@@ -74,6 +79,67 @@ export const DEFAULT_PROVIDER_STALL_TIMEOUT_MS = 120000;
 // `brand` gets ITS service through `RuntimeConfig.brand.keychainService`; this constant remains what
 // the runtime falls back to when neither the deprecated option nor a brand reached it.
 export const DEFAULT_KEYCHAIN_SERVICE = WINTER_BRAND.keychainService;
+
+// --- The web tools' defaults and their one reader -------------------------------------------------
+//
+// HERE rather than beside the shapes in protocol/config.ts, which is a TYPES-ONLY module: these are
+// runtime values, and this file is where every other `DEFAULT_*` a host and the runtime share lives.
+
+/**
+ * Every web-tool default, spelled ONCE. A reader function resolves an absent field against this --
+ * no consumer writes a literal of its own.
+ *
+ * `maxSearchesPerCall: 8` is the pinned tool's own per-call bound. `anonymousMaxSearchesPerCall: 3`
+ * is Winter's: see `WebSearchConfig.anonymousMaxSearchesPerCall`. `privateAddressPolicy: "ask"` is
+ * the conservative interactive posture; a host that can never ask sets `"deny"`.
+ */
+export const WEB_TOOLS_DEFAULTS = {
+  searchEnabled: true,
+  maxSearchesPerCall: 8,
+  anonymousMaxSearchesPerCall: 3,
+  privateAddressPolicy: "ask",
+} as const satisfies {
+  searchEnabled: boolean;
+  maxSearchesPerCall: number;
+  anonymousMaxSearchesPerCall: number;
+  privateAddressPolicy: WebPrivateAddressPolicy;
+};
+
+/** `WebToolsConfig` with every default applied -- what a consumer reads instead of the raw option. */
+export interface ResolvedWebToolsConfig {
+  search: { enabled: boolean; authRef?: CredentialRef; maxSearchesPerCall: number; anonymousMaxSearchesPerCall: number };
+  fetch: { digestModel?: string; authRef?: CredentialRef; privateAddressPolicy: WebPrivateAddressPolicy };
+  blockedDomains: string[];
+}
+
+function positiveIntegerOr(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
+}
+
+/**
+ * THE one reader of `WebToolsConfig`. Pure, dependency-free and total: an absent block, an absent
+ * field, a non-positive or non-finite bound and a whitespace-only `digestModel` all resolve to the
+ * default rather than to a value no consumer can act on (a bound of `0` would make a tool that is
+ * advertised and can never search; disabling search is `search.enabled: false`).
+ */
+export function resolveWebToolsConfig(web: WebToolsConfig | undefined): ResolvedWebToolsConfig {
+  const digestModel = web?.fetch?.digestModel?.trim();
+  return {
+    search: {
+      enabled: web?.search?.enabled ?? WEB_TOOLS_DEFAULTS.searchEnabled,
+      ...(web?.search?.authRef !== undefined ? { authRef: web.search.authRef } : {}),
+      maxSearchesPerCall: positiveIntegerOr(web?.search?.maxSearchesPerCall, WEB_TOOLS_DEFAULTS.maxSearchesPerCall),
+      anonymousMaxSearchesPerCall: positiveIntegerOr(web?.search?.anonymousMaxSearchesPerCall, WEB_TOOLS_DEFAULTS.anonymousMaxSearchesPerCall),
+    },
+    fetch: {
+      ...(digestModel !== undefined && digestModel.length > 0 ? { digestModel } : {}),
+      ...(web?.fetch?.authRef !== undefined ? { authRef: web.fetch.authRef } : {}),
+      privateAddressPolicy: web?.fetch?.privateAddressPolicy ?? WEB_TOOLS_DEFAULTS.privateAddressPolicy,
+    },
+    blockedDomains: (web?.blockedDomains ?? []).filter((d): d is string => typeof d === "string" && d.trim().length > 0),
+  };
+}
+
 
 // --- Phase 4 Task 2 (WS-09 derived-shapes item (a)): the HOST-facing MCP config union -------------
 //
@@ -572,6 +638,20 @@ export interface Options {
    * The MODEL may also come from `settings.advisor.model` (D30, hot); `Options.advisor.model` wins.
    */
   advisor?: AdvisorConfig;
+  /**
+   * DISCLOSED WINTER option: the `WebSearch` / `WebFetch` tools' configuration -- the search
+   * backend's fallback key and per-call bounds, the page-digest model and its credential, the
+   * private-address policy, and the ONE `blockedDomains` floor both tools honour. Every field is
+   * optional; `resolveWebToolsConfig` applies `WEB_TOOLS_DEFAULTS`. See `WebToolsConfig`.
+   */
+  web?: WebToolsConfig;
+  /**
+   * DISCLOSED WINTER option: the host's say over the auto-memory section -- whether it is on, and
+   * which directory it names. Wins over the settings keys, which win over the computed default; it
+   * is how a host that disables settings files (`settingSources: []`) still makes the session agree
+   * with it about where memory lives. See `AutoMemoryConfig`.
+   */
+  autoMemory?: AutoMemoryConfig;
   /**
    * DISCLOSED WINTER option (P7a, D19): THE BRAND PROFILE — every Winter-owned name this session
    * runs under, as a partial that folds onto Winter's own defaults (brand.ts's `WINTER_BRAND`).

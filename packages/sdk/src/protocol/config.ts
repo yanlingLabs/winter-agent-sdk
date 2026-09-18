@@ -527,6 +527,10 @@ export interface RuntimeConfig {
   keychainService?: string;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;
+  /** The wire twin of `Options.web` -- see `WebToolsConfig`. Pure passthrough; absent means every default in `WEB_TOOLS_DEFAULTS`. */
+  web?: WebToolsConfig;
+  /** The wire twin of `Options.autoMemory` -- see `AutoMemoryConfig`. Pure passthrough; absent means "settings, then the computed default". */
+  autoMemory?: AutoMemoryConfig;
   /**
    * P7a (D19): the RESOLVED brand profile — every Winter-owned name this session runs under.
    *
@@ -675,6 +679,142 @@ export interface AutoClassifierConfig {
 export interface AdvisorConfig {
   model: string;
   authRef?: CredentialRef;
+}
+
+// --- The web tools (`WebSearch` / `WebFetch`) -----------------------------------------------------
+//
+// Declared HERE for the same structural reason `AdvisorConfig` is: `Options` needs the shape, the
+// sdk package is dependency-free and fence-resident, and `RuntimeConfig` mirrors it verbatim so
+// `query.ts` serializes it with the same conditional-spread convention as every option above.
+
+/**
+ * What to do when `WebFetch` is pointed at a loopback, private-range or link-local address.
+ *
+ *   `"ask"`    raise the ordinary permission prompt for that host before anything is fetched;
+ *   `"deny"`   refuse with a typed tool result and fetch nothing;
+ *   `"allow"`  fetch it like any public host.
+ *
+ * WHY THIS IS A HOST DECISION AND NOT A CONSTANT. A sandboxed shell has no network, so `WebFetch` is
+ * the only door from a session to the services on the user's own machine and LAN -- an admin page, a
+ * metadata endpoint, a dev server. Whether that door opens silently depends on whether the session
+ * can ask a human at all: an interactive host can, an unattended one cannot and must refuse.
+ */
+export type WebPrivateAddressPolicy = "allow" | "ask" | "deny";
+
+/** `WebSearch`'s own configuration. Every field is optional; see `WEB_TOOLS_DEFAULTS` (options.ts) for what absent means. */
+export interface WebSearchConfig {
+  /**
+   * The host's explicit OFF switch for the search BACKEND. Absent means enabled.
+   *
+   * The backend's anonymous tier needs no credential, so "is a search backend usable" is `true` for
+   * every session by default -- which would make the tool's capability gate a constant. This is the
+   * one fact that can make it `false`: a host that must not let a session reach the backend at all
+   * (an offline deployment, a policy that forbids the third-party endpoint). With `false` the tool is
+   * not advertised, and a call that reaches it anyway answers with a typed refusal.
+   *
+   * NOT a substitute for `disallowedTools`, which hides a tool the runtime has; this says the
+   * backend behind it is not there.
+   */
+  enabled?: boolean;
+  /**
+   * A reference to the search backend's API key -- the FALLBACK, used only once the anonymous tier
+   * is exhausted or rate-limited. A locator, never the key: the runtime resolves it at the last
+   * responsible moment and accepts EITHER JSON credential material (`{"kind":"api-key","key":...}`)
+   * OR a bare non-empty string, because a host that shares this keychain slot with another client
+   * cannot change what is stored in it. Absent means anonymous-only: an exhausted quota is then a
+   * typed "add a key" result, never an error that ends the turn.
+   */
+  authRef?: CredentialRef;
+  /**
+   * The most backend searches ONE `WebSearch` call may run while a key is in use (the inner model
+   * decides how many it needs, up to this). Absent means `WEB_TOOLS_DEFAULTS.maxSearchesPerCall`.
+   */
+  maxSearchesPerCall?: number;
+  /**
+   * The same bound while the call is riding the ANONYMOUS tier. Separate, and lower by default,
+   * because the anonymous tier is a small shared daily allowance: eight searches per call would
+   * spend it in a handful of calls and push every later one onto the key (or onto the "quota
+   * exhausted" result when there is no key). Absent means
+   * `WEB_TOOLS_DEFAULTS.anonymousMaxSearchesPerCall`.
+   */
+  anonymousMaxSearchesPerCall?: number;
+}
+
+/** `WebFetch`'s own configuration. Every field is optional; see `WEB_TOOLS_DEFAULTS` (options.ts) for what absent means. */
+export interface WebFetchConfig {
+  /**
+   * The model that digests a fetched page against the caller's prompt -- a provider-qualified tag
+   * (`<providerId>/<model>`) or a slot name, resolved through the SAME selection path as the session
+   * model.
+   *
+   * THE DEFAULT, stated plainly: when the host names none, the digest runs on the SESSION'S OWN
+   * MODEL. That is the one choice that is always resolvable and needs no second credential. There is
+   * deliberately no "cheapest slot" heuristic -- a family's slots are not reliably ranked
+   * strongest-to-weakest, so picking one by position would be a guess presented as a rule.
+   *
+   * A STATED model that cannot be resolved (unknown tag, disabled provider, no credential) is a
+   * typed refusal surfaced as the tool's RESULT. It is never a silent fallback onto the session's
+   * model: a host that named a small model did so to bound cost, and quietly spending the session
+   * model's price instead is the failure this field exists to prevent.
+   */
+  digestModel?: string;
+  /**
+   * The digest model's OWN credential, for a digest model on another provider than the session's
+   * (the cross-provider credential rule every auxiliary route follows: the route's own ref, else the
+   * session's material only when the provider is the same, else the target provider's
+   * `<providerId>:default` keychain record, else a typed `no-credential-for-provider`). The session's
+   * key is never sent to another provider. Ignored when `digestModel` is absent.
+   */
+  authRef?: CredentialRef;
+  /** See `WebPrivateAddressPolicy`. Absent means `WEB_TOOLS_DEFAULTS.privateAddressPolicy`. */
+  privateAddressPolicy?: WebPrivateAddressPolicy;
+}
+
+/**
+ * DISCLOSED WINTER option: the two web tools' configuration.
+ *
+ * `blockedDomains` sits at THIS level, not under either tool, because it is ONE list with ONE
+ * meaning -- the host's domain floor -- and both tools must honour it: `WebFetch` refuses a listed
+ * host outright, and `WebSearch` sends the list as the backend's exclusion filter on EVERY inner
+ * search, so a blocked domain can neither be fetched nor be surfaced as a link to fetch. Two lists
+ * would be two chances to update one and forget the other.
+ *
+ * MATCHING IS BY SUFFIX ON A LABEL BOUNDARY: listing `example.com` blocks `example.com` and every
+ * subdomain of it (`docs.example.com`), and does not block `notexample.com`. Entries are compared
+ * case-insensitively; a leading `*.` or `.` and a trailing `.` are ignored.
+ */
+export interface WebToolsConfig {
+  search?: WebSearchConfig;
+  fetch?: WebFetchConfig;
+  blockedDomains?: string[];
+}
+
+/**
+ * DISCLOSED WINTER option: the host's say over the auto-memory section.
+ *
+ * WHY IT EXISTS. The runtime computes the memory directory itself and reads `autoMemoryEnabled` /
+ * `autoMemoryDirectory` from SETTINGS FILES only. A host that turns settings files off
+ * (`settingSources: []`) therefore had no way to make the session agree with it about where memory
+ * lives, or to turn the section off -- the two sides could only agree by computing the same path by
+ * coincidence.
+ *
+ * PRECEDENCE, per field: this option, then the settings key, then the computed default
+ * (`<home>/projects/<memory-key>/memory`, enabled).
+ *
+ *   `enabled: false`  the auto-memory section and its index are omitted entirely, whatever settings
+ *                     say; `enabled: true` turns it on even over a settings `false`.
+ *   `directory`       REPLACES the computed path outright, with no per-project nesting beneath it
+ *                     (`~` and a cwd-relative path are expanded exactly as the settings key's are).
+ *                     Whitespace-only counts as absent.
+ *
+ * NOTE FOR A HOST RELOCATING THE DIRECTORY: the write-permission carve-out for memory files is keyed
+ * to the DEFAULT `projects/<key>/memory` shape under the home. A directory elsewhere under the
+ * home's `projects/` tree is still write-denied; one outside the home meets no floor at all and
+ * follows the session's ordinary write rules.
+ */
+export interface AutoMemoryConfig {
+  enabled?: boolean;
+  directory?: string;
 }
 
 // --- Phase 6 Task 10 (derived-shapes-p6 item (d)): the two PUBLIC-SURFACE provider shapes ---------

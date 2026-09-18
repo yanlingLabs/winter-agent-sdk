@@ -1,6 +1,7 @@
 import { test, expect, spyOn, describe } from "bun:test";
 import { query, type QueryInternal } from "./query.ts";
 import type { Options } from "./options.ts";
+import { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
 import { ResultError, WinterRpcError, InvalidBrandError } from "./errors.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, testProviderByName } from "winter-agent-runtime";
@@ -1790,6 +1791,58 @@ test("Phase 6 Task 2: unset provider-layer options are OMITTED entirely — an u
   ]) {
     expect(key in config).toBe(false);
   }
+});
+
+// --- The web tools' and auto-memory's option blocks ------------------------------------------------
+//
+// Same two obligations as every other passthrough option: a set block reaches the wire VERBATIM
+// (nested refs included -- `authRef` is a locator the runtime resolves, never something the wrapper
+// interprets), and an unset one leaves the wire byte-identical to before the option existed.
+test("Options.web and Options.autoMemory round-trip onto RuntimeConfig verbatim", async () => {
+  const capture = captureConfigJson();
+  const web = {
+    search: { enabled: true, authRef: { kind: "keychain" as const, account: "exa", service: "com.example.core" }, maxSearchesPerCall: 6, anonymousMaxSearchesPerCall: 2 },
+    fetch: { digestModel: "anthropic/claude-haiku-4-5-20251001", authRef: { kind: "env" as const, name: "WINTER_TEST_DIGEST_KEY" }, privateAddressPolicy: "deny" as const },
+    blockedDomains: ["blocked.example", "ads.example.net"],
+  };
+  const autoMemory = { enabled: true, directory: "/tmp/host-chosen-memory" };
+  for await (const _msg of query({ prompt: "ping", options: { web, autoMemory, spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect(config["web"]).toEqual(web);
+  expect(config["autoMemory"]).toEqual(autoMemory);
+  // The serialized form is what a spawned child actually parses -- prove the JSON round trip too,
+  // so a field a structured clone would keep but JSON would drop (there is none today) fails here.
+  expect(JSON.parse(JSON.stringify(config["web"]))).toEqual(web);
+});
+
+test("unset Options.web / Options.autoMemory are OMITTED from the wire entirely", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect("web" in config).toBe(false);
+  expect("autoMemory" in config).toBe(false);
+});
+
+test("resolveWebToolsConfig spells every default once and never yields an unusable bound", () => {
+  expect(resolveWebToolsConfig(undefined)).toEqual({
+    search: { enabled: WEB_TOOLS_DEFAULTS.searchEnabled, maxSearchesPerCall: WEB_TOOLS_DEFAULTS.maxSearchesPerCall, anonymousMaxSearchesPerCall: WEB_TOOLS_DEFAULTS.anonymousMaxSearchesPerCall },
+    fetch: { privateAddressPolicy: WEB_TOOLS_DEFAULTS.privateAddressPolicy },
+    blockedDomains: [],
+  });
+  // The session's own model is the digest default -- expressed as ABSENCE, never as a sentinel tag.
+  expect("digestModel" in resolveWebToolsConfig({ fetch: { digestModel: "   " } }).fetch).toBe(false);
+  // A non-positive / non-finite bound falls back rather than producing a tool that can never search.
+  const odd = resolveWebToolsConfig({ search: { maxSearchesPerCall: 0, anonymousMaxSearchesPerCall: Number.NaN, enabled: false }, blockedDomains: ["a.example", "  ", "b.example"] });
+  expect(odd.search).toEqual({ enabled: false, maxSearchesPerCall: WEB_TOOLS_DEFAULTS.maxSearchesPerCall, anonymousMaxSearchesPerCall: WEB_TOOLS_DEFAULTS.anonymousMaxSearchesPerCall });
+  expect(odd.blockedDomains).toEqual(["a.example", "b.example"]);
+  const stated = resolveWebToolsConfig({ search: { maxSearchesPerCall: 4.9, authRef: { kind: "none" } }, fetch: { digestModel: " openai/gpt-4.1 ", authRef: { kind: "none" }, privateAddressPolicy: "allow" } });
+  expect(stated.search.maxSearchesPerCall).toBe(4);
+  expect(stated.search.authRef).toEqual({ kind: "none" });
+  expect(stated.fetch).toEqual({ digestModel: "openai/gpt-4.1", authRef: { kind: "none" }, privateAddressPolicy: "allow" });
 });
 
 // --- Phase 6 Task 3 (R6-F): a PROVIDER failure yields its result AND throws -------------------------

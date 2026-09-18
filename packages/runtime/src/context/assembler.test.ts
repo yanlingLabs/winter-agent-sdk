@@ -291,6 +291,55 @@ describe("assembler -- auto-memory", () => {
     expect(out.system).not.toContain("settings-memory");
   });
 
+  // --- The HOST's option (`RuntimeConfig.autoMemory`): host > settings file > computed default ------
+  //
+  // The case this exists for is a host that runs with settings files OFF and still has to make the
+  // session agree with it about where memory lives -- so each link of the precedence is pinned, in
+  // both directions, rather than only the happy one.
+  test("host `autoMemory.directory` wins over the settings key AND the computed default, and its index is the one read", () => {
+    const hostDir = join(cwd, "host-option-memory");
+    const settingsDir = join(cwd, "settings-memory");
+    mkdirSync(hostDir, { recursive: true });
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(join(hostDir, MEMORY_INDEX_BASENAME), "- [h](h.md) — host fact", "utf8");
+    writeFileSync(join(settingsDir, MEMORY_INDEX_BASENAME), "- [s](s.md) — settings fact", "utf8");
+    const config = cfg({ autoMemory: { directory: hostDir } });
+    const out = assemble({ config }, { autoMemoryDirectory: settingsDir });
+    expect(out.system).toContain(hostDir);
+    expect(out.system).not.toContain(settingsDir);
+    expect(out.system).not.toContain(memoryDirFor({ cwd, home, env: {} }));
+    const claudeMd = contextValue(userContext({ config }, { autoMemoryDirectory: settingsDir }), "claudeMd");
+    expect(claudeMd).toContain("host fact");
+    expect(claudeMd).not.toContain("settings fact");
+  });
+
+  test("host `autoMemory.directory` gets the settings key's treatment: relative resolves against cwd, whitespace-only is ABSENT", () => {
+    expect(assemble({ config: cfg({ autoMemory: { directory: "rel-memory" } }) }).system).toContain(join(cwd, "rel-memory"));
+    // Whitespace-only falls THROUGH to the settings key -- never to the home directory itself.
+    const settingsDir = join(cwd, "settings-memory");
+    const out = assemble({ config: cfg({ autoMemory: { directory: "   " } }) }, { autoMemoryDirectory: settingsDir });
+    expect(out.system).toContain(settingsDir);
+    // ...and with no settings key either, to the computed default.
+    expect(assemble({ config: cfg({ autoMemory: { directory: "" } }) }).system).toContain(memoryDirFor({ cwd, home, env: {} }));
+  });
+
+  test("host `autoMemory.enabled: false` turns the section off even when settings say on", () => {
+    const memDir = memoryDirFor({ cwd, home, env: {} });
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(join(memDir, MEMORY_INDEX_BASENAME), "- [q](q.md) — hidden by the host", "utf8");
+    const config = cfg({ autoMemory: { enabled: false, directory: join(cwd, "ignored-when-off") } });
+    const out = assemble({ config }, { autoMemoryEnabled: true });
+    expect(out.system).not.toContain(AUTO_MEMORY_HEADING);
+    expect(out.system).not.toContain("ignored-when-off");
+    expect(JSON.stringify(userContext({ config }, { autoMemoryEnabled: true }))).not.toContain("hidden by the host");
+  });
+
+  test("host `autoMemory.enabled: true` wins over a settings `autoMemoryEnabled: false`; an absent `enabled` defers to settings", () => {
+    expect(assemble({ config: cfg({ autoMemory: { enabled: true } }) }, { autoMemoryEnabled: false }).system).toContain(AUTO_MEMORY_HEADING);
+    // `directory` alone says nothing about `enabled`, so the settings key still governs it.
+    expect(assemble({ config: cfg({ autoMemory: { directory: join(cwd, "d") } }) }, { autoMemoryEnabled: false }).system).not.toContain(AUTO_MEMORY_HEADING);
+  });
+
   test("the guidance is present even with no MEMORY.md, and the index joins claudeMd once there is one", () => {
     expect(assemble().system).toContain("Auto-memory for this project");
     expect(contextValue(userContext(), "claudeMd")).toBeUndefined();

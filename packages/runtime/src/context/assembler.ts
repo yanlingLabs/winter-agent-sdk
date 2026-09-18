@@ -170,12 +170,25 @@ function resolveContext(deps: SystemPromptAssemblerDeps, input: SystemPromptInpu
 
   // --- auto-memory ----------------------------------------------------------------------------
   //
-  // PRECEDENCE, and every link is tested: an explicit host-supplied directory, then the settings
-  // key, then the computed `<home>/projects/<memory-key>/memory`. The settings key is never taken
-  // from PROJECT settings -- `OVERLAY_NEVER_KEYS` enforces that upstream, in the settings layer, and
-  // this consumes whatever survived it.
-  const memoryOn = autoMemoryEnabled(settings);
-  const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(settings?.autoMemoryDirectory !== undefined ? { override: settings.autoMemoryDirectory } : {}) })) : undefined;
+  // PRECEDENCE, per field, and every link is tested: the HOST's option (`RuntimeConfig.autoMemory`),
+  // then the settings key, then the computed default -- enabled, at
+  // `<home>/projects/<memory-key>/memory`. The host wins because a host that disables settings files
+  // (`settingSources: []`) otherwise has no way at all to make this session agree with it about where
+  // memory lives; the two could only match by computing the same path by coincidence.
+  //
+  // `input.memoryDir` stays in front of all three: it is the assembler's own programmatic seam (a
+  // caller that already holds a resolved directory), and no production caller sets it.
+  //
+  // The host's `directory` rides `memoryDirFor`'s `override` rather than being used verbatim, so it
+  // gets the settings key's exact treatment: `~` expanded, a relative path resolved against the cwd,
+  // whitespace-only read as ABSENT (falling through to the settings key, not to the home itself).
+  // The settings key is never taken from PROJECT settings -- `OVERLAY_NEVER_KEYS` enforces that
+  // upstream, in the settings layer, and this consumes whatever survived it.
+  const hostMemory = config.autoMemory;
+  const memoryOn = hostMemory?.enabled ?? autoMemoryEnabled(settings);
+  const hostDirectory = hostMemory?.directory !== undefined && hostMemory.directory.trim().length > 0 ? hostMemory.directory : undefined;
+  const directoryOverride = hostDirectory ?? settings?.autoMemoryDirectory;
+  const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(directoryOverride !== undefined ? { override: directoryOverride } : {}) })) : undefined;
 
   const environment: EnvironmentInput = {
     cwd: input.cwd,

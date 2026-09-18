@@ -14,6 +14,9 @@ export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_
 // re-exported by @yanlinglabs/winter-provider-runtime, so a lane importing it from either package
 // gets the identical type rather than two structurally-similar twins that can drift.
 export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE } from "./options.ts";
+export { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
+export type { ResolvedWebToolsConfig } from "./options.ts";
+export type { WebToolsConfig, WebSearchConfig, WebFetchConfig, WebPrivateAddressPolicy, AutoMemoryConfig } from "./protocol/config.ts";
 export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig, ModelInfo, AgentInfo, AccountInfo } from "./protocol/config.ts";
 // WS-13c §7 (P6.6): the model-family / slot public shapes. `Query.listModelFamilies()` returns
 // `ModelFamilyListing`; `ModelSlotSetting` is what `settings.modelSlots` holds.
