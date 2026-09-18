@@ -224,17 +224,21 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
 
     // A pass that failed OUTRIGHT (not-wired, provider-error, aborted, ...): show whatever REAL
     // searches it completed first (a partial loop's searches are still real -- `_inner-model.ts`'s
-    // own contract), then append the failure as a trailing note; a pass with NOTHING to show returns
-    // the failure text alone, as an error.
+    // own contract), then append the failure as a trailing note; a pass with NO ATTEMPTED SEARCH
+    // returns the failure text alone, as an error -- checked BEFORE the "no search calls" branch
+    // below, which would otherwise SWALLOW the real failure reason behind a generic "not performed"
+    // whenever the pass also produced leading/trailing commentary text (e.g. round 1 answers with
+    // "Let me check." + an unknown-tool-name call, then round 2's generation itself throws:
+    // `events` would be all-text with zero attempted searches, and without this ordering the
+    // provider-error detail would be discarded in favour of a message that implies nothing went
+    // wrong at all).
     if (!pass.ok) {
-      if (events.length === 0) return { output: innerFailureText(pass), isError: true };
+      if (attemptedSearches === 0) return { output: innerFailureText(pass), isError: true };
       events.push({ type: "text", text: innerFailureText(pass) });
-    }
-
-    // The forced round-1 tool call never actually called the tool at all (an adapter that ignores a
-    // forced `toolChoice`) -- there is no search to report, and the model's own commentary must not
-    // be dressed up as a search summary that never happened.
-    if (attemptedSearches === 0 && events.every((e) => e.type === "text")) {
+    } else if (attemptedSearches === 0 && events.every((e) => e.type === "text")) {
+      // The forced round-1 tool call never actually called the tool at all (an adapter that ignores
+      // a forced `toolChoice`) -- there is no search to report, and the model's own commentary must
+      // not be dressed up as a search summary that never happened.
       return { output: "Web search was not performed: the search pass produced no search calls." };
     }
 

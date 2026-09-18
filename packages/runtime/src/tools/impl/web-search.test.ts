@@ -350,6 +350,21 @@ describe("zero successful searches", () => {
     expect(result.output).toBe("Web search was not performed: the search pass produced no search calls.");
     expect(result.output).not.toContain("I already know");
   });
+
+  test("REGRESSION: a pass with only text/unknown-tool steps that then FAILS outright must surface the real failure, never the generic 'not performed' message that would otherwise swallow it", async () => {
+    const ctx = makeCtx("zero-fail-with-text");
+    // Round 1: leading text + an unknown-tool-name call (attemptedSearches stays 0 -- neither is a
+    // real search). Only ONE turn is scripted, so round 2's generate() throws "no more scripted
+    // turns" -- the inner pass fails outright (`pass.ok === false`, code "provider-error") with
+    // ONLY text-shaped events recorded. Before the fix, `attemptedSearches === 0 && events.every(text)`
+    // fired regardless of `pass.ok` and replaced the real failure with the generic "not performed"
+    // text, discarding the actual reason the pass never completed.
+    runtimeWith("zero-fail-with-text", scriptedProvider([{ kind: "tool_use", calls: [{ id: "u1", name: "NotWebSearch", input: {} }], text: "Let me check." }]));
+    const result = await run({ query: "hello world" }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.output).not.toBe("Web search was not performed: the search pass produced no search calls.");
+    expect(result.output).toContain("the web search failed");
+  });
 });
 
 // =====================================================================================================
