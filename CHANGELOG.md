@@ -98,6 +98,15 @@ analogue of `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`.
   backend failure adds one actionable sentence (e.g. "add an Exa API key") claude never needs.
 - `WebFetch`'s domain floor is the host's own `blockedDomains`; Winter never calls Anthropic's
   `domain_info` preflight.
+- The private-address policy is Winter's own; claude has no equivalent. Under the default `"ask"` a
+  lexically private or loopback `WebFetch` target prompts even in `bypassPermissions`, under a broad
+  allow rule, and after a PreToolUse hook's pre-approval; only an allow rule naming that exact host, or
+  `privateAddressPolicy: "allow"`, is consent.
+- A `WebFetch` url the executor is certain to refuse as written (a single-label host such as
+  `localhost`, an IPv6 literal) is never prompted for: a hook's `ask`/`defer` and a user's ask rule are
+  skipped for it, deny rules and a hook's deny still apply, and the call answers `Invalid URL` without
+  touching the network.
+- The 1,000-entry bound on `allowed_domains` / `blocked_domains` is Winter's own.
 - `modelUsage.webSearchRequests` is always `0`: Winter's searches are the tool's own, and the count is
   not available where a generation is priced.
 
