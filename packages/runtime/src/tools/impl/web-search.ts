@@ -53,23 +53,22 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 /**
- * claude's own `validateInput`, verbatim texts (research file, errorCodes 1/2). The zod `min(2)`
- * message is NOT in the pinned binary (the research file's own "Not found" list) -- a query of
- * length 1 is folded into the SAME `Error: Missing query` claude gives an empty one, rather than
- * inventing a distinct Winter-authored line for a case the binary never had its own text for.
- * Disclosed in this lane's report.
+ * The query is validated, searched and rendered RAW -- never trimmed. Measured against the pinned
+ * binary: a two-space query is ACCEPTED there, searched as-is, and its header reads
+ * `Web search results for query: "  "`; the only length rule is the schema's `minLength: 2` on the
+ * string the model actually sent. (A blank `objective` is the search client's own concern: it falls
+ * back to the per-call query, and is backend plumbing rather than interface.)
  *
- * NIT (independent review, disclosed rather than fixed): the query is TRIMMED before the length
- * check, and the TRIMMED value is what is searched and rendered into the header -- claude's own
- * `validateInput` (research file) checks and forwards the RAW string. So `" a "` (one real character,
- * padded) is refused HERE (`Error: Missing query`, trimmed length 1) but would be ACCEPTED there
- * (raw length 3, whatever zod's `.min(2)` actually measures). A one-character query padded with
- * whitespace is not a realistic input either way; trimming before validating is the more useful
- * behaviour for the common case (accidental leading/trailing whitespace from a model), so it stands.
+ * `Error: Missing query` is a real string in claude's binary that NO input can reach there: claude
+ * validates a call against the tool's input schema BEFORE the tool's own validation, so a short or
+ * absent query is refused by the schema (`InputValidationError: [...]`) and every string that passes
+ * the schema also passes this check. This runtime has no schema-validation step in front of its
+ * executors, so here the same text IS reachable, as the backstop for exactly the inputs claude's
+ * schema refuses. It stops being reachable the day such a step exists.
  */
 function parseInput(raw: unknown): ParsedInput {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-  const query = typeof record["query"] === "string" ? record["query"].trim() : "";
+  const query = typeof record["query"] === "string" ? record["query"] : "";
   if (query.length < 2) return { ok: false, error: "Error: Missing query" };
   const allowed = stringArray(record["allowed_domains"]);
   const blocked = stringArray(record["blocked_domains"]);

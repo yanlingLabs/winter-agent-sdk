@@ -73,11 +73,34 @@ const call = (id: string, query: string): { id: string; name: string; input: unk
 // =====================================================================================================
 
 describe("validation", () => {
-  test("Error: Missing query -- absent, empty, whitespace-only and length-1 all fold to the same text", async () => {
+  test("Error: Missing query -- absent, non-string, empty and length-1 all fold to the same text", async () => {
     const ctx = makeCtx("v-missing");
-    for (const query of [undefined, "", "   ", "a"]) {
+    for (const query of [undefined, 7, "", "a", " "]) {
       expect(await run({ query }, ctx)).toEqual({ output: "Error: Missing query", isError: true });
     }
+  });
+
+  test("the query is never trimmed: a two-space query is ACCEPTED, searched and rendered raw (claude's own measured behaviour)", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const ctx = makeCtx("v-raw-query");
+      const seen: string[] = [];
+      const inner = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "spaces")] }, { kind: "text", text: "done" }]);
+      const provider: Provider = {
+        generate(input) {
+          const first = input.messages[0]?.content;
+          seen.push(typeof first === "string" ? first : JSON.stringify(first));
+          return inner.generate(input);
+        },
+      };
+      runtimeWith("v-raw-query", provider);
+      const result = await run({ query: "  " }, ctx, { fixture });
+      expect(result.isError).toBeUndefined();
+      expect(result.output.startsWith('Web search results for query: "  "\n')).toBe(true);
+      expect(seen[0]).toContain("Perform a web search for the query:   ");
+      // A padded query keeps its padding too -- nothing between the model and the header rewrites it.
+      runtimeWith("v-raw-query", scriptedProvider([{ kind: "tool_use", calls: [call("c2", "padded")] }, { kind: "text", text: "done" }]));
+      expect((await run({ query: " a " }, ctx, { fixture })).output.startsWith('Web search results for query: " a "\n')).toBe(true);
+    });
   });
 
   test("Error: Cannot specify both allowed_domains and blocked_domains in the same request", async () => {
