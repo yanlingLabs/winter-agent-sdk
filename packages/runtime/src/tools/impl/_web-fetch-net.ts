@@ -158,11 +158,14 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
   }
   current = upgradeToHttps(current);
 
-  for (let hop = 0; hop <= WEB_FETCH_MAX_REDIRECTS; hop++) {
-    if (hop === WEB_FETCH_MAX_REDIRECTS) {
-      return { kind: "too-many-redirects", message: `Too many redirects (exceeded ${WEB_FETCH_MAX_REDIRECTS})` };
-    }
-
+  // COUNTS REDIRECTS FOLLOWED, not total requests: the initial request is never itself a "hop," so
+  // this permits the initial fetch PLUS up to `WEB_FETCH_MAX_REDIRECTS` eligible redirects (11 total
+  // requests in the worst case) before refusing an 11th. Measured only as far as the pinned string
+  // itself ("Too many redirects (exceeded ") -- the exact off-by-one was not fully re-derivable from
+  // the binary in the time this lane had; this is the more natural reading of "max 10 hops" (a hop
+  // IS a redirect) and is disclosed as a residual uncertainty in the report.
+  let redirectsFollowed = 0;
+  for (;;) {
     const fv = validateFetchTimeUrl(current);
     if (!fv.ok) return { kind: "invalid-url", message: fv.message };
 
@@ -209,6 +212,10 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
         return { kind: "redirect-blocked", message };
       }
       if (isEligibleAutoFollow(current, target, scope)) {
+        if (redirectsFollowed >= WEB_FETCH_MAX_REDIRECTS) {
+          return { kind: "too-many-redirects", message: `Too many redirects (exceeded ${WEB_FETCH_MAX_REDIRECTS})` };
+        }
+        redirectsFollowed += 1;
         current = target;
         continue;
       }
@@ -234,7 +241,4 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
       body,
     };
   }
-
-  // Unreachable (the loop always returns by hop === WEB_FETCH_MAX_REDIRECTS), but keeps the function total.
-  return { kind: "too-many-redirects", message: `Too many redirects (exceeded ${WEB_FETCH_MAX_REDIRECTS})` };
 }

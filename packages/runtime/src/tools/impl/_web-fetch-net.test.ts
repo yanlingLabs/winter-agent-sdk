@@ -71,6 +71,28 @@ describe("performWebFetch -- https upgrade", () => {
   });
 });
 
+describe("performWebFetch -- fetch-time validation", () => {
+  test("embedded credentials are refused", async () => {
+    const outcome = await performWebFetch(`https://user:pw@127.0.0.1:${port}/ok`, "p", baseOpts(), testDeps());
+    expect(outcome.kind).toBe("invalid-url");
+    expect(calls.length).toBe(0);
+  });
+
+  test("a hostname with fewer than two labels is refused (this is ALSO why bare 'localhost' never reaches the private-address gate -- it fails here first)", async () => {
+    const outcome = await performWebFetch("https://localhost/x", "p", baseOpts(), testDeps());
+    expect(outcome.kind).toBe("invalid-url");
+    expect(calls.length).toBe(0);
+  });
+
+  test("a URL over 2000 characters is refused", async () => {
+    const long = `https://127.0.0.1:${port}/ok?q=${"x".repeat(2000)}`;
+    expect(long.length).toBeGreaterThan(2000);
+    const outcome = await performWebFetch(long, "p", baseOpts(), testDeps());
+    expect(outcome.kind).toBe("invalid-url");
+    expect(calls.length).toBe(0);
+  });
+});
+
 describe("performWebFetch -- redirects", () => {
   test("a same-host redirect is followed automatically", async () => {
     const outcome = await performWebFetch(`https://127.0.0.1:${port}/redirect-same-host`, "p", baseOpts(), testDeps());
@@ -135,9 +157,12 @@ describe("performWebFetch -- redirects", () => {
     expect(outcome.message).toContain("The redirect target could not be relayed in full or is not a fetchable address, so it cannot be fetched from here; report the redirect instead.");
   });
 
-  test("more than 10 hops is refused", async () => {
+  test("more than 10 redirects is refused, and EXACTLY 10 are followed first (11 requests total)", async () => {
     const outcome = await performWebFetch(`https://127.0.0.1:${port}/redirect-loop`, "p", baseOpts(), testDeps());
     expect(outcome.kind).toBe("too-many-redirects");
+    if (outcome.kind !== "too-many-redirects") throw new Error("unreachable");
+    expect(outcome.message).toBe("Too many redirects (exceeded 10)");
+    expect(calls.length).toBe(11); // the initial request + 10 followed redirects, refused on the 11th
   });
 });
 
@@ -189,18 +214,27 @@ describe("performWebFetch -- domain floor", () => {
     expect(calls.length).toBe(0);
   });
 
-  test("the floor is re-checked at the top of every hop, not only before the loop starts", async () => {
-    // A cross-host redirect is never auto-followed regardless of the floor (proven separately
-    // above), so the only chain shape that ever reaches a SECOND floor check is a same-host one --
-    // and a same-host hop's floor verdict cannot differ from hop 0's (blockedDomains matches by
-    // hostname suffix, and an eligible same-host hop's hostname is unchanged, mod a "www." strip
-    // that the suffix rule already treats as the same entry). What IS independently observable is
-    // that the check runs from the TOP of the loop body (this test's own redirect-same-host fixture
-    // reaches it twice) rather than once outside it -- a structural placement a code reader can
-    // confirm directly, pinned here by asserting the blocked verdict holds even through a chain that
-    // DOES perform a hop.
-    const outcome = await performWebFetch(`https://127.0.0.1:${port}/redirect-same-host`, "p", baseOpts({ blockedDomains: ["127.0.0.1"] }), testDeps());
-    expect(outcome).toMatchObject({ kind: "blocked-domain", host: "127.0.0.1" });
+  test("a redirect HOP is independently checked against the floor, even when hop 0 passed it", async () => {
+    // `_domains.ts`'s own suffix match is ASYMMETRIC: blocking "www.example.com" does not block
+    // "example.com" (`"example.com".endsWith(".www.example.com")` is false), but a same-host
+    // (www-stripped) redirect from "example.com" to "www.example.com" IS auto-follow eligible. So
+    // hop 0 ("example.com") passes the floor while hop 1 ("www.example.com") -- the exact string the
+    // list names -- does not: a real, independently observable proof the check re-runs per hop
+    // rather than being hoisted once above the loop.
+    const deps: WebFetchNetDeps = {
+      fetchImpl: async (url, init) => {
+        calls.push(url);
+        const u = new URL(url);
+        u.protocol = "http:";
+        u.hostname = "127.0.0.1";
+        u.port = String(port);
+        if (new URL(url).hostname === "example.com") return new Response(null, { status: 302, headers: { Location: "https://www.example.com/ok" } });
+        return fetch(u.toString(), init);
+      },
+    };
+    const outcome = await performWebFetch("https://example.com/start", "p", baseOpts({ blockedDomains: ["www.example.com"] }), deps);
+    expect(outcome).toMatchObject({ kind: "blocked-domain", host: "www.example.com" });
+    expect(calls.length).toBe(1); // the redirect target itself was never actually requested
   });
 
   test("malformed-but-parseable spellings still resolve to the blocked hostname", async () => {

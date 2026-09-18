@@ -336,7 +336,9 @@ describe("preapproved hosts", () => {
     const runtime = fakeRuntime(provider);
     const ctx = makeCtx({ sessionId: "s-preapproved-guidelines" });
     registerWebSessionRuntime(ctx.sessionId, runtime);
-    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    // resolveHost is stubbed so this test is hermetic (bun.sh is a REAL preapproved hostname, never
+    // actually reached -- the fetchImpl rewrite below routes the actual bytes to the loopback server).
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
     await runFetch(executor, { url: "https://bun.sh/html", prompt: "What does this say?" }, ctx);
     const sentPrompt = provider.requests[0]!.messages[0]!.content as string;
     const expected = `\nWeb page content:\n---\nTitle\n=====\n\nHello **world**.\n---\n\nWhat does this say?\n\n${PERMISSIVE_GUIDELINES}\n`;
@@ -348,7 +350,7 @@ describe("preapproved hosts", () => {
     const runtime = fakeRuntime(provider);
     const ctx = makeCtx({ sessionId: "s-strict-guidelines" });
     registerWebSessionRuntime(ctx.sessionId, runtime);
-    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
     await runFetch(executor, { url: "https://not-preapproved.example/html", prompt: "What does this say?" }, ctx);
     const sentPrompt = provider.requests[0]!.messages[0]!.content as string;
     const expected = `\nWeb page content:\n---\nTitle\n=====\n\nHello **world**.\n---\n\nWhat does this say?\n\n${STRICT_GUIDELINES}\n`;
@@ -360,7 +362,7 @@ describe("preapproved hosts", () => {
     const runtime = fakeRuntime(provider);
     const ctx = makeCtx({ sessionId: "s-passthrough" });
     registerWebSessionRuntime(ctx.sessionId, runtime);
-    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
     const result = await runFetch(executor, { url: "https://bun.sh/markdown-doc", prompt: "irrelevant" }, ctx);
     expect(result).toEqual({ output: "# Real Docs\n\nSome real markdown." });
     expect(provider.requests).toHaveLength(0);
