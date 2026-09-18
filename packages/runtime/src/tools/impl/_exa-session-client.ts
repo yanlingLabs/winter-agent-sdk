@@ -16,25 +16,15 @@
 // keyed-not-shared registry). So the grain is ONE client per session, created on that session's FIRST
 // WebSearch call and reused by every later one in the SAME session.
 //
-// SESSION TEARDOWN: NOT WIRED HERE, DISCLOSED. Closing gracefully on session end needs a call from
-// wherever a session's run actually ends -- the exact shape `toolsearch/search.ts`'s own
-// `disposeToolSearchSessionRuntime()` already is, called once from `engine.ts` teardown. That call
-// site is a spine edit this lane does not make. In PRODUCTION this is a narrower gap than it looks:
-// per CLAUDE.md's own architecture, one `winter` runtime child is one OS PROCESS for the life of one
-// session (plus its own descendants, sharing that session id) -- so a cached client's life is already
-// bounded by the process's, and the OS reclaims its socket on exit. What is missing is a GRACEFUL
-// close (flushing the MCP session cleanly) rather than a leak; `closeExaSearchClientForSession` is
-// exported so a future one-line spine hook can call it, and tests call it directly for hygiene.
-//
-// NOTE FOR WHOEVER WIRES THAT HOOK (independent review, flagged explicitly): `exaSearchClientForSession`
-// is keyed on `ctx.sessionId`, and a CHILD shares its ROOT's `sessionId` by construction
-// (`web/session-runtime.ts`'s own header: "a child shares its parent's session id"). So the cached
-// entry belongs to the WHOLE agent tree, not to whichever run happened to create it first -- call
-// `closeExaSearchClientForSession(sessionId)` ONLY from the ROOT engine's own teardown, i.e. only when
-// `config.agentId === undefined`. Calling it from a CHILD's teardown (`config.agentId` set) would close
-// the connection out from under the parent or a sibling that is still mid-search, exactly the
-// cross-session-vs-cross-run confusion `web/session-runtime.ts`'s own registry is designed to avoid on
-// the read side; this module's write side needs the identical discipline.
+// SESSION TEARDOWN: `engine.ts` calls `closeExaSearchClientForSession(sessionId)` from the ROOT run's
+// teardown -- beside `disposeWebSessionRuntime()` on the ordinary path (awaited), and on the run's
+// outer `finally` for a run that throws. ROOT ONLY (`config.agentId === undefined`), and that
+// condition is the whole point: `exaSearchClientForSession` is keyed on `ctx.sessionId`, and a CHILD
+// shares its ROOT's `sessionId` by construction (`web/session-runtime.ts`'s own header: "a child
+// shares its parent's session id"). The cached entry therefore belongs to the WHOLE agent tree, not
+// to whichever run happened to create it first -- closing it from a CHILD's teardown would drop the
+// connection out from under a parent or a sibling that is still mid-search. Pinned by
+// `web/search-client-teardown.test.ts`.
 import type { ExaSearchClient } from "./_exa-client.ts";
 
 const clientsBySession = new Map<string, ExaSearchClient>();

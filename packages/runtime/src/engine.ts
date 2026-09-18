@@ -302,6 +302,9 @@ import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, type WebSessionRuntime } from "./web/session-runtime.ts";
 // The web tools' per-session description choice (`toolSpecFor`) -- names and both variants come from
 // the descriptor modules, so neither tool name is ever a literal in this file.
+// TEARDOWN ONLY: the per-ROOT-session search client's closer. A module that registers nothing and
+// imports only a type, so this value import pulls in no tool (`tools/impl-isolation.test.ts`).
+import { closeExaSearchClientForSession } from "./tools/impl/_exa-session-client.ts";
 import { WEB_FETCH_CANONICAL_NAME, webFetchDescriptionFor } from "./tools/descriptors/web-fetch.ts";
 import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription } from "./tools/descriptors/web-search.ts";
 import type { AuxiliaryModelResolution } from "./provider/session-provider.ts";
@@ -4127,6 +4130,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // LIVE PROVIDER and a SECRET RESOLVER under a key a later session can reuse. The disposer is
   // identity-checked, so the ordinary teardown's own call and this one are idempotent together.
   facetDisposers.push(disposeWebSessionRuntime);
+  // THE SESSION'S SEARCH CLIENT (`tools/impl/_exa-session-client.ts`): one per ROOT session, shared
+  // by the whole agent tree, because a child carries its root's `sessionId`. So -- unlike the two
+  // per-AGENT disposals beside it, which are unconditional because `sessionStateKey` is the agent's
+  // own -- it is closed by the ROOT run ONLY. A child closing it on its own teardown would drop the
+  // connection out from under a parent or a sibling that is mid-search. On the outer `finally` too,
+  // for the reason above: a throw mid-run must not leave a live connection (and its cached key)
+  // behind under a session id a `--resume` in this process reuses. The closer never throws, forgets
+  // the entry synchronously, and is idempotent, so this and the ordinary teardown's awaited call
+  // compose; here it cannot be awaited (disposers are synchronous), so the close is best-effort.
+  const closeSessionSearchClient = (): Promise<void> => (config.agentId === undefined ? closeExaSearchClientForSession(config.sessionId) : Promise.resolve());
+  facetDisposers.push(() => void closeSessionSearchClient());
 
   // `winter.search-backend` / `winter.fetch-extractor`: DERIVED, on the reviewer-model precedent
   // above and for its reason -- each is a per-SESSION fact (a host switch; a catalog-and-credential
@@ -7569,6 +7583,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   disposeToolSearchSessionRuntime();
   // The web tools' session seam: same singleton-hygiene argument, same identity-checked disposer.
   disposeWebSessionRuntime();
+  // ...and the session's one search client -- ROOT run only (see `closeSessionSearchClient`).
+  // Awaited here, on the ordinary path, so the MCP session is closed before the run reports done.
+  await closeSessionSearchClient();
   // Phase 5 Task 3 (R5-10): withdraw this run's host-generated StructuredOutput descriptor -- same
   // singleton-hygiene argument as the MCP/ToolSearch withdrawals above, and the disposer is
   // identity-checked so a concurrent in-memory run's own registration is never removed by this one.
