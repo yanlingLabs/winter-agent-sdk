@@ -1,15 +1,15 @@
 // The web tools' session seam, and the two capability tokens derived from it.
 //
 // The token half is driven against the REAL engine and read off `system/init.tools`, because the
-// claim that matters is about what a session ADVERTISES: nothing before an executor exists, and
-// then exactly what the session's own facts allow.
+// claim that matters is about what a session ADVERTISES: nothing without an executor, and with one
+// exactly what the session's own facts allow.
 import { afterEach, describe, expect, test } from "bun:test";
 import { resolveWebToolsConfig, type ProtocolSdkMessage as SdkMessage, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import "../tools/descriptors/index.ts";
 import { runEngine, type EngineOptions, type Provider } from "../engine.ts";
 import { scriptedProvider } from "../provider/mock.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
-import { getRegisteredTool, registerTool, replaceExecutor, unregisterToolForTest, type RegisteredTool } from "../tools/registry.ts";
+import { getRegisteredTool, registerTool, unregisterToolForTest, type RegisteredTool } from "../tools/registry.ts";
 import {
   digestModelResolves,
   getWebSessionRuntime,
@@ -142,11 +142,17 @@ describe("the registration never outlives its run", () => {
 });
 
 describe("`winter.search-backend` / `winter.fetch-extractor` are DERIVED: executor present AND the session fact", () => {
+  // BOTH REAL EXECUTORS ARE INSTALLED NOW (the descriptor barrel imported above loads `impl/web-*.ts`),
+  // so the "executor" half of the conjunction is exercised by TAKING ONE AWAY -- swapping the live
+  // registration for its descriptor-only stub -- rather than by adding a throwaway one.
   const originals = new Map<string, RegisteredTool>();
-  /** Installs a throwaway executor over the descriptor-only stub, exactly as `impl/web-*.ts` will at module load. */
-  function installExecutor(name: string): void {
-    if (!originals.has(name)) originals.set(name, getRegisteredTool(name)!);
-    replaceExecutor(name, { execute: async () => ({ output: "" }) });
+  function removeExecutor(name: string): void {
+    const live = getRegisteredTool(name)!;
+    if (!originals.has(name)) originals.set(name, live);
+    const { executor: _executor, ...descriptorOnly } = live;
+    unregisterToolForTest(name);
+    registerTool(descriptorOnly as RegisteredTool);
+    expect(getRegisteredTool(name)?.executor).toBeUndefined();
   }
   afterEach(() => {
     for (const [name, original] of originals) {
@@ -156,45 +162,61 @@ describe("`winter.search-backend` / `winter.fetch-extractor` are DERIVED: execut
     originals.clear();
   });
 
-  test("TODAY, with no executor installed, NEITHER tool is advertised -- whatever the host configures", async () => {
-    expect(getRegisteredTool("WebFetch")?.executor).toBeUndefined();
-    expect(getRegisteredTool("WebSearch")?.executor).toBeUndefined();
+  test("the shipped registry carries a REAL executor for both tools (the baseline every case below starts from)", () => {
+    expect(getRegisteredTool("WebFetch")?.executor).toBeDefined();
+    expect(getRegisteredTool("WebSearch")?.executor).toBeDefined();
+  });
+
+  test("with NO executor installed, NEITHER tool is advertised -- whatever the host configures, and each half independently", async () => {
+    removeExecutor("WebFetch");
+    removeExecutor("WebSearch");
     const tools = await initTools({ web: { search: { enabled: true }, fetch: {} } });
     expect(tools).not.toContain("WebFetch");
     expect(tools).not.toContain("WebSearch");
   });
 
-  test("once the executors exist, both light up BY THEMSELVES -- no host token, no configuration", async () => {
-    installExecutor("WebFetch");
-    installExecutor("WebSearch");
+  test("the executor probe is PER TOOL: taking one tool's executor away withdraws that tool and leaves the other", async () => {
+    removeExecutor("WebSearch");
+    const tools = await initTools({});
+    expect(tools).toContain("WebFetch");
+    expect(tools).not.toContain("WebSearch");
+  });
+
+  test("with the executors in place, both light up BY THEMSELVES -- no host token, no configuration", async () => {
     const tools = await initTools({});
     expect(tools).toContain("WebFetch");
     expect(tools).toContain("WebSearch");
   });
 
   test("`web.search.enabled: false` withdraws WebSearch and leaves WebFetch", async () => {
-    installExecutor("WebFetch");
-    installExecutor("WebSearch");
     const tools = await initTools({ web: { search: { enabled: false } } });
     expect(tools).toContain("WebFetch");
     expect(tools).not.toContain("WebSearch");
   });
 
   test("a STATED digest model that does not resolve withdraws WebFetch; one that resolves keeps it", async () => {
-    installExecutor("WebFetch");
-    installExecutor("WebSearch");
     const stated = { web: { fetch: { digestModel: "provb/small" } } };
     // No resolver at all (a bare engine over a double): a stated tag cannot resolve.
-    expect(await initTools(stated)).not.toContain("WebFetch");
+    const bare = await initTools(stated);
+    expect(bare).not.toContain("WebFetch");
+    expect(bare).toContain("WebSearch");
     expect(await initTools(stated, { resolveAuxiliaryModel: () => ({ ok: false, code: "unknown-model", message: "no such row" }) })).not.toContain("WebFetch");
     const resolved = await initTools(stated, { resolveAuxiliaryModel: () => ({ ok: true, provider, modelKey: "provb/small" }) });
     expect(resolved).toContain("WebFetch");
     expect(resolved).toContain("WebSearch");
   });
 
-  test("a host-supplied token still unions in (the pre-existing contract), executor or not", async () => {
-    const tools = await initTools({ capabilities: ["winter.fetch-extractor"] });
-    expect(tools).toContain("WebFetch");
-    expect(tools).not.toContain("WebSearch");
+  test("a host-supplied token still unions in (the pre-existing contract) -- over a FALSE session fact, and with no executor at all", async () => {
+    // The derived fact is false (a stated digest model with nothing to resolve it), and the host's
+    // own token advertises the tool anyway. WebSearch has no host token, so its own fact governs.
+    const overFalseFact = await initTools({ capabilities: ["winter.fetch-extractor"], web: { fetch: { digestModel: "provb/small" }, search: { enabled: false } } });
+    expect(overFalseFact).toContain("WebFetch");
+    expect(overFalseFact).not.toContain("WebSearch");
+    // ...and with no executor installed for EITHER tool: the token names one, and only that one appears.
+    removeExecutor("WebFetch");
+    removeExecutor("WebSearch");
+    const noExecutors = await initTools({ capabilities: ["winter.fetch-extractor"] });
+    expect(noExecutors).toContain("WebFetch");
+    expect(noExecutors).not.toContain("WebSearch");
   });
 });
