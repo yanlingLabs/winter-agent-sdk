@@ -1465,6 +1465,21 @@ export interface EngineOptions {
   resolveAuxiliaryModel?: (tag: string, opts?: { authRef?: CredentialRef; currentModelKey?: string }) => AuxiliaryModelResolution;
   /** The wiring's tool-secret resolver (`provider/tool-secret.ts`), reached by a tool through the web session registry. */
   resolveToolSecret?: ToolSecretResolver;
+  /**
+   * Called for EVERY generation this run prices -- its own main-loop and inner generations, and
+   * every descendant's it folded in. A CHILD engine is handed its parent's
+   * `ChildEngineRunContext.recordDescendantCost` here, which is what makes a subagent's spend reach
+   * the SESSION's `total_cost_usd`/`modelUsage` and therefore `maxBudgetUsd`. The token roll-up
+   * (`recordDescendantUsage`) cannot do this job: it carries no model key, and a price is per model.
+   */
+  onPricedGeneration?: (entry: PricedGenerationEntry) => void;
+}
+
+/** One PRICED generation, as it travels up the agent tree: the model it ran on, what it used, what that cost. */
+export interface PricedGenerationEntry {
+  modelKey: string;
+  usage: ProviderUsage;
+  priced: PricedUsage;
 }
 
 /**
@@ -1832,6 +1847,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     resolveReviewer: resolveReviewerRoute,
     resolveAuxiliaryModel: resolveAuxiliaryModelRoute,
     resolveToolSecret: resolveToolSecretRoute,
+    onPricedGeneration,
   } = opts;
 
   // Review r2 finding 9 (whole-branch): registered BEFORE anything else in this function body can
@@ -2499,6 +2515,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (modelKey === undefined) return;
     const priced = priceUsage(modelKey, usage);
     if (priced === undefined) return;
+    foldPricedGeneration({ modelKey, usage, priced });
+  };
+  // THE ONE FOLD into the ledger, shared by this run's own generations (above) and by every
+  // DESCENDANT's (`recordDescendantCost`, the run context's cost roll-up). It then reports upward, so
+  // a grandchild's spend climbs the whole tree: each level's ledger is the cost of the subtree below
+  // it, and the root's is the session's.
+  const foldPricedGeneration = (entry: PricedGenerationEntry): void => {
+    const { modelKey, usage, priced } = entry;
     costLedger.priced = true;
     costLedger.totalUsd += priced.costUsd;
     const row = costLedger.models.get(modelKey) ?? {
@@ -2520,6 +2544,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     row.cacheCreationInputTokens += usage.cacheWriteTokens ?? 0;
     row.costUSD += priced.costUsd;
     costLedger.models.set(modelKey, row);
+    try {
+      onPricedGeneration?.(entry);
+    } catch {
+      /* a parent's ledger failing must never break this run's generation */
+    }
   };
   /** The cost trio a result frame carries once anything was priced: `total_cost_usd` + `modelUsage` (`usage` stays absent, disclosed). */
   const costFields = (): Record<string, unknown> => (costLedger.priced ? { total_cost_usd: costLedger.totalUsd, modelUsage: Object.fromEntries(costLedger.models) } : {});
@@ -3388,6 +3417,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // mirror -- the accountant belongs to a RUN and a registered factory is built once.
             recordDescendantUsage: (usage: { inputTokens: number; outputTokens: number }): void => {
               contextAccountant.recordDescendantUsage(usage);
+            },
+            // The COST half of the same roll-up: a descendant's priced generation lands on THIS run's
+            // ledger (and climbs on from here), so `total_cost_usd`, `modelUsage` and `maxBudgetUsd`
+            // are the whole tree's. Per-run for the same reason as the accessor above.
+            recordDescendantCost: (entry: PricedGenerationEntry): void => {
+              foldPricedGeneration(entry);
             },
             // Phase 4 Task 8 (rider 26, RULING P4-J(e)): the parent's CURRENT live policy, read
             // fresh on every call (never a spawn-time snapshot) -- WS-10 §9's stricter-of comparison

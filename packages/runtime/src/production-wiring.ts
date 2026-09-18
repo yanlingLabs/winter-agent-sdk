@@ -466,9 +466,12 @@ export interface ProductionWiring {
   childFactoryOptions: Required<
     Pick<
       DefaultChildEngineFactoryOptions,
-      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel"
+      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel" | "priceUsage" | "resolveToolSecret"
     >
-  >;
+  > &
+    // OPTIONAL on the wiring itself (withheld on the arms with no catalog identity), so it cannot sit
+    // inside the `Required<>` -- but it is still a `Pick`, so the two-file tripwire above still holds.
+    Pick<DefaultChildEngineFactoryOptions, "resolveAuxiliaryModel">;
   /**
    * Phase 6 Task 10: the session's provider, and everything resolved with it.
    *
@@ -1301,6 +1304,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // see that file's own note.)
       skillListing,
       describeModel,
+      // A child's generations are priced from the SAME catalog evidence as the parent's, and its web
+      // tools resolve a stated model and a tool secret through the SAME wiring.
+      priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
+      resolveToolSecret: providerWiring.resolveToolSecret,
+      ...(providerWiring.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: providerWiring.resolveAuxiliaryModel } : {}),
       // NEW-4: the settings seed. Everything else in this object is a mirror of what the parent got;
       // this was the one whose absence was a security boundary rather than a context difference.
       settingsRules,
