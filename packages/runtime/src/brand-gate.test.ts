@@ -839,7 +839,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/provider/classifier/prompt.ts:265": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix)",
   "packages/runtime/src/permissions/protected.ts:85": "the SEED of the protected set; `isProtectedWrite` adds the session brand's own file per call",
   "packages/runtime/src/skills/store.ts:43": "PROJECT_PLUGIN_NAME -- Winter's own value; a session's is `SkillIndexOptions.brand.projectDirName`",
-  "packages/runtime/src/tools/impl/web-fetch.ts:76": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",
+  "packages/runtime/src/tools/impl/web-fetch.ts:85": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",
   "packages/provider-runtime/src/identity.ts:64": "DEFAULT_IDENTITY -- what the process presents as until a branded session installs its own frame",
   "packages/provider-runtime/src/continuity/handoff.ts:46": "INSTRUCTION_FILE_BASENAMES -- a recognition list beside CLAUDE.md/AGENTS.md, not a path this code writes",
   "packages/provider-runtime/src/adapters/openai/codex-config.ts:57": "the codex profile's DEFAULT originator; the wire reads `activeWinterIdentity().codexOriginator`",
