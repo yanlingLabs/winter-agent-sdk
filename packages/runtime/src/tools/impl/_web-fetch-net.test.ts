@@ -119,6 +119,32 @@ describe("performWebFetch -- redirects", () => {
     expect(calls.length).toBe(2);
   });
 
+  test("security review round 2 minor: the preapproved scope gate survives recomputation at a www-variant hop -- claude.com/docs/a -> www.claude.com/docs/a (eligible) -> www.claude.com/other is REFUSED, not silently followed", async () => {
+    const deps: WebFetchNetDeps = {
+      resolveHost: async () => ["127.0.0.1"],
+      fetchImpl: async (url, init) => {
+        calls.push(url);
+        const u = new URL(url);
+        const hostHeader = init.headers["Host"];
+        u.protocol = "http:";
+        u.hostname = "127.0.0.1";
+        u.port = String(port);
+        if (hostHeader === "claude.com" && u.pathname === "/docs/a") {
+          return new Response(null, { status: 302, headers: { Location: "https://www.claude.com/docs/a" } });
+        }
+        if (hostHeader === "www.claude.com" && u.pathname === "/docs/a") {
+          return new Response(null, { status: 302, headers: { Location: "https://www.claude.com/other" } });
+        }
+        return fetch(u.toString(), init);
+      },
+    };
+    const outcome = await performWebFetch("https://claude.com/docs/a", "p", baseOpts(), deps);
+    expect(outcome.kind).toBe("redirect-blocked");
+    if (outcome.kind !== "redirect-blocked") throw new Error("unreachable");
+    expect(outcome.message).toContain("www.claude.com/other");
+    expect(calls.length).toBe(2); // hop 0 (claude.com) + hop 1 (www.claude.com) -- hop 2's target was never actually requested
+  });
+
   test("a cross-host redirect is NOT followed -- REDIRECT DETECTED, exact message shape", async () => {
     const outcome = await performWebFetch(`https://127.0.0.1:${port}/redirect-cross-host`, "the prompt", baseOpts(), testDeps());
     expect(outcome.kind).toBe("redirect-blocked");
@@ -520,6 +546,65 @@ describe("performWebFetch -- B1: a body-phase failure is a typed result, never a
   });
 });
 
+describe("performWebFetch -- N1: a body-phase failure on an ENCODED (Content-Encoding) response no longer hangs forever", () => {
+  // `.pipe()` never forwarded a SOURCE error to the decoder it fed -- these are the identical three
+  // shapes B1 already proves for an IDENTITY body, but each now WITH `Content-Encoding: gzip`, which
+  // is exactly the case the earlier `.pipe()`-based fix missed (measured: all three still pending
+  // after 10s under a 0.5s hop timeout before this round's `pipeline()` fix).
+  const gz = gzipSync(Buffer.from("x".repeat(5000)));
+  const partialGzip = gz.subarray(0, 40); // real gzip header + a few bytes of compressed data -- enough to engage the decoder, never a complete stream.
+
+  test("gzip headers then the body STALLS: a short timeout still resolves cleanly, not an infinite hang", async () => {
+    const { port: rawPort, close } = await startRawServer((write) => {
+      write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 1000000\r\n\r\n");
+      write(Buffer.from(partialGzip));
+      // never close, never send more.
+    });
+    try {
+      const t0 = Date.now();
+      const outcome = await performWebFetch(`https://127.0.0.1:${rawPort}/`, "p", baseOpts(), { fetchImpl: rawFetchImpl(), timeoutMs: 200 });
+      expect(outcome.kind).toBe("timeout");
+      expect(Date.now() - t0).toBeLessThan(3000); // bounded -- the pre-fix version was still pending at 10s
+    } finally {
+      close();
+    }
+  });
+
+  test("gzip headers, then a turn-level ABORT mid-body: aborted, not a hang", async () => {
+    const { port: rawPort, close } = await startRawServer((write) => {
+      write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 1000000\r\n\r\n");
+      write(Buffer.from(partialGzip));
+    });
+    try {
+      const controller = new AbortController();
+      const t0 = Date.now();
+      const promise = performWebFetch(`https://127.0.0.1:${rawPort}/`, "p", { ...baseOpts(), signal: controller.signal }, { fetchImpl: rawFetchImpl(), timeoutMs: 8000 });
+      setTimeout(() => controller.abort(), 50);
+      const outcome = await promise;
+      expect(outcome.kind).toBe("aborted");
+      expect(Date.now() - t0).toBeLessThan(3000);
+    } finally {
+      close();
+    }
+  });
+
+  test("gzip headers, then the SOCKET IS DESTROYED mid-body: a result, not a hang or an unhandled rejection", async () => {
+    const { port: rawPort, close } = await startRawServer((write, _end, destroy) => {
+      write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 1000000\r\n\r\n");
+      write(Buffer.from(partialGzip));
+      setTimeout(destroy, 30);
+    });
+    try {
+      const t0 = Date.now();
+      const outcome = await performWebFetch(`https://127.0.0.1:${rawPort}/`, "p", baseOpts(), { fetchImpl: rawFetchImpl(), timeoutMs: 8000 });
+      expect(["network-error", "timeout"]).toContain(outcome.kind);
+      expect(Date.now() - t0).toBeLessThan(3000);
+    } finally {
+      close();
+    }
+  });
+});
+
 describe("performWebFetch -- B2: streaming decompression is capped by OUTPUT bytes, not input", () => {
   test("a gzip bomb (a few KB in, 50 MB of zeros out) is refused quickly, never materialised", async () => {
     const big = Buffer.alloc(50 * 1024 * 1024, 0);
@@ -563,6 +648,58 @@ describe("performWebFetch -- B2: streaming decompression is capped by OUTPUT byt
       }
     } finally {
       okServer.stop(true);
+    }
+  });
+});
+
+describe("performWebFetch -- N3: COMPRESSED input is capped independently of decompressed output", () => {
+  test("a huge run of empty raw-deflate stored blocks (large input, ~zero output) is refused by the LOWER encoded-input cap, not the output cap", async () => {
+    // A real gzip header (10 bytes) followed by many repeats of the raw-DEFLATE "stored block, empty,
+    // not final" pattern (5 bytes: 0x00 0x00 0x00 0xff 0xff) -- each one is valid, streamable, and
+    // decompresses to NOTHING, so the OUTPUT cap (10 MiB) never trips no matter how many are sent; only
+    // a cap on the COMPRESSED bytes read off the wire can bound this. 3 MiB of input comfortably
+    // exceeds the 2 MiB encoded-input cap while staying far under the 10 MiB output cap.
+    const header = Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]);
+    const blockCount = Math.ceil((3 * 1024 * 1024) / 5);
+    const body = Buffer.alloc(header.length + blockCount * 5);
+    header.copy(body, 0);
+    for (let i = 0; i < blockCount; i++) body.set([0, 0, 0, 0xff, 0xff], header.length + i * 5);
+    expect(body.byteLength).toBeGreaterThan(2 * 1024 * 1024);
+
+    const zeroServer = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-encoding": "gzip", "content-type": "text/plain" } }) });
+    try {
+      const t0 = Date.now();
+      const outcome = await performWebFetch(`https://127.0.0.1:${zeroServer.port}/`, "p", baseOpts(), testDepsFor(zeroServer.port!));
+      expect(outcome.kind).toBe("size-exceeded");
+      if (outcome.kind === "size-exceeded") expect(outcome.message).toContain("compressed");
+      expect(Date.now() - t0).toBeLessThan(5000);
+    } finally {
+      zeroServer.stop(true);
+    }
+  });
+
+  test("an unrecognised Content-Encoding is refused outright, before any body bytes are treated as text", async () => {
+    const zstdServer = Bun.serve({ port: 0, fetch: () => new Response(Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3]), { headers: { "content-encoding": "zstd", "content-type": "text/plain" } }) });
+    try {
+      const outcome = await performWebFetch(`https://127.0.0.1:${zstdServer.port}/`, "p", baseOpts(), testDepsFor(zstdServer.port!));
+      expect(outcome.kind).toBe("network-error");
+      if (outcome.kind === "network-error") expect(outcome.message).toContain("zstd");
+    } finally {
+      zstdServer.stop(true);
+    }
+  });
+
+  test("MULTIPLE Content-Encoding tokens decode in REVERSE (undo) order", async () => {
+    const text = "hello multi-encoded world".repeat(20);
+    const first = gzipSync(Buffer.from(text)); // applied FIRST when encoding
+    const both = brotliCompressSync(first); // applied SECOND -- so the header reads "gzip, br"
+    const multiServer = Bun.serve({ port: 0, fetch: () => new Response(both, { headers: { "content-encoding": "gzip, br", "content-type": "text/plain" } }) });
+    try {
+      const outcome = await performWebFetch(`https://127.0.0.1:${multiServer.port}/`, "p", baseOpts(), testDepsFor(multiServer.port!));
+      expect(outcome.kind).toBe("success");
+      if (outcome.kind === "success") expect(new TextDecoder().decode(outcome.body)).toBe(text);
+    } finally {
+      multiServer.stop(true);
     }
   });
 });
@@ -630,5 +767,70 @@ describe("performWebFetch -- M6: connection pinning (resolve once, connect to wh
     // answer and let the fetch through.
     expect(outcome).toMatchObject({ kind: "private-address", policy: "deny" });
     expect(calls2).toBe(1);
+  });
+});
+
+describe("performWebFetch -- N4: a CONNECT-phase failure advances to the next resolved candidate", () => {
+  test("a broken-IPv6-first answer falls back to the working IPv4 address -- not a full timeout", async () => {
+    // Mirrors `dns.lookup(host,{all:true})`'s own ordering on many machines (IPv6 first) and a
+    // network where IPv6 is unreachable: the first candidate must FAIL FAST enough (or be abandoned
+    // by the connect budget) for the second to still be tried within the test's own bound.
+    const deps: WebFetchNetDeps = {
+      resolveHost: async () => ["2001:db8::1", "127.0.0.1"], // the first is a real, unreachable documentation-range address
+      fetchImpl: async (url, init) => {
+        calls.push(url);
+        const u = new URL(url);
+        if (u.hostname === "[2001:db8::1]") {
+          // Simulate a slow/unreachable first candidate without actually waiting out a real OS
+          // connect timeout (which can run well past this test's own budget): reject quickly, the
+          // same observable shape as an immediate ECONNREFUSED/ENETUNREACH.
+          throw new Error("simulated: unreachable in this environment");
+        }
+        u.protocol = "http:";
+        u.hostname = "127.0.0.1";
+        u.port = String(port);
+        return fetch(u.toString(), init);
+      },
+    };
+    const outcome = await performWebFetch("https://dualstack.test/ok", "p", baseOpts(), deps);
+    expect(outcome.kind).toBe("success");
+    expect(calls.length).toBe(2); // tried the v6 candidate, then fell back to v4
+  });
+
+  test("EVERY candidate failing is still a typed network-error result, never a throw", async () => {
+    const deps: WebFetchNetDeps = {
+      resolveHost: async () => ["198.51.100.1", "198.51.100.2"], // both in the TEST-NET-2 documentation range -- never routable
+      fetchImpl: async () => {
+        throw new Error("simulated: unreachable");
+      },
+    };
+    const outcome = await performWebFetch("https://all-unreachable.test/ok", "p", baseOpts(), deps);
+    expect(outcome.kind).toBe("network-error");
+  });
+
+  test("a candidate is NEVER retried once a Response has come back, even for a non-2xx status", async () => {
+    // A connect-phase failure retries; a completed request that merely answered with an error status
+    // must not -- that would silently re-issue the request against a DIFFERENT address for a response
+    // that already fully arrived.
+    let secondCandidateTried = false;
+    const deps: WebFetchNetDeps = {
+      resolveHost: async () => ["203.0.113.1", "127.0.0.1"], // TEST-NET-3, never actually dialled
+      fetchImpl: async (url, init) => {
+        const u = new URL(url);
+        if (u.hostname === "203.0.113.1") {
+          u.protocol = "http:";
+          u.hostname = "127.0.0.1";
+          u.port = String(port);
+          return fetch(new URL("/404", u).toString(), init); // a REAL response, just a 404 -- not a connect failure
+        }
+        secondCandidateTried = true;
+        u.protocol = "http:";
+        u.port = String(port);
+        return fetch(u.toString(), init);
+      },
+    };
+    const outcome = await performWebFetch("https://first-candidate-answers.test/404", "p", baseOpts(), deps);
+    expect(outcome).toMatchObject({ kind: "http-error", status: 404 });
+    expect(secondCandidateTried).toBe(false);
   });
 });

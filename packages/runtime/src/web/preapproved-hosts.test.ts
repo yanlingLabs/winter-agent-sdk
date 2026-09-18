@@ -89,4 +89,15 @@ describe("preapprovedScopeOf / staysWithinScope", () => {
     // an unrelated host is still refused.
     expect(staysWithinScope(scope!, new URL("https://evil.example/docs"))).toBe(false);
   });
+
+  test("security review round 2 minor: preapprovedScopeOf(current) itself resolves a scope for a www-variant hop, not just exact registered hosts", () => {
+    // The exact chain the review names: claude.com/docs/a -> www.claude.com/docs/a (an eligible hop,
+    // per the test above) -> RECOMPUTING the scope at that second hop's own hostname must still find
+    // one (via the registered "claude.com" entry), or the redirect walk's "stay within scope" gate
+    // has nothing to check against and an out-of-scope third hop slips through unrefused.
+    const hop1Scope = preapprovedScopeOf(new URL("https://www.claude.com/docs/a"));
+    expect(hop1Scope).toEqual({ host: "claude.com", pathPrefix: "/docs" });
+    expect(staysWithinScope(hop1Scope!, new URL("https://www.claude.com/docs/a"))).toBe(true);
+    expect(staysWithinScope(hop1Scope!, new URL("https://www.claude.com/other"))).toBe(false);
+  });
 });
