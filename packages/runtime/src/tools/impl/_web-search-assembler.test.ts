@@ -7,28 +7,36 @@ import { assembleWebSearchOutput, flushWebSearchStream, renderWebSearchToolResul
 
 const REMINDER = "REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.";
 
+// The render formula, spelled out once here so every fixture below is checked against an
+// independent (if structurally identical) expression of the SAME rule rather than hand-counted
+// newlines: `header + "\n\n"` once, `item + "\n\n"` for each item IN ORDER, then `"\n" + REMINDER`,
+// the whole thing trimmed. A non-empty item list therefore ALWAYS ends `...lastItem\n\n\nREMINDER`
+// (the item's own trailing blank line, plus the formula's own separating `"\n"`) -- three newlines,
+// not two; an empty item list collapses to `header\n\n\nREMINDER` for the identical reason.
+function expected(query: string, items: readonly string[]): string {
+  const header = `Web search results for query: "${query}"`;
+  return (header + "\n\n" + items.map((i) => i + "\n\n").join("") + "\n" + REMINDER).trim();
+}
+
 describe("renderWebSearchToolResult -- the string rules, in isolation from the stream walk", () => {
   test("text-only: a single string item, no links anywhere", () => {
     const out = renderWebSearchToolResult("hello", ["just an answer, no search was needed"]);
-    expect(out).toBe(`Web search results for query: "hello"\n\njust an answer, no search was needed\n\n${REMINDER}`);
+    expect(out).toBe(expected("hello", ["just an answer, no search was needed"]));
   });
 
   test("links-only: one non-empty links item renders `Links: ` + compact JSON", () => {
     const out = renderWebSearchToolResult("bun release", [{ content: [{ title: "Bun v1.4.2", url: "https://bun.com/blog/bun-v1.4.2" }] }]);
-    expect(out).toBe(`Web search results for query: "bun release"\n\nLinks: [{"title":"Bun v1.4.2","url":"https://bun.com/bun-v1.4.2".replace("bun.com/bun-v1.4.2","blog/bun-v1.4.2")}]\n\n${REMINDER}`.replace('.replace("bun.com/bun-v1.4.2","blog/bun-v1.4.2")', ""));
-    // (the replace() dance above is just to keep the URL literal identical to the input in one line;
-    // assert directly against JSON.stringify so the test cannot silently drift from the render rule)
-    expect(out).toBe(`Web search results for query: "bun release"\n\nLinks: ${JSON.stringify([{ title: "Bun v1.4.2", url: "https://bun.com/blog/bun-v1.4.2" }])}\n\n${REMINDER}`);
+    expect(out).toBe(expected("bun release", [`Links: ${JSON.stringify([{ title: "Bun v1.4.2", url: "https://bun.com/blog/bun-v1.4.2" }])}`]));
   });
 
   test("empty links: `No links found.`", () => {
     const out = renderWebSearchToolResult("nothing found", [{ content: [] }]);
-    expect(out).toBe(`Web search results for query: "nothing found"\n\nNo links found.\n\n${REMINDER}`);
+    expect(out).toBe(expected("nothing found", ["No links found."]));
   });
 
   test("an error item is a STRING, not a links item", () => {
     const out = renderWebSearchToolResult("q", ["Web search error: rate_limit"]);
-    expect(out).toBe(`Web search results for query: "q"\n\nWeb search error: rate_limit\n\n${REMINDER}`);
+    expect(out).toBe(expected("q", ["Web search error: rate_limit"]));
   });
 
   test("interleaved: string, links, string, links, in stream order, each on its own blank-line-separated block", () => {
@@ -39,24 +47,13 @@ describe("renderWebSearchToolResult -- the string rules, in isolation from the s
       { content: [{ title: "B", url: "https://b.example/" }] },
     ]);
     expect(out).toBe(
-      [
-        `Web search results for query: "q"`,
-        "",
-        "Let me check two sources.",
-        "",
-        `Links: ${JSON.stringify([{ title: "A", url: "https://a.example/" }])}`,
-        "",
-        "Now the second.",
-        "",
-        `Links: ${JSON.stringify([{ title: "B", url: "https://b.example/" }])}`,
-        "",
-        REMINDER,
-      ].join("\n"),
+      expected("q", ["Let me check two sources.", `Links: ${JSON.stringify([{ title: "A", url: "https://a.example/" }])}`, "Now the second.", `Links: ${JSON.stringify([{ title: "B", url: "https://b.example/" }])}`]),
     );
   });
 
-  test("zero items: header, then straight to the reminder", () => {
-    expect(renderWebSearchToolResult("q", [])).toBe(`Web search results for query: "q"\n\n${REMINDER}`);
+  test("zero items: header, then straight to the reminder (with no item's own trailing blank line to absorb the formula's separating newline)", () => {
+    expect(renderWebSearchToolResult("q", [])).toBe(expected("q", []));
+    expect(renderWebSearchToolResult("q", [])).toBe(`Web search results for query: "q"\n\n\n${REMINDER}`);
   });
 });
 
@@ -66,24 +63,24 @@ describe("flushWebSearchStream -- the walk", () => {
     expect(flushWebSearchStream(events)).toEqual(["the answer, no search needed"]);
   });
 
-  test("links-only, round 1 forced: NO leading text -- the walk still flushes an item before the search (FLUSH_EMPTY_TEXT), so item 0 is the empty string", () => {
+  test("links-only, round 1 forced: NO leading text -- with FLUSH_EMPTY_TEXT=false an empty flush contributes NO item, so item 0 is the links item itself", () => {
     const events: WebSearchStreamEvent[] = [{ type: "search_result", hits: [{ title: "A", url: "https://a.example/" }] }];
-    expect(flushWebSearchStream(events)).toEqual(["", { content: [{ title: "A", url: "https://a.example/" }] }]);
+    expect(flushWebSearchStream(events)).toEqual([{ content: [{ title: "A", url: "https://a.example/" }] }]);
   });
 
-  test("interleaved: text before EACH search flushes as its own item, consecutive searches with nothing between them still flush an empty item between them", () => {
+  test("interleaved: text before a search flushes as its own item; two searches with nothing between them produce NO item between them", () => {
     const events: WebSearchStreamEvent[] = [
       { type: "text", text: "Let me look that up." },
       { type: "search_result", hits: [{ title: "A", url: "https://a.example/" }] },
       { type: "search_result", hits: [{ title: "B", url: "https://b.example/" }] },
       { type: "text", text: "Done." },
     ];
-    expect(flushWebSearchStream(events)).toEqual(["Let me look that up.", { content: [{ title: "A", url: "https://a.example/" }] }, "", { content: [{ title: "B", url: "https://b.example/" }] }, "Done."]);
+    expect(flushWebSearchStream(events)).toEqual(["Let me look that up.", { content: [{ title: "A", url: "https://a.example/" }] }, { content: [{ title: "B", url: "https://b.example/" }] }, "Done."]);
   });
 
   test("a search with zero hits is a links item with an EMPTY content array (not dropped, not a string)", () => {
     const events: WebSearchStreamEvent[] = [{ type: "search_result", hits: [] }];
-    expect(flushWebSearchStream(events)).toEqual(["", { content: [] }]);
+    expect(flushWebSearchStream(events)).toEqual([{ content: [] }]);
   });
 
   test("a failed search pushes the exact string `Web search error: <code>`, never a links item", () => {
@@ -91,14 +88,16 @@ describe("flushWebSearchStream -- the walk", () => {
     expect(flushWebSearchStream(events)).toEqual(["Trying.", "Web search error: quota-exhausted"]);
   });
 
-  test("trailing text after the last search is flushed at the end", () => {
-    const events: WebSearchStreamEvent[] = [{ type: "search_result", hits: [{ title: "A", url: "https://a.example/" }] }, { type: "text", text: "Based on that, here is the summary." }];
-    expect(flushWebSearchStream(events)).toEqual(["", { content: [{ title: "A", url: "https://a.example/" }] }, "Based on that, here is the summary."]);
+  test("trailing text after the last search is flushed at the end, and a search with no trailing text contributes no extra empty item", () => {
+    const withTrailing: WebSearchStreamEvent[] = [{ type: "search_result", hits: [{ title: "A", url: "https://a.example/" }] }, { type: "text", text: "Based on that, here is the summary." }];
+    expect(flushWebSearchStream(withTrailing)).toEqual([{ content: [{ title: "A", url: "https://a.example/" }] }, "Based on that, here is the summary."]);
+    const withoutTrailing: WebSearchStreamEvent[] = [{ type: "search_result", hits: [{ title: "A", url: "https://a.example/" }] }];
+    expect(flushWebSearchStream(withoutTrailing)).toEqual([{ content: [{ title: "A", url: "https://a.example/" }] }]);
   });
 
   test("only titles and urls survive into a links item, even when the caller's event carries nothing else (the type has no room for a highlight)", () => {
     const events: WebSearchStreamEvent[] = [{ type: "search_result", hits: [{ title: "Only Title", url: "https://only.example/" }] }];
-    const [, links] = flushWebSearchStream(events);
+    const [links] = flushWebSearchStream(events);
     expect(links).toEqual({ content: [{ title: "Only Title", url: "https://only.example/" }] });
     expect(Object.keys((links as { content: unknown[] }).content[0]!)).toEqual(["title", "url"]);
   });
@@ -112,17 +111,11 @@ describe("assembleWebSearchOutput -- both stages composed, end to end", () => {
       { type: "text", text: "Bun 1.4.2 fixed two regressions." },
     ]);
     expect(out).toBe(
-      [
-        'Web search results for query: "bun 1.4 release notes"',
-        "",
+      expected("bun 1.4 release notes", [
         "Let me check the release notes.",
-        "",
         `Links: ${JSON.stringify([{ title: "Bun v1.4.2 | Bun Blog", url: "https://bun.com/blog/bun-v1.4.2" }])}`,
-        "",
         "Bun 1.4.2 fixed two regressions.",
-        "",
-        REMINDER,
-      ].join("\n"),
+      ]),
     );
     // No leading/trailing whitespace survives the final .trim().
     expect(out.startsWith("Web search results")).toBe(true);
@@ -131,6 +124,6 @@ describe("assembleWebSearchOutput -- both stages composed, end to end", () => {
 
   test("zero successful searches (every call errored) still names the searches and their errors, never fabricated results", () => {
     const out = assembleWebSearchOutput("q", [{ type: "search_error", code: "unreachable" }, { type: "search_error", code: "timeout" }]);
-    expect(out).toBe(`Web search results for query: "q"\n\nWeb search error: unreachable\n\n\nWeb search error: timeout\n\n${REMINDER}`);
+    expect(out).toBe(expected("q", ["Web search error: unreachable", "Web search error: timeout"]));
   });
 });

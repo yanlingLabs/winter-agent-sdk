@@ -15,15 +15,21 @@
 //
 // THE ONE UNVERIFIABLE CHOICE, NAMED HERE SO A DIFFERENTIAL TEST FINDS IT FIRST: the research file
 // says accumulated text is "flushed (trimmed) as a STRING item" before each search and again at the
-// end, with NO stated condition on the text being non-empty. This assembler takes that literally --
-// EVERY flush point pushes an item, even an empty one (round 1 is FORCED, so a call with no leading
-// commentary flushes `""` as its very first item). The alternative (skip a flush when the buffer is
-// empty) is arguably more likely for hand-written code, and would remove exactly one item -- and
-// therefore exactly one `\n\n` block -- at the removed position; a middle empty item's absence changes
-// the byte output (spurious items elsewhere in a result do not, since blank-line joins make an empty
-// TRAILING flush and no flush at all indistinguishable). `FLUSH_EMPTY_TEXT` is the one flag governing
-// this; flip it and every fixture below still names the behaviour it is pinning.
-const FLUSH_EMPTY_TEXT = true;
+// end, with no stated condition on the text being non-empty -- read LITERALLY, every flush point would
+// push an item even when the buffer is empty (round 1 is FORCED, so a call with no leading commentary
+// would flush `""` as its very first item, and every call would end with a spurious trailing `""`
+// after its last search). `FLUSH_EMPTY_TEXT = false` here takes the OTHER reading: a flush with
+// nothing in the buffer contributes NO item at all. Two things point this way over the literal one --
+// neither is proof, both are named so a differential test can weigh them: (1) it is the more likely
+// shape for hand-written stream-walk code (`if (buf) items.push(buf)`, not an unconditional push), and
+// (2) the literal reading produces a VISIBLE artefact on the most common shape of all (a forced round
+// 1 with no preamble): a blank line pair between the header and the first `Links:` block, and another
+// between the header and a lone commentary answer's REMINDER footer when there was no search at all
+// -- neither of which resembles real WebSearch output as this lane recalls it (recall, not evidence).
+// `FLUSH_EMPTY_TEXT` is the one flag governing this; flip it and every fixture below still names the
+// behaviour it is pinning, so a differential test that finds the literal reading correct needs to
+// change exactly one line plus this comment.
+const FLUSH_EMPTY_TEXT = false;
 
 /** A search hit as the OUTER (main-loop) model is allowed to see it: title and url ONLY -- no highlight, no date, no encrypted content. */
 export interface WebSearchOutputHit {
