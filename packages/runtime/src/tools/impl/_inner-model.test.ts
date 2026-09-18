@@ -160,6 +160,71 @@ describe("runInnerModel -- the bounded tool loop (WebSearch's inner pass)", () =
     });
   });
 
+  // --- THE GENERATION BOUND ------------------------------------------------------------------------
+  //
+  // `maxToolCalls` bounds HANDLER calls, and a handler call happens only for a correctly-named call.
+  // A model that never names the tool correctly therefore never advances that counter -- so the loop
+  // needs its own bound on GENERATIONS, each of which is real, accounted spend. The N-bound test
+  // above cannot see this: its fake always names the right tool.
+  test("a model that names an UNKNOWN tool every round is stopped by the GENERATION cap (maxToolCalls + 2), not left to run", async () => {
+    let n = 0;
+    const provider: Provider & { requests: ProviderRequest[] } = {
+      requests: [],
+      async generate(input) {
+        this.requests.push(input);
+        if (this.requests.length > 40) throw new Error("runaway: the loop has no bound on generations");
+        n += 1;
+        return { kind: "tool_use", calls: [{ id: `x${n}`, name: "Bash", input: { command: "ls" } }], usage: USAGE };
+      },
+    };
+    const runtime = runtimeOver(provider);
+    let handled = 0;
+    const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 2, handler: async () => (handled++, { output: "r" }) }, runtime);
+    expect(result).toMatchObject({ ok: true, stoppedBy: "tool-call-limit", toolCalls: 0 });
+    expect(handled).toBe(0);
+    expect(provider.requests).toHaveLength(4);
+    expect(runtime.accounted).toHaveLength(4);
+  });
+
+  test("a tool-call turn with an EMPTY calls array is terminal -- there is nothing to answer and nothing to wait for", async () => {
+    const provider = recordingProvider([{ kind: "tool_use", text: "I have nothing to look up.", calls: [], usage: USAGE }]);
+    const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 2, handler: async () => ({ output: "r" }) }, runtimeOver(provider));
+    expect(result).toMatchObject({ ok: true, stoppedBy: "answer", toolCalls: 0, text: "I have nothing to look up." });
+    expect(provider.requests).toHaveLength(1);
+  });
+
+  test("MIXED: unknown names, empty turns and real calls interleaved still end within the generation cap", async () => {
+    let n = 0;
+    const provider: Provider & { requests: ProviderRequest[] } = {
+      requests: [],
+      async generate(input) {
+        this.requests.push(input);
+        if (this.requests.length > 40) throw new Error("runaway: the loop has no bound on generations");
+        n += 1;
+        // real, unknown, real(limit reached), then unknown forever
+        if (n === 1) return { kind: "tool_use", calls: [call("c1", "a")], usage: USAGE };
+        if (n === 3) return { kind: "tool_use", calls: [call("c3", "b")], usage: USAGE };
+        return { kind: "tool_use", calls: [{ id: `x${n}`, name: "nope", input: {} }], usage: USAGE };
+      },
+    };
+    const handled: string[] = [];
+    const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 2, handler: async (_i, info) => (handled.push(info.toolUseId), { output: "r" }) }, runtimeOver(provider));
+    expect(result).toMatchObject({ ok: true, stoppedBy: "tool-call-limit", toolCalls: 2 });
+    expect(handled).toEqual(["c1", "c3"]);
+    // c1, unknown, c3 (limit) -> ONE closing generation -> stop. Never more than maxToolCalls + 2.
+    expect(provider.requests).toHaveLength(4);
+  });
+
+  test("the session's BUDGET is checked between rounds: an inner pass cannot spend past `maxBudgetUsd` on its own", async () => {
+    const provider = recordingProvider([{ kind: "tool_use", calls: [call("c1", "a")], usage: USAGE }, { kind: "tool_use", calls: [call("c2", "b")], usage: USAGE }, { kind: "text", text: "never reached" }]);
+    let generations = 0;
+    const runtime = { ...runtimeOver(provider), budgetExceeded: () => generations >= 1 };
+    runtime.accountUsage = () => void generations++;
+    const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 8, handler: async () => ({ output: "r" }) }, runtime);
+    expect(result).toMatchObject({ ok: false, code: "aborted", detail: "budget-exceeded", toolCalls: 1 });
+    expect(provider.requests).toHaveLength(1);
+  });
+
   test("a call to a tool that was never offered, a handler error and a handler THROW are all results to the inner model -- none ends the pass", async () => {
     const provider = recordingProvider([
       { kind: "tool_use", calls: [{ id: "x1", name: "Bash", input: { command: "ls" } }, call("c1", "a"), call("c2", "b")] },
@@ -247,6 +312,29 @@ describe("runInnerModel -- a STATED model", () => {
     const noCatalog = await runInnerModel(CTX, { prompt: "p", model: { kind: "tag", tag: "nope/none" } }, runtimeOver(session));
     expect(noCatalog).toMatchObject({ ok: false, code: "model-unresolvable", detail: "no-catalog" });
     expect(session.requests).toHaveLength(0);
+  });
+
+  test("a resolver (or `sessionModel`) that THROWS is a value too -- and only the error's NAME is exposed, never its message", async () => {
+    const session = recordingProvider([{ kind: "text", text: "must not be used" }]);
+    const throwing = runtimeOver(session, {
+      resolveAuxiliaryModel: () => {
+        throw new RangeError("boom sk-secret-IN-A-RESOLVER-MESSAGE");
+      },
+    });
+    const viaTag = await runInnerModel(CTX, { prompt: "p", model: { kind: "tag", tag: "provb/small" } }, throwing);
+    expect(viaTag).toMatchObject({ ok: false, code: "model-unresolvable" });
+    expect(JSON.stringify(viaTag)).toContain("RangeError");
+    expect(JSON.stringify(viaTag)).not.toContain("sk-secret");
+    expect(session.requests).toHaveLength(0);
+
+    const brokenSession = runtimeOver(session, {
+      sessionModel: () => {
+        throw new TypeError("boom sk-secret-IN-A-SESSION-MODEL-MESSAGE");
+      },
+    });
+    const viaSession = await runInnerModel(CTX, { prompt: "p" }, brokenSession);
+    expect(viaSession).toMatchObject({ ok: false, code: "model-unresolvable" });
+    expect(JSON.stringify(viaSession)).not.toContain("sk-secret");
   });
 
   test("a missing credential and a provider failure are VALUES with their own codes", async () => {
@@ -360,5 +448,52 @@ describe("inner generations are accounted into the turn exactly as a main-loop g
     // Registered for the run, and withdrawn at teardown (one leaked entry per run otherwise).
     expect(registeredDuringRun).toBe(true);
     expect(getWebSessionRuntime("inner-usage-e2e")).toBeUndefined();
+  });
+
+  test("`maxBudgetUsd` binds an inner pass on the REAL engine: the generation that would follow a crossed ceiling never goes out", async () => {
+    let probeOutput = "";
+    registerTool({
+      descriptor: { canonicalName: PROBE, advertisedName: PROBE, source: "builtin", inputSchema: { type: "object" }, description: "runs an inner tool loop", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          const inner = await runInnerModel(ctx, { prompt: "search", tool: SEARCH_TOOL, maxToolCalls: 8, handler: async () => ({ output: "r" }) });
+          probeOutput = JSON.stringify({ ok: inner.ok, code: inner.ok ? undefined : inner.code, detail: inner.ok ? undefined : inner.detail, toolCalls: inner.toolCalls });
+          return { output: probeOutput };
+        },
+      },
+    });
+    // main round 1 (1010) -> inner generation 1 (505): the total, 1515, crosses the 1500 ceiling, so
+    // inner generation 2 must never be requested. A model that would happily search forever.
+    const requests: ProviderRequest[] = [];
+    const script: ProviderTurn[] = [
+      { kind: "tool_use", calls: [{ id: "t1", name: PROBE, input: {} }], usage: { inputTokens: 1000, outputTokens: 10 } },
+      { kind: "tool_use", calls: [call("c1", "a")], usage: { inputTokens: 500, outputTokens: 5 } },
+      { kind: "tool_use", calls: [call("c2", "b")], usage: { inputTokens: 500, outputTokens: 5 } },
+    ];
+    const main: Provider = {
+      async generate(input) {
+        requests.push(input);
+        return script[Math.min(requests.length - 1, script.length - 1)]!;
+      },
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: { sessionId: "inner-budget-e2e", cwd: process.cwd(), model: "prova/main", persistSession: false, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, maxBudgetUsd: 1500 } as RuntimeConfig,
+      input: runtime.input,
+      output: runtime.output,
+      provider: main,
+      priceUsage: (key, usage) => ({ costUsd: usage.inputTokens + usage.outputTokens, costBasis: "list", canonicalModel: key }),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const frames: WinterFrame[] = [];
+    for await (const f of host.input) frames.push(f);
+    await done;
+    expect(JSON.parse(probeOutput)).toEqual({ ok: false, code: "aborted", detail: "budget-exceeded", toolCalls: 1 });
+    // Exactly two generations went out: the main loop's, and the ONE inner generation that crossed.
+    expect(requests).toHaveLength(2);
+    const result = frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message).filter((m) => m.type === "result").at(-1) as unknown as Record<string, unknown>;
+    expect(result.subtype).toBe("error_max_budget_usd");
+    expect(result.total_cost_usd).toBe(1515);
   });
 });

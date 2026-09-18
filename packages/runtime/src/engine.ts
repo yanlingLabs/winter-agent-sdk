@@ -4071,6 +4071,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       contextAccountant.recordDescendantUsage(usage);
       priceGeneration(usage, modelKey);
     },
+    budgetExceeded: () => budgetExceeded(),
     ...(resolveAuxiliaryForSession !== undefined
       ? {
           resolveAuxiliaryModel: (tag: string, auxOpts?: { authRef?: CredentialRef }) =>
