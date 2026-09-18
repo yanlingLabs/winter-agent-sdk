@@ -191,14 +191,28 @@ function abortRace(signal: AbortSignal | undefined): { aborted: Promise<typeof A
 /**
  * `engine.ts`'s `isProviderTurnError`, structurally (see the import note above for why it is not
  * imported): the engine's own failure class carries a marker so it is recognised across a package
- * boundary, and its message is REDACTED BY CONSTRUCTION at every construction site -- which is what
- * makes it safe to show the model.
+ * boundary. Recognising it buys the HTTP STATUS and the typed CODE -- and nothing else. Its message
+ * is NOT relayed: construction sites redact what they know to redact, but a transport-level failure's
+ * text is whatever the network stack wrote, and that has been seen to carry a proxy URL with its
+ * userinfo (`http://user:password@proxy:3128`). This value is shown to the MODEL and lands in the
+ * transcript, so the rule is the same as for any other throw: a fixed sentence and the error's NAME.
  */
 function isProviderFailure(err: unknown): err is Error & { status?: number } {
   return typeof err === "object" && err !== null && (err as { winterProviderFailure?: unknown }).winterProviderFailure === true && err instanceof Error;
 }
 
-/** A provider failure as text the inner caller may show the model. Provider errors are redacted at construction; anything else contributes its NAME only. */
+/** Only an identifier-shaped name is quoted: `name` is a writable property, so it is not trusted to be one. */
+function safeErrorName(err: unknown): string | undefined {
+  const name = typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
+  return typeof name === "string" && /^[A-Za-z_$][\w$]{0,63}$/.test(name) ? name : undefined;
+}
+
+/**
+ * A failure as text the inner caller may show the model. NO thrown error's `.message` is relayed,
+ * with ONE exception: a `WinterProviderResolutionError`, whose message is composed by this codebase's
+ * own resolver from catalog ids (never from a network response) and is the only thing that tells the
+ * user WHICH provider has no credential.
+ */
 function describeFailure(err: unknown): { code: InnerModelFailureCode; message: string; detail?: string } {
   const name = typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
   const code = typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
@@ -207,11 +221,13 @@ function describeFailure(err: unknown): { code: InnerModelFailureCode; message: 
     const message = err instanceof Error ? err.message : "the inner model's provider could not be resolved";
     return detail === "no-credential-for-provider" ? { code: "no-credential", message, detail } : { code: "model-unresolvable", message, ...(detail !== undefined ? { detail } : {}) };
   }
+  const safeName = safeErrorName(err);
   if (isProviderFailure(err)) {
-    const status = err.status;
-    return { code: "provider-error", message: `the inner model's provider failed${status !== undefined ? ` (HTTP ${status})` : ""}: ${err.message}`, ...(detail !== undefined ? { detail } : {}) };
+    const status = typeof err.status === "number" && Number.isFinite(err.status) ? `HTTP ${err.status}` : undefined;
+    const facts = [status, safeName].filter((part): part is string => part !== undefined).join(", ");
+    return { code: "provider-error", message: `the inner model's provider failed${facts.length > 0 ? ` (${facts})` : ""}`, ...(detail !== undefined ? { detail } : {}) };
   }
-  return { code: "provider-error", message: `the inner model call failed with ${typeof name === "string" ? name : "an unknown error"}` };
+  return { code: "provider-error", message: `the inner model call failed with ${safeName ?? "an unknown error"}` };
 }
 
 /**
@@ -356,19 +372,26 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
       if (turn.kind === "text") return succeed("answer");
       // A tool-call turn that calls NOTHING is terminal: there is no result to feed back, so another
       // generation would be the same request again -- forever, for a model that keeps doing it.
-      if (turn.calls.length === 0) return succeed("answer");
+      //
+      // `calls` UNDEFINED (or any non-array) is the same case, reached by a TYPE VIOLATION a real
+      // adapter can still commit -- a `tool_use` turn assembled from a stream that ended before any
+      // call block closed. Read defensively: unguarded, `.length` throws a `TypeError` out of this
+      // function (the `try` below has a `finally` and, by design, no blanket `catch`), and a throw
+      // from an executor ends the user's whole turn.
+      const calls = Array.isArray(turn.calls) ? turn.calls : [];
+      if (calls.length === 0) return succeed("answer");
       // Still calling the tool on its closing generation, or at the generation bound: stop here. The
       // calls are NOT recorded as steps -- nothing ran and nothing was answered.
       if (closing || round >= maxGenerations) return succeed("tool-call-limit");
 
-      const toolUse: ContentBlock[] = [...(text.length > 0 ? [{ type: "text" as const, text }] : []), ...turn.calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input }))];
+      const toolUse: ContentBlock[] = [...(text.length > 0 ? [{ type: "text" as const, text }] : []), ...calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input }))];
       // `nativeState` rides with the assistant message so a family that needs its own opaque items
       // replayed beside a function call (and stamps them with its continuation domain) gets them;
       // `origin` lets the session's own renderer treat the message as in-domain.
       messages.push({ role: "assistant", content: toolUse, ...(origin !== undefined ? { origin } : {}), ...(turn.nativeState !== undefined ? { nativeState: turn.nativeState } : {}) });
 
       const results: ContentBlock[] = [];
-      for (const call of turn.calls) {
+      for (const call of calls) {
         let output: string;
         let isError: boolean;
         let executed = false;

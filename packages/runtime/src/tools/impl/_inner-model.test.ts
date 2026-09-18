@@ -366,6 +366,40 @@ describe("runInnerModel -- a STATED model", () => {
     };
     expect(JSON.stringify(await runInnerModel(CTX, { prompt: "p" }, runtimeOver(odd)))).not.toContain("SECRET-IN-AN-UNVETTED-MESSAGE");
   });
+
+  test("a PROVIDER failure's own message is never relayed either: a network error can carry a proxy URL with a password", async () => {
+    const SECRET = "hunter2-proxy-password";
+    const leaky: Provider = {
+      async generate() {
+        throw new ProviderTurnError(`connect ECONNREFUSED via http://user:${SECRET}@proxy.corp.example:3128`, { status: 502, code: "network_error" });
+      },
+    };
+    // Single-shot AND mid-loop: both relay paths go through the same description.
+    const single = await runInnerModel(CTX, { prompt: "p" }, runtimeOver(leaky));
+    const looped = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 2, handler: async () => ({ output: "r" }) }, runtimeOver(leaky));
+    for (const failed of [single, looped]) {
+      expect(failed).toMatchObject({ ok: false, code: "provider-error", detail: "network_error" });
+      expect(JSON.stringify(failed)).not.toContain(SECRET);
+      expect(JSON.stringify(failed)).not.toContain("proxy.corp.example");
+      if (failed.ok) throw new Error("unreachable");
+      // What IS exposed: a fixed sentence, the HTTP status, and the error's NAME.
+      expect(failed.message).toBe("the inner model's provider failed (HTTP 502, ProviderTurnError)");
+    }
+  });
+
+  test("a tool-call turn whose `calls` is UNDEFINED (a type violation a real adapter could still produce) is terminal and typed -- never a TypeError out of the loop", async () => {
+    const malformed = { kind: "tool_use", text: "partial words", usage: USAGE } as unknown as ProviderTurn;
+    const provider = recordingProvider([malformed]);
+    const runtime = runtimeOver(provider);
+    const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 3, handler: async () => ({ output: "never" }) }, runtime);
+    expect(result).toMatchObject({ ok: true, stoppedBy: "answer", toolCalls: 0, text: "partial words" });
+    // One generation, accounted; no second request for a turn there is nothing to answer.
+    expect(provider.requests).toHaveLength(1);
+    expect(runtime.accounted).toHaveLength(1);
+    // A non-array of any other shape is the same thing.
+    const odd = recordingProvider([{ kind: "tool_use", calls: "nope", usage: USAGE } as unknown as ProviderTurn]);
+    expect(await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 3, handler: async () => ({ output: "never" }) }, runtimeOver(odd))).toMatchObject({ ok: true, stoppedBy: "answer", toolCalls: 0 });
+  });
 });
 
 describe("runInnerModel -- wiring and misuse are values too", () => {
