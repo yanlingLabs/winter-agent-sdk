@@ -136,10 +136,30 @@ function sanitizeFilenameSegment(segment: string): string {
 const BINARY_SAVE_BUDGET_BYTES = 50 * 1024 * 1024;
 const binarySavedBytesBySession = new Map<string, number>();
 
+// Item 1 fix: the budget must be RESERVED synchronously, before this function's first `await` --
+// `writeFile`/`mkdir` yield to the event loop, and several concurrent calls each read `spent` before
+// any of them had written it back (measured: 12 concurrent 10 MiB saves against this same 50 MiB
+// budget landed 120 MiB on disk, because every one of the 12 read `spent === 0` before the first
+// `await writeFile` let any of them update the map). Reserving here -- synchronous code, no `await`
+// between the read and the write -- means the FIRST call past the budget line has already claimed
+// its bytes before control ever returns to the event loop, so a concurrent sibling's own check sees
+// the updated total. Rolled back in the `catch` below if the save itself then fails, so a failed
+// write never permanently eats budget it never spent.
+function reserveBinarySaveBudget(sessionId: string, bytes: number): boolean {
+  const spent = binarySavedBytesBySession.get(sessionId) ?? 0;
+  if (spent + bytes > BINARY_SAVE_BUDGET_BYTES) return false;
+  binarySavedBytesBySession.set(sessionId, spent + bytes);
+  return true;
+}
+
+function releaseBinarySaveBudget(sessionId: string, bytes: number): void {
+  const spent = binarySavedBytesBySession.get(sessionId) ?? 0;
+  binarySavedBytesBySession.set(sessionId, Math.max(0, spent - bytes));
+}
+
 async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint8Array): Promise<string | undefined | "budget-exceeded"> {
   if (typeof ctx.tempDir !== "string" || ctx.tempDir.length === 0) return undefined;
-  const spent = binarySavedBytesBySession.get(ctx.sessionId) ?? 0;
-  if (spent + bytes.byteLength > BINARY_SAVE_BUDGET_BYTES) return "budget-exceeded";
+  if (!reserveBinarySaveBudget(ctx.sessionId, bytes.byteLength)) return "budget-exceeded";
   const lastSegment = url.pathname.split("/").filter((s) => s.length > 0).pop() ?? "download";
   const filename = `webfetch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFilenameSegment(lastSegment)}`;
   const path = join(ctx.tempDir, filename);
@@ -149,9 +169,9 @@ async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint
     // at this path -- the timestamp+random filename already makes a real collision astronomically
     // unlikely, this is defence in depth, not the primary uniqueness guarantee).
     await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
-    binarySavedBytesBySession.set(ctx.sessionId, spent + bytes.byteLength);
     return path;
   } catch {
+    releaseBinarySaveBudget(ctx.sessionId, bytes.byteLength);
     return undefined;
   }
 }
@@ -440,3 +460,9 @@ replaceExecutor("WebFetch", createWebFetchExecutor());
 // Exported for `web-fetch.test.ts` (verbatim-string pinning) without a second literal copy.
 export { PERMISSIVE_GUIDELINES, STRICT_GUIDELINES };
 export const WEB_FETCH_DEFAULT_TIMEOUT_MS = WEB_FETCH_TIMEOUT_MS;
+
+// Exported for web-fetch.test.ts's own item-1 concurrency proof: calling `saveBinaryToTemp` directly,
+// back-to-back with no `await` between calls, is the only way to pin the reservation race
+// deterministically -- going through the whole network stack lets real I/O jitter dilute the timing
+// the race depends on.
+export { saveBinaryToTemp, BINARY_SAVE_BUDGET_BYTES };

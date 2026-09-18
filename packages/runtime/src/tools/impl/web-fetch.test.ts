@@ -13,7 +13,15 @@ import { resolveWebToolsConfig, type ResolvedWebToolsConfig } from "@yanlinglabs
 import type { Provider, ProviderRequest, ProviderTurn, ProviderUsage } from "../../engine.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { registerWebSessionRuntime, resetWebSessionRuntimesForTest, type WebSessionRuntime } from "../../web/session-runtime.ts";
-import { createWebFetchExecutor, PERMISSIVE_GUIDELINES, STRICT_GUIDELINES, WEB_FETCH_BUDGET_STOP_MESSAGE, type WebFetchExecutorDeps } from "./web-fetch.ts";
+import {
+  BINARY_SAVE_BUDGET_BYTES,
+  createWebFetchExecutor,
+  PERMISSIVE_GUIDELINES,
+  saveBinaryToTemp,
+  STRICT_GUIDELINES,
+  WEB_FETCH_BUDGET_STOP_MESSAGE,
+  type WebFetchExecutorDeps,
+} from "./web-fetch.ts";
 import { WEB_FETCH_MAX_BYTES } from "./_web-fetch-net.ts";
 import { WebFetchCache } from "./_web-fetch-cache.ts";
 import "./web-fetch.ts"; // self-sufficiency: installs the module-load default before getRegisteredTool below
@@ -485,6 +493,36 @@ describe("binary content", () => {
     }
     expect(lastOutput).toContain("budget");
     expect(lastOutput).not.toContain("saved to");
+  });
+
+  test("item 1: the budget is RESERVED synchronously, so 12 genuinely concurrent 10 MiB saves never overspend it", async () => {
+    // Calling the async function 12 times in a plain loop -- with NO `await` between calls -- is
+    // what makes this deterministic rather than network-jitter-dependent: each call runs
+    // synchronously up to its own first `await` (inside `saveBinaryToTemp`, that is `await
+    // mkdir(...)`), so if the budget check-and-reserve happens before that point, all 12 checks run
+    // back-to-back in one microtask BEFORE any of the 12 writes has a chance to complete -- exactly
+    // the race the bug report measured (120 MiB saved against a 50 MiB budget). Fails before the fix
+    // (all 12 pass the check, all 12 save) and passes after it (only 5 fit; 7 are budget-exceeded).
+    const sessionId = "s-binary-budget-concurrent";
+    const tenMiB = new Uint8Array(10 * 1024 * 1024);
+    const url = new URL("https://example.com/file.bin");
+    const fakeCtx = { tempDir: join(tmpRoot, ".tmp-concurrent"), sessionId } as unknown as ToolExecutionContext;
+
+    const promises: ReturnType<typeof saveBinaryToTemp>[] = [];
+    for (let i = 0; i < 12; i++) promises.push(saveBinaryToTemp(fakeCtx, url, tenMiB));
+    const results = await Promise.all(promises);
+
+    const saved = results.filter((r): r is string => typeof r === "string" && r !== "budget-exceeded");
+    const budgetExceeded = results.filter((r) => r === "budget-exceeded");
+    // 5 * 10 MiB == 50 MiB exactly fits the budget (the boundary case, spent + bytes === BUDGET, must
+    // still be accepted); a 6th would push it to 60 MiB and must be refused.
+    expect(saved.length).toBe(5);
+    expect(budgetExceeded.length).toBe(7);
+
+    let totalBytesOnDisk = 0;
+    for (const path of saved) totalBytesOnDisk += (await stat(path)).size;
+    expect(totalBytesOnDisk).toBe(5 * 10 * 1024 * 1024);
+    expect(totalBytesOnDisk).toBeLessThanOrEqual(BINARY_SAVE_BUDGET_BYTES);
   });
 });
 
