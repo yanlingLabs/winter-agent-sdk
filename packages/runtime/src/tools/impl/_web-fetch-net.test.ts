@@ -332,6 +332,51 @@ describe("performWebFetch -- timeout and abort", () => {
     const outcome = await promise;
     expect(outcome.kind).toBe("aborted");
   });
+
+  describe("item 3: the DNS lookup itself is raced against the hop timeout and the turn abort -- not run outside either", () => {
+    // A hostname, not an IP literal: `resolveTarget`'s own literal-IP branch never calls
+    // `resolveHost` at all, which would make these tests exercise nothing (the same discipline the
+    // cache-hit private-address tests already follow, in web-fetch.test.ts).
+    function neverSettlingResolveHost(): Promise<readonly string[]> {
+      return new Promise(() => {}); // a resolver that hangs forever
+    }
+
+    test("a resolver that never settles is bounded by the hop timeout -- a typed timeout result, not a hang", async () => {
+      const t0 = Date.now();
+      const outcome = await performWebFetch(
+        "https://never-resolves.example/ok",
+        "p",
+        baseOpts(),
+        testDeps({ timeoutMs: 50, resolveHost: neverSettlingResolveHost }),
+      );
+      expect(outcome.kind).toBe("timeout");
+      // Bounded by the 50 ms hop timeout, not by the test's own default timeout -- proves the
+      // resolver is actually raced, not merely eventually garbage-collected.
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(calls.length).toBe(0); // never reached the fetch step at all
+    });
+
+    test("a resolver that never settles is ALSO cancelled by a turn-level abort, never merely by the timeout", async () => {
+      const controller = new AbortController();
+      const promise = performWebFetch(
+        "https://never-resolves-2.example/ok",
+        "p",
+        { ...baseOpts(), signal: controller.signal },
+        testDeps({ timeoutMs: 5000, resolveHost: neverSettlingResolveHost }),
+      );
+      setTimeout(() => controller.abort(), 30);
+      const t0 = Date.now();
+      const outcome = await promise;
+      expect(outcome.kind).toBe("aborted");
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(calls.length).toBe(0);
+    });
+
+    test("a resolver that settles quickly is unaffected -- the race never delays the ordinary path", async () => {
+      const outcome = await performWebFetch(`https://127.0.0.1:${port}/ok`, "p", baseOpts(), testDeps({ resolveHost: async () => ["127.0.0.1"] }));
+      expect(outcome.kind).toBe("success");
+    });
+  });
 });
 
 describe("performWebFetch -- domain floor", () => {
