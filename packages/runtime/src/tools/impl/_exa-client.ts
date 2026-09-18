@@ -46,7 +46,7 @@ import { connectMcpServer, McpConnectError, type ConnectedMcpClient, type McpToo
 import { createElicitationAsker } from "../../mcp/elicitation.ts";
 import type { ToolSecretResult } from "../../provider/tool-secret.ts";
 import type { WebSessionRuntime } from "../../web/session-runtime.ts";
-import { isDomainBlocked, mergeDomainLists } from "./_domains.ts";
+import { backendExcludableDomains, isDomainBlocked, mergeDomainLists } from "./_domains.ts";
 
 // --- named constants ------------------------------------------------------------------------------
 
@@ -124,6 +124,8 @@ export interface ExaBackendState {
   anonymousRefusal?: "rate-limited" | "auth";
   /** The earliest time the next anonymous call may START (pacing). */
   nextAnonymousCallAt: number;
+  /** How many callers are asleep in the pacer RIGHT NOW -- what tells a deep queue from a clock step. Absent reads as 0. */
+  anonymousWaiting?: number;
 }
 
 export function createExaBackendState(): ExaBackendState {
@@ -227,11 +229,25 @@ function isTransportFailure(err: unknown): boolean {
   return code === 404 || code === -32000;
 }
 
-/** `text` with the request's own string arguments removed, so a backend ECHOING the query cannot trip a pattern meant for the backend's own words. */
+/**
+ * An argument shorter than this is never treated as an echo. Removing a SHORT argument shreds the
+ * backend's own words instead of the caller's: with the query `e`, "Rate limit exceeded" reads
+ * "Rat  limit  xc  d d", the detector answers `backend-error`, the breaker stays shut and the key
+ * fallback never happens. Six clears every word the two patterns are built from that a query could
+ * plausibly BE (`limit`, `quota`, `rate`, `free`, `tier`, `key`).
+ */
+const ECHO_MIN_LENGTH = 6;
+
+/**
+ * `text` with the request's own string arguments removed, so a backend ECHOING the query cannot trip a
+ * pattern meant for the backend's own words. CASE-INSENSITIVE (a backend may re-case what it echoes),
+ * and the argument is matched as TEXT -- escaped, never compiled as the caller's own pattern.
+ */
 function withoutEchoes(text: string, args: Record<string, unknown>): string {
   let out = text;
   for (const value of Object.values(args)) {
-    if (typeof value === "string" && value.length > 0) out = out.split(value).join(" ");
+    if (typeof value !== "string" || value.length < ECHO_MIN_LENGTH) continue;
+    out = out.replace(new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
   }
   return out;
 }
@@ -496,17 +512,29 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
     return attempt(tier, apiKey, tool, args, signal);
   };
 
+  // THE PACER. Each caller RESERVES the next start slot synchronously and then sleeps until it, so N
+  // callers queued at one instant start one interval apart however deep the queue is.
+  //
+  // A reservation can legitimately sit at most `(waiting + 1)` intervals ahead of now: one slot per
+  // caller still asleep, plus the one handed out last. Anything FURTHER out is not a queue -- it is a
+  // wall clock that stepped backwards under the reservation -- and only that is re-based (behind the
+  // callers still asleep, so they keep their spacing). The bound is the queue's REAL depth, never a
+  // fixed ceiling: a fixed one ("over 32 s is absurd") is also true of the 65th genuinely queued
+  // caller, which it would wave through unpaced -- a burst against a two-per-second allowance.
   const pace = async (signal: AbortSignal | undefined): Promise<void> => {
-    const start = Math.max(now(), state.nextAnonymousCallAt);
+    const at = now();
+    const waiting = state.anonymousWaiting ?? 0;
+    const steppedBack = state.nextAnonymousCallAt > at + (waiting + 1) * EXA_ANONYMOUS_MIN_INTERVAL_MS;
+    const start = steppedBack ? at + waiting * EXA_ANONYMOUS_MIN_INTERVAL_MS : Math.max(at, state.nextAnonymousCallAt);
     state.nextAnonymousCallAt = start + EXA_ANONYMOUS_MIN_INTERVAL_MS;
-    // Never longer than ONE interval per queued call is possible by construction -- unless the clock
-    // stepped backwards and left the reservation far in the future. Clamp, and re-base the reservation.
-    const wait = start - now();
-    if (wait > EXA_ANONYMOUS_MIN_INTERVAL_MS * 64) {
-      state.nextAnonymousCallAt = now() + EXA_ANONYMOUS_MIN_INTERVAL_MS;
-      return;
+    const wait = start - at;
+    if (wait <= 0) return;
+    state.anonymousWaiting = waiting + 1;
+    try {
+      await sleep(wait, signal);
+    } finally {
+      state.anonymousWaiting = Math.max(0, (state.anonymousWaiting ?? 1) - 1);
     }
-    if (wait > 0) await sleep(wait, signal);
   };
 
   const failureFrom = (outcome: Exclude<CallOutcome, { kind: "ok" } | { kind: "rate-limited" } | { kind: "auth" }>): ExaSearchResult => {
@@ -533,7 +561,12 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
       if ((params.includeDomains?.length ?? 0) > 0 && include.length === 0) {
         return { ok: false, code: "blocked-domains", message: "every domain in the allow-list is blocked by this host's configuration, so there is nothing that may be searched" };
       }
-      const exclude = include.length > 0 ? [] : mergeDomainLists(floor, params.excludeDomains);
+      // TWO lists, on purpose. `localExclude` is everything that must not come back, applied to the
+      // hits below under `_domains.ts`'s own rule. `exclude` is the part of it that may be handed to
+      // the BACKEND's filter: multi-label names only -- how the backend matches an IP or a single
+      // label (`com`) is unknown, and a suffix reading would over-block silently.
+      const localExclude = mergeDomainLists(floor, params.excludeDomains);
+      const exclude = include.length > 0 ? [] : backendExcludableDomains(localExclude);
       // CLAMPED, and total: each hit is capped, so without a ceiling on the COUNT a caller (the inner
       // model picks this) could still pull a thousand capped hits; `NaN` would serialise to `null`.
       const requested = typeof params.numResults === "number" && Number.isFinite(params.numResults) ? Math.floor(params.numResults) : EXA_DEFAULT_NUM_RESULTS;
@@ -556,7 +589,7 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
         // Parsed from the FULL text (a JSON payload cut mid-way would not parse at all), capped for
         // what is handed on; each hit's own highlight is already capped.
         // Sliced to what was ASKED FOR: a backend that ignores `numResults` cannot widen the bound.
-        const hits = parseExaHits(full).filter((hit) => !isDomainBlocked(hit.url, floor)).slice(0, numResults);
+        const hits = parseExaHits(full).filter((hit) => !isDomainBlocked(hit.url, localExclude)).slice(0, numResults);
         return { ok: true, hits, tier, tool, rawText: capText(full, maxResultChars), truncated: full.length > maxResultChars };
       };
 

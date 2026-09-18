@@ -562,6 +562,118 @@ describe("review fixes: bounds, answered errors, single-flight connect, key re-r
     expect(anonymousBreakerOpen(state, 10_000_000 - 3_600_000 + EXA_ANONYMOUS_COOLDOWN_MS)).toBe(false);
   });
 
+  test("echo-stripping removes only what can BE an echo: a one-letter query must not shred the backend's own words", async () => {
+    // Query `e`: stripped naively, "Rate limit exceeded" becomes "Rat  limit  xc  d d" -- the detector
+    // reads `backend-error`, the breaker stays shut and the key fallback never happens.
+    await withExaFixture({ respond: (call) => (call.apiKey === null ? { content: [{ type: "text", text: "Rate limit exceeded" }], isError: true } : advancedPayload([{ url: "https://k.example/" }])) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query: "e" })).toMatchObject({ ok: true, tier: "key" });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+    // Five characters is still under the bar (`limit` is a word the backend uses about itself).
+    await withExaFixture({ respond: (call) => (call.apiKey === null ? { content: [{ type: "text", text: "Rate limit exceeded" }], isError: true } : advancedPayload([{ url: "https://k.example/" }])) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query: "limit" })).toMatchObject({ ok: true, tier: "key" });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("echo-stripping is CASE-INSENSITIVE and treats the query as text, not as a pattern: a backend that re-cases the echo still does not open the breaker", async () => {
+    const query = "Why does my API (v2.*) return 429 Quota Exceeded [rate limit] errors?";
+    await withExaFixture({ respond: (call) => ({ content: [{ type: "text", text: `no results found for: ${String(call.args["query"]).toUpperCase()}` }], isError: true }) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query })).toMatchObject({ ok: false, code: "backend-error" });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(false);
+        expect(fixture.calls.every((call) => call.apiKey === null)).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("THE PACER QUEUE: 70 genuinely queued calls each wait for their OWN slot -- a deep queue is never mistaken for a clock step and let through as a burst", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const state = createExaBackendState();
+      // A FROZEN clock and sleeps that are only RELEASED at the end: all 70 are queued at one instant.
+      const asked: number[] = [];
+      const release: Array<() => void> = [];
+      const sleep = (ms: number): Promise<void> => {
+        asked.push(ms);
+        return new Promise<void>((resolve) => release.push(resolve));
+      };
+      const client = createExaSearchClient({ endpoint: fixture.endpoint, state, now: () => 5_000_000, sleep });
+      try {
+        const searches = Array.from({ length: 70 }, (_, i) => client.search({ query: `q${i}` }));
+        // Every pacing decision is made synchronously at the top of `search`, before any await on the network.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(asked).toEqual(Array.from({ length: 69 }, (_, i) => (i + 1) * EXA_ANONYMOUS_MIN_INTERVAL_MS));
+        expect(state.nextAnonymousCallAt).toBe(5_000_000 + 70 * EXA_ANONYMOUS_MIN_INTERVAL_MS);
+        for (const go of release) go();
+        const results = await Promise.all(searches);
+        expect(results.every((r) => r.ok)).toBe(true);
+        // The queue drained: nobody is counted as waiting any more.
+        expect(state.anonymousWaiting ?? 0).toBe(0);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("THE PACER, clock step: a reservation further out than the queue can explain is re-based -- one call never sleeps for an hour", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const c = clock();
+      const state = createExaBackendState();
+      state.nextAnonymousCallAt = c.now() + 3_600_000; // the wall clock stepped back an hour under a reservation
+      const client = createExaSearchClient({ endpoint: fixture.endpoint, state, now: c.now, sleep: c.sleep });
+      try {
+        expect(await client.search({ query: "after the step" })).toMatchObject({ ok: true });
+        expect(c.slept).toEqual([]);
+        await client.search({ query: "next" });
+        expect(c.slept).toEqual([EXA_ANONYMOUS_MIN_INTERVAL_MS]);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("an IP or single-label exclusion is applied LOCALLY and never forwarded to the backend's own `excludeDomains`", async () => {
+    const respond = () => advancedPayload([{ title: "ok", url: "https://fine.example/a" }, { title: "loop", url: "http://127.0.0.1:8080/x" }, { title: "mapped", url: "http://[::ffff:127.0.0.1]/y" }, { title: "local", url: "http://localhost/z" }, { title: "a dot-com", url: "https://innocent.com/" }]);
+    await withExaFixture({ respond }, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, { blockedDomains: ["127.0.0.1", "blocked.example"] });
+      try {
+        const result = await client.search({ query: "one", excludeDomains: ["localhost", "com", "reddit.com"] });
+        if (!result.ok) throw new Error("expected the search to succeed");
+        expect(fixture.calls[0]!.args["excludeDomains"]).toEqual(["blocked.example", "reddit.com"]);
+        // Locally: the IP (both spellings) and `localhost` are dropped; `com` is EXACT, so a .com survives.
+        expect(result.hits.map((h) => h.url)).toEqual(["https://fine.example/a", "https://innocent.com/"]);
+        // Nothing but unforwardable entries: there is no filter to send, so it is the BASIC tool.
+        await client.search({ query: "two", excludeDomains: ["localhost"] });
+        expect(fixture.calls[1]!.args["excludeDomains"]).toEqual(["blocked.example"]);
+      } finally {
+        await client.close();
+      }
+    });
+    await withExaFixture({}, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint, { blockedDomains: ["10.0.0.1"] });
+      try {
+        await client.search({ query: "three", excludeDomains: ["localhost"] });
+        expect(fixture.calls[0]!.tool).toBe(EXA_SEARCH_TOOL);
+        expect("excludeDomains" in fixture.calls[0]!.args).toBe(false);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   test("the KEYED connection refuses redirects: `x-api-key` never follows one to another origin", async () => {
     const elsewhere: Array<string | null> = [];
     const other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (elsewhere.push(req.headers.get("x-api-key")), new Response("{}", { status: 200 })) });
