@@ -524,11 +524,14 @@ describe("WebFetch domain rules (WS-07 §3)", () => {
   });
 
   test("a source that is more than a host is left as written and matches nothing -- never quietly widened to the whole host", () => {
-    for (const source of ["WebFetch(domain:example.com/docs)", "WebFetch(domain:example.com:8080)", "WebFetch(domain:https://example.com)"]) {
+    // `:80` is the trap: it is http's DEFAULT port, which the url parser drops without a trace.
+    for (const source of ["WebFetch(domain:example.com/docs)", "WebFetch(domain:example.com:8080)", "WebFetch(domain:example.com:80)", "WebFetch(domain:[::1]:80)", "WebFetch(domain:https://example.com)"]) {
       const rule = parseRule(source);
       expect(rule.specifier?.kind).toBe("webFetchDomain");
       expect(matchesRule(rule, fetchCall("https://example.com/docs"), { direction: "allow" })).toBe(false);
       expect(matchesRule(rule, fetchCall("https://example.com:8080/docs"), { direction: "allow" })).toBe(false);
+      expect(matchesRule(rule, fetchCall("http://example.com:80/"), { direction: "allow" })).toBe(false);
+      expect(matchesRule(rule, fetchCall("http://[::1]:80/"), { direction: "allow" })).toBe(false);
     }
   });
 

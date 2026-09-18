@@ -650,6 +650,10 @@ function stripTrailingDot(hostname: string): string {
 function normalizeRuleHostname(source: string): string {
   const lowered = stripTrailingDot(source.trim().toLowerCase());
   if (lowered === "" || lowered.includes("*")) return lowered;
+  // A port is "more than a host" too, and the URL parser would DROP a scheme-default one silently
+  // (`example.com:80` round-trips to `example.com`), so it is caught here rather than by the
+  // round-trip check below. An IPv6 literal's colons are inside its brackets and are part of the host.
+  if (lowered.replace(/^\[[^\]]*\]/, "").includes(":")) return lowered;
   try {
     const parsed = new URL(`http://${lowered}/`);
     if (parsed.href === `http://${parsed.hostname}/`) return stripTrailingDot(parsed.hostname);
