@@ -40,16 +40,35 @@ export interface WebSearchInput {
 
 type ParsedInput = { ok: true; input: WebSearchInput } | { ok: false; error: string };
 
-// NIT (independent review, disclosed rather than fixed -- behaviour, not a bug): an explicit EMPTY
-// array (`allowed_domains: []`) collapses to "absent" here, same as an array with only blank/non-
-// string entries. Whether claude's own code treats a truthy-but-empty array the same way is
-// unprovable from the binary (no observed call exercises it); this reading is the more defensible
-// one (an empty list filters nothing, so it is indistinguishable in EFFECT from not having named the
-// field at all), but it is a judgement call, not a transcription.
-function stringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const strings = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
-  return strings.length > 0 ? strings : undefined;
+/**
+ * The most entries either domain list may carry. claude has no analogue -- its schema-validated
+ * `string[]` is forwarded whole, and the extraction notes record no bound -- but a list is a MODEL-
+ * supplied array that this runtime hands to a third-party backend, and a 100,000-element one was
+ * forwarded verbatim (whole-branch review MINOR 10). A thousand is far past any real filter and small
+ * enough that no request built from it is absurd.
+ */
+export const MAX_DOMAIN_LIST_ENTRIES = 1000;
+
+// AN EXPLICIT EMPTY ARRAY (`allowed_domains: []`) collapses to "absent", same as an array whose every
+// entry is blank. Whether claude's own code treats a truthy-but-empty array the same way is unprovable
+// from the binary (no observed call exercises it); this reading is the more defensible one (an empty
+// list filters nothing, so it is indistinguishable in EFFECT from not having named the field at all),
+// but it is a judgement call, not a transcription.
+//
+// A WRONG TYPE IS REFUSED, NOT IGNORED (whole-branch review, NIT). `allowed_domains: "a.example"` used
+// to read as `undefined` here -- i.e. the search ran UNFILTERED, which is the opposite of what the
+// caller asked for and the one direction that is never safe to guess. claude never has to decide: its
+// schema refuses the call first. With no schema step in front of this executor, refusing here is that
+// step's stand-in, and it is an ordinary error result.
+type DomainListResult = { ok: true; value: string[] | undefined } | { ok: false; error: string };
+
+function stringArray(field: string, value: unknown): DomainListResult {
+  if (value === undefined || value === null) return { ok: true, value: undefined };
+  if (!Array.isArray(value)) return { ok: false, error: `Error: ${field} must be an array of domain strings` };
+  if (value.length > MAX_DOMAIN_LIST_ENTRIES) return { ok: false, error: `Error: ${field} has ${value.length.toLocaleString("en-US")} entries; at most ${MAX_DOMAIN_LIST_ENTRIES.toLocaleString("en-US")} are accepted` };
+  if (value.some((v) => typeof v !== "string")) return { ok: false, error: `Error: every entry of ${field} must be a string` };
+  const strings = (value as string[]).filter((v) => v.trim().length > 0);
+  return { ok: true, value: strings.length > 0 ? strings : undefined };
 }
 
 /**
@@ -70,8 +89,12 @@ function parseInput(raw: unknown): ParsedInput {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
   const query = typeof record["query"] === "string" ? record["query"] : "";
   if (query.length < 2) return { ok: false, error: "Error: Missing query" };
-  const allowed = stringArray(record["allowed_domains"]);
-  const blocked = stringArray(record["blocked_domains"]);
+  const allowedList = stringArray("allowed_domains", record["allowed_domains"]);
+  if (!allowedList.ok) return { ok: false, error: allowedList.error };
+  const blockedList = stringArray("blocked_domains", record["blocked_domains"]);
+  if (!blockedList.ok) return { ok: false, error: blockedList.error };
+  const allowed = allowedList.value;
+  const blocked = blockedList.value;
   if (allowed !== undefined && blocked !== undefined) {
     return { ok: false, error: "Error: Cannot specify both allowed_domains and blocked_domains in the same request" };
   }
@@ -281,7 +304,11 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     if (!pass.ok) {
       const budgetStop = isBudgetStop(pass);
       if (attemptedSearches === 0) return { output: innerFailureText(pass), ...(budgetStop ? {} : { isError: true }) };
-      events.push({ type: "text", text: innerFailureText(pass) });
+      // `\n\n` because the stream walk ACCUMULATES adjacent text with no separator of its own (claude's
+      // own rule, for claude's own deltas): a pass whose last commentary was "done" rendered
+      // "doneWeb search stopped: ..." (whole-branch review, NIT). The walk trims each flushed buffer,
+      // so the prefix costs nothing when there is no preceding text.
+      events.push({ type: "text", text: `\n\n${innerFailureText(pass)}` });
     } else if (attemptedSearches === 0 && events.every((e) => e.type === "text")) {
       // The forced round-1 tool call never actually called the tool at all (an adapter that ignores
       // a forced `toolChoice`) -- there is no search to report, and the model's own commentary must
@@ -294,7 +321,7 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     // guidance (e.g. "add an Exa API key") claude's never needs to -- surfaced ONCE, plainly, rather
     // than leaving the model to infer it from a bare code.
     if (attemptedSearches > 0 && successfulSearches === 0 && lastFailureMessage !== undefined) {
-      events.push({ type: "text", text: lastFailureMessage });
+      events.push({ type: "text", text: `\n\n${lastFailureMessage}` });
     }
 
     // Capped by DROPPING ITEMS, never by slicing the finished string -- a raw slice chops from the

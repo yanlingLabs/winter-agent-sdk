@@ -179,9 +179,18 @@ function releaseBinarySaveBudget(sessionId: string, bytes: number): void {
   binarySavedBytesBySession.set(sessionId, Math.max(0, spent - bytes));
 }
 
-async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint8Array): Promise<string | undefined | "budget-exceeded"> {
+/**
+ * `saveBinaryToTemp`'s "the session's saved-binary allowance is used up" answer. RENAMED away from the
+ * bare `"budget-exceeded"` it used to be (whole-branch review, NIT): that string is also the VALUE of
+ * `INNER_MODEL_BUDGET_EXCEEDED_DETAIL`, an unrelated fact (the session's spend ceiling stopping an
+ * inner model pass) that this same file matches on. Nothing conflated them today; two identical
+ * literals a few hundred lines apart is how something eventually would.
+ */
+export const BINARY_SAVE_BUDGET_EXCEEDED = "binary-save-budget-exceeded";
+
+async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint8Array): Promise<string | undefined | typeof BINARY_SAVE_BUDGET_EXCEEDED> {
   if (typeof ctx.tempDir !== "string" || ctx.tempDir.length === 0) return undefined;
-  if (!reserveBinarySaveBudget(ctx.sessionId, bytes.byteLength)) return "budget-exceeded";
+  if (!reserveBinarySaveBudget(ctx.sessionId, bytes.byteLength)) return BINARY_SAVE_BUDGET_EXCEEDED;
   const lastSegment = url.pathname.split("/").filter((s) => s.length > 0).pop() ?? "download";
   const filename = `webfetch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFilenameSegment(lastSegment)}`;
   const path = join(ctx.tempDir, filename);
@@ -210,9 +219,8 @@ function cappedForDigest(content: string): string {
 
 // The inner-model helper reports a session-BUDGET stop as the `aborted` code with the detail
 // `INNER_MODEL_BUDGET_EXCEEDED_DETAIL`, so its code union does not grow. Imported, never re-spelled:
-// this file ALSO has an unrelated budget of its own (the saved-binary allowance, `saveBinaryToTemp`'s
-// "budget-exceeded" return), and the two happen to share those words. They are different facts with
-// different messages, and matching a literal here is how they would one day be conflated.
+// this file ALSO has an unrelated budget of its own (the saved-binary allowance), and the two used to
+// share the same literal value -- `BINARY_SAVE_BUDGET_EXCEEDED` above no longer can be mistaken for it.
 
 /** The digest pass was stopped because the session reached its spending limit -- NOT an interruption, and retrying cannot help. */
 export const WEB_FETCH_BUDGET_STOP_MESSAGE =
@@ -254,7 +262,17 @@ async function runDigest(ctx: ToolExecutionContext, runtime: WebSessionRuntime, 
   const model = digestModel !== undefined ? ({ kind: "tag" as const, tag: digestModel, ...(runtime.web.fetch.authRef !== undefined ? { authRef: runtime.web.fetch.authRef } : {}) }) : undefined;
   try {
     const result = await runInnerModel(ctx, { prompt: built, ...(model !== undefined ? { model } : {}) }, runtime);
-    if (!result.ok) return { output: digestFailureMessage(result.code, result.message, result.detail), isError: true };
+    // A SESSION-BUDGET STOP IS NOT AN ERROR RESULT, matching WebSearch's own equivalent (whole-branch
+    // review, NIT: the two disagreed). It is a normal, session-initiated boundary rather than a failed
+    // call, which is the posture claude takes for its own budget refusal (the 200-search cap answers
+    // with a RESULT, `is_error: false`, per the extraction notes) and for every other outcome where the
+    // tool did its job and the answer is simply "no more": a non-2xx response and a blank-Location
+    // redirect are both `is_error: false` there, measured. It also keeps the stop out of the
+    // PostToolUseFailure hooks, which exist for calls that went wrong.
+    if (!result.ok) {
+      const budgetStop = result.code === "aborted" && result.detail === INNER_MODEL_BUDGET_EXCEEDED_DETAIL;
+      return { output: digestFailureMessage(result.code, result.message, result.detail), isError: !budgetStop };
+    }
     // KNOWN, DISCLOSED DIFFERENCE. claude tells two empty answers apart: an assistant message with NO
     // text block at all yields `No response from model` (matched here), while an EMPTY text block
     // yields the empty string, which its main loop then shows the model as a generic "completed with
@@ -489,7 +507,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
         const savedPath = await saveBinaryToTemp(ctx, originalUrl, outcome.body);
         const sizeLabel = `${outcome.body.byteLength.toLocaleString("en-US")} bytes`;
         const note =
-          savedPath === "budget-exceeded"
+          savedPath === BINARY_SAVE_BUDGET_EXCEEDED
             ? `The fetched content is binary (content-type: ${outcome.contentType || "unknown"}, ${sizeLabel}). Binary content was not retrieved: this session's binary-save budget (${(BINARY_SAVE_BUDGET_BYTES / (1024 * 1024)).toFixed(0)} MiB) has been reached.`
             : savedPath !== undefined
               ? `The fetched content is binary (content-type: ${outcome.contentType || "unknown"}, ${sizeLabel}) and was saved to ${savedPath}. Binary content is not analyzed by WebFetch's digest model.`

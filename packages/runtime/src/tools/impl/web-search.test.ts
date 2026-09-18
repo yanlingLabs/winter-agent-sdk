@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { resolveWebToolsConfig, type ResolvedWebToolsConfig } from "@yanlinglabs/winter-agent-sdk";
 import "./web-search.ts";
-import { createWebSearchExecutor, WEB_SEARCH_RESULT_CAP } from "./web-search.ts";
+import { createWebSearchExecutor, MAX_DOMAIN_LIST_ENTRIES, WEB_SEARCH_RESULT_CAP } from "./web-search.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 import { registerWebSessionRuntime, resetWebSessionRuntimesForTest, type WebSessionRuntime } from "../../web/session-runtime.ts";
@@ -109,11 +109,37 @@ describe("validation", () => {
     expect(result).toEqual({ output: "Error: Cannot specify both allowed_domains and blocked_domains in the same request", isError: true });
   });
 
+  // Whole-branch review, NIT + MINOR 10: a domain list is model-supplied and reaches a third-party
+  // backend. A wrong TYPE used to read as "absent", i.e. the search ran UNFILTERED -- the one direction
+  // that is never safe to guess -- and a 100,000-element list was forwarded whole.
+  test("a wrong-typed domain list is REFUSED, never quietly ignored (which would search unfiltered)", async () => {
+    const ctx = makeCtx("v-wrong-typed-list");
+    for (const value of ["a.example", 7, true, { "0": "a.example" }]) {
+      expect(await run({ query: "bun release", allowed_domains: value }, ctx)).toEqual({ output: "Error: allowed_domains must be an array of domain strings", isError: true });
+      expect(await run({ query: "bun release", blocked_domains: value }, ctx)).toEqual({ output: "Error: blocked_domains must be an array of domain strings", isError: true });
+    }
+    // An array with a non-string entry is refused too -- filtering it out is the same silent guess.
+    expect(await run({ query: "bun release", allowed_domains: ["a.example", 7] }, ctx)).toEqual({ output: "Error: every entry of allowed_domains must be a string", isError: true });
+    // An explicit EMPTY array, and one of only blank strings, still read as "absent": they filter nothing.
+    expect((await run({ query: "bun release", allowed_domains: [] }, ctx)).output).not.toContain("must be an array");
+    expect((await run({ query: "bun release", allowed_domains: ["  "] }, ctx)).output).not.toContain("must be an array");
+  });
+
+  test("an absurdly long domain list is refused rather than forwarded to the backend", async () => {
+    const ctx = makeCtx("v-huge-list");
+    const huge = Array.from({ length: MAX_DOMAIN_LIST_ENTRIES + 1 }, (_, i) => `d${i}.example`);
+    const result = await run({ query: "bun release", blocked_domains: huge }, ctx);
+    expect(result).toEqual({ output: `Error: blocked_domains has 1,001 entries; at most 1,000 are accepted`, isError: true });
+    // The bound itself is not off by one: exactly the cap is accepted.
+    expect((await run({ query: "bun release", blocked_domains: huge.slice(0, MAX_DOMAIN_LIST_ENTRIES) }, ctx)).output).not.toContain("entries; at most");
+  });
+
   test("validation failures never touch the session's search budget (no runtime needs to be wired for them to fail correctly)", async () => {
     const ctx = makeCtx("v-no-budget-spend");
     await run({ query: "" }, ctx);
     await run({ query: "a" }, ctx);
     await run({ query: "x", allowed_domains: ["a"], blocked_domains: ["b"] }, ctx);
+    await run({ query: "x", allowed_domains: "a" }, ctx);
     expect(webSearchCallsUsed("v-no-budget-spend")).toBe(0);
   });
 });
@@ -369,6 +395,20 @@ describe("zero successful searches", () => {
     });
   });
 
+  // Whole-branch review, NIT: the stream walk accumulates adjacent text with NO separator (claude's own
+  // rule for claude's own deltas), so Winter's appended sentence ran straight into the model's last
+  // word -- "doneWeb search error guidance...".
+  test("an appended failure sentence is separated from the model's own trailing text, never glued to it", async () => {
+    await withExaFixture({ respond: () => ({ content: [{ type: "text", text: "an internal backend hiccup" }], isError: true }) }, async (fixture) => {
+      const state = createExaBackendState();
+      const ctx = makeCtx("zero-fail-separator");
+      runtimeWith("zero-fail-separator", scriptedProvider([call1Turn(), { kind: "text", text: "done" }]));
+      const result = await run({ query: "qq" }, ctx, { fixture, state });
+      expect(result.output).toContain("done\n\n");
+      expect(result.output).not.toMatch(/done\S/);
+    });
+  });
+
   test("the model never even called the tool (an adapter that ignores the forced round 1) -> a plain 'not performed' result, never the model's own commentary dressed up as search results", async () => {
     const ctx = makeCtx("zero-no-call");
     runtimeWith("zero-no-call", scriptedProvider([{ kind: "text", text: "I already know the answer without searching." }]));
@@ -557,6 +597,22 @@ describe("the result cap", () => {
       expect(result.output.length).toBeGreaterThan(1_000);
       expect(result.output.startsWith('Web search results for query: "qq"')).toBe(true);
       expect(result.output.endsWith("REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.")).toBe(true);
+    });
+  });
+
+  // Whole-branch review, NIT: the header is the one part of the render the cap cannot drop, so an
+  // enormous QUERY defeated the cap outright -- every item could go and the result was still megabytes.
+  test("a megabyte-long query cannot defeat the cap: the header's copy of it is bounded", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const ctx = makeCtx("cap-huge-query");
+      const query = "q".repeat(1_000_000);
+      runtimeWith("cap-huge-query", scriptedProvider([call1Turn(), { kind: "text", text: "done" }]));
+      const result = await run({ query }, ctx, { fixture });
+      expect(result.output.length).toBeLessThanOrEqual(WEB_SEARCH_RESULT_CAP);
+      expect(result.output).toContain("[query truncated at 1,000 characters]");
+      // An ordinary query is still rendered RAW and whole -- the bound is far past any real one.
+      runtimeWith("cap-huge-query", scriptedProvider([call1Turn(), { kind: "text", text: "done" }]));
+      expect((await run({ query: "bun release notes" }, ctx, { fixture })).output.startsWith('Web search results for query: "bun release notes"')).toBe(true);
     });
   });
 

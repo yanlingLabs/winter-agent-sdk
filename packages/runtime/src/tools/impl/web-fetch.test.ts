@@ -15,6 +15,7 @@ import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } 
 import { registerWebSessionRuntime, resetWebSessionRuntimesForTest, type WebSessionRuntime } from "../../web/session-runtime.ts";
 import {
   BINARY_SAVE_BUDGET_BYTES,
+  BINARY_SAVE_BUDGET_EXCEEDED,
   createWebFetchExecutor,
   PERMISSIVE_GUIDELINES,
   saveBinaryToTemp,
@@ -391,7 +392,9 @@ describe("the digest pass stopped by the session's BUDGET is not reported as an 
     const ctx = makeCtx({ sessionId: "s-budget-stop" });
     registerWebSessionRuntime(ctx.sessionId, runtime);
     const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } }), { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
-    expect(result).toEqual({ output: WEB_FETCH_BUDGET_STOP_MESSAGE, isError: true });
+    // NOT an error result (whole-branch review, NIT): a session-budget stop is a boundary, not a failed
+    // call, and WebSearch's own equivalent already answered that way.
+    expect(result).toEqual({ output: WEB_FETCH_BUDGET_STOP_MESSAGE });
     expect(result.output).toContain("spending limit");
     expect(result.output).toContain("Retrying will not help");
     expect(result.output).not.toContain("interrupted");
@@ -516,8 +519,8 @@ describe("binary content", () => {
     for (let i = 0; i < 12; i++) promises.push(saveBinaryToTemp(fakeCtx, url, tenMiB));
     const results = await Promise.all(promises);
 
-    const saved = results.filter((r): r is string => typeof r === "string" && r !== "budget-exceeded");
-    const budgetExceeded = results.filter((r) => r === "budget-exceeded");
+    const saved = results.filter((r): r is string => typeof r === "string" && r !== BINARY_SAVE_BUDGET_EXCEEDED);
+    const budgetExceeded = results.filter((r) => r === BINARY_SAVE_BUDGET_EXCEEDED);
     // 5 * 10 MiB == 50 MiB exactly fits the budget (the boundary case, spent + bytes === BUDGET, must
     // still be accepted); a 6th would push it to 60 MiB and must be refused.
     expect(saved.length).toBe(5);

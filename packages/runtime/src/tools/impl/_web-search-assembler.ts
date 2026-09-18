@@ -66,6 +66,21 @@ export function flushWebSearchStream(events: readonly WebSearchStreamEvent[]): W
 const REMINDER = "REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.";
 
 /**
+ * The most of the QUERY that reaches the header. claude interpolates the query raw and has no bound of
+ * its own (its own schema-validated `query` is the model's, and the measured scenarios are short), but
+ * the header is the one part of the render the size cap cannot drop -- so a 1 MB query defeated the
+ * 100,000-char cap entirely (whole-branch review, NIT): every item could be dropped and the result was
+ * still megabytes. A thousand characters is far longer than any real search query, so the capped and
+ * the uncapped render are byte-identical for every input either side has been measured on.
+ */
+const HEADER_QUERY_CAP = 1_000;
+
+function headerQuery(query: string): string {
+  if (query.length <= HEADER_QUERY_CAP) return query;
+  return `${query.slice(0, HEADER_QUERY_CAP)}[query truncated at ${HEADER_QUERY_CAP.toLocaleString("en-US")} characters]`;
+}
+
+/**
  * Stage 2: the render. Verbatim from the research file: header + `"\n\n"`; each item + `"\n\n"`
  * (a string item as-is; a links item as `Links: ` + COMPACT `JSON.stringify` of `[{title,url}]`, or
  * `No links found.` when its `content` is empty); then `"\n"` + the reminder; the WHOLE string
@@ -73,7 +88,7 @@ const REMINDER = "REMINDER: You MUST include the sources above in your response 
  * there happen to be zero items, and any trailing blank line before the reminder).
  */
 export function renderWebSearchToolResult(query: string, items: readonly WebSearchResultItem[]): string {
-  const header = `Web search results for query: "${query}"`;
+  const header = `Web search results for query: "${headerQuery(query)}"`;
   const body = items.map((item) => (typeof item === "string" ? item : item.content.length > 0 ? `Links: ${JSON.stringify(item.content)}` : "No links found.")).reduce((acc, rendered) => acc + rendered + "\n\n", "");
   return (header + "\n\n" + body + "\n" + REMINDER).trim();
 }
