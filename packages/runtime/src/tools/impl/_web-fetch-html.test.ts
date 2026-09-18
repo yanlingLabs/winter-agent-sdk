@@ -23,6 +23,16 @@ describe("decodeHtmlEntities", () => {
   test("no ampersand -> fast path, unchanged", () => {
     expect(decodeHtmlEntities("plain text")).toBe("plain text");
   });
+
+  test("security review minor: NUL and a lone surrogate map to U+FFFD (the HTML spec's own rule), never a raw NUL or an unpaired surrogate", () => {
+    expect(decodeHtmlEntities("a&#0;b")).toBe("a�b");
+    expect(decodeHtmlEntities("a&#x0;b")).toBe("a�b");
+    expect(decodeHtmlEntities("a&#xD800;b")).toBe("a�b");
+    expect(decodeHtmlEntities("a&#55296;b")).toBe("a�b"); // 0xD800 in decimal
+    expect(decodeHtmlEntities("a&#xDFFF;b")).toBe("a�b");
+    // a well-formed SURROGATE PAIR (not a lone one) still decodes to the real character it encodes.
+    expect(decodeHtmlEntities("&#x1F600;")).toBe("\u{1F600}");
+  });
 });
 
 describe("htmlToMarkdown -- headings", () => {
@@ -130,6 +140,85 @@ describe("htmlToMarkdown -- malformed markup", () => {
   test("an unclosed tag at end-of-stream is force-closed, content not dropped", async () => {
     const md = await htmlToMarkdown("<p>Unterminated paragraph");
     expect(md).toBe("Unterminated paragraph");
+  });
+});
+
+describe("htmlToMarkdown -- security review finding M3: omitted end tags (everyday HTML) do not drop content", () => {
+  test("<ul><li>a<li>b</ul> -- both bullets survive, correctly separated", async () => {
+    const md = await htmlToMarkdown("<ul><li>a<li>b</ul>");
+    expect(md).toBe("* a\n* b");
+  });
+
+  test("<table><tr><td>x<td>y</table> -- both cells survive", async () => {
+    const md = await htmlToMarkdown("<table><tr><td>x<td>y</table>");
+    expect(md).toBe("x\n\ny");
+  });
+
+  test("<div><p>one<p>two</div><p>three</p> -- all three paragraphs survive, in order", async () => {
+    const md = await htmlToMarkdown("<div><p>one<p>two</div><p>three</p>");
+    expect(md).toBe("one\n\ntwo\n\nthree");
+  });
+
+  test("<div><span>hello</div> -- an entirely unclosed descendant's text is not lost", async () => {
+    const md = await htmlToMarkdown("<div><span>hello</div>");
+    expect(md).toBe("hello");
+  });
+
+  test("<div><span>hello</div> nested two levels deep, with trailing sibling text", async () => {
+    const md = await htmlToMarkdown("<div><p>a<span>b<b>c</div>tail");
+    // a, b and c all survive (b/c unclosed, force-closed by the div's own close); "tail" is root-level
+    // text AFTER the div, proving onDocument text still interleaves correctly around the fix.
+    expect(md).toBe("ab**c**\n\ntail");
+  });
+
+  test("root-level (unwrapped) text is captured -- security review finding M3, part 2", async () => {
+    expect(await htmlToMarkdown("hello <b>bold</b> world")).toBe("hello **bold** world");
+    expect(await htmlToMarkdown("tail only")).toBe("tail only");
+  });
+
+  test("dt/dd sibling omission", async () => {
+    const md = await htmlToMarkdown("<dl><dt>Term<dd>Definition<dt>Term2<dd>Def2</dl>");
+    expect(md).toContain("Term");
+    expect(md).toContain("Definition");
+    expect(md).toContain("Term2");
+    expect(md).toContain("Def2");
+  });
+});
+
+describe("htmlToMarkdown -- security review finding M4: performance on hostile input", () => {
+  test("300KB of individually-wrapped <b> characters converts well under a second (depth cap bounds the quadratic blowup)", async () => {
+    const html = Array.from({ length: 100_000 }, (_, i) => `<b>${i % 10}</b>`).join("");
+    const t0 = Date.now();
+    const md = await htmlToMarkdown(html);
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeLessThan(3000);
+    expect(md.length).toBeGreaterThan(0);
+  });
+
+  test("a <code> block with 500,000 backticks converts in well under a second", async () => {
+    const html = `<pre><code>${"`".repeat(500_000)}</code></pre>`;
+    const t0 = Date.now();
+    const md = await htmlToMarkdown(html);
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeLessThan(3000);
+    expect(md.length).toBeGreaterThan(0);
+  });
+
+  test("a single inline <code> run with many backticks (not inside pre) fences correctly AND quickly", async () => {
+    const html = `<p><code>${"`".repeat(50_000)}x</code></p>`;
+    const t0 = Date.now();
+    const md = await htmlToMarkdown(html);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(md.startsWith("`".repeat(50_001))).toBe(true); // fence = longest run + 1
+  });
+
+  test("the full 1,048,576-char conversion cap completes quickly even on deeply-nested hostile input", async () => {
+    const one = "<b>";
+    const openCount = Math.floor(1_048_000 / one.length);
+    const html = one.repeat(openCount) + "x";
+    const t0 = Date.now();
+    await convertFetchedHtml(html);
+    expect(Date.now() - t0).toBeLessThan(5000);
   });
 });
 

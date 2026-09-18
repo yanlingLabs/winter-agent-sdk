@@ -84,6 +84,16 @@ const NAMED_ENTITIES: Readonly<Record<string, string>> = {
 
 const ENTITY_RE = /&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g;
 
+/** The Unicode replacement character -- the HTML spec's own answer for U+0000 and a lone surrogate. */
+const REPLACEMENT_CHAR = "�";
+
+/**
+ * Security review minor: `&#0;` and `&#xD800;` (a lone UTF-16 surrogate, `0xD800..0xDFFF`) previously
+ * round-tripped to U+0000 and an actual lone surrogate respectively -- both are exactly what the HTML
+ * spec's own numeric-character-reference algorithm maps to U+FFFD instead, and a lone surrogate in
+ * particular is a well-known way to make a downstream JSON/UTF-8 encode step (here: the digest
+ * REQUEST to the inner model) fail outright on otherwise ordinary-looking input.
+ */
 export function decodeHtmlEntities(input: string): string {
   if (!input.includes("&")) return input;
   return input.replace(ENTITY_RE, (whole, body: string) => {
@@ -91,6 +101,7 @@ export function decodeHtmlEntities(input: string): string {
       const isHex = body[1] === "x" || body[1] === "X";
       const codePoint = Number.parseInt(isHex ? body.slice(2) : body.slice(1), isHex ? 16 : 10);
       if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return whole;
+      if (codePoint === 0 || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return REPLACEMENT_CHAR;
       try {
         return String.fromCodePoint(codePoint);
       } catch {
@@ -182,18 +193,40 @@ function joinVerbatim(pieces: readonly Piece[]): string {
   return pieces.map((p) => p.text).join("");
 }
 
+// Security review finding M4: the earlier lazy-`.*?` regex could take quadratic-ish time on a large
+// run of non-whitespace text (the engine re-tries the lazy middle group at every position hunting
+// for the trailing `\s*$` anchor). `trimStart`/`trimEnd` are linear, built-in, and cannot backtrack.
 function wrapInline(text: string, delim: string): string {
-  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(text);
-  if (m === null) return text;
-  const [, lead, core, trail] = m;
-  if (core === undefined || core === "") return text;
-  return `${lead ?? ""}${delim}${core}${delim}${trail ?? ""}`;
+  const core = text.trim();
+  if (core === "") return text;
+  const leadLen = text.length - text.trimStart().length;
+  const trailLen = text.length - text.trimEnd().length;
+  const lead = leadLen > 0 ? text.slice(0, leadLen) : "";
+  const trail = trailLen > 0 ? text.slice(text.length - trailLen) : "";
+  return `${lead}${delim}${core}${delim}${trail}`;
+}
+
+/** The length of the longest run of consecutive backticks in `text`, in ONE linear pass. */
+function longestBacktickRun(text: string): number {
+  let max = 0;
+  let run = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 0x60 /* ` */) {
+      run += 1;
+      if (run > max) max = run;
+    } else {
+      run = 0;
+    }
+  }
+  return max;
 }
 
 function wrapCode(text: string): string {
   if (text === "") return "";
-  let fence = "`";
-  while (text.includes(fence)) fence += "`";
+  // Security review finding M4: the earlier `while (text.includes(fence)) fence += "\`"` re-scanned
+  // the WHOLE string on every iteration -- O(n*k) for k = the longest backtick run, which a
+  // 500,000-backtick `<code>` block turns into a multi-second stall. One linear scan replaces it.
+  const fence = "`".repeat(longestBacktickRun(text) + 1);
   const pad = text.startsWith("`") || text.endsWith("`") || /^\s|\s$/.test(text) ? " " : "";
   return `${fence}${pad}${text}${pad}${fence}`;
 }
@@ -315,6 +348,51 @@ function renderFrame(frame: Frame): Piece {
   return { tag, text: inner, isBlock: false };
 }
 
+// Security review finding M3, part 1: `HTMLRewriter#onEndTag` fires an element's callback with the
+// nearest ENCLOSING end tag it actually sees on the wire, not necessarily its own -- for an omitted
+// `</li>`/`</p>`/`</td>` (everyday HTML: `<ul><li>a<li>b</ul>` has NO closing `</li>` at all), the
+// first `<li>`'s callback fires at `</ul>`, reporting `end.name === "ul"`. The earlier version popped
+// by NAME, discarding every frame it walked past on the way -- for exactly that input, the FIRST
+// `<li>` was thrown away, unrendered, with its own second `<li>` sibling wrongly nested inside it.
+// Measured (see the report): `<ul><li>a<li>b</ul>` -> `""`; `<table><tr><td>x<td>y…` -> `""`;
+// `<div><p>one<p>two</div><p>three</p>` -> `"three"`; `<div><span>hello</div>` lost "hello" entirely.
+//
+// TWO closing paths now cooperate:
+//   (a) PROACTIVE SIBLING AUTO-CLOSE, at the moment a NEW element opens: HTML5's own implied-end-tag
+//       rules for the common omission patterns (li/li, td-or-th/td-or-th/tr, tr/tr, dt-or-dd/dt-or-dd,
+//       p/[block-level-or-list-or-hr]) close the CONFLICTING open frame immediately, before the new
+//       one is pushed -- there is no interleaving to get wrong, because nothing has opened yet.
+//   (b) IDENTITY-BASED onEndTag, for whatever (a) does not cover (an entirely unclosed descendant
+//       chain closed by an ancestor's real end tag, e.g. `<div><span>hello</div>`): the callback
+//       closes over its OWN frame object and locates it by IDENTITY (`stack.indexOf`), never by
+//       name, then closes every frame from the top of the stack down to and including it -- each one
+//       RENDERED into its own parent, never merely discarded. A frame already closed by (a) is simply
+//       absent (`indexOf` returns -1) and the callback no-ops.
+//
+// Security review finding M3, part 2: `.on("*", {text})` never sees text that is a DIRECT child of
+// the document with no enclosing element at all (`hello <b>bold</b> world` loses "hello "/" world";
+// a document with no elements at all loses everything). `HTMLRewriter#onDocument({text})` is the
+// only source for that text -- and, measured, it ALSO reports every OTHER text node HTMLRewriter's
+// element-scoped handler would have, in the same document order interleaved correctly with element
+// open/close events -- so routing ALL text through `onDocument` (and none through `.on("*",{text})`)
+// is a strict superset, not a second source to reconcile.
+//
+// Security review finding M4, part 3: elements past `MAX_DEPTH` (an adversarial, deeply nested
+// document) stop pushing their own frame -- their content flows straight into the deepest frame that
+// IS still tracked, so nesting depth (and the per-frame render work that comes with it) is bounded
+// regardless of how deep the real markup goes.
+const MAX_DEPTH = 512;
+
+/** HTML5's own implied-end-tag rule, narrowly: does opening `newTag` close the CURRENT top frame first? */
+function closesOnSiblingOpen(topTag: string, newTag: string): boolean {
+  if (topTag === "li") return newTag === "li";
+  if (topTag === "td" || topTag === "th") return newTag === "td" || newTag === "th" || newTag === "tr";
+  if (topTag === "tr") return newTag === "tr";
+  if (topTag === "dt" || topTag === "dd") return newTag === "dt" || newTag === "dd";
+  if (topTag === "p") return newTag === "p" || newTag === "hr" || newTag === "ul" || newTag === "ol" || newTag === "pre" || newTag === "blockquote" || HEADING_TAGS.has(newTag) || GENERIC_BLOCK_TAGS.has(newTag);
+  return false;
+}
+
 /**
  * Converts `html` to markdown using the rules above, driven by Bun's `HTMLRewriter` as a SAX walk
  * (see the module header). Never throws for malformed markup on its own -- `HTMLRewriter` tolerates
@@ -325,50 +403,60 @@ export async function htmlToMarkdown(html: string): Promise<string> {
   const root: Frame = { tag: "#root", attrs: {}, buf: [], insidePre: false };
   const stack: Frame[] = [root];
 
-  const rewriter = new HTMLRewriter().on("*", {
-    element(el) {
-      const tag = el.tagName.toLowerCase();
-      const attrs: Record<string, string> = {};
-      for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
-      const parent = stack[stack.length - 1]!;
+  /** Closes every frame from the top of the stack down to and including `frame`, rendering each into its NEW top's buf. A no-op if `frame` was already closed (not found). */
+  function closeFrame(frame: Frame): void {
+    const idx = stack.indexOf(frame);
+    if (idx === -1) return;
+    while (stack.length > idx) {
+      const closed = stack.pop()!;
+      stack[stack.length - 1]!.buf.push(renderFrame(closed));
+    }
+  }
 
-      if (VOID_TAGS.has(tag)) {
-        if (tag === "br") parent.buf.push({ tag, text: "  \n", isBlock: false });
-        else if (tag === "hr") parent.buf.push({ tag, text: "* * *", isBlock: true });
-        else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs), isBlock: false });
-        // meta/link/base/area/col/embed/input/param/source/track/wbr: no useful text -- contribute nothing.
-        return;
-      }
+  const rewriter = new HTMLRewriter()
+    .on("*", {
+      element(el) {
+        const tag = el.tagName.toLowerCase();
+        const parent = stack[stack.length - 1]!;
 
-      const frame: Frame = { tag, attrs, buf: [], insidePre: parent.insidePre || tag === "pre" };
-      stack.push(frame);
-      el.onEndTag((end) => {
-        // Defensive against a mismatched end tag under malformed markup: pop until the matching
-        // frame (by name) is found, or stop at the root -- never pop past it.
-        while (stack.length > 1 && stack[stack.length - 1]!.tag !== end.name.toLowerCase()) stack.pop();
-        if (stack.length <= 1) return;
-        const closed = stack.pop()!;
-        const rendered = renderFrame(closed);
-        stack[stack.length - 1]!.buf.push(rendered);
-      });
-    },
-    text(t) {
-      if (t.text === "") return;
-      const frame = stack[stack.length - 1]!;
-      const decoded = decodeHtmlEntities(t.text);
-      const text = frame.insidePre ? decoded : decoded.replace(/[\t\n\r ]+/g, " ");
-      if (!frame.insidePre && text === "") return;
-      frame.buf.push({ tag: "#text", text, isBlock: false });
-    },
-  });
+        if (VOID_TAGS.has(tag)) {
+          const attrs: Record<string, string> = {};
+          for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
+          if (tag === "br") parent.buf.push({ tag, text: "  \n", isBlock: false });
+          else if (tag === "hr") parent.buf.push({ tag, text: "* * *", isBlock: true });
+          else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs), isBlock: false });
+          // meta/link/base/area/col/embed/input/param/source/track/wbr: no useful text -- contribute nothing.
+          return;
+        }
+
+        if (parent !== root && closesOnSiblingOpen(parent.tag, tag)) closeFrame(parent);
+
+        if (stack.length > MAX_DEPTH) return; // transparent: content attaches to the deepest tracked frame instead.
+
+        const attrs: Record<string, string> = {};
+        for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
+        const top = stack[stack.length - 1]!;
+        const frame: Frame = { tag, attrs, buf: [], insidePre: top.insidePre || tag === "pre" };
+        stack.push(frame);
+        el.onEndTag(() => closeFrame(frame));
+      },
+    })
+    .onDocument({
+      text(t) {
+        if (t.text === "") return;
+        const frame = stack[stack.length - 1]!;
+        const decoded = decodeHtmlEntities(t.text);
+        const text = frame.insidePre ? decoded : decoded.replace(/[\t\n\r ]+/g, " ");
+        if (!frame.insidePre && text === "") return;
+        frame.buf.push({ tag: "#text", text, isBlock: false });
+      },
+    });
 
   await rewriter.transform(new Response(html)).text();
   // Whatever is still open at end-of-stream (malformed/truncated HTML) is force-closed root-ward so
-  // its content is not silently dropped.
-  while (stack.length > 1) {
-    const closed = stack.pop()!;
-    stack[stack.length - 1]!.buf.push(renderFrame(closed));
-  }
+  // its content is not silently dropped. `stack[1]` is the outermost still-open frame (index 0 is
+  // always `root`, which must never itself be popped).
+  if (stack.length > 1) closeFrame(stack[1]!);
   return joinPieces(root.buf);
 }
 
