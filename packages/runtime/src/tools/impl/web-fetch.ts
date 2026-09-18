@@ -85,6 +85,26 @@ function brandNameFor(ctx: ToolExecutionContext): string {
   return ctx.brand?.productName ?? WINTER_BRAND.productName;
 }
 
+/** Races `promise` against `signal` aborting; resolves `"aborted"` first if the signal wins. `signal` may be absent (a hand-built test context) -- then this is just `await promise`. */
+async function raceAgainstAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T | "aborted"> {
+  if (signal === undefined) return promise;
+  if (signal.aborted) return "aborted";
+  return new Promise<T | "aborted">((resolve, reject) => {
+    const onAbort = () => resolve("aborted");
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
 function capResult(text: string): string {
   if (text.length <= RESULT_CAP) return text;
   return `${text.slice(0, RESULT_CAP)}\n\n[Result truncated at ${RESULT_CAP.toLocaleString("en-US")} characters.]`;
@@ -256,7 +276,11 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       // makes correctly. A HIT never touches the network at all, so it is the one path that needs its
       // own check: the host's policy can change between when a URL was cached and when it is served
       // again, and a cached response must not silently bypass a floor or policy now in effect.
-      const addressVerdict = await classifyHostname(stripIpv6Brackets(originalUrl.hostname), resolveHost);
+      // Security review minor: this lookup was not previously raced against the turn's own signal
+      // (a DNS resolver that never answers could hold a cache-hit call open indefinitely, outside
+      // WebFetch's own 60 s fetch timeout entirely, since a hit never reaches the fetch loop at all).
+      const addressVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(originalUrl.hostname), resolveHost), ctx.signal);
+      if (addressVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
       if (addressVerdict.class === "private") {
         const refusal = privateAddressRefusal(originalUrl.hostname, policy);
         if (refusal !== undefined) return refusal;

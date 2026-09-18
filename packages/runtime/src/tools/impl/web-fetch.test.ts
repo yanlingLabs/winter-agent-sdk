@@ -497,6 +497,27 @@ describe("preapproved hosts", () => {
 });
 
 describe("cache", () => {
+  test("security review minor: a cache-hit's private-address lookup is raced against the turn's abort signal", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const runtime = fakeRuntime(provider);
+    const ctx = makeCtx({ sessionId: "s-cache-hit-abort" });
+    registerWebSessionRuntime(ctx.sessionId, runtime);
+    // A NAME-based host (not a literal IP): `classifyHostname` short-circuits an IP literal
+    // LEXICALLY, never calling `resolveHost` at all, which would make this test exercise nothing.
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["127.0.0.1"] });
+    await runFetch(executor, { url: "https://cache-hit-abort.test/html", prompt: "p" }, ctx); // populate the cache
+    const controller = new AbortController();
+    const hangingResolveHost = createWebFetchExecutor({
+      net: { fetchImpl: loopbackFetchImpl() },
+      resolveHost: () => new Promise(() => {}), // never resolves
+    });
+    const promise = runFetch(hangingResolveHost, { url: "https://cache-hit-abort.test/html", prompt: "p" }, { ...ctx, signal: controller.signal });
+    setTimeout(() => controller.abort(), 30);
+    const result = await promise;
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe("WebFetch was interrupted.");
+  });
+
   test("a cache hit re-runs the digest model but never refetches", async () => {
     const provider = recordingProvider([{ kind: "text", text: "first digest" }, { kind: "text", text: "second digest" }]);
     const runtime = fakeRuntime(provider);

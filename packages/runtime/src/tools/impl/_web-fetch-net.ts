@@ -229,6 +229,14 @@ interface ResolvedTarget {
  * evaluated against is the SAME one the fetch call below pins to, never a second, independently
  * (and possibly differently) resolved one. `undefined` means resolution genuinely failed or answered
  * no addresses -- the caller refuses outright; there is no address left to fail open onto.
+ *
+ * NIT, disclosed rather than fixed: Bun's `fetch` honours `HTTPS_PROXY`/`https_proxy` (and the http/
+ * no_proxy equivalents) at the process level. Pinning the connection to a resolved IP says nothing
+ * about where the request ACTUALLY goes when a proxy is configured -- the proxy, not this address, is
+ * the real destination, and the proxy itself resolves `hostname` a second time, outside anything this
+ * module can see or classify. This is an environment-level trust boundary the private-address policy
+ * cannot reach into; a host that must guarantee the check's meaning under a proxy needs to control
+ * (or refuse) proxy env vars itself.
  */
 async function resolveTarget(hostname: string, resolveHost: (hostname: string) => Promise<readonly string[]>): Promise<ResolvedTarget | undefined> {
   const bare = stripIpv6Brackets(hostname);
