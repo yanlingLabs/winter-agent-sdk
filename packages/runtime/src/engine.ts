@@ -4083,6 +4083,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     ...(resolveToolSecretRoute !== undefined ? { resolveToolSecret: resolveToolSecretRoute } : inheritedWeb?.resolveToolSecret !== undefined ? { resolveToolSecret: inheritedWeb.resolveToolSecret } : {}),
   };
   const disposeWebSessionRuntime = registerWebSessionRuntime(sessionStateKey, webSessionRuntime);
+  // ALSO on the run's OUTER `finally`, not only the ordinary teardown far below: a throw anywhere in
+  // the thousands of lines between here and there would otherwise leak a registration that holds a
+  // LIVE PROVIDER and a SECRET RESOLVER under a key a later session can reuse. The disposer is
+  // identity-checked, so the ordinary teardown's own call and this one are idempotent together.
+  facetDisposers.push(disposeWebSessionRuntime);
 
   // `winter.search-backend` / `winter.fetch-extractor`: DERIVED, on the reviewer-model precedent
   // above and for its reason -- each is a per-SESSION fact (a host switch; a catalog-and-credential
