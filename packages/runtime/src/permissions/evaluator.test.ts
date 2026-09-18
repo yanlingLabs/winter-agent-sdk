@@ -2979,7 +2979,13 @@ describe("parity: findMatchingRuleEntry (evaluator.ts) vs. resolveRules (ruleset
   });
 
   test("webFetchDomain rule", () => {
-    compare([rule("WebFetch(domain:example.com)", "deny")], call("WebFetch", { domain: "example.com" }), { trustedWorkspace: false });
+    // A REAL call shape -- `{url, prompt}`. This row used to hand-build `{domain}`, which no call carries.
+    const webFetchCall = call("WebFetch", { url: "https://example.com/page", prompt: "summarise" });
+    const entries = [rule("WebFetch(domain:example.com)", "deny")];
+    compare(entries, webFetchCall, { trustedWorkspace: false });
+    // `compare` degrades to `undefined === undefined` when neither copy matches, so parity alone
+    // would still pass with the rule dead. Pin that it is LIVE.
+    expect(findMatchingRuleEntry(withRules(...entries), webFetchCall, "deny", baseCtx({ policy: policy({ rules: withRules(...entries) }) }))).toBe(entries[0]);
   });
 
   for (const source of ["project", "local"] as const) {
