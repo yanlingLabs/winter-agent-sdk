@@ -13,7 +13,15 @@ import { resolveWebToolsConfig, type ResolvedWebToolsConfig } from "@yanlinglabs
 import type { Provider, ProviderRequest, ProviderTurn, ProviderUsage } from "../../engine.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { registerWebSessionRuntime, resetWebSessionRuntimesForTest, type WebSessionRuntime } from "../../web/session-runtime.ts";
-import { createWebFetchExecutor, PERMISSIVE_GUIDELINES, STRICT_GUIDELINES, WEB_FETCH_BUDGET_STOP_MESSAGE, type WebFetchExecutorDeps } from "./web-fetch.ts";
+import {
+  BINARY_SAVE_BUDGET_BYTES,
+  createWebFetchExecutor,
+  PERMISSIVE_GUIDELINES,
+  saveBinaryToTemp,
+  STRICT_GUIDELINES,
+  WEB_FETCH_BUDGET_STOP_MESSAGE,
+  type WebFetchExecutorDeps,
+} from "./web-fetch.ts";
 import { WEB_FETCH_MAX_BYTES } from "./_web-fetch-net.ts";
 import { WebFetchCache } from "./_web-fetch-cache.ts";
 import "./web-fetch.ts"; // self-sufficiency: installs the module-load default before getRegisteredTool below
@@ -486,6 +494,36 @@ describe("binary content", () => {
     expect(lastOutput).toContain("budget");
     expect(lastOutput).not.toContain("saved to");
   });
+
+  test("item 1: the budget is RESERVED synchronously, so 12 genuinely concurrent 10 MiB saves never overspend it", async () => {
+    // Calling the async function 12 times in a plain loop -- with NO `await` between calls -- is
+    // what makes this deterministic rather than network-jitter-dependent: each call runs
+    // synchronously up to its own first `await` (inside `saveBinaryToTemp`, that is `await
+    // mkdir(...)`), so if the budget check-and-reserve happens before that point, all 12 checks run
+    // back-to-back in one microtask BEFORE any of the 12 writes has a chance to complete -- exactly
+    // the race the bug report measured (120 MiB saved against a 50 MiB budget). Fails before the fix
+    // (all 12 pass the check, all 12 save) and passes after it (only 5 fit; 7 are budget-exceeded).
+    const sessionId = "s-binary-budget-concurrent";
+    const tenMiB = new Uint8Array(10 * 1024 * 1024);
+    const url = new URL("https://example.com/file.bin");
+    const fakeCtx = { tempDir: join(tmpRoot, ".tmp-concurrent"), sessionId } as unknown as ToolExecutionContext;
+
+    const promises: ReturnType<typeof saveBinaryToTemp>[] = [];
+    for (let i = 0; i < 12; i++) promises.push(saveBinaryToTemp(fakeCtx, url, tenMiB));
+    const results = await Promise.all(promises);
+
+    const saved = results.filter((r): r is string => typeof r === "string" && r !== "budget-exceeded");
+    const budgetExceeded = results.filter((r) => r === "budget-exceeded");
+    // 5 * 10 MiB == 50 MiB exactly fits the budget (the boundary case, spent + bytes === BUDGET, must
+    // still be accepted); a 6th would push it to 60 MiB and must be refused.
+    expect(saved.length).toBe(5);
+    expect(budgetExceeded.length).toBe(7);
+
+    let totalBytesOnDisk = 0;
+    for (const path of saved) totalBytesOnDisk += (await stat(path)).size;
+    expect(totalBytesOnDisk).toBe(5 * 10 * 1024 * 1024);
+    expect(totalBytesOnDisk).toBeLessThanOrEqual(BINARY_SAVE_BUDGET_BYTES);
+  });
 });
 
 describe("security review fidelity #10: only text/html converts, not xhtml", () => {
@@ -659,6 +697,78 @@ describe("cache", () => {
     const result = await promise;
     expect(result.isError).toBe(true);
     expect(result.output).toBe("WebFetch was interrupted.");
+  });
+
+  describe("item 2: a cache-hit whose DNS lookup FAILS reports 'could not resolve', never 'it is private'", () => {
+    // A resolver that always fails: no address is known at all, so the host is not actually
+    // demonstrated to be private -- it is simply unresolvable. Before the fix, `privateAddressRefusal`
+    // could not tell this apart from a genuinely private address and said so anyway (false).
+    function failingResolveHost(): Promise<readonly string[]> {
+      return Promise.reject(new Error("ENOTFOUND"));
+    }
+
+    async function populateCache(sessionId: string, url: string): Promise<void> {
+      const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+      const runtime = fakeRuntime(provider, { fetch: { privateAddressPolicy: "allow" } });
+      const ctx = makeCtx({ sessionId });
+      registerWebSessionRuntime(ctx.sessionId, runtime);
+      const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
+      const result = await runFetch(executor, { url, prompt: "p" }, ctx);
+      expect(result).toEqual({ output: "digested" });
+    }
+
+    test("under 'deny', a resolution failure says 'could not resolve', not 'it is a private/loopback address'", async () => {
+      const sessionId = "s-cache-hit-dns-fail-deny";
+      const url = "https://dns-fail-deny.test/html";
+      await populateCache(sessionId, url);
+      const runtime = fakeRuntime(recordingProvider([{ kind: "text", text: "should not run" }]), { fetch: { privateAddressPolicy: "deny" } });
+      registerWebSessionRuntime(sessionId, runtime);
+      const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: failingResolveHost });
+      const result = await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId }));
+      expect(result.isError).toBe(true);
+      // Matches the MISS path's own exact wording (_web-fetch-net.ts's network-error message) --
+      // the two paths must never disagree about how "resolution failed" reads to the model.
+      expect(result.output).toBe("WebFetch could not resolve any address for dns-fail-deny.test.");
+      expect(result.output).not.toContain("it is a private/loopback address");
+    });
+
+    test("under 'ask', a resolution failure ALSO says 'could not resolve', not the late-case or the direct-private wording", async () => {
+      const sessionId = "s-cache-hit-dns-fail-ask";
+      const url = "https://dns-fail-ask.test/html";
+      await populateCache(sessionId, url);
+      const runtime = fakeRuntime(recordingProvider([{ kind: "text", text: "should not run" }]), { fetch: { privateAddressPolicy: "ask" } });
+      registerWebSessionRuntime(sessionId, runtime);
+      const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: failingResolveHost });
+      const result = await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId }));
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe("WebFetch could not resolve any address for dns-fail-ask.test.");
+      expect(result.output).not.toContain("must explicitly approve");
+      expect(result.output).not.toContain("only discoverable at fetch time");
+    });
+
+    test("under 'allow', a resolution failure still serves the cached content (unchanged: an explicit allow needs no resolution)", async () => {
+      const sessionId = "s-cache-hit-dns-fail-allow";
+      const url = "https://dns-fail-allow.test/html";
+      await populateCache(sessionId, url);
+      const runtime = fakeRuntime(recordingProvider([{ kind: "text", text: "digested again" }]), { fetch: { privateAddressPolicy: "allow" } });
+      registerWebSessionRuntime(sessionId, runtime);
+      const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: failingResolveHost });
+      const result = await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId }));
+      expect(result).toEqual({ output: "digested again" });
+    });
+
+    test("a GENUINELY private resolved address (not a lookup failure) keeps today's wording, unchanged", async () => {
+      const sessionId = "s-cache-hit-genuinely-private";
+      const url = "https://genuinely-private.test/html";
+      await populateCache(sessionId, url);
+      const runtime = fakeRuntime(recordingProvider([{ kind: "text", text: "should not run" }]), { fetch: { privateAddressPolicy: "deny" } });
+      registerWebSessionRuntime(sessionId, runtime);
+      const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["127.0.0.1"] });
+      const result = await runFetch(executor, { url, prompt: "p" }, makeCtx({ sessionId }));
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("it is a private/loopback address");
+      expect(result.output).not.toContain("could not resolve");
+    });
   });
 
   test("a cache hit re-runs the digest model but never refetches", async () => {

@@ -198,6 +198,26 @@ export interface ToolResultPayload {
   isError?: boolean;
 }
 
+// --- Per-call permission facts ----------------------------------------------------------------------
+//
+// Declared HERE, immediately beside `ToolExecutionContext` (their one field's own home), rather than
+// beside the adapter that is their only PRODUCER (`buildRegistryToolExecutor`, further down): unlike
+// every other field on that interface these are facts about ONE CALL (how the permission layer let it
+// through), not about the session -- but a reader looking for `ToolExecutionContext.permission`'s own
+// type expects to find it right here, not interface-merged in from three hundred lines away.
+
+/** See `ToolExecutionContext.permission`. */
+export interface ToolCallPermission {
+  explicitApproval: "prompt" | "rule";
+}
+
+/** What the engine may hand the adapter per call; both optional, both absent for a hand-made call. */
+export interface ToolCallExecuteOptions {
+  signal?: AbortSignal;
+  /** The permission decision's `explicitApproval`, when it carried one. */
+  explicitApproval?: "prompt" | "rule";
+}
+
 export interface ToolExecutionContext {
   cwd: string;
   home: string;
@@ -385,6 +405,21 @@ export interface ToolExecutionContext {
      */
     unavailableMessage: (agentType: string) => string | undefined;
   };
+  /**
+   * HOW THIS CALL WAS PERMITTED -- present only when it was EXPLICITLY approved.
+   *
+   * An executor cannot prompt mid-call, so a tool whose safety depends on "did a person (or a rule
+   * naming this exact target) consent to THIS call?" has to be told. `explicitApproval` is the
+   * permission decision's own marker (`PermissionDecisionRecord.explicitApproval`), carried verbatim:
+   *   - `"prompt"` -- a permission request for this call was answered allow;
+   *   - `"rule"`   -- a standing allow rule names this call's target exactly.
+   * ABSENT means the call was allowed by the session's mode, a broad rule, a pre-approving hook or
+   * the classifier -- or that this context was hand-built. An executor must read absence as "not
+   * explicitly approved", never the other way round.
+   *
+   * One consumer today: `WebFetch`, for a private-address target under the `"ask"` policy.
+   */
+  permission?: ToolCallPermission;
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
@@ -1410,42 +1445,6 @@ export interface EngineToolResult {
    * success.
    */
   isError?: boolean;
-}
-// --- Per-call permission facts ----------------------------------------------------------------------
-//
-// Declared HERE, beside the adapter that is their only producer, and joined to
-// `ToolExecutionContext` by interface merging: unlike every other field on that context these are
-// facts about ONE CALL (how the permission layer let it through), not about the session, and the
-// adapter below is the single place a call's options become a context.
-
-/** See `ToolExecutionContext.permission`. */
-export interface ToolCallPermission {
-  explicitApproval: "prompt" | "rule";
-}
-
-/** What the engine may hand the adapter per call; both optional, both absent for a hand-made call. */
-export interface ToolCallExecuteOptions {
-  signal?: AbortSignal;
-  /** The permission decision's `explicitApproval`, when it carried one. */
-  explicitApproval?: "prompt" | "rule";
-}
-
-export interface ToolExecutionContext {
-  /**
-   * HOW THIS CALL WAS PERMITTED -- present only when it was EXPLICITLY approved.
-   *
-   * An executor cannot prompt mid-call, so a tool whose safety depends on "did a person (or a rule
-   * naming this exact target) consent to THIS call?" has to be told. `explicitApproval` is the
-   * permission decision's own marker (`PermissionDecisionRecord.explicitApproval`), carried verbatim:
-   *   - `"prompt"` -- a permission request for this call was answered allow;
-   *   - `"rule"`   -- a standing allow rule names this call's target exactly.
-   * ABSENT means the call was allowed by the session's mode, a broad rule, a pre-approving hook or
-   * the classifier -- or that this context was hand-built. An executor must read absence as "not
-   * explicitly approved", never the other way round.
-   *
-   * One consumer today: `WebFetch`, for a private-address target under the `"ask"` policy.
-   */
-  permission?: ToolCallPermission;
 }
 
 export interface EngineFacingToolExecutor {

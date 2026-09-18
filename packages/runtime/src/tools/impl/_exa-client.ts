@@ -239,14 +239,40 @@ function isTransportFailure(err: unknown): boolean {
 const ECHO_MIN_LENGTH = 6;
 
 /**
+ * Item 5 fix: is `value`, taken WHOLE (anchored start-to-end, not merely containing a match somewhere
+ * inside it), itself nothing more than one of the two patterns' own canonical phrases? An MCP tool
+ * result carries no HTTP status the way `classifyError`'s `catch` branch above does (`McpToolCallResult`
+ * has only `content`/`isError`, see `mcp/client.ts`) -- text is the ONLY signal here, so when the
+ * caller's own argument IS (not merely contains) a bare trigger phrase, a genuine backend reply built
+ * from that same short phrase ("Rate limit exceeded") and a backend that happens to echo that exact
+ * argument back are textually IDENTICAL; there is no reliable way to tell them apart from the string
+ * alone. This module's own header rules resolve that kind of tie explicitly ("WORDS ARE THE FALLBACK
+ * ... a loose match is expensive," i.e. lean toward detecting): such a value is therefore NEVER
+ * stripped as an echo, biasing the ambiguous case toward correctly OPENING the breaker rather than
+ * silently stranding a keyless caller on an exhausted anonymous tier with no fallback.
+ *
+ * A LONGER argument that merely CONTAINS one of those phrases inside a longer sentence -- the
+ * original echo bug this module exists to fix ("why does my API return 429 quota exceeded rate limit
+ * errors") -- does not anchor-match here (the sentence around the phrase is not itself part of either
+ * pattern), so it is still stripped exactly as before: that case has a real discriminator (the
+ * backend's own wrapper prose surrounding the echoed argument), this one does not.
+ */
+function isBareTriggerPhrase(value: string): boolean {
+  const trimmed = value.trim();
+  return new RegExp(`^(?:${RATE_LIMIT_PATTERN.source})$`, "i").test(trimmed) || new RegExp(`^(?:${AUTH_PATTERN.source})$`, "i").test(trimmed);
+}
+
+/**
  * `text` with the request's own string arguments removed, so a backend ECHOING the query cannot trip a
  * pattern meant for the backend's own words. CASE-INSENSITIVE (a backend may re-case what it echoes),
- * and the argument is matched as TEXT -- escaped, never compiled as the caller's own pattern.
+ * and the argument is matched as TEXT -- escaped, never compiled as the caller's own pattern. An
+ * argument that is ITSELF nothing but a bare trigger phrase is skipped -- see `isBareTriggerPhrase`.
  */
 function withoutEchoes(text: string, args: Record<string, unknown>): string {
   let out = text;
   for (const value of Object.values(args)) {
     if (typeof value !== "string" || value.length < ECHO_MIN_LENGTH) continue;
+    if (isBareTriggerPhrase(value)) continue;
     out = out.replace(new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
   }
   return out;

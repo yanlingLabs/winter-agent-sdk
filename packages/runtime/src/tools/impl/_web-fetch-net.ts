@@ -388,6 +388,40 @@ function errorLabel(err: unknown): string {
   return err instanceof Error ? err.name : "unknown error";
 }
 
+/** Item 3: the ONE spelling of a hop timeout, shared by the pre-resolve race below and the fetch's own catch, so the two can never drift apart. */
+function timeoutMessage(timeoutMs: number): string {
+  const seconds = timeoutMs / 1000;
+  return `WebFetch timed out after ${seconds < 1 ? `${timeoutMs}ms` : `${Math.round(seconds)}s`}.`;
+}
+
+/**
+ * Item 3: races `promise` against `signal` aborting, resolving `"aborted"` first if the signal wins.
+ * Used to bound `resolveTarget`'s own DNS lookup by the SAME per-hop signal (turn abort + the 60 s
+ * hop timeout, `AbortSignal.any`-combined) the fetch itself already races against below --
+ * `resolveTarget` used to run BEFORE that signal even existed, so a resolver that never settles sat
+ * outside the hop timeout entirely and ignored `ctx.signal` altogether: an UNCONDITIONAL hang, not
+ * merely an unbounded one, and never a throw -- `resolveTarget` itself never rejects (its own
+ * try/catch already turns a throwing resolver into `undefined`), so there is no rejection branch to
+ * forward here, unlike `web-fetch.ts`'s own `raceAgainstAbort`, which races a promise that can.
+ *
+ * NEVER calls `signal.removeEventListener` -- measured (Bun 1.3.14): calling `removeEventListener
+ * ("abort", ...)` on an `AbortSignal.timeout()`/`AbortSignal.any()` signal that is later handed to
+ * `fetch()` as ITS OWN abort signal silently disables that signal's future abort delivery, so the
+ * fetch that follows this race, on the SAME `signal`, then never times out at all (reproduced in
+ * isolation: add+remove -> the subsequent fetch runs to completion past its timeout; add alone,
+ * never removed -> the fetch aborts correctly). The abort listener below is therefore added once and
+ * simply left attached for the signal's whole lifetime -- a single per-hop signal, so this is not a
+ * leak -- and `Promise.race`'s losing side (whichever of the two never settles first) is never
+ * awaited again; its eventual settlement is ignored, not cancelled.
+ */
+function raceResolveAgainstSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | "aborted"> {
+  if (signal.aborted) return Promise.resolve("aborted");
+  const aborted = new Promise<"aborted">((resolve) => {
+    signal.addEventListener("abort", () => resolve("aborted"), { once: true });
+  });
+  return Promise.race([promise, aborted]);
+}
+
 /** How long ONE candidate address gets to complete its TCP/TLS connect before this module gives up on it and tries the next (finding N4) -- short relative to the whole hop's own `timeoutMs`, so one unreachable address cannot eat the entire budget when a working one is still available. */
 const CONNECT_BUDGET_MS = 10_000;
 
@@ -422,7 +456,17 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
 
     if (isDomainBlocked(current.hostname, opts.blockedDomains)) return { kind: "blocked-domain", host: current.hostname };
 
-    const resolved = await resolveTarget(current.hostname, resolveHost);
+    // Item 3: the per-hop timeout/abort signal is created HERE, before `resolveTarget`, not after it
+    // -- so the DNS lookup itself is inside the hop's own budget, exactly like the fetch that follows
+    // it. Created once per hop (matching the pre-existing "60 s timeout is PER HOP" design, above).
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = opts.signal !== undefined ? AbortSignal.any([opts.signal, timeoutSignal]) : timeoutSignal;
+
+    const resolved = await raceResolveAgainstSignal(resolveTarget(current.hostname, resolveHost), signal);
+    if (resolved === "aborted") {
+      if (opts.signal?.aborted === true) return { kind: "aborted" };
+      return { kind: "timeout", message: timeoutMessage(timeoutMs) };
+    }
     if (resolved === undefined) {
       return { kind: "network-error", message: `WebFetch could not resolve any address for ${current.hostname}.` };
     }
@@ -434,8 +478,6 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
 
     const scope = preapprovedScopeOf(current);
 
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const signal = opts.signal !== undefined ? AbortSignal.any([opts.signal, timeoutSignal]) : timeoutSignal;
     const { host: hostHeader, sni } = hostAndSniFor(current);
 
     let response: Response;
@@ -559,10 +601,7 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
       // (a torn socket, the hop timeout crossed mid-body, a turn abort) is classified exactly like a
       // header-phase one, never an unhandled rejection.
       if (opts.signal?.aborted === true) return { kind: "aborted" };
-      if (timeoutSignal.aborted) {
-        const seconds = timeoutMs / 1000;
-        return { kind: "timeout", message: `WebFetch timed out after ${seconds < 1 ? `${timeoutMs}ms` : `${Math.round(seconds)}s`}.` };
-      }
+      if (timeoutSignal.aborted) return { kind: "timeout", message: timeoutMessage(timeoutMs) };
       return { kind: "network-error", message: errorLabel(err) };
     }
     return outcome;

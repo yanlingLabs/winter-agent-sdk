@@ -112,6 +112,14 @@ export function classifyResolvedAddress(address: string): PrivateAddressFinding 
  * unresolvable name as safe to serve. There is no address to pin a decision to, so the honest answer
  * is `private` (refuse), never `public` (silently proceed).
  */
+/**
+ * Item 2: the ONE spelling of "resolution failed" -- shared so a caller that needs to tell "actually
+ * private" apart from "unknown, because DNS didn't answer" (`web-fetch.ts`'s own cache-hit refusal,
+ * which used to say "it is a private/loopback address" for BOTH) compares against this constant,
+ * never a re-typed literal that could drift from the one below.
+ */
+export const UNRESOLVABLE_HOST_REASON = "could not resolve any address for this host";
+
 export async function classifyHostname(hostname: string, resolve: (hostname: string) => Promise<readonly string[]>): Promise<PrivateAddressFinding> {
   const lexical = classifyHostnameLexically(hostname);
   if (lexical !== undefined) return lexical;
@@ -119,9 +127,9 @@ export async function classifyHostname(hostname: string, resolve: (hostname: str
   try {
     addresses = await resolve(hostname);
   } catch {
-    return { class: "private", reason: "could not resolve any address for this host" };
+    return { class: "private", reason: UNRESOLVABLE_HOST_REASON };
   }
-  if (addresses.length === 0) return { class: "private", reason: "could not resolve any address for this host" };
+  if (addresses.length === 0) return { class: "private", reason: UNRESOLVABLE_HOST_REASON };
   for (const address of addresses) {
     const verdict = classifyResolvedAddress(address);
     if (verdict.class === "private") return verdict;

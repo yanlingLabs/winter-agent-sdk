@@ -40,7 +40,7 @@ import { winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-runtime.ts";
 import { isDomainBlocked } from "./_domains.ts";
-import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets } from "../../web/private-address.ts";
+import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets, UNRESOLVABLE_HOST_REASON } from "../../web/private-address.ts";
 import { isPreapprovedUrl } from "../../web/preapproved-hosts.ts";
 import { convertFetchedHtml, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./_web-fetch-html.ts";
 import { webFetchCache, WebFetchCache, type WebFetchCacheEntry } from "./_web-fetch-cache.ts";
@@ -136,10 +136,30 @@ function sanitizeFilenameSegment(segment: string): string {
 const BINARY_SAVE_BUDGET_BYTES = 50 * 1024 * 1024;
 const binarySavedBytesBySession = new Map<string, number>();
 
+// Item 1 fix: the budget must be RESERVED synchronously, before this function's first `await` --
+// `writeFile`/`mkdir` yield to the event loop, and several concurrent calls each read `spent` before
+// any of them had written it back (measured: 12 concurrent 10 MiB saves against this same 50 MiB
+// budget landed 120 MiB on disk, because every one of the 12 read `spent === 0` before the first
+// `await writeFile` let any of them update the map). Reserving here -- synchronous code, no `await`
+// between the read and the write -- means the FIRST call past the budget line has already claimed
+// its bytes before control ever returns to the event loop, so a concurrent sibling's own check sees
+// the updated total. Rolled back in the `catch` below if the save itself then fails, so a failed
+// write never permanently eats budget it never spent.
+function reserveBinarySaveBudget(sessionId: string, bytes: number): boolean {
+  const spent = binarySavedBytesBySession.get(sessionId) ?? 0;
+  if (spent + bytes > BINARY_SAVE_BUDGET_BYTES) return false;
+  binarySavedBytesBySession.set(sessionId, spent + bytes);
+  return true;
+}
+
+function releaseBinarySaveBudget(sessionId: string, bytes: number): void {
+  const spent = binarySavedBytesBySession.get(sessionId) ?? 0;
+  binarySavedBytesBySession.set(sessionId, Math.max(0, spent - bytes));
+}
+
 async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint8Array): Promise<string | undefined | "budget-exceeded"> {
   if (typeof ctx.tempDir !== "string" || ctx.tempDir.length === 0) return undefined;
-  const spent = binarySavedBytesBySession.get(ctx.sessionId) ?? 0;
-  if (spent + bytes.byteLength > BINARY_SAVE_BUDGET_BYTES) return "budget-exceeded";
+  if (!reserveBinarySaveBudget(ctx.sessionId, bytes.byteLength)) return "budget-exceeded";
   const lastSegment = url.pathname.split("/").filter((s) => s.length > 0).pop() ?? "download";
   const filename = `webfetch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFilenameSegment(lastSegment)}`;
   const path = join(ctx.tempDir, filename);
@@ -149,9 +169,9 @@ async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint
     // at this path -- the timestamp+random filename already makes a real collision astronomically
     // unlikely, this is defence in depth, not the primary uniqueness guarantee).
     await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
-    binarySavedBytesBySession.set(ctx.sessionId, spent + bytes.byteLength);
     return path;
   } catch {
+    releaseBinarySaveBudget(ctx.sessionId, bytes.byteLength);
     return undefined;
   }
 }
@@ -272,7 +292,21 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
     return "ask";
   }
 
-  function privateAddressRefusal(host: string, policy: NormalizedPrivateAddressPolicy): ToolResultPayload | undefined {
+  /**
+   * `unresolvedReason` is item 2: a cache-HIT lookup (the only caller that ever passes it -- the
+   * MISS path's own `private-address` outcome is never a resolution failure, see `_web-fetch-net.ts`,
+   * which reports that case as `network-error` instead) can fail closed with `class: "private"` for
+   * a reason that is NOT "this address is private" -- it is "nothing is known about this address".
+   * The two used to share one refusal text ("it is a private/loopback address," which is simply
+   * false when resolution just failed), so this checks the reason FIRST, before either policy
+   * branch, and matches the MISS path's own exact wording for the same fact
+   * (`WebFetch could not resolve any address for <host>.`) so the two paths never diverge.
+   */
+  function privateAddressRefusal(host: string, policy: NormalizedPrivateAddressPolicy, unresolvedReason?: string): ToolResultPayload | undefined {
+    if (unresolvedReason === UNRESOLVABLE_HOST_REASON) {
+      if (policy === "allow") return undefined; // an explicit allow needs no resolution to proceed
+      return { output: `WebFetch could not resolve any address for ${host}.`, isError: true };
+    }
     if (policy === "deny") {
       return { output: `WebFetch will not reach ${host}: it is a private/loopback address, and this session's policy denies WebFetch access to private addresses.`, isError: true };
     }
@@ -337,7 +371,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       const addressVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(originalUrl.hostname), resolveHost), ctx.signal);
       if (addressVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
       if (addressVerdict.class === "private") {
-        const refusal = privateAddressRefusal(originalUrl.hostname, policy);
+        const refusal = privateAddressRefusal(originalUrl.hostname, policy, addressVerdict.reason);
         if (refusal !== undefined) return refusal;
       }
       content = cached.content;
@@ -440,3 +474,9 @@ replaceExecutor("WebFetch", createWebFetchExecutor());
 // Exported for `web-fetch.test.ts` (verbatim-string pinning) without a second literal copy.
 export { PERMISSIVE_GUIDELINES, STRICT_GUIDELINES };
 export const WEB_FETCH_DEFAULT_TIMEOUT_MS = WEB_FETCH_TIMEOUT_MS;
+
+// Exported for web-fetch.test.ts's own item-1 concurrency proof: calling `saveBinaryToTemp` directly,
+// back-to-back with no `await` between calls, is the only way to pin the reservation race
+// deterministically -- going through the whole network stack lets real I/O jitter dilute the timing
+// the race depends on.
+export { saveBinaryToTemp, BINARY_SAVE_BUDGET_BYTES };
