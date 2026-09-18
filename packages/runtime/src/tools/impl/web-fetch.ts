@@ -10,6 +10,11 @@
 //   (html/text/binary) -> preapproved verbatim passthrough, or the digest pass -> the registry's own
 //   50,000-char result cap (this registry enforces none itself, so it is applied here).
 //
+// THE PRIVATE-ADDRESS POLICY under `"ask"` is decided BEFORE this file runs, by the permission layer
+// (an executor cannot prompt mid-call); what arrives here is `ctx.permission.explicitApproval`. See
+// `effectivePolicyFor` below for exactly when that marker lets a private target through, and for the
+// one case -- a public-looking name that only RESOLVES private -- that a prompt approval never covers.
+//
 // A FIX LANE IS REPAIRING A SPINE BUG IN PARALLEL (not edited here, per this lane's own scope):
 //   `resolveWebToolsConfig` does not validate `privateAddressPolicy` at runtime (config arrives as
 //   untyped JSON) -- `normalizePrivateAddressPolicy` below fails CLOSED: only the exact string
@@ -40,7 +45,7 @@ import { winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-runtime.ts";
 import { isDomainBlocked } from "./_domains.ts";
-import { classifyHostname, stripIpv6Brackets } from "../../web/private-address.ts";
+import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets } from "../../web/private-address.ts";
 import { isPreapprovedUrl } from "../../web/preapproved-hosts.ts";
 import { convertFetchedHtml, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./_web-fetch-html.ts";
 import { webFetchCache, WebFetchCache, type WebFetchCacheEntry } from "./_web-fetch-cache.ts";
@@ -166,7 +171,17 @@ function cappedForDigest(content: string): string {
   return content.length > DIGEST_CONTENT_CAP ? content.slice(0, DIGEST_CONTENT_CAP) + WEB_FETCH_HTML_TRUNCATION_NOTICE : content;
 }
 
-function digestFailureMessage(code: InnerModelFailureCode, message: string): string {
+// The inner-model helper reports a session-BUDGET stop as the `aborted` code with this `detail`, so its
+// code union does not grow. NOTE: the literal is matched here because the helper does not export a
+// named constant for it on this branch (`web-search.ts` holds its own copy for the same reason); when
+// one is exported, both should import it.
+const BUDGET_EXCEEDED_DETAIL = "budget-exceeded";
+
+/** The digest pass was stopped because the session reached its spending limit -- NOT an interruption, and retrying cannot help. */
+export const WEB_FETCH_BUDGET_STOP_MESSAGE =
+  "WebFetch fetched the page but could not digest it: this session has reached its spending limit, so no further model calls can be made. Retrying will not help -- continue with the information already gathered, or ask the user to raise the session's budget.";
+
+function digestFailureMessage(code: InnerModelFailureCode, message: string, detail?: string): string {
   switch (code) {
     case "not-wired":
       return `WebFetch could not run its digest pass: ${message}`;
@@ -184,7 +199,10 @@ function digestFailureMessage(code: InnerModelFailureCode, message: string): str
       // server- or provider-supplied; this is the one place that rule had a gap.
       return "The digest model failed.";
     case "aborted":
-      return "WebFetch was interrupted before it could answer.";
+      // TWO different things arrive under this one code. An interrupted turn is worth retrying; a
+      // budget stop is not, and telling the model it "was interrupted" invites exactly the retry loop
+      // the budget exists to end.
+      return detail === BUDGET_EXCEEDED_DETAIL ? WEB_FETCH_BUDGET_STOP_MESSAGE : "WebFetch was interrupted before it could answer.";
   }
 }
 
@@ -199,7 +217,7 @@ async function runDigest(ctx: ToolExecutionContext, runtime: WebSessionRuntime, 
   const model = digestModel !== undefined ? ({ kind: "tag" as const, tag: digestModel, ...(runtime.web.fetch.authRef !== undefined ? { authRef: runtime.web.fetch.authRef } : {}) }) : undefined;
   try {
     const result = await runInnerModel(ctx, { prompt: built, ...(model !== undefined ? { model } : {}) }, runtime);
-    if (!result.ok) return { output: digestFailureMessage(result.code, result.message), isError: true };
+    if (!result.ok) return { output: digestFailureMessage(result.code, result.message, result.detail), isError: true };
     const text = result.text.trim();
     return { output: text.length > 0 ? result.text : "No response from model", isError: false };
   } catch (err) {
@@ -224,11 +242,53 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
   const resolveHost = deps.resolveHost ?? deps.net?.resolveHost ?? defaultResolveHost;
   const netDeps: WebFetchNetDeps = { ...deps.net, resolveHost };
 
+  // THE `"ask"` POLICY, AND WHY IT IS DECIDED BEFORE THIS FILE EVER RUNS. An executor cannot prompt
+  // mid-call. The ASK itself therefore happens in the permission layer, before execution: a call whose
+  // url is private BY HOW IT IS WRITTEN (an IP literal in a private range, `localhost`, `.local`) is
+  // put to the user -- or satisfied by an allow rule naming that exact host -- and the outcome arrives
+  // here as `ctx.permission.explicitApproval`. This file's part is to HONOUR that marker and to keep
+  // refusing without it.
+  //
+  //   marker      input host written as private?    a private target under "ask"
+  //   ---------   ------------------------------    ------------------------------------------------
+  //   "rule"      either                            PROCEEDS -- `WebFetch(domain:<host>)` is standing
+  //                                                 consent for that host, wherever it resolves
+  //   "prompt"    yes                               PROCEEDS -- the asker was told it is private
+  //   "prompt"    no  (a public-looking name)       REFUSED  -- nobody was told; see below
+  //   absent      either                            REFUSED  -- allowed by mode / a broad rule / a hook
+  //
+  // THE LATE CASE. A public-looking name that RESOLVES to a private address is only discoverable at
+  // fetch time -- the permission layer does no DNS -- so no pre-execution ask could have mentioned it.
+  // A user who approved "fetch intranet-looking.example" at an ordinary prompt did not knowingly
+  // approve reaching 127.0.0.1 (that is what DNS rebinding looks like), so `"prompt"` does not cover
+  // it. It stays refused, and the refusal names the one thing that does permit it: the allow rule
+  // naming the host, which the next call then carries as `"rule"`.
+  //
+  // WHY "PROCEEDS" IS `"allow"` FOR THE WHOLE FETCH rather than for one hop: the fetch loop takes a
+  // single policy, and it only ever auto-follows a redirect to the SAME host (modulo a leading
+  // `www.`). A redirect to any OTHER host -- private or not -- is returned to the model as a redirect
+  // message, and the model's re-call is a new call that goes back through the permission layer. So
+  // "allow for this fetch" cannot reach a private host other than the one that was consented to.
+  function effectivePolicyFor(policy: NormalizedPrivateAddressPolicy, inputHostname: string, ctx: ToolExecutionContext): NormalizedPrivateAddressPolicy {
+    if (policy !== "ask") return policy; // "deny" is absolute; "allow" needs nothing
+    const approval = ctx.permission?.explicitApproval;
+    if (approval === "rule") return "allow";
+    if (approval === "prompt" && classifyHostnameLexically(inputHostname)?.class === "private") return "allow";
+    return "ask";
+  }
+
   function privateAddressRefusal(host: string, policy: NormalizedPrivateAddressPolicy): ToolResultPayload | undefined {
     if (policy === "deny") {
       return { output: `WebFetch will not reach ${host}: it is a private/loopback address, and this session's policy denies WebFetch access to private addresses.`, isError: true };
     }
     if (policy === "ask") {
+      if (classifyHostnameLexically(host)?.class !== "private") {
+        // The late case: private by RESOLUTION only.
+        return {
+          output: `WebFetch will not reach ${host}: it resolves to a private/loopback address. That is only discoverable at fetch time, so no approval could be asked for it beforehand, and WebFetch cannot prompt for approval mid-call. An allow rule naming the host permits it: WebFetch(domain:${host}).`,
+          isError: true,
+        };
+      }
       return { output: `WebFetch cannot prompt for approval mid-call. ${host} is a private/loopback address; the user must explicitly approve WebFetch(domain:${host}) before this URL can be fetched.`, isError: true };
     }
     return undefined; // "allow"
@@ -254,7 +314,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
 
     const brand = brandNameFor(ctx);
     const blockedDomains = runtime.web.blockedDomains;
-    const policy = normalizePrivateAddressPolicy(runtime.web.fetch.privateAddressPolicy);
+    const policy = effectivePolicyFor(normalizePrivateAddressPolicy(runtime.web.fetch.privateAddressPolicy), originalUrl.hostname, ctx);
 
     // Fidelity #6 (corrections §4.6): no trailing period -- claude's own `Claude Code is unable to
     // fetch from ${host}` has none, measured directly in the binary.

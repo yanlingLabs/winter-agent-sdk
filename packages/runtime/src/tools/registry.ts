@@ -198,6 +198,18 @@ export interface ToolResultPayload {
   isError?: boolean;
 }
 
+/** See `ToolExecutionContext.permission`. */
+export interface ToolCallPermission {
+  explicitApproval: "prompt" | "rule";
+}
+
+/** What the engine may hand the adapter per call; both optional, both absent for a hand-made call. */
+export interface ToolCallExecuteOptions {
+  signal?: AbortSignal;
+  /** The permission decision's `explicitApproval`, when it carried one. */
+  explicitApproval?: "prompt" | "rule";
+}
+
 export interface ToolExecutionContext {
   cwd: string;
   home: string;
@@ -264,6 +276,21 @@ export interface ToolExecutionContext {
    * required field would force a throwaway stub into every one of them.
    */
   signal?: AbortSignal;
+  /**
+   * HOW THIS CALL WAS PERMITTED -- present only when it was EXPLICITLY approved.
+   *
+   * An executor cannot prompt mid-call, so a tool whose safety depends on "did a person (or a rule
+   * naming this exact target) consent to THIS call?" has to be told. `explicitApproval` is the
+   * permission decision's own marker (`PermissionDecisionRecord.explicitApproval`), carried verbatim:
+   *   - `"prompt"` -- a permission request for this call was answered allow;
+   *   - `"rule"`   -- a standing allow rule names this call's target exactly.
+   * ABSENT means the call was allowed by the session's mode, a broad rule, a pre-approving hook or
+   * the classifier -- or that this context was hand-built. An executor must read absence as "not
+   * explicitly approved", never the other way round.
+   *
+   * One consumer today: `WebFetch`, for a private-address target under the `"ask"` policy.
+   */
+  permission?: ToolCallPermission;
   // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §5.3): the session's configured outputs
   // directory (RuntimeConfig.outputsDir), when one was configured -- a Winter product extension, not
   // a CC-pinned field. Optional (most sessions configure none): absent means "no $OUTDIR export, no
@@ -1413,7 +1440,7 @@ export interface EngineToolResult {
 }
 export interface EngineFacingToolExecutor {
   /** Phase 6 Task 3 (R6-6): `opts.signal` is the engine's per-turn abort. It reaches a real executor as `ToolExecutionContext.signal`. */
-  execute(call: EngineToolCall, opts?: { signal?: AbortSignal }): Promise<EngineToolResult>;
+  execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult>;
 }
 
 function unknownToolResult(name: string): ToolResultPayload {
@@ -1524,7 +1551,7 @@ function unavailableResult(name: string): ToolResultPayload {
 
 export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): EngineFacingToolExecutor {
   return {
-    async execute(call: EngineToolCall, opts?: { signal?: AbortSignal }): Promise<EngineToolResult> {
+    async execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult> {
       const registered = getRegisteredTool(call.name);
       if (!registered) return foldResult(unknownToolResult(call.name));
       if (registered.descriptor.disposition === "correctly-absent") return foldResult(correctlyAbsentResult(call.name));
@@ -1552,6 +1579,9 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         // Phase 6 Task 3 (R6-6): conditionally spread, so a call made with no signal produces a ctx
         // byte-identical to before this field existed (exactOptionalPropertyTypes).
         ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
+        // Same conditional spread: a call the permission layer did not explicitly approve produces a
+        // ctx with no `permission` key at all.
+        ...(opts?.explicitApproval !== undefined ? { permission: { explicitApproval: opts.explicitApproval } } : {}),
         get tempDir() {
           return deps.getTempDir();
         },
@@ -1610,9 +1640,12 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
 export function buildRegistryToolExecutorWithFallback(deps: RegistryToolExecutorDeps, fallback: EngineFacingToolExecutor): EngineFacingToolExecutor {
   const registryExecutor = buildRegistryToolExecutor(deps);
   return {
-    async execute(call: EngineToolCall): Promise<EngineToolResult> {
-      if (getRegisteredTool(call.name) === undefined) return fallback.execute(call);
-      return registryExecutor.execute(call);
+    // `opts` is FORWARDED. This wrapper used to take `call` alone, so the per-turn abort signal --
+    // and now the explicit-approval marker -- stopped here and never reached a real executor on any
+    // run that supplies a fallback, which the production entry point always does.
+    async execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult> {
+      if (getRegisteredTool(call.name) === undefined) return fallback.execute(call, opts);
+      return registryExecutor.execute(call, opts);
     },
   };
 }

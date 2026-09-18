@@ -18,6 +18,7 @@ import {
   unregisterToolForTest,
   buildAdvertisedSet,
   buildRegistryToolExecutor,
+  buildRegistryToolExecutorWithFallback,
   registerMcpServerTools,
   unregisterMcpServerTools,
   onRegistryChange,
@@ -30,6 +31,7 @@ import {
   RUNTIME_DERIVED_CAPABILITIES,
   type ToolDescriptor,
   type ToolExecutor,
+  type ToolExecutionContext,
   type RegistryToolExecutorDeps,
   type DeferralActivation,
   type AdvertisedSetInputs,
@@ -377,6 +379,38 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
       await expect(executor.execute({ id: "1", name: notYetExecutableName, input: {} })).resolves.toBeDefined();
     } finally {
       unregisterToolForTest(notYetExecutableName);
+    }
+  });
+
+  test("per-call options reach the executor's context -- the abort signal and the explicit-approval marker -- through BOTH adapters", async () => {
+    const name = "__perm_marker_test_executor__";
+    registerTool({ descriptor: fixtureDescriptor(name) });
+    try {
+      const seen: Array<Pick<ToolExecutionContext, "signal" | "permission"> & { hasPermissionKey: boolean }> = [];
+      replaceExecutor(name, {
+        async execute(_input, ctx) {
+          seen.push({ ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}), ...(ctx.permission !== undefined ? { permission: ctx.permission } : {}), hasPermissionKey: "permission" in ctx });
+          return { output: "ok" };
+        },
+      });
+      const signal = new AbortController().signal;
+      const fallback = { execute: async () => ({ output: "fallback" }) };
+      // The production entry point always supplies a fallback, so the WRAPPED adapter is the one a real
+      // session runs. It used to take `call` alone and drop every option on the floor.
+      for (const executor of [buildRegistryToolExecutor(deps()), buildRegistryToolExecutorWithFallback(deps(), fallback)]) {
+        seen.length = 0;
+        await executor.execute({ id: "1", name, input: {} }, { signal, explicitApproval: "rule" });
+        await executor.execute({ id: "2", name, input: {} }, { signal, explicitApproval: "prompt" });
+        await executor.execute({ id: "3", name, input: {} }, { signal });
+        await executor.execute({ id: "4", name, input: {} });
+        expect(seen[0]).toEqual({ signal, permission: { explicitApproval: "rule" }, hasPermissionKey: true });
+        expect(seen[1]).toEqual({ signal, permission: { explicitApproval: "prompt" }, hasPermissionKey: true });
+        // Not explicitly approved: NO `permission` key at all, so an executor reads absence, never a falsy marker.
+        expect(seen[2]).toEqual({ signal, hasPermissionKey: false });
+        expect(seen[3]).toEqual({ hasPermissionKey: false });
+      }
+    } finally {
+      unregisterToolForTest(name);
     }
   });
 
