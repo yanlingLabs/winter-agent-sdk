@@ -333,6 +333,13 @@ function splitDigestPrompt(text: string, callerPrompt: string): { head: string; 
 
 // --- the differential tests -----------------------------------------------------------------------------------
 
+// Outside the gate on purpose: the tripwire for a silently added known-red row must fire in an ordinary run.
+test("exactly two rows here are marked knownRed, and they are the two the header documents", () => {
+  const red = SCENARIOS.filter((s) => s.knownRed !== undefined);
+  expect(red.map((s) => s.id)).toEqual(["empty-digest", "invalid-url-unparseable"]);
+  for (const s of red) expect(s.knownRed!.length).toBeGreaterThan(20);
+});
+
 describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned ${CLAUDE_VERSION} claude${skipReason !== undefined ? ` -- SKIPPED: ${skipReason}` : ""}`, () => {
   test(
     "the scripted run is hermetic: nothing left the box, the binary really fetched the loopback pages, and only fetched pages were digested",
@@ -346,16 +353,11 @@ describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned
     240_000,
   );
 
-  // THE GUARD (whole-branch review MINOR 1). Two rows here and two in `web-search-differential.test.ts`
+  // THE GUARD sits above this gated block (whole-branch review MINOR 1). Two rows here and two in `web-search-differential.test.ts`
   // are the branch's four documented reds. Each file guards its OWN rows: one guard covering both would
   // have to import the other file, whose module body starts loopback servers and a `claude` spawn.
   // A fifth red therefore shows up as a plain failure, and a fixed red shows up as a `test.failing`
   // that unexpectedly passed -- which is exactly the signal that this list needs editing.
-  test("exactly two rows here are marked knownRed, and they are the two the header documents", () => {
-    const red = SCENARIOS.filter((s) => s.knownRed !== undefined);
-    expect(red.map((s) => s.id)).toEqual(["empty-digest", "invalid-url-unparseable"]);
-    for (const s of red) expect(s.knownRed!.length).toBeGreaterThan(20);
-  });
 
   test(
     "the binary's own request headers: the documented Accept, and a Claude-User user agent",

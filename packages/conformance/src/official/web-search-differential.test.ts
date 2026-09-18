@@ -322,6 +322,13 @@ function flatText(content: unknown): string {
 
 // --- the differential tests ----------------------------------------------------------------------------
 
+// Outside the gate on purpose: the tripwire for a silently added known-red row must fire in an ordinary run.
+test("exactly two rows here are marked knownRed, and they are the two the header documents", () => {
+  const red = VALIDATION.filter((v) => v.knownRed !== undefined);
+  expect(red.map((v) => v.id)).toEqual(["one-character-query", "empty-query"]);
+  for (const v of red) expect(v.knownRed!.length).toBeGreaterThan(20);
+});
+
 describe.skipIf(skipReason !== undefined)(`WebSearch output assembly: Winter's assembler vs pinned ${CLAUDE_VERSION} claude${skipReason !== undefined ? ` -- SKIPPED: ${skipReason}` : ""}`, () => {
   test(
     "the scripted run is hermetic and complete: nothing left the box, and every scenario got its own inner request",
@@ -521,14 +528,9 @@ describe.skipIf(skipReason !== undefined)(`WebSearch output assembly: Winter's a
 
   // --- input validation: no inner request, and the same error text -------------------------------------
 
-  // THE GUARD (whole-branch review MINOR 1). Two rows here and two in `web-fetch-differential.test.ts`
+  // THE GUARD sits above this gated block (whole-branch review MINOR 1). Two rows here and two in `web-fetch-differential.test.ts`
   // are the branch's four documented reds. Each file guards its OWN rows: one guard covering both would
   // have to import the other file, whose module body starts loopback servers and a `claude` spawn.
-  test("exactly two rows here are marked knownRed, and they are the two the header documents", () => {
-    const red = VALIDATION.filter((v) => v.knownRed !== undefined);
-    expect(red.map((v) => v.id)).toEqual(["one-character-query", "empty-query"]);
-    for (const v of red) expect(v.knownRed!.length).toBeGreaterThan(20);
-  });
 
   for (const v of VALIDATION) {
     (v.knownRed !== undefined ? test.failing : test)(
