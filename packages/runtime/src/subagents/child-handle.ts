@@ -347,6 +347,12 @@ export interface ChildEngineRunContext {
    * session is responsible for, and they are not part of the parent's own next request.
    */
   recordDescendantUsage?(usage: { inputTokens: number; outputTokens: number }): void;
+  /**
+   * The COST roll-up, beside the token one above: one PRICED generation of a descendant, folded into
+   * the owning run's cost ledger. Separate because a price is per MODEL and the token roll-up carries
+   * no model key. Without it a subagent's spend was invisible to `total_cost_usd` and `maxBudgetUsd`.
+   */
+  recordDescendantCost?(entry: import("../engine.ts").PricedGenerationEntry): void;
   // Phase 4 Task 8 (rider 26, PRECISED; RULING P4-J(e)): the parent's CURRENT live policy, for
   // WS-10 §9's "a child resume applies the stricter of the recorded and current parent policy".
   // Lane C's Q1 finding: `resolveChildResumeMode` had ZERO call sites anywhere in the repository and

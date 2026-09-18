@@ -96,6 +96,12 @@ import "./skill.ts";
 import "./workflow.ts";
 import "./web-fetch.ts";
 
+// A3 (web tools): WebSearch. Reads the session-keyed web runtime (web/session-runtime.ts, populated
+// per run the same way as every other session-keyed registry above); with none registered it answers
+// a typed "no search runtime is wired up" tool error, never a crash. The WebFetch lane adds its own
+// import here, beside this one -- see that lane's own file for its wiring note.
+import "./web-search.ts";
+
 // Named export mirroring `descriptors/index.ts`'s own `DESCRIPTORS_REGISTERED` precedent -- lets a
 // consumer force this module to evaluate at an explicit point, and lets a future test assert "the
 // impl barrel imported without throwing" as a real value.

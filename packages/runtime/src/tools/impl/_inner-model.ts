@@ -140,7 +140,7 @@ export interface InnerModelSuccess {
 export type InnerModelResult = InnerModelSuccess | InnerModelFailure;
 
 /** What the loop needs from the session, narrowed so a test hands in three functions and no engine. */
-export type InnerModelRuntime = Pick<WebSessionRuntime, "sessionModel" | "resolveAuxiliaryModel" | "accountUsage">;
+export type InnerModelRuntime = Pick<WebSessionRuntime, "sessionModel" | "resolveAuxiliaryModel" | "accountUsage" | "budgetExceeded">;
 
 /** The notice an over-limit call is answered with. Exported so a caller can recognise (and not re-report) it. */
 export const INNER_TOOL_LIMIT_NOTICE = "The tool-call limit for this request has been reached. Do not call the tool again; answer now from the results you already have.";
@@ -230,23 +230,32 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
   let requestModel: string | undefined;
   let usageKey: string | undefined;
   let origin: ProviderMessage["origin"];
-  if (selector.kind === "session") {
-    const live = session.sessionModel();
-    provider = live.provider;
-    requestModel = live.model;
-    usageKey = live.model;
-    origin = live.origin;
-  } else {
-    if (session.resolveAuxiliaryModel === undefined) {
-      return fail("model-unresolvable", `the model "${selector.tag}" cannot be resolved: this session has no provider catalog to resolve a stated model against`, "no-catalog");
+  // GUARDED, both arms. The production resolver deliberately RETHROWS anything that is not a typed
+  // resolution refusal (a bug must not be dressed as one), and this function's contract is that
+  // nothing expected-or-not escapes as a throw from HERE -- a throw ends the user's whole turn. Only
+  // the error's NAME is exposed: its message is unvetted and has been seen to carry material.
+  try {
+    if (selector.kind === "session") {
+      const live = session.sessionModel();
+      provider = live.provider;
+      requestModel = live.model;
+      usageKey = live.model;
+      origin = live.origin;
+    } else {
+      if (session.resolveAuxiliaryModel === undefined) {
+        return fail("model-unresolvable", `the model "${selector.tag}" cannot be resolved: this session has no provider catalog to resolve a stated model against`, "no-catalog");
+      }
+      const resolution = session.resolveAuxiliaryModel(selector.tag, selector.authRef !== undefined ? { authRef: selector.authRef } : {});
+      if (!resolution.ok) return fail("model-unresolvable", `the model "${selector.tag}" could not be resolved (${resolution.code}): ${resolution.message}`, resolution.code);
+      provider = resolution.provider;
+      // No `model` on the request: the built provider already IS this model, and its bridge sends the
+      // provider's own model id when the request names none.
+      requestModel = undefined;
+      usageKey = resolution.modelKey;
     }
-    const resolution = session.resolveAuxiliaryModel(selector.tag, selector.authRef !== undefined ? { authRef: selector.authRef } : {});
-    if (!resolution.ok) return fail("model-unresolvable", `the model "${selector.tag}" could not be resolved (${resolution.code}): ${resolution.message}`, resolution.code);
-    provider = resolution.provider;
-    // No `model` on the request: the built provider already IS this model, and its bridge sends the
-    // provider's own model id when the request names none.
-    requestModel = undefined;
-    usageKey = resolution.modelKey;
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "an unknown error";
+    return fail("model-unresolvable", `the inner model could not be resolved: the resolver failed with ${name}`, "resolver-threw");
   }
 
   const signal = ctx.signal;
@@ -261,6 +270,18 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
 
   const generate = async (forced: boolean): Promise<ProviderTurn | typeof ABORTED | { failure: InnerModelFailure }> => {
     if (isAborted()) return ABORTED;
+    // THE SESSION'S BUDGET, checked before EVERY inner generation. The main loop checks
+    // `maxBudgetUsd` only before its own requests, so without this an inner pass is the one place a
+    // session could keep spending after crossing its ceiling -- up to the whole generation bound.
+    // Reported as `aborted` (the pass was stopped by the session, not by a failure) with its own
+    // `detail`, so the code union the two tools switch on does not grow.
+    let overBudget = false;
+    try {
+      overBudget = session.budgetExceeded?.() === true;
+    } catch {
+      overBudget = false;
+    }
+    if (overBudget) return { failure: fail("aborted", "the inner model pass was stopped: this session has reached its spending limit", "budget-exceeded") };
     const input: ProviderRequest = {
       messages: [...messages],
       ...(request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),
@@ -311,6 +332,12 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
     // --- the bounded tool loop ----------------------------------------------------------------------
     const handler = request.handler!;
     let closing = false; // the ONE generation granted after the limit was reached
+    // THE HARD BOUND ON GENERATIONS. `maxToolCalls` bounds HANDLER calls, and a handler call happens
+    // only for a correctly-named call -- so a model that names an unknown tool every round never
+    // advances that counter, and each of its rounds is a real, accounted generation. The bound is
+    // N rounds of at least one call each, the closing generation, and one round of slack for a
+    // mis-named call; past it the pass stops exactly as it does on a too-eager closing generation.
+    const maxGenerations = maxToolCalls + 2;
     for (let round = 1; ; round++) {
       const turn = await generate(round === 1);
       if (turn === ABORTED) return abortedFailure();
@@ -319,9 +346,12 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
       const text = turn.kind === "text" ? turn.text : (turn.text ?? "");
       if (text.length > 0) steps.push({ kind: "text", text });
       if (turn.kind === "text") return succeed("answer");
-      // Still calling the tool on its closing generation: stop here. The calls are NOT recorded as
-      // steps -- nothing ran and nothing was answered.
-      if (closing) return succeed("tool-call-limit");
+      // A tool-call turn that calls NOTHING is terminal: there is no result to feed back, so another
+      // generation would be the same request again -- forever, for a model that keeps doing it.
+      if (turn.calls.length === 0) return succeed("answer");
+      // Still calling the tool on its closing generation, or at the generation bound: stop here. The
+      // calls are NOT recorded as steps -- nothing ran and nothing was answered.
+      if (closing || round >= maxGenerations) return succeed("tool-call-limit");
 
       const toolUse: ContentBlock[] = [...(text.length > 0 ? [{ type: "text" as const, text }] : []), ...turn.calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input }))];
       // `nativeState` rides with the assistant message so a family that needs its own opaque items

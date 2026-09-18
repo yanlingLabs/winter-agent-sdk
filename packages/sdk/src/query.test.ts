@@ -1845,6 +1845,19 @@ test("resolveWebToolsConfig spells every default once and never yields an unusab
   expect(stated.fetch).toEqual({ digestModel: "openai/gpt-4.1", authRef: { kind: "none" }, privateAddressPolicy: "allow" });
 });
 
+test("resolveWebToolsConfig COERCES what arrives as JSON: only the boolean `false` disables search, and an unknown policy is the default", () => {
+  // The config crosses a process boundary as JSON, so the types promise nothing about what is here.
+  const stringly = resolveWebToolsConfig({ search: { enabled: "false" as unknown as boolean }, fetch: { privateAddressPolicy: "permit" as unknown as "allow" } });
+  expect(stringly.search.enabled).toBe(true);
+  expect(stringly.fetch.privateAddressPolicy).toBe(WEB_TOOLS_DEFAULTS.privateAddressPolicy);
+  expect(resolveWebToolsConfig({ search: { enabled: 0 as unknown as boolean } }).search.enabled).toBe(true);
+  expect(resolveWebToolsConfig({ search: { enabled: null as unknown as boolean } }).search.enabled).toBe(true);
+  expect(resolveWebToolsConfig({ search: { enabled: false } }).search.enabled).toBe(false);
+  for (const policy of ["allow", "ask", "deny"] as const) expect(resolveWebToolsConfig({ fetch: { privateAddressPolicy: policy } }).fetch.privateAddressPolicy).toBe(policy);
+  // A non-array `blockedDomains` and a non-string `digestModel` are dropped rather than thrown on.
+  expect(resolveWebToolsConfig({ blockedDomains: "blocked.example" as unknown as string[], fetch: { digestModel: 7 as unknown as string } })).toMatchObject({ blockedDomains: [] });
+});
+
 // --- Phase 6 Task 3 (R6-F): a PROVIDER failure yields its result AND throws -------------------------
 //
 // Capture (I): both hermetic runs yielded the `result` and THEN threw. A host that only iterates and

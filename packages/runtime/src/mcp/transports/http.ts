@@ -16,9 +16,16 @@ import type { McpHttpServerConfig } from "@yanlinglabs/winter-agent-sdk";
 // tsconfig). Casting ONCE here, at the producer, means every caller (this lane's own tests,
 // mcp/client.ts) receives an already-`Transport`-typed value and never re-hits this friction at
 // their own call sites.
-export function buildHttpTransport(cfg: McpHttpServerConfig): Transport {
+//
+// `opts.refuseRedirects`: every request fails rather than follow a redirect. For a connection that
+// carries a credential in a CUSTOM header this is not optional hygiene: fetch strips only
+// `Authorization` on a cross-origin redirect, so an `x-api-key` header would otherwise be replayed to
+// whatever origin the endpoint (or anything in front of it) pointed at. Not on the public server
+// config -- it is a decision of the direct caller that put the credential there.
+export function buildHttpTransport(cfg: McpHttpServerConfig, opts: { refuseRedirects?: boolean } = {}): Transport {
+  const requestInit: RequestInit = { ...(cfg.headers !== undefined ? { headers: cfg.headers } : {}), ...(opts.refuseRedirects === true ? { redirect: "error" as const } : {}) };
   const transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
-    ...(cfg.headers !== undefined ? { requestInit: { headers: cfg.headers } } : {}),
+    ...(Object.keys(requestInit).length > 0 ? { requestInit } : {}),
   });
   return transport as unknown as Transport;
 }
