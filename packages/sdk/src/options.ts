@@ -116,14 +116,15 @@ function positiveIntegerOr(value: number | undefined, fallback: number): number 
   return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
 }
 
+/** The three known policies. Anything else a host writes is not one of them and reads as the default -- see the coercion inside `resolveWebToolsConfig`. */
+const PRIVATE_ADDRESS_POLICIES: readonly WebPrivateAddressPolicy[] = ["allow", "ask", "deny"];
+
 /**
  * THE one reader of `WebToolsConfig`. Pure, dependency-free and total: an absent block, an absent
  * field, a non-positive or non-finite bound and a whitespace-only `digestModel` all resolve to the
  * default rather than to a value no consumer can act on (a bound of `0` would make a tool that is
  * advertised and can never search; disabling search is `search.enabled: false`).
  */
-const PRIVATE_ADDRESS_POLICIES: readonly WebPrivateAddressPolicy[] = ["allow", "ask", "deny"];
-
 export function resolveWebToolsConfig(web: WebToolsConfig | undefined): ResolvedWebToolsConfig {
   // COERCED, not trusted: this value crosses a process boundary as JSON, so the declared types say
   // nothing about what is actually here. Two fields fail OPEN if read naively -- `enabled: "false"`

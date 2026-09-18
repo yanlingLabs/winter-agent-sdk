@@ -495,6 +495,11 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
       // again; its own eventual settlement is swallowed so it can never become an unhandled rejection.
       let connectFailure: unknown;
       let connected: Response | undefined;
+      // A candidate ABANDONED at its connect budget keeps running: if it later answers, its body is a
+      // live stream nobody reads (whole-branch review, NIT -- the earlier version only swallowed its
+      // rejection). Drained below, once a winner is settled, so the socket is released rather than
+      // held open until GC.
+      const abandoned: Array<Promise<Response>> = [];
       for (let i = 0; i < resolved.candidates.length; i++) {
         const candidate = resolved.candidates[i]!;
         const isLast = i === resolved.candidates.length - 1;
@@ -519,12 +524,21 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
           }
           break;
         }
+        // The budget timer is CLEARED whichever side of the race wins (whole-branch review, NIT):
+        // one per candidate, and a 10 s timer left pending holds the event loop open that much longer
+        // after a fetch that finished in milliseconds.
+        let budgetTimer: ReturnType<typeof setTimeout> | undefined;
         const settled = await Promise.race([
           attempt.then((r): { ok: true; r: Response } => ({ ok: true, r })).catch((e: unknown): { ok: false; e: unknown } => ({ ok: false, e })),
-          new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), CONNECT_BUDGET_MS)),
-        ]);
+          new Promise<"timed-out">((resolve) => {
+            budgetTimer = setTimeout(() => resolve("timed-out"), CONNECT_BUDGET_MS);
+          }),
+        ]).finally(() => {
+          if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+        });
         if (settled === "timed-out") {
           connectFailure = new Error("WebFetch: candidate connect budget exceeded");
+          abandoned.push(attempt);
           continue;
         }
         if (!settled.ok) {
@@ -536,6 +550,12 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
         }
         connected = settled.r;
         break;
+      }
+      // Whichever candidate won (or none did), every abandoned one's eventual body is cancelled: a
+      // response nobody will read must not sit on an open socket. Fire-and-forget by design -- this is
+      // cleanup, and neither its failure nor its timing may affect the hop's own outcome.
+      for (const loser of abandoned) {
+        void loser.then((r) => r.body?.cancel().catch(() => {})).catch(() => {});
       }
       if (connected === undefined) throw connectFailure ?? new Error("WebFetch: no candidate address could be reached");
       response = connected;

@@ -877,9 +877,8 @@ export interface ToolExecutor {
    * "a stopped child starts nothing new AND its in-flight Bash is killed" (R6-6), which was
    * previously impossible because the interrupt was a raced Promise with no channel into the tool.
    */
-  // >>> WEB-PERMS HUNK 1 of 3 (permissions lane) -- `explicitApproval` added to `opts`; see `ToolExecutionContext.permission`.
+  // `explicitApproval` rides through to `ToolExecutionContext.permission`; see its own JSDoc.
   execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; isError?: boolean }>;
-  // <<< WEB-PERMS HUNK 1 of 3
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -2513,10 +2512,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const sessionChain: Map<string, ContinuationLink> = new Map();
   // P6 fix wave (Ruling E-4, R6-H): THE COST LEDGER. `total_cost_usd` accumulates over the whole run
   // and every result frame repeats the total so far (the pinned lifecycle: a consumer reads the
-  // newest result and never adds them); `modelUsage` is keyed by the RAW model string the session was
-  // generating with, with the catalog key as `canonicalModel`. Nothing is emitted until a generation
-  // has actually been PRICED, so a session on an unpriced row -- and every pre-P6 golden -- carries
-  // no cost field at all rather than an invented zero.
+  // newest result and never adds them); `modelUsage` is keyed by the QUALIFIED `provider/model`
+  // CATALOG KEY the session was generating with whenever a provider identity exists -- not the raw
+  // string the host passed, which this comment used to claim (whole-branch review, NIT; see
+  // `priceGeneration` below for the one rule) -- with the same key as `canonicalModel`. Nothing is
+  // emitted until a generation has actually been PRICED, so a session on an unpriced row -- and every
+  // pre-P6 golden -- carries no cost field at all rather than an invented zero.
+  //
+  // `webSearchRequests` IS ALWAYS 0, disclosed (whole-branch review MINOR 7). The pin reports the
+  // number of server-side searches a generation billed for; Winter's searches are the WebSearch tool's
+  // own inner pass against its own backend, and the count is known only inside that executor, after its
+  // loop -- not at this fold, which sees one generation's `{modelKey, usage, priced}`. Reporting it
+  // would mean folding a zero-token entry from the tool, which flips `costLedger.priced` and can make a
+  // result frame carry cost fields it otherwise would not. Left honest at 0 rather than half-true.
   interface ModelUsageRow {
     inputTokens: number;
     outputTokens: number;
@@ -2698,14 +2706,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // dispatch consults, so a live MCP registration (registerMcpServerTools) is reflected on the
       // very next evaluate() call with no engine-side caching to go stale.
       requiresInteraction: (toolName: string): boolean => getRegisteredTool(toolName)?.descriptor.interaction === "required",
-      // >>> WEB-PERMS HUNK 2 of 3 (permissions lane) -- the session's `web.fetch.privateAddressPolicy`, RAW:
-      // the evaluator normalises it and fails closed to "ask" (absent included). Read at call time
+      // The session's `web.fetch.privateAddressPolicy`, RAW: the evaluator normalises it and fails
+      // closed to "ask" (absent included). Read at call time
       // through the same lookup every web tool executor uses, so the two can never see different values.
       ...(() => {
         const privateAddressPolicy = webSessionRuntimeFor({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) })?.web.fetch.privateAddressPolicy;
         return privateAddressPolicy !== undefined ? { webFetchPrivateAddressPolicy: privateAddressPolicy } : {};
       })(),
-      // <<< WEB-PERMS HUNK 2 of 3
     };
   };
 
@@ -7356,9 +7363,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
           // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
           // turn promptly; the signal is what stops the work the race walked away from.
-          // >>> WEB-PERMS HUNK 3 of 3 (permissions lane) -- the decision's explicit-approval marker rides to the executor's context.
+          // The decision's explicit-approval marker rides to the executor's context beside the signal.
           const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
-          // <<< WEB-PERMS HUNK 3 of 3
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
