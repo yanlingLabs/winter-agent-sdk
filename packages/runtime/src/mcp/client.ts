@@ -44,10 +44,21 @@ export type McpConnectErrorCode = "timeout" | "spawn_failed" | "handshake_failed
 
 export class McpConnectError extends Error {
   readonly code: McpConnectErrorCode;
-  constructor(code: McpConnectErrorCode, message: string) {
+  /**
+   * The HTTP status an http/sse transport failed the handshake with, when there was one.
+   *
+   * Carried because the classification below is LOSSY on purpose (the state model needs only
+   * failed-vs-needsAuth) and the transport's message holds the response BODY, not the status -- so a
+   * direct caller that must tell a 429 from a 500 (the web search backend's anonymous tier answers a
+   * rate limit at `initialize`) had nothing to read. `declare` + conditional assignment so an error
+   * with no status has no own `httpStatus` key at all.
+   */
+  declare readonly httpStatus?: number;
+  constructor(code: McpConnectErrorCode, message: string, httpStatus?: number) {
     super(message);
     this.name = "McpConnectError";
     this.code = code;
+    if (httpStatus !== undefined) Object.assign(this, { httpStatus });
   }
 }
 
@@ -134,9 +145,9 @@ function classifyConnectError(err: unknown): McpConnectError {
   // own `code` carries the HTTP status -- checked here so a server that requires auth Winter has no
   // credentials for still lands in WS-09 §2.1's `needsAuth` state, not a generic "failed".
   if ((err instanceof StreamableHTTPError || err instanceof SseError) && err.code === 401) {
-    return new McpConnectError("needs_auth", err.message);
+    return new McpConnectError("needs_auth", err.message, 401);
   }
-  if (err instanceof StreamableHTTPError || err instanceof SseError) return new McpConnectError("handshake_failed", err.message);
+  if (err instanceof StreamableHTTPError || err instanceof SseError) return new McpConnectError("handshake_failed", err.message, typeof err.code === "number" ? err.code : undefined);
   const message = err instanceof Error ? err.message : String(err);
   // Node's own child_process spawn failure shape (verified empirically: `ENOENT: no such file or
   // directory, posix_spawn '<command>'`, `err.code === "ENOENT"`) -- checked by CODE, not a message
