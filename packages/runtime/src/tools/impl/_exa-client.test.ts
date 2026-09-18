@@ -600,6 +600,23 @@ describe("review fixes: bounds, answered errors, single-flight connect, key re-r
     });
   });
 
+  test("item 5: a query that IS a bare trigger phrase never suppresses a GENUINE rate-limit reply -- the breaker still opens and the key still fires", async () => {
+    // The query is not embedded in a longer sentence (unlike the echo tests above) -- it IS, word for
+    // word, the backend's own genuine complaint. Before the fix, `withoutEchoes` stripped "rate limit"
+    // out of "Rate limit exceeded" (a plain substring match, case-insensitive), leaving " exceeded",
+    // which trips neither RATE_LIMIT_PATTERN nor AUTH_PATTERN -- the detector answered `backend-error`,
+    // the breaker stayed shut, and the key fallback never ran for this exact search.
+    await withExaFixture({ respond: (call) => (call.apiKey === null ? { content: [{ type: "text", text: "Rate limit exceeded" }], isError: true } : advancedPayload([{ url: "https://k.example/" }])) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query: "rate limit" })).toMatchObject({ ok: true, tier: "key", hits: [{ url: "https://k.example/", title: "https://k.example/" }] });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   test("THE PACER QUEUE: 70 genuinely queued calls each wait for their OWN slot -- a deep queue is never mistaken for a clock step and let through as a burst", async () => {
     await withExaFixture({}, async (fixture) => {
       const state = createExaBackendState();
