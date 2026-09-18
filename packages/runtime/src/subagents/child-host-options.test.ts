@@ -18,6 +18,7 @@ import { runEngine, type EngineOptions, type Provider, type ProviderRequest, typ
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../tools/registry.ts";
 import { resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
+import { CHILD_BUDGET_STOP_TEXT } from "./child-engine.ts";
 import { registerDefaultChildEngineFactory } from "./register-default-factory.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { resolveBuiltinAgents } from "./builtin-agents.ts";
@@ -207,7 +208,7 @@ describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop st
    * root -> child -> grandchild. The grandchild would happily loop on a probe tool for six rounds
    * (101 each); the root and the child spend 1010 + 303 before it starts.
    */
-  async function driveTree(maxBudgetUsd: number | undefined): Promise<{ grandchildRequests: number; childRequests: number; rootRequests: number; result: Record<string, unknown>; grandchildStatus: unknown }> {
+  async function driveTree(maxBudgetUsd: number | undefined): Promise<{ grandchildRequests: number; childRequests: number; rootRequests: number; result: Record<string, unknown>; grandchildStatus: unknown; grandchildContent: string | undefined }> {
     home = mkdtempSync(join(tmpdir(), "winter-child-budget-tree-"));
     const counts = { root: 0, child: 0, grandchild: 0 };
     const provider: Provider = {
@@ -231,6 +232,7 @@ describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop st
       },
     };
     let grandchildStatus: unknown;
+    let grandchildContent: string | undefined;
     registerTool({
       descriptor: descriptor(SPAWN),
       executor: {
@@ -238,7 +240,10 @@ describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop st
           if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
           const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
           const result = await handle.result();
-          if ((input as SpawnChildRequest).parentToolUseId === "call-2") grandchildStatus = result.status;
+          if ((input as SpawnChildRequest).parentToolUseId === "call-2") {
+            grandchildStatus = result.status;
+            grandchildContent = result.content;
+          }
           return { output: JSON.stringify({ status: result.status }) };
         },
       },
@@ -255,7 +260,7 @@ describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop st
     for await (const f of host.input) frames.push(f);
     await done;
     const result = frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message).filter((m) => m.type === "result").at(-1) as unknown as Record<string, unknown>;
-    return { grandchildRequests: counts.grandchild, childRequests: counts.child, rootRequests: counts.root, result, grandchildStatus };
+    return { grandchildRequests: counts.grandchild, childRequests: counts.child, rootRequests: counts.root, result, grandchildStatus, grandchildContent };
   }
 
   test("CONTROL: with no budget the grandchild runs its whole loop (so the case below is not vacuous)", async () => {
@@ -276,6 +281,17 @@ describe("`maxBudgetUsd` is the WHOLE TREE's ceiling: a descendant's own loop st
     expect(r.rootRequests).toBe(1);
     expect(r.result.subtype).toBe("error_max_budget_usd");
     expect(r.result.total_cost_usd).toBe(1010 + 303 + 2 * 101);
+    // Whole-branch review MINOR 9: the grandchild's own failure SAYS the budget stopped it. The engine's
+    // budget result carries no text, so this used to be the grandchild's last assistant sentence (or
+    // nothing) -- a parent reading it had no way to know a retry was pointless.
+    expect(r.grandchildStatus).toBe("failed");
+    expect(r.grandchildContent).toBe(CHILD_BUDGET_STOP_TEXT);
+  });
+
+  test("CONTROL: a child that fails for any OTHER reason still reports its own text, not the budget sentence", async () => {
+    const r = await driveTree(undefined);
+    expect(r.grandchildStatus).toBe("completed");
+    expect(r.grandchildContent).toBe("grandchild done");
   });
 });
 

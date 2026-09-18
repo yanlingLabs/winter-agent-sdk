@@ -388,10 +388,18 @@ export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEng
 // (frames.ts) carries far more, but only `is_error`/`result` are needed to produce a ChildResult.
 interface ResultLikeMessage {
   type?: string;
+  subtype?: string;
   is_error?: boolean;
   result?: string;
   [k: string]: unknown;
 }
+
+/**
+ * What a child reports when the SPENDING CEILING ended it (whole-branch review MINOR 9). One constant,
+ * because the engine's own `error_max_budget_usd` result carries no text to forward and the parent must
+ * not be told a retry is worth trying: the ceiling is the session's, so a retry hits it again.
+ */
+export const CHILD_BUDGET_STOP_TEXT = "The agent stopped because the session reached its spending limit (maxBudgetUsd), so no further model calls could be made. Retrying will not help -- continue with what it produced, or ask the user to raise the session's budget.";
 
 async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritance, runCtx: ChildEngineRunContext, deps: ChildEngineFactoryDeps): Promise<ChildHandle> {
   const agentId = randomUUID();
@@ -904,7 +912,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           return progressAtWrite.get(frame);
         } else if (message.type === "result") {
           const isError = message.is_error === true;
-          const resultText = typeof message.result === "string" ? message.result : lastAssistantText;
+          // A BUDGET STOP SAYS SO (whole-branch review MINOR 9). The engine's budget result carries no
+          // `result` text at all (engine.ts: `{subtype: "error_max_budget_usd", is_error: true}`), so a
+          // child stopped by the spending ceiling -- its own `maxBudgetUsd`, or a ROOT's, which every
+          // descendant now also stops on -- reported its last assistant sentence as its failure, or
+          // nothing at all. The parent then read "I'll check the config" as the reason its agent failed.
+          const resultText = message.subtype === "error_max_budget_usd" ? CHILD_BUDGET_STOP_TEXT : typeof message.result === "string" ? message.result : lastAssistantText;
           // RULING P5-I: the engine's structured SUCCESS variant sets `structured_output` and NO
           // `result` (engine.ts) -- which is exactly why `resultText` falls back to the last
           // assistant text above, and exactly why the validated object needs its own channel. Read
