@@ -40,7 +40,7 @@ import { winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-runtime.ts";
 import { isDomainBlocked } from "./_domains.ts";
-import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets } from "../../web/private-address.ts";
+import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets, UNRESOLVABLE_HOST_REASON } from "../../web/private-address.ts";
 import { isPreapprovedUrl } from "../../web/preapproved-hosts.ts";
 import { convertFetchedHtml, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./_web-fetch-html.ts";
 import { webFetchCache, WebFetchCache, type WebFetchCacheEntry } from "./_web-fetch-cache.ts";
@@ -292,7 +292,21 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
     return "ask";
   }
 
-  function privateAddressRefusal(host: string, policy: NormalizedPrivateAddressPolicy): ToolResultPayload | undefined {
+  /**
+   * `unresolvedReason` is item 2: a cache-HIT lookup (the only caller that ever passes it -- the
+   * MISS path's own `private-address` outcome is never a resolution failure, see `_web-fetch-net.ts`,
+   * which reports that case as `network-error` instead) can fail closed with `class: "private"` for
+   * a reason that is NOT "this address is private" -- it is "nothing is known about this address".
+   * The two used to share one refusal text ("it is a private/loopback address," which is simply
+   * false when resolution just failed), so this checks the reason FIRST, before either policy
+   * branch, and matches the MISS path's own exact wording for the same fact
+   * (`WebFetch could not resolve any address for <host>.`) so the two paths never diverge.
+   */
+  function privateAddressRefusal(host: string, policy: NormalizedPrivateAddressPolicy, unresolvedReason?: string): ToolResultPayload | undefined {
+    if (unresolvedReason === UNRESOLVABLE_HOST_REASON) {
+      if (policy === "allow") return undefined; // an explicit allow needs no resolution to proceed
+      return { output: `WebFetch could not resolve any address for ${host}.`, isError: true };
+    }
     if (policy === "deny") {
       return { output: `WebFetch will not reach ${host}: it is a private/loopback address, and this session's policy denies WebFetch access to private addresses.`, isError: true };
     }
@@ -357,7 +371,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       const addressVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(originalUrl.hostname), resolveHost), ctx.signal);
       if (addressVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
       if (addressVerdict.class === "private") {
-        const refusal = privateAddressRefusal(originalUrl.hostname, policy);
+        const refusal = privateAddressRefusal(originalUrl.hostname, policy, addressVerdict.reason);
         if (refusal !== undefined) return refusal;
       }
       content = cached.content;
