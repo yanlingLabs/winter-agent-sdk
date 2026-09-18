@@ -53,7 +53,7 @@ interface Driven {
  * carries the child definition's own prompt. The parent spawns the child (foreground) from a probe
  * tool; the child optionally calls `WEB_PROBE` first.
  */
-async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?: boolean; dropRootRegistrationBeforeSpawn?: boolean; engine?: Partial<EngineOptions>; factory?: Record<string, unknown> } = {}): Promise<Driven> {
+async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?: boolean; dropRootRegistrationBeforeSpawn?: boolean; childModel?: string; engine?: Partial<EngineOptions>; factory?: Record<string, unknown> | ((provider: Provider) => Record<string, unknown>) } = {}): Promise<Driven> {
   home = mkdtempSync(join(tmpdir(), "winter-child-host-options-"));
   const requests: ProviderRequest[] = [];
   const childRequests: ProviderRequest[] = [];
@@ -69,7 +69,7 @@ async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?
         return { kind: "text", text: "child done", usage: { inputTokens: 300, outputTokens: 3 } };
       }
       parentTurns += 1;
-      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do the thing", runInBackground: false, name: "prober", definition: { description: "probe", prompt: CHILD_MARK } };
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do the thing", runInBackground: false, name: "prober", definition: { description: "probe", prompt: CHILD_MARK, ...(opts.childModel !== undefined ? { model: opts.childModel } : {}) } };
       return parentTurns === 1 ? { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN, input: req }], usage: { inputTokens: 1000, outputTokens: 10 } } : { kind: "text", text: "parent done", usage: { inputTokens: 1000, outputTokens: 10 } };
     },
   };
@@ -97,7 +97,7 @@ async function drive(config: Partial<RuntimeConfig>, opts: { childCallsWebProbe?
   });
   const full = { sessionId: `child-host-options-${Math.random().toString(36).slice(2)}`, cwd: home, model: "prova/main", persistSession: false, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, ...config } as RuntimeConfig;
   const assembler = createSystemPromptAssembler({ home });
-  registerDefaultChildEngineFactory({ provider, config: full, env: {}, systemPromptAssembler: assembler, ...(opts.factory ?? {}) } as never);
+  registerDefaultChildEngineFactory({ provider, config: full, env: {}, systemPromptAssembler: assembler, ...(typeof opts.factory === "function" ? opts.factory(provider) : (opts.factory ?? {})) } as never);
   const { host, runtime } = createInMemoryChannel();
   const done = runEngine({ config: full, input: runtime.input, output: runtime.output, provider, systemPromptAssembler: assembler, ...(opts.engine ?? {}) });
   host.output.write({ type: "user", text: "go" });
@@ -160,5 +160,37 @@ describe("a subagent's generations are PRICED, and roll up into the session's co
     const r = await drive({ maxBudgetUsd: 1200 }, { engine: { priceUsage }, factory: { priceUsage } });
     expect(r.result.subtype).toBe("error_max_budget_usd");
     expect(r.requests.filter((q) => !(q.system ?? "").includes(CHILD_MARK))).toHaveLength(1);
+  });
+
+  test("a child on a DIFFERENT PROVIDER than its parent is priced under ITS OWN qualified key -- never its slot name paired with the parent's provider", async () => {
+    // The pricing seam as the production wiring implements it: a `/`-bearing key self-qualifies; a
+    // BARE key can only be read against the session-START provider (`prova`), which has no `haiku`.
+    const RATES: Record<string, number> = { "prova/main": 1, "provb/small": 10 };
+    const asked: string[] = [];
+    const catalogPricing: NonNullable<EngineOptions["priceUsage"]> = (key, usage) => {
+      asked.push(key);
+      const qualified = key.includes("/") ? key : `prova/${key}`;
+      const rate = RATES[qualified];
+      return rate === undefined ? undefined : { costUsd: rate * (usage.inputTokens + usage.outputTokens), costBasis: "list", canonicalModel: qualified };
+    };
+    const r = await drive(
+      {},
+      {
+        childModel: "haiku",
+        engine: { priceUsage: catalogPricing },
+        // The agent definition says `haiku`; the resolver maps that slot onto ANOTHER provider.
+        factory: (provider) => ({ priceUsage: catalogPricing, resolveChildProvider: (model: string) => (model === "haiku" ? { provider, identity: { providerId: "provb", modelKey: "provb/small", family: "fam-b" } } : undefined) }),
+      },
+    );
+    expect(r.childRequests).toHaveLength(1);
+    // Priced at the CHILD's provider's rate: parent 2 x 1010 x $1, child 303 x $10.
+    expect(r.result.total_cost_usd).toBe(2 * 1010 + 303 * 10);
+    const rows = r.result.modelUsage as Record<string, Record<string, unknown>>;
+    // ONE row per model, keyed by the qualified tag -- not a `haiku` row beside it.
+    expect(Object.keys(rows).sort()).toEqual(["prova/main", "provb/small"]);
+    expect(rows["provb/small"]).toMatchObject({ inputTokens: 300, outputTokens: 3, costUSD: 3030, canonicalModel: "provb/small" });
+    expect(rows["prova/main"]).toMatchObject({ inputTokens: 2000, outputTokens: 20 });
+    // The slot name never reached the pricing seam at all.
+    expect(asked).not.toContain("haiku");
   });
 });

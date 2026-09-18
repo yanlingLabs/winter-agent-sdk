@@ -1093,7 +1093,20 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         ...(deps.describeModel !== undefined ? { describeModel: deps.describeModel } : {}),
         // A child's generations are PRICED like its parent's, and each priced one climbs to the
         // owning run's ledger -- see `ChildEngineFactoryDeps.priceUsage`.
-        ...(deps.priceUsage !== undefined ? { priceUsage: deps.priceUsage } : {}),
+        //
+        // UNDER THE CHILD'S OWN QUALIFIED KEY. The child's config carries `effectiveModel` -- for a
+        // definition that says `model: "haiku"`, the SLOT NAME. The pricing seam pairs a bare key
+        // with the session-START provider, so a child that resolved onto a DIFFERENT provider would
+        // be priced against the wrong provider's rows, or not at all. `childProvider.identity` is
+        // what the model resolved TO; it is read INSIDE the closure because `resume()` reassigns
+        // `childProvider`. (The engine keys its ledger on the live identity as well; this is the
+        // half that holds for whatever key a caller hands the seam.)
+        ...(deps.priceUsage !== undefined
+          ? {
+              priceUsage: (modelKey: string, usage: ProviderUsage) =>
+                deps.priceUsage!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey, usage),
+            }
+          : {}),
         ...(runCtx.recordDescendantCost !== undefined ? { onPricedGeneration: runCtx.recordDescendantCost } : {}),
         ...(deps.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: deps.resolveAuxiliaryModel } : {}),
         ...(deps.resolveToolSecret !== undefined ? { resolveToolSecret: deps.resolveToolSecret } : {}),

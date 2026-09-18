@@ -2518,8 +2518,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // nothing, so its behaviour is byte-identical to before the parameter existed.
   const priceGeneration = (usage: ProviderUsage, pricedUnder?: string): void => {
     if (priceUsage === undefined) return;
-    const modelKey = pricedUnder ?? currentModel;
-    if (modelKey === undefined) return;
+    const stated = pricedUnder ?? currentModel;
+    if (stated === undefined) return;
+    // THE SESSION'S OWN MODEL IS PRICED -- AND ITS ROW KEYED -- UNDER THE LIVE, QUALIFIED KEY.
+    // `currentModel` is the string the run was STARTED with until a switch rewrites it, and for a
+    // subagent whose definition says `model: "haiku"` that is the SLOT NAME. The pricing seam pairs a
+    // bare key with the session-START provider (`session-provider.ts`, R-6c-24), so a child that
+    // resolved onto a different provider was priced against the wrong provider's rows or not at all,
+    // and its usage landed on a `haiku` row beside the qualified one -- one model on two rows. The
+    // installed identity is what the model actually resolved TO. Matched by VALUE, not by
+    // `pricedUnder === undefined`: an inner pass on the session's own model hands `currentModel`
+    // back as its key (`SessionModelHandle.model`) and must land on the same row as the main loop.
+    // A stated inner model arrives already qualified and passes through untouched.
+    const modelKey = stated === currentModel && currentProviderIdentity !== undefined ? currentProviderIdentity.modelKey : stated;
     const priced = priceUsage(modelKey, usage);
     if (priced === undefined) return;
     foldPricedGeneration({ modelKey, usage, priced });
