@@ -5,6 +5,8 @@ import { homedir, release as osRelease, type as osType } from "node:os";
 import { join, resolve } from "node:path";
 import {
   PROTOCOL_VERSION,
+  resolveWebToolsConfig,
+  type CredentialRef,
   type RuntimeConfig,
   type ControlRequestFrame,
   type ControlResponseFrame,
@@ -295,6 +297,11 @@ import { aliasExclusionReasons, effectiveAliasTable, resolvePermissionIdentity, 
 // registry. Both of that lane's executors answer a typed "no session runtime registered" error until
 // a live run registers one -- this file is the one production registrar.
 import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
+// The web tools' session seam (see that module's header for why it is a keyed registry and not the
+// advisor's per-run `replaceExecutor`). Type-only in the other direction, so there is no value cycle.
+import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, type WebSessionRuntime } from "./web/session-runtime.ts";
+import type { AuxiliaryModelResolution } from "./provider/session-provider.ts";
+import type { ToolSecretResolver } from "./provider/tool-secret.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -1445,6 +1452,19 @@ export interface EngineOptions {
    * the capability token) it returns WS-06 §4's ordinary "reviewer unavailable" tool error.
    */
   resolveReviewer?: (currentModelKey?: string) => ResolvedReviewer | undefined;
+  /**
+   * A TOOL'S STATED INNER MODEL, by tag (`RuntimeConfig.web.fetch.digestModel` is the first) -- the
+   * wiring's `resolveAuxiliaryModel`, under the cross-provider credential rule. Takes the live model
+   * key for the same reason `resolveReviewer` does: a slot NAME resolves against the family the
+   * session is on NOW, and the wiring's own view of that is the start snapshot.
+   *
+   * NOT consulted for "the session's own model": the engine already holds that provider, live.
+   * ABSENT (a scripted double, a refused session, a child engine) -> a root run treats a stated tag
+   * as unresolvable; a child inherits the root's through the web session registry.
+   */
+  resolveAuxiliaryModel?: (tag: string, opts?: { authRef?: CredentialRef; currentModelKey?: string }) => AuxiliaryModelResolution;
+  /** The wiring's tool-secret resolver (`provider/tool-secret.ts`), reached by a tool through the web session registry. */
+  resolveToolSecret?: ToolSecretResolver;
 }
 
 /**
@@ -1810,6 +1830,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     autoAudit,
     // P7a LANE B (D29/D30): the advisor's reviewer route -- see EngineOptions.resolveReviewer.
     resolveReviewer: resolveReviewerRoute,
+    resolveAuxiliaryModel: resolveAuxiliaryModelRoute,
+    resolveToolSecret: resolveToolSecretRoute,
   } = opts;
 
   // Review r2 finding 9 (whole-branch): registered BEFORE anything else in this function body can
@@ -2467,9 +2489,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     costBasis: "list";
   }
   const costLedger = { priced: false, totalUsd: 0, models: new Map<string, ModelUsageRow>() };
-  const priceGeneration = (usage: ProviderUsage): void => {
+  // `pricedUnder` exists for ONE caller besides the main loop: a tool's INNER generation (the web
+  // tools' digest and search passes), which may run on a DIFFERENT model than the session's and must
+  // land on that model's own `modelUsage` row at that model's own price. The main loop passes
+  // nothing, so its behaviour is byte-identical to before the parameter existed.
+  const priceGeneration = (usage: ProviderUsage, pricedUnder?: string): void => {
     if (priceUsage === undefined) return;
-    const modelKey = currentModel;
+    const modelKey = pricedUnder ?? currentModel;
+    if (modelKey === undefined) return;
     const priced = priceUsage(modelKey, usage);
     if (priced === undefined) return;
     costLedger.priced = true;
@@ -4010,9 +4037,78 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     }
   };
   const ADVISOR_CAPABILITY = "winter.reviewer-model";
+
+  // --- THE WEB TOOLS' SESSION SEAM, and the two capability tokens derived from it -----------------
+  //
+  // `WebFetch`/`WebSearch` each run an INNER model pass, and one needs a credential; neither a
+  // provider nor a credential store is on `ToolExecutionContext`. They reach this run through a
+  // session-keyed side registry (`web/session-runtime.ts` -- its header says why that, and not the
+  // advisor block's per-run `replaceExecutor`, which is last-writer-wins across the in-process child
+  // engines these tools will run inside).
+  //
+  // PER-RUN: `sessionModel` reads the LIVE lets (`activeProvider`, the installed identity), so an
+  // inner pass follows a `set_model` or a fallback exactly as the next main-loop generation does;
+  // `accountUsage` is this run's own ledger. PER-SESSION: the host's `web` block, the stated-model
+  // resolver and the tool-secret resolver belong to the ROOT run's config and wiring, which a
+  // child's hand-built config and options do not carry -- so a child inherits those three from the
+  // root's registration.
+  //
+  // USAGE, and why it is these two calls and not `contextAccountant.record`: an inner generation is
+  // SPEND the session is responsible for (cumulative tokens, the cost ledger, hence `maxBudgetUsd`)
+  // and is NOT part of this session's next request. `record` overwrites the context reading that
+  // compaction triggers on; `recordDescendantUsage` adds to spend only -- the same distinction, for
+  // the same reason, as a child engine's roll-up. `priceGeneration` is handed the INNER model's key,
+  // so a digest on another model lands on that model's own `modelUsage` row at its own price.
+  const inheritedWeb = config.agentId !== undefined ? inheritedWebSessionFacts(config.sessionId) : undefined;
+  const resolveAuxiliaryForSession = resolveAuxiliaryModelRoute;
+  const webSessionRuntime: WebSessionRuntime = {
+    web: config.web !== undefined || inheritedWeb === undefined ? resolveWebToolsConfig(config.web) : inheritedWeb.web,
+    sessionModel: () => {
+      const origin = currentOrigin();
+      return { provider: activeProvider, model: currentModel, ...(origin !== undefined ? { origin } : {}) };
+    },
+    accountUsage: (modelKey, usage) => {
+      contextAccountant.recordDescendantUsage(usage);
+      priceGeneration(usage, modelKey);
+    },
+    ...(resolveAuxiliaryForSession !== undefined
+      ? {
+          resolveAuxiliaryModel: (tag: string, auxOpts?: { authRef?: CredentialRef }) =>
+            resolveAuxiliaryForSession(tag, { ...(auxOpts?.authRef !== undefined ? { authRef: auxOpts.authRef } : {}), currentModelKey: currentProviderIdentity?.modelKey ?? currentModel }),
+        }
+      : inheritedWeb?.resolveAuxiliaryModel !== undefined
+        ? { resolveAuxiliaryModel: inheritedWeb.resolveAuxiliaryModel }
+        : {}),
+    ...(resolveToolSecretRoute !== undefined ? { resolveToolSecret: resolveToolSecretRoute } : inheritedWeb?.resolveToolSecret !== undefined ? { resolveToolSecret: inheritedWeb.resolveToolSecret } : {}),
+  };
+  const disposeWebSessionRuntime = registerWebSessionRuntime(sessionStateKey, webSessionRuntime);
+
+  // `winter.search-backend` / `winter.fetch-extractor`: DERIVED, on the reviewer-model precedent
+  // above and for its reason -- each is a per-SESSION fact (a host switch; a catalog-and-credential
+  // resolution), which is the one thing `RUNTIME_DERIVED_CAPABILITIES` must never key on.
+  //
+  // EACH TOKEN IS THE CONJUNCTION OF TWO FACTS, and the first is what keeps a tool from being
+  // advertised before it can run: `buildAdvertisedSet` does not look at executors, so a token that
+  // were true on the session fact alone would advertise a descriptor whose every call answers
+  // "registered but not yet executable".
+  //   (1) the tool's EXECUTOR is installed in the live registry (the same probe
+  //       `deriveRuntimeCapabilities` uses for the shipped families);
+  //   (2) the session fact -- for search, the host has not switched the backend off (its anonymous
+  //       tier needs no credential, so it is usable by default); for fetch, a digest model resolves
+  //       (the session's own always does; a STATED one must, and is never silently replaced).
+  // A host-supplied token still unions in, exactly as for the advisor.
+  const WEB_DERIVED_CAPABILITIES: ReadonlyArray<{ token: string; probeTool: string; fact: () => boolean }> = [
+    { token: "winter.search-backend", probeTool: "WebSearch", fact: () => searchBackendUsable(webSessionRuntime) },
+    { token: "winter.fetch-extractor", probeTool: "WebFetch", fact: () => digestModelResolves(webSessionRuntime) },
+  ];
   const resolveLiveSessionCapabilities = (): string[] => {
     const base = resolveSessionCapabilities(config.capabilities, { hasMcpServers: sessionHasMcp() });
-    return reviewerResolves() && !base.includes(ADVISOR_CAPABILITY) ? [...base, ADVISOR_CAPABILITY] : base;
+    const derived = reviewerResolves() ? [ADVISOR_CAPABILITY] : [];
+    for (const cap of WEB_DERIVED_CAPABILITIES) {
+      if (getRegisteredTool(cap.probeTool)?.executor !== undefined && cap.fact()) derived.push(cap.token);
+    }
+    const missing = derived.filter((token) => !base.includes(token));
+    return missing.length === 0 ? base : [...base, ...missing];
   };
   // The STARTUP snapshot, for `init.tools` and the advertised partition (see sessionHasMcp above for
   // why this one cannot be live).
@@ -7414,6 +7510,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // generation 1's teardown is still draining, and a by-key delete would let the dead generation
   // remove the live one's runtime.
   disposeToolSearchSessionRuntime();
+  // The web tools' session seam: same singleton-hygiene argument, same identity-checked disposer.
+  disposeWebSessionRuntime();
   // Phase 5 Task 3 (R5-10): withdraw this run's host-generated StructuredOutput descriptor -- same
   // singleton-hygiene argument as the MCP/ToolSearch withdrawals above, and the disposer is
   // identity-checked so a concurrent in-memory run's own registration is never removed by this one.

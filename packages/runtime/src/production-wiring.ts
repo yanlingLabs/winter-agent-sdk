@@ -434,6 +434,15 @@ export interface ProductionWiring {
     skillListing: SkillListing;
     /** SDK 0.0.16: the catalog's model display names for the `# Environment` model line. */
     describeModel: NonNullable<EngineOptions["describeModel"]>;
+    /**
+     * The web tools' two wiring-level seams, DECLARED here rather than riding the spread undeclared:
+     * a spread of a property the destination type has not declared is not an excess-property error,
+     * so an undeclared one type-checks whether or not anything downstream reads it.
+     * `resolveAuxiliaryModel` is withheld on the arms with no catalog identity, like `resolveReviewer`;
+     * `resolveToolSecret` is present on every arm (it needs a credential store, not a model).
+     */
+    resolveAuxiliaryModel?: NonNullable<EngineOptions["resolveAuxiliaryModel"]>;
+    resolveToolSecret: NonNullable<EngineOptions["resolveToolSecret"]>;
   };
   /**
    * Mirrors handed to `registerDefaultChildEngineFactory`, so a CHILD engine gets the same context
@@ -1258,6 +1267,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // to resolve) -- absent means "there is nothing to ask", and the engine then neither advertises
       // the advisor nor re-wires its executor.
       ...(providerWiring.resolveReviewer !== undefined ? { resolveReviewer: providerWiring.resolveReviewer } : {}),
+      // The web tools' inner-model and tool-secret seams, from the SAME wiring (one resolution path
+      // and one credential store on every leg). The engine publishes them to a tool's executor
+      // through the web session registry -- see `web/session-runtime.ts`.
+      ...(providerWiring.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: providerWiring.resolveAuxiliaryModel } : {}),
+      resolveToolSecret: providerWiring.resolveToolSecret,
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,
