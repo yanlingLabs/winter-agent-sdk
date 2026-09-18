@@ -72,6 +72,12 @@ import { matchesSkillRule } from "../skills/permission-rules.ts";
 // comparison must use the identical fold. No cycle: `definitions.ts` imports only `builtin-agents.ts`
 // (-> `permissions/policy-state.ts`, a sibling of this file, never this file itself).
 import { normalizeAgentTypeName } from "../subagents/definitions.ts";
+// The web tools' permission behaviour (see the "WebFetch" section below). Both modules are leaves:
+// `preapproved-hosts.ts` imports nothing, `private-address.ts` imports only the shared address
+// classifier -- neither reaches back into `permissions/` or `tools/`, so there is no cycle.
+import { isPreapprovedUrl } from "../web/preapproved-hosts.ts";
+import { classifyHostnameLexically } from "../web/private-address.ts";
+import { isExactWebFetchDomainRule, webFetchHostnameOf, webFetchUrlOf } from "./grammar.ts";
 const SKILL_RULE_TOOL = "Skill";
 
 export type { AutoModeConfig };
@@ -359,6 +365,17 @@ export interface EvaluationContext {
   // that predates this task) -- absence reads as "nothing requires interaction," byte-identical to
   // before this field existed.
   requiresInteraction?: (toolName: string) => boolean;
+  /**
+   * The session's `web.fetch.privateAddressPolicy`, exactly as configured -- `"allow" | "ask" | "deny"`.
+   *
+   * INJECTED for the same reason `requiresInteraction` is: the value lives on the session's web
+   * runtime, and this module holds no session. Taken RAW (a plain `string`) and normalised here by
+   * `normalizePrivateAddressPolicy`, which fails closed: only the exact string `"allow"` is allow,
+   * `"deny"` is deny, and ANYTHING ELSE -- an unrecognised value, and an absent one -- is `"ask"`,
+   * the option's own documented default. So a hand-built context that omits this field gets the
+   * default posture rather than silently none.
+   */
+  webFetchPrivateAddressPolicy?: string;
 }
 
 // --- The decision record (cross-task pin, verbatim shape + one T6 addition) ---------------------------
@@ -383,6 +400,30 @@ export interface PermissionDecisionRecord {
   // a scoped deny identically (both become the same synthetic denied tool_result) — this marker is
   // forward-looking data only.
   deniedBareSchemaRemoval?: boolean;
+  /**
+   * WHY an `allow` was allowed, where the reason is not already carried by `mechanism`/`ruleRef`.
+   * Set today by exactly one path: the preapproved-host auto-allow (`PREAPPROVED_HOST_REASON`).
+   */
+  decisionReason?: string;
+  /**
+   * Set on an `allow` that was EXPLICITLY approved for this exact call, as opposed to one the
+   * session's mode or a broad rule let through:
+   *   - `"prompt"` -- something ANSWERED a request for this call: a `canUseTool` answer, or a
+   *     PermissionRequest hook's. The asker saw this call's own input.
+   *   - `"rule"`   -- a standing allow rule NAMES this call's target exactly. For WebFetch that is
+   *     `WebFetch(domain:<host>)` with no `*` in it, equal to the call's hostname, from a tier this
+   *     workspace's trust admits. It is stamped whichever stage produced the allow -- the consent is
+   *     the rule's existence, not the route the call happened to take (under `bypassPermissions` the
+   *     mode stage allows first and the rule is never consulted, yet the user's consent is the same).
+   *
+   * ABSENT for everything else: a mode allow, a bare / `Tool(*)` / glob rule, a PreToolUse hook's
+   * pre-approval, the classifier. None of those is a statement about THIS target.
+   *
+   * STAMPED ONLY FOR THE TOOLS THAT CONSUME IT -- today `WebFetch`, whose executor must know whether
+   * a private-address target was consented to (it cannot prompt mid-call). Every other tool's record
+   * is byte-identical to what it was before this field existed.
+   */
+  explicitApproval?: "prompt" | "rule";
 }
 
 // --- No-opinion stub seams --------------------------------------------------------------------------
@@ -928,6 +969,120 @@ function ruleAskUnresolvedMessage(entry: SourcedRuleEntry): string {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// WebFetch: the preapproved-host auto-allow, the private-address ask, and the explicit-approval marker
+// ---------------------------------------------------------------------------------------------------
+//
+// THE ORDER THIS FILE GIVES A WebFetch CALL, which is the reference runtime's own:
+//   a DENY rule for the domain -> an ASK rule for it -> (the mode baseline, which for a preapproved
+//   host is a silent allow) -> an ALLOW rule -> otherwise ask, suggesting `WebFetch(domain:<host>)`.
+// The preapproved allow sits in the MODE stage, so deny and ask rules -- stages 2 and 3 -- have both
+// already run by construction: a user's deny or ask for a preapproved domain always wins.
+//
+// `WebSearch` needs nothing here. Its rules are bare-name only (`grammar.ts` makes a scoped one
+// `invalid`), so deny / ask / allow already resolve through the ordinary pipeline, and an unmatched
+// call reaches the prompt stage like any other unmatched action.
+
+const WEB_FETCH_TOOL = "WebFetch";
+
+/** The reason recorded on a preapproved-host allow -- the reference runtime's own wording. */
+export const PREAPPROVED_HOST_REASON = "Preapproved host";
+
+/**
+ * True for a `WebFetch` call whose INPUT url is on the preapproved list (host, plus path scope where
+ * the entry has one). Only WebFetch, only the url the call was made with -- a redirect target is a
+ * new call and is judged again -- and never an unparseable url.
+ */
+function isPreapprovedWebFetch(call: PermissionCall): boolean {
+  if (call.toolName !== WEB_FETCH_TOOL) return false;
+  const url = webFetchUrlOf(call.input);
+  return url !== undefined && isPreapprovedUrl(url);
+}
+
+type PrivateAddressPosture = "allow" | "ask" | "deny";
+
+/**
+ * Fails CLOSED, and matches the executor's own coercion (`tools/impl/web-fetch.ts`) value for value:
+ * the two must never disagree about what an unrecognised policy means. Kept as a three-line twin
+ * rather than imported -- a permissions module importing a tool implementation is the wrong direction.
+ */
+function normalizePrivateAddressPolicy(raw: string | undefined): PrivateAddressPosture {
+  if (raw === "allow") return "allow";
+  if (raw === "deny") return "deny";
+  return "ask";
+}
+
+interface PrivateWebFetchTarget {
+  /** Canonical, as a `domain:` rule would name it. */
+  hostname: string;
+  /** The classifier's own label -- "loopback", "private", "the .local mDNS TLD", ... */
+  reason: string;
+}
+
+/**
+ * The call's target when it is private BY HOW IT IS WRITTEN: an IP literal in a loopback / private /
+ * link-local / unique-local / CGNAT / unspecified range, or a `localhost` / `.local` name.
+ *
+ * LEXICAL ONLY, deliberately. A permission decision must not do DNS: it would make every evaluation
+ * network-bound and would still prove nothing, since the fetch resolves again. A public-looking name
+ * that RESOLVES to a private address is therefore invisible here and is caught where it can be --
+ * by the executor, on every hop, against the address it actually connects to.
+ *
+ * The classifier is `web/private-address.ts`'s -- the same one the executor uses. There is no second
+ * copy of the ranges.
+ */
+function privateWebFetchTargetOf(call: PermissionCall): PrivateWebFetchTarget | undefined {
+  if (call.toolName !== WEB_FETCH_TOOL) return undefined;
+  const hostname = webFetchHostnameOf(call.input);
+  if (hostname === undefined) return undefined;
+  const finding = classifyHostnameLexically(hostname); // strips an IPv6 literal's brackets itself
+  if (finding === undefined || finding.class !== "private") return undefined;
+  return { hostname, reason: finding.reason ?? "private" };
+}
+
+/**
+ * The allow rule that NAMES this call's host -- `WebFetch(domain:<host>)`, no glob -- or `undefined`.
+ * Goes through `findMatchingRuleEntry`, so the trust gate and the managed-only filter apply exactly
+ * as they do to any other allow: a project-tier rule in an untrusted workspace is not consent.
+ */
+function findExactHostAllowRule(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
+  if (call.toolName !== WEB_FETCH_TOOL) return undefined;
+  const hostname = webFetchHostnameOf(call.input);
+  if (hostname === undefined) return undefined;
+  return findMatchingRuleEntry(ctx.policy.rules, call, "allow", ctx, { skip: (entry) => !isExactWebFetchDomainRule(entry.rule, hostname) });
+}
+
+function privateAddressRuleHint(target: PrivateWebFetchTarget): string {
+  return `An allow rule naming the host -- WebFetch(domain:${target.hostname}) -- is standing approval for it.`;
+}
+
+function privateAddressAskReason(target: PrivateWebFetchTarget): string {
+  return `${target.hostname} is a private or loopback address (${target.reason}); WebFetch needs explicit approval to reach it. ${privateAddressRuleHint(target)}`;
+}
+
+// Records built from an ANSWER to a permission request (`buildRecordFromPromptResult`, and a
+// PermissionRequest hook's allow). Tracked by identity rather than by a field, so that the marker
+// can be stamped in ONE place (`stampExplicitApproval`) and only for the tools that consume it --
+// `mechanism` alone cannot tell a PermissionRequest hook's answer from a PreToolUse hook's
+// pre-approval, and those two are not the same kind of consent.
+const PROMPT_ANSWERED = new WeakSet<PermissionDecisionRecord>();
+
+function markPromptAnswered(record: PermissionDecisionRecord): PermissionDecisionRecord {
+  if (record.decision === "allow") PROMPT_ANSWERED.add(record);
+  return record;
+}
+
+/** See `PermissionDecisionRecord.explicitApproval`. `"rule"` outranks `"prompt"`: it is the stronger, standing consent. */
+function stampExplicitApproval(record: PermissionDecisionRecord, call: PermissionCall, ctx: EvaluationContext): PermissionDecisionRecord {
+  if (record.decision !== "allow" || call.toolName !== WEB_FETCH_TOOL) return record;
+  // Judged against the input that will actually EXECUTE: a hook's or a prompt answer's transformed
+  // input replaces the call's own, and a rule naming the original host says nothing about a new one.
+  const executed: PermissionCall = record.transformedInput !== undefined ? { ...call, input: record.transformedInput } : call;
+  if (findExactHostAllowRule(executed, ctx) !== undefined) return { ...record, explicitApproval: "rule" };
+  if (PROMPT_ANSWERED.has(record)) return { ...record, explicitApproval: "prompt" };
+  return record;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Stage 4: permission mode baseline
 // ---------------------------------------------------------------------------------------------------
 
@@ -1047,7 +1202,7 @@ function isTaskModeClassSilentAllow(call: PermissionCall): boolean {
 type MustPromptOrigin = "critical" | "protected" | "planWrite";
 
 type ModeStageResult =
-  | { kind: "allow" }
+  | { kind: "allow"; reason?: string }
   | { kind: "deny"; message: string }
   | { kind: "mustPrompt"; message: string; blockedPath?: string; origin: MustPromptOrigin }
   | { kind: "unresolved" };
@@ -1139,6 +1294,15 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   const critical = ctx.specialChecks.isCriticalRemoval(call, ctx);
   if (critical.critical) return resolveCriticalRemoval(mode, critical.reason);
   if (ctx.specialChecks.isProtectedWrite(call, ctx)) return resolveProtectedWrite(mode, ctx, call);
+
+  // The preapproved-host auto-allow: a WebFetch of a documentation host on the built-in list is
+  // allowed WITHOUT asking, in every mode -- `dontAsk` included (it is not a would-prompt outcome),
+  // `plan` included (a fetch is a read), and under `auto` it skips the classifier exactly as the
+  // built-in read-only class does. Placed HERE, in the mode stage, so that the ordering which makes
+  // it safe is structural: stage 2's deny rules and stage 3's ask rules have both already run and
+  // already returned if either matched, so a user's own deny or ask for one of these domains always
+  // wins. Ahead of the `bypassPermissions` return only so the recorded reason is the true one.
+  if (isPreapprovedWebFetch(call)) return { kind: "allow", reason: PREAPPROVED_HOST_REASON };
 
   if (mode === "bypassPermissions") {
     // Standing exceptions above already intercepted anything critical/protected; everything else
@@ -1329,7 +1493,7 @@ async function tryPermissionRequestHook(
       ...(transformedInput !== undefined ? { transformedInput } : {}),
     };
   }
-  return {
+  return markPromptAnswered({
     decision: "allow",
     mechanism: "hook",
     policyVersion,
@@ -1343,7 +1507,7 @@ async function tryPermissionRequestHook(
     // (WS-08 §11: "a hook response ... can never ... change permission settings beyond its
     // documented output shape").
     ...(hookResult.updatedPermissions !== undefined ? { updatedPermissions: hookResult.updatedPermissions } : {}),
-  };
+  });
 }
 
 function buildRecordFromPromptResult(
@@ -1352,7 +1516,7 @@ function buildRecordFromPromptResult(
   carriedTransform: Record<string, unknown> | undefined,
 ): PermissionDecisionRecord {
   const transformedInput = result.transformedInput ?? carriedTransform;
-  return {
+  return markPromptAnswered({
     decision: result.decision,
     mechanism: "canUseTool",
     policyVersion,
@@ -1361,7 +1525,7 @@ function buildRecordFromPromptResult(
     ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
     ...(result.updatedPermissions !== undefined ? { updatedPermissions: result.updatedPermissions } : {}),
     ...(result.decisionClassification !== undefined ? { decisionClassification: result.decisionClassification } : {}),
-  };
+  });
 }
 
 // Task 12 (WS-07 §6.5): "when auto is available and useAutoModeDuringPlan is enabled (current
@@ -1450,6 +1614,12 @@ async function resolveAutoDecision(
 }
 
 export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Promise<PermissionDecisionRecord> {
+  // The six stages decide; the explicit-approval marker is then stamped in this ONE place, so that no
+  // return site among the stages' dozens can forget it (see `PermissionDecisionRecord.explicitApproval`).
+  return stampExplicitApproval(await evaluateStages(call, ctx), call, ctx);
+}
+
+async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Promise<PermissionDecisionRecord> {
   // Snapshot discipline: policyVersion is stamped from ctx.policy NOW (evaluation start), not at
   // completion — see EvaluationContext.policy's own comment for why, and engine.ts's re-evaluation
   // loop for how the caller uses this stamp.
@@ -1529,6 +1699,37 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
   }
+
+  // --- WebFetch to a private address: the session's `privateAddressPolicy` ------------------------
+  //
+  // A sandboxed shell has no network, so WebFetch is a session's only door to the services on the
+  // user's own machine and LAN. `"deny"` closes it outright and `"ask"` (the default) requires a
+  // real, per-call human answer -- or a standing allow rule that NAMES the host.
+  //
+  // `"deny"` resolves HERE, with the deny rules: nothing downstream may soften it -- not a hook's
+  // allow, not `bypassPermissions`, not an allow rule naming the host (the executor refuses under
+  // `"deny"` regardless, so an allow here would only produce a call that then fails).
+  //
+  // `"ask"` is the stage-3 mandate a few lines below (`isMandatoryPrivateAddressAsk`), NOT a stage-4
+  // `mustPrompt`: under `auto` a `mustPrompt` is routed to the classifier, and a classifier's verdict
+  // is not a person's consent. As a stage-3 mandate it is a genuine prompt in every mode -- including
+  // `bypassPermissions`, the same way AskUserQuestion stays mandatory there -- ahead of the mode
+  // baseline and of stage 5, so neither a permissive mode nor a broad allow (`WebFetch`,
+  // `WebFetch(domain:*)`) silences it. A session that can never prompt gets a DENIAL, never a hang:
+  // `dontAsk` converts it, and a prompt stage with no handler answers null, which fails closed.
+  const privateTarget = normalizePrivateAddressPolicy(ctx.webFetchPrivateAddressPolicy) === "allow" ? undefined : privateWebFetchTargetOf(effectiveCall);
+  if (privateTarget !== undefined && normalizePrivateAddressPolicy(ctx.webFetchPrivateAddressPolicy) === "deny") {
+    return {
+      decision: "deny",
+      mechanism: "mode",
+      policyVersion,
+      message: `Denied: WebFetch will not reach ${privateTarget.hostname}: it is a private or loopback address (${privateTarget.reason}), and this session's policy denies WebFetch access to private addresses.`,
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+  // An allow rule naming THIS host is the user's standing consent and satisfies the ask. A glob or a
+  // bare `WebFetch` allow does not: it lets a fetch through without ever having named the address.
+  const isMandatoryPrivateAddressAsk = privateTarget !== undefined && findExactHostAllowRule(effectiveCall, ctx) === undefined;
 
   // --- A hook-forced "defer" resolves HERE, between stage 2 and stage 3 (Task 11, WS-08 §7) -------
   //
@@ -1626,7 +1827,7 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   // regardless of which one is picked). In practice the first four are mutually exclusive (a call
   // cannot simultaneously BE AskUserQuestion and Bash and an MCP tool), so this ordering is a
   // tie-break with no live ambiguity today.
-  if (askEntry || isMandatoryAskUserQuestion || isMandatoryDangerousBashOverride || isMandatoryMcpInteraction || hookForcedAsk) {
+  if (askEntry || isMandatoryAskUserQuestion || isMandatoryDangerousBashOverride || isMandatoryMcpInteraction || isMandatoryPrivateAddressAsk || hookForcedAsk) {
     if (policy.mode === "dontAsk") {
       // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
       // own rule-denial message/mechanism; AskUserQuestion / a hook-forced ask with no matching rule
@@ -1669,6 +1870,16 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
+      if (isMandatoryPrivateAddressAsk && privateTarget !== undefined) {
+        // A session that can never prompt: a denial that says what WOULD permit the fetch, never a hang.
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: `Denied: ${privateTarget.hostname} is a private or loopback address (${privateTarget.reason}) and dontAsk mode cannot ask for the approval WebFetch needs to reach it. ${privateAddressRuleHint(privateTarget)}`,
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
       if (hookForcedAsk) {
         // mechanism "hook" (not "mode"): a hook is the actual, attributable reason this needed
         // asking, unlike AskUserQuestion's tool-identity-driven mandate just below, which has no
@@ -1706,14 +1917,17 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
         }
       : undefined;
     const decisionReason = askEntry
-      ? `matched ask rule ${formatRuleRef(askEntry)}`
+      ? // An ask rule's prompt for a private target still tells the asker it IS one.
+        `matched ask rule ${formatRuleRef(askEntry)}${privateTarget !== undefined ? `; ${privateAddressAskReason(privateTarget)}` : ""}`
       : isMandatoryAskUserQuestion
         ? "AskUserQuestion requires mandatory interaction (WS-07 §8)"
         : isMandatoryDangerousBashOverride
           ? "Bash dangerouslyDisableSandbox requires mandatory interaction (WS-12 §4/§11, RULING P3-J)"
           : isMandatoryMcpInteraction
             ? `'${effectiveCall.toolName}' is marked requiresUserInteraction and requires mandatory interaction (WS-09 §6)`
-            : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
+            : isMandatoryPrivateAddressAsk && privateTarget !== undefined
+              ? privateAddressAskReason(privateTarget)
+              : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
     const meta: PromptStageMeta = {
       decisionReason,
       ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
@@ -1753,6 +1967,15 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           mechanism: "mode",
           policyVersion,
           message: `Denied: '${effectiveCall.toolName}' requires interaction (requiresUserInteraction, WS-09 §6) and no prompt handler answered it`,
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatoryPrivateAddressAsk && privateTarget !== undefined) {
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: `Denied: ${privateTarget.hostname} is a private or loopback address (${privateTarget.reason}); WebFetch needs explicit approval to reach it and no prompt handler answered. ${privateAddressRuleHint(privateTarget)}`,
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
@@ -1822,7 +2045,13 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   // --- Stage 4: permission mode ------------------------------------------------------------------
   const modeResult = evaluateModeStage(effectiveCall, ctx, policy.mode);
   if (modeResult.kind === "allow") {
-    return { decision: "allow", mechanism: "mode", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+    return {
+      decision: "allow",
+      mechanism: "mode",
+      policyVersion,
+      ...(modeResult.reason !== undefined ? { decisionReason: modeResult.reason } : {}),
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
   }
   if (modeResult.kind === "deny") {
     // dontAsk's own standing-exception denial (critical/protected) — "canUseTool is NEVER called"
