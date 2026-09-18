@@ -137,6 +137,17 @@ function sanitizeFilenameSegment(segment: string): string {
 const BINARY_SAVE_BUDGET_BYTES = 50 * 1024 * 1024;
 const binarySavedBytesBySession = new Map<string, number>();
 
+/**
+ * Forgets `sessionId`'s spend (whole-branch review MINOR 4). Called from the ROOT run's own teardown in
+ * `engine.ts`, beside the search client's close and the fetch cache's own `forgetSession`: nothing used
+ * to remove a row, so on the in-process `query()` path the map grew forever AND an in-process
+ * `--resume` of the same id inherited the previous run's spend. A resumed run starts fresh, which is
+ * what a resumed session gets in claude (a new process).
+ */
+export function forgetWebFetchBinarySaveBudgetForSession(sessionId: string): void {
+  binarySavedBytesBySession.delete(sessionId);
+}
+
 // Item 1 fix: the budget must be RESERVED synchronously, before this function's first `await` --
 // `writeFile`/`mkdir` yield to the event loop, and several concurrent calls each read `spent` before
 // any of them had written it back (measured: 12 concurrent 10 MiB saves against this same 50 MiB

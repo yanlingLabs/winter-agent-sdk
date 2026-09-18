@@ -13,13 +13,17 @@
 // `inheritedWebSessionFacts` precedent) -- a child re-fetching a URL its parent already fetched this
 // turn should hit the same cache, not start a cold one.
 //
-// NO EXPLICIT TEARDOWN HOOK EXISTS for "this session ended" (the spine's `WebSessionRuntime`
-// disposer only covers the runtime registration, not this cache) -- so self-cleaning is the ONLY
-// disposal this module gets, and it earns that name literally: every `get`/`set` for a session first
-// sweeps THAT session's own expired entries, and an emptied session map is deleted outright rather
-// than left as a zero-entry husk. A session that is fetched from at least once every 15 minutes never
-// accumulates dead weight; one that goes fully idle leaves one small empty Map behind until the
-// process exits -- an accepted, bounded cost, not a leak of the cached CONTENT itself.
+// TEARDOWN IS TWO THINGS (whole-branch review MINOR 4 corrected the header's earlier claim that there
+// was no teardown hook at all):
+//   - SELF-CLEANING, which this module earns literally: every `get`/`set` for a session first sweeps
+//     THAT session's own expired entries, and an emptied session map is deleted outright rather than
+//     left as a zero-entry husk.
+//   - `forgetSession`, called from the ROOT run's own teardown in `engine.ts` (beside the search
+//     client's close). Without it a session that ended holding 50 MiB of live, unexpired entries kept
+//     every byte until the TTL happened to be swept by some LATER session -- harmless in the
+//     one-process-per-session binary, a real leak on the in-process `query()` path, which is also the
+//     one path where session ids are reused within a process. A resumed session therefore starts with
+//     a COLD cache, which is what a resumed session gets in claude too (a new process).
 
 export interface WebFetchCacheEntry {
   /** The converted content's own UTF-8 byte length -- the cache's weight unit. */
@@ -131,6 +135,14 @@ export class WebFetchCache {
     }
     session.set(url, entry, this.now());
     if (session.isEmpty()) this.sessions.delete(sessionId);
+  }
+
+  /**
+   * Drops everything cached for `sessionId` (whole-branch review MINOR 4). Called from the ROOT run's
+   * teardown; idempotent, and unknown session ids are a no-op.
+   */
+  forgetSession(sessionId: string): void {
+    this.sessions.delete(sessionId);
   }
 
   /** Test/diagnostic only: how many sessions currently hold at least one live entry. */

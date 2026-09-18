@@ -307,7 +307,10 @@ import { isFirstPartyAnthropic } from "./provider/first-party.ts";
 // the descriptor modules, so neither tool name is ever a literal in this file.
 // TEARDOWN ONLY: the per-ROOT-session search client's closer. A module that registers nothing and
 // imports only a type, so this value import pulls in no tool (`tools/impl-isolation.test.ts`).
-import { closeExaSearchClientForSession } from "./tools/impl/_exa-session-client.ts";
+import { closeExaSearchClientForSession, reopenExaSearchClientsForSession } from "./tools/impl/_exa-session-client.ts";
+import { forgetWebSearchBudgetForSession } from "./tools/impl/_search-budget.ts";
+import { webFetchCache } from "./tools/impl/_web-fetch-cache.ts";
+import { forgetWebFetchBinarySaveBudgetForSession } from "./tools/impl/web-fetch.ts";
 import { WEB_FETCH_CANONICAL_NAME, webFetchDescriptionFor, webFetchInputSchemaFor } from "./tools/descriptors/web-fetch.ts";
 import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription, webSearchInputSchemaFor } from "./tools/descriptors/web-search.ts";
 import type { AuxiliaryModelResolution } from "./provider/session-provider.ts";
@@ -4168,6 +4171,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         : {}),
     ...(resolveToolSecretRoute !== undefined ? { resolveToolSecret: resolveToolSecretRoute } : inheritedWeb?.resolveToolSecret !== undefined ? { resolveToolSecret: inheritedWeb.resolveToolSecret } : {}),
   };
+  // A ROOT run STARTING (or resuming) this session id lifts the search client's tombstone
+  // (`_exa-session-client.ts`, whole-branch review MINOR 6): a previous run under the same id closed
+  // the client and left the id marked so a late CHILD could not open another one -- which must not
+  // outlive the run it was protecting, or an in-process `--resume` of that id could never search.
+  if (config.agentId === undefined) reopenExaSearchClientsForSession(config.sessionId);
   const disposeWebSessionRuntime = registerWebSessionRuntime(sessionStateKey, webSessionRuntime);
   // ALSO on the run's OUTER `finally`, not only the ordinary teardown far below: a throw anywhere in
   // the thousands of lines between here and there would otherwise leak a registration that holds a
@@ -4185,6 +4193,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // compose; here it cannot be awaited (disposers are synchronous), so the close is best-effort.
   const closeSessionSearchClient = (): Promise<void> => (config.agentId === undefined ? closeExaSearchClientForSession(config.sessionId) : Promise.resolve());
   facetDisposers.push(() => void closeSessionSearchClient());
+  // THE WEB TOOLS' OTHER PROCESS-GLOBAL PER-SESSION STATE (whole-branch review MINOR 4): the 200-call
+  // search budget, the fetch cache (up to 50 MiB of live content) and the binary-save budget are all
+  // `Map<sessionId, ...>` in their own modules, and nothing ever removed a row. Harmless in the
+  // one-process-per-session binary; a real leak on the in-process `query()` path, which is also the
+  // one path that re-enters the same session id. Forgotten by the ROOT run only, for the identical
+  // reason the search client is (a child shares its root's `sessionId`, so a child clearing these
+  // would reset its parent's budget and drop its cache mid-turn). A resumed session therefore starts
+  // with a cold cache and a fresh budget -- what a resumed session gets in claude, where `--resume` is
+  // a new process; each module's own header states that.
+  const forgetSessionWebState = (): void => {
+    if (config.agentId !== undefined) return;
+    forgetWebSearchBudgetForSession(config.sessionId);
+    forgetWebFetchBinarySaveBudgetForSession(config.sessionId);
+    webFetchCache.forgetSession(config.sessionId);
+  };
+  facetDisposers.push(forgetSessionWebState);
 
   // `winter.search-backend` / `winter.fetch-extractor`: DERIVED, on the reviewer-model precedent
   // above and for its reason -- each is a per-SESSION fact (a host switch; a catalog-and-credential

@@ -6,9 +6,15 @@
 // own header records that "a child shares its parent's session id" (only `agentId` tells a child
 // apart from its root) -- so a plain `Map<sessionId, number>` keyed on `ctx.sessionId` (never
 // `ctx.agentId`) is ALREADY the shared, per-session counter the spec asks for, with no inheritance
-// machinery of its own to write. "Reset with the session" needs no explicit teardown either: a new
-// session gets a session id this map has never seen, which reads as zero -- the same "absent means
-// not yet spent" convention `subagents/limits.ts`'s own `depthById` follows for an identical reason.
+// machinery of its own to write.
+//
+// "RESET WITH THE SESSION" IS AN EXPLICIT TEARDOWN (whole-branch review MINOR 4 -- this header used to
+// claim it needed none, on the reasoning that a new session brings an id this map has never seen. That
+// is true of a fresh session and FALSE of an in-process `--resume`, which re-enters the SAME id: the
+// resumed run inherited the spent count and its own entry outlived it forever). `forgetSession` is
+// called from the ROOT run's own teardown in `engine.ts`, so a resumed session starts at zero -- which
+// is exactly what a resumed session gets in claude, where `--resume` is a new process with a fresh
+// registry. The cap is per session-RUN here, deliberately, not per session-id-for-all-time.
 import { WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 type EnvBrand = Pick<BrandProfile, "envPrefix">;
@@ -70,6 +76,11 @@ export function webSearchCallsUsed(sessionId: string): number {
  */
 export function webSearchBudgetRefusalText(used: number, cap: number, brand: EnvBrand = WINTER_BRAND): string {
   return `Web search was not performed: this session has used its web search budget (${used} of ${cap} WebSearch calls). Continue with the information already gathered instead of issuing more searches. If more searches are genuinely needed, ask the user to raise ${maxWebSearchesPerSessionEnvName(brand)}.`;
+}
+
+/** Forgets `sessionId`'s spend (whole-branch review MINOR 4). Called from the ROOT run's teardown; idempotent. */
+export function forgetWebSearchBudgetForSession(sessionId: string): void {
+  usedBySession.delete(sessionId);
 }
 
 export function resetWebSearchBudgetForTest(): void {

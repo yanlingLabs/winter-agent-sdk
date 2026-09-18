@@ -195,6 +195,13 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
           ...deps.exaClientOptions,
         }),
       );
+      // The TOMBSTONE (whole-branch review MINOR 6): this session's search client was closed by the
+      // root run's teardown, so nothing may open another one -- a still-running child on a torn-down
+      // session would otherwise build a connection nobody ever closes. An ordinary error RESULT, never
+      // a throw: a child whose parent has gone away is told plainly and finishes its own turn.
+      if (client === undefined) {
+        return { output: "Error: web search is no longer available: this session's search backend was closed when the session ended.", isError: true };
+      }
 
       const handler: InnerToolHandler = async (rawToolInput, info) => {
         const toolQuery = typeof rawToolInput === "object" && rawToolInput !== null && typeof (rawToolInput as Record<string, unknown>)["query"] === "string" ? ((rawToolInput as Record<string, unknown>)["query"] as string) : query;
