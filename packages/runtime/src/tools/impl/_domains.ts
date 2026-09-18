@@ -38,6 +38,25 @@ function isIpLiteral(host: string): boolean {
   return host.startsWith("[") || IPV4.test(host);
 }
 
+// IPv4-MAPPED IPv6 (`::ffff:a.b.c.d`) IS the IPv4 address it carries -- a socket opened to it reaches
+// the same host. The URL parser canonicalises the dotted tail to two hex groups (`[::ffff:7f00:1]`),
+// so without this an exact-match IP entry (`127.0.0.1`) is walked around by writing the address in
+// its mapped form. Both spellings are read; the parser only ever emits the hex one, the dotted one is
+// accepted so this function does not depend on that.
+const MAPPED_HEX = /^\[(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/i;
+const MAPPED_DOTTED = /^\[(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})\]$/i;
+
+function unmapIpv4(host: string): string {
+  if (!host.startsWith("[")) return host;
+  const dotted = MAPPED_DOTTED.exec(host);
+  if (dotted !== null) return dotted[1]!;
+  const hex = MAPPED_HEX.exec(host);
+  if (hex === null) return host;
+  const hi = Number.parseInt(hex[1]!, 16);
+  const lo = Number.parseInt(hex[2]!, 16);
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
 /**
  * One list entry, or one host/URL under test, as the canonical hostname the URL parser gives it --
  * or `undefined` for something that names no host.
@@ -52,6 +71,10 @@ export function normalizeDomain(entry: string): string | undefined {
   // (1) Something the URL parser reads as a URL WITH A HOST, in whatever spelling (`http:/h`,
   //     `https:\\h`). `host:8080` also looks like a scheme; it parses to an EMPTY host and falls through.
   let hostname = SCHEME_PREFIX.test(raw) ? hostnameOf(raw) : undefined;
+  // An input that SAYS it is a URL (`scheme://`) and does not parse names no host. It must NOT fall
+  // through to (2): re-read as a bare host, `http://[fe80::1%25eth0]/` becomes `http://http://[...`,
+  // whose host is the word `http`. `host:8080` has no `://` and still falls through, as it must.
+  if (hostname === undefined && SCHEME_PREFIX.test(raw) && raw.includes("://")) return undefined;
   if (hostname === undefined) {
     // (2) A bare host (or `//host/path`, or `host:port/path`): strip the list-entry decorations, then
     //     let the parser canonicalise it. A bare IPv6 address needs its brackets to parse at all.
@@ -60,7 +83,7 @@ export function normalizeDomain(entry: string): string | undefined {
     hostname = hostnameOf(`http://${bare}`) ?? (bare.includes(":") && !bare.includes("[") ? hostnameOf(`http://[${bare}]`) : undefined);
   }
   if (hostname === undefined) return undefined;
-  const value = hostname.replace(/^(\*\.)+/, "").replace(/\.+$/, "");
+  const value = unmapIpv4(hostname.replace(/^(\*\.)+/, "").replace(/\.+$/, ""));
   return value.length > 0 ? value : undefined;
 }
 
@@ -94,4 +117,19 @@ export function mergeDomainLists(...lists: ReadonlyArray<readonly string[] | und
     }
   }
   return [...seen];
+}
+
+/**
+ * The subset of an (already merged) list that may be handed to a search BACKEND's own exclude filter:
+ * MULTI-LABEL NAMES ONLY. An IP literal and a single-label entry (`com`, `localhost`) match EXACTLY
+ * here, by this module's own rule -- but a backend's rule for them is unknown, and one that reads
+ * `com` as a suffix turns a typo'd entry into "no .com result, ever", silently. They are withheld from
+ * the backend and lose nothing: the caller still drops any hit they cover, locally, with
+ * `isDomainBlocked`, under the rule this module documents.
+ */
+export function backendExcludableDomains(domains: readonly string[]): string[] {
+  return domains.filter((entry) => {
+    const domain = normalizeDomain(entry);
+    return domain !== undefined && !isIpLiteral(domain) && domain.includes(".");
+  });
 }

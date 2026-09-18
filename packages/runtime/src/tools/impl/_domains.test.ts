@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostMatchesDomain, isDomainBlocked, matchingDomain, mergeDomainLists, normalizeDomain } from "./_domains.ts";
+import { backendExcludableDomains, hostMatchesDomain, isDomainBlocked, matchingDomain, mergeDomainLists, normalizeDomain } from "./_domains.ts";
 
 describe("the shared blockedDomains matcher", () => {
   test("normalises what people actually write in a block-list", () => {
@@ -74,5 +74,44 @@ describe("the shared blockedDomains matcher", () => {
     expect(isDomainBlocked("http://localhost:3000/", ["localhost"])).toBe(true);
     expect(isDomainBlocked("http://app.localhost/", ["localhost"])).toBe(false);
     expect(hostMatchesDomain("com", "com")).toBe(true);
+  });
+  test("IPv4-MAPPED IPv6 is the IPv4 address it carries: every spelling of `::ffff:a.b.c.d` normalises to the dotted quad", () => {
+    // The URL parser rewrites the dotted tail to hex, so `127.0.0.1` and `[::ffff:7f00:1]` are two
+    // strings for one loopback address -- and an exact-match rule makes that a way around the entry.
+    expect(normalizeDomain("http://[::ffff:127.0.0.1]/")).toBe("127.0.0.1");
+    expect(normalizeDomain("http://[::ffff:7f00:1]/")).toBe("127.0.0.1");
+    expect(normalizeDomain("::ffff:127.0.0.1")).toBe("127.0.0.1");
+    expect(normalizeDomain("[0:0:0:0:0:FFFF:10.1.2.3]")).toBe("10.1.2.3");
+    expect(normalizeDomain("::ffff:a9fe:a9fe")).toBe("169.254.169.254");
+    expect(isDomainBlocked("http://[::ffff:127.0.0.1]:3000/admin", ["127.0.0.1"])).toBe(true);
+    expect(isDomainBlocked("http://[::ffff:7f00:1]/", ["127.0.0.1"])).toBe(true);
+    expect(isDomainBlocked("http://127.0.0.1/", ["::ffff:127.0.0.1"])).toBe(true);
+    expect(isDomainBlocked("http://[::ffff:7f00:2]/", ["127.0.0.1"])).toBe(false);
+    // Still an IP literal afterwards: exact only, never a suffix.
+    expect(isDomainBlocked("http://[::ffff:127.0.0.1]/", ["0.1"])).toBe(false);
+    // NOT the mapped block: a different prefix is a different address and keeps its IPv6 form.
+    expect(normalizeDomain("http://[::fffe:7f00:1]/")).toBe("[::fffe:7f00:1]");
+    expect(normalizeDomain("http://[64:ff9b::7f00:1]/")).toBe("[64:ff9b::7f00:1]");
+  });
+
+  test("an input that SAYS it is a URL (`://`) and does not parse names NO host -- it never falls through to the bare-host reading of its own scheme", () => {
+    // Bare-host parsing of `http://[fe80::1%25eth0]/` is `http://http://[...` -> the host `http`.
+    expect(normalizeDomain("http://[fe80::1%25eth0]/")).toBeUndefined();
+    expect(normalizeDomain("https://exa mple.com/")).toBeUndefined();
+    expect(normalizeDomain("http://[::1/")).toBeUndefined();
+    expect(isDomainBlocked("http://[fe80::1%25eth0]/", ["http"])).toBe(false);
+    expect(mergeDomainLists(["http://[fe80::1%25eth0]/", "ok.example"])).toEqual(["ok.example"]);
+    // `host:port` ALSO looks like a scheme, has no `://`, and must keep falling through.
+    expect(normalizeDomain("example.com:8080")).toBe("example.com");
+    expect(normalizeDomain("localhost:3000/path")).toBe("localhost");
+    expect(normalizeDomain("//example.com/path")).toBe("example.com");
+  });
+
+  test("what may be handed to a BACKEND's own exclude filter: multi-label names only -- an IP or a single label applies locally and is never forwarded", () => {
+    // This module's rule for those two is EXACT match. A backend's rule for them is unknown: if it
+    // reads `com` as a suffix, one typo'd entry silently removes every .com result.
+    expect(backendExcludableDomains(["example.com", "com", "localhost", "127.0.0.1", "[::1]", "docs.example.org"])).toEqual(["example.com", "docs.example.org"]);
+    expect(backendExcludableDomains(mergeDomainLists(["::ffff:10.0.0.1", "*.ads.example.com"]))).toEqual(["ads.example.com"]);
+    expect(backendExcludableDomains([])).toEqual([]);
   });
 });
