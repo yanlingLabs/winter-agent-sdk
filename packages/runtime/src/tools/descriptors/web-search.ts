@@ -7,6 +7,15 @@
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 import type { ToolDescriptor } from "../registry.ts";
 
+/**
+ * Mirrors `provider/slots.ts`'s own `AGENT_TOOL_CANONICAL_NAME` precedent: a future `toolSpecFor`
+ * branch (the engine.ts hook this file's own header names as the completion of real per-session lean
+ * selection -- see below) needs to recognise this descriptor by canonical name WITHOUT spelling
+ * `"WebSearch"` as a literal at its own call site. Exported for that integration lane; this file's own
+ * `stub(descriptor)` call below is the only other place this name may legitimately originate.
+ */
+export const WEB_SEARCH_CANONICAL_NAME = "WebSearch";
+
 // --- The month, rendered exactly as claude's own template computes it -----------------------------
 
 /** `new Date().toLocaleString("en-US",{month:"long",year:"numeric"})`, e.g. "September 2026" -- claude's own `${t}`. */
@@ -73,8 +82,8 @@ export function webSearchDescription(lean: boolean, now: () => Date = () => new 
 // --- The descriptor -----------------------------------------------------------------------------
 
 const descriptor: ToolDescriptor = {
-  canonicalName: "WebSearch",
-  advertisedName: "WebSearch",
+  canonicalName: WEB_SEARCH_CANONICAL_NAME,
+  advertisedName: WEB_SEARCH_CANONICAL_NAME,
   source: "builtin",
   inputSchema: {
     type: "object",
@@ -123,10 +132,11 @@ const descriptor: ToolDescriptor = {
  * available from a descriptor file alone, so this ships the FULL (non-lean) text as the static
  * default -- the SAME branch `sessionLeanModel` itself falls back to for every session that is not
  * Fable-tier-on-the-`anthropic`-provider (the overwhelming majority: every non-Claude-family model,
- * and haiku/sonnet/opus on Claude). `leanWebSearchDescription`/`webSearchDescription(true, ...)` are
- * exported so a future one-line `toolSpecFor` branch (mirroring the Agent tool's own) can select it
- * with no changes on this side. Named loudly in this lane's report as the one spine hook that would
- * complete real per-session parity.
+ * and haiku/sonnet/opus on Claude). `webSearchDescription(lean, now?)` (both variants) and
+ * `WEB_SEARCH_CANONICAL_NAME` (above) are exported so a future one-line `toolSpecFor` branch
+ * (mirroring the Agent tool's own `canonicalName === AGENT_TOOL_CANONICAL_NAME` gate) can render the
+ * right variant with no changes on this side and no `"WebSearch"` literal at its own call site. Named
+ * loudly in this lane's report as the one spine hook that would complete real per-session parity.
  */
 Object.defineProperty(descriptor, "description", {
   enumerable: true,

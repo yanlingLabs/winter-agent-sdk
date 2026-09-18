@@ -99,18 +99,20 @@ describe("validation", () => {
 // =====================================================================================================
 
 describe("wiring", () => {
-  test("no web session runtime registered -> a typed error result", async () => {
+  test("no web session runtime registered -> a typed error result, and the budget is NEVER touched (ordering fix: wiring is checked before the reservation)", async () => {
     const result = await run({ query: "hello world" }, makeCtx("w-not-wired"));
     expect(result.isError).toBe(true);
     expect(result.output).toContain("no search runtime is wired up");
+    expect(webSearchCallsUsed("w-not-wired")).toBe(0);
   });
 
-  test("the search backend turned off for this session -> a plain (non-error) refusal", async () => {
+  test("the search backend turned off for this session -> a plain (non-error) refusal, and the budget is NEVER touched", async () => {
     const ctx = makeCtx("w-disabled");
     runtimeWith("w-disabled", scriptedProvider([]), {}, { search: { enabled: false } });
     const result = await run({ query: "hello world" }, ctx);
     expect(result.isError).toBeUndefined();
     expect(result.output).toBe("Web search is turned off for this session.");
+    expect(webSearchCallsUsed("w-disabled")).toBe(0);
   });
 
   test("the executor never throws -- even when the inner pass itself throws unexpectedly (sessionModel() exploding)", async () => {
@@ -460,47 +462,123 @@ describe("abort and usage", () => {
 });
 
 // =====================================================================================================
+// The SESSION's own spend ceiling (`maxBudgetUsd`), reported by the fixed spine as `runInnerModel`'s
+// existing "aborted" code with `detail: "budget-exceeded"` -- distinct wording from a genuine
+// interrupt, never `isError`, and whatever searches completed before the ceiling is kept and returned.
+// =====================================================================================================
+
+describe("a session budget stop (distinct from a genuine abort)", () => {
+  test("over budget from the very first generation -> a plain, non-error result naming the spending limit, never the generic interrupt wording", async () => {
+    const ctx = makeCtx("budget-from-start");
+    runtimeWith("budget-from-start", scriptedProvider([{ kind: "text", text: "unreachable -- the budget check runs before round 1's own generate()" }]), { budgetExceeded: () => true });
+    const result = await run({ query: "hello world" }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe("Web search stopped: this session has reached its spending limit, so no further searches will run. Continue with the information already gathered.");
+    expect(result.output.toLowerCase()).not.toContain("interrupt");
+  });
+
+  test("over budget AFTER one search already succeeded -> the completed search is kept and returned, with the budget note appended, never discarded", async () => {
+    let exceeded = false;
+    await withExaFixture(
+      {
+        respond: (call) => {
+          // Flips AS A SIDE EFFECT of the first search actually completing -- so round 1's own
+          // budget check (before this call) still passes, and it is round 2's check that stops the
+          // pass, reproducing "one search already ran, then the ceiling was crossed."
+          exceeded = true;
+          return basicPayload([{ title: "A", url: "https://a.example/", highlights: "hi" }]);
+        },
+      },
+      async (fixture) => {
+        const state = createExaBackendState();
+        const ctx = makeCtx("budget-after-one");
+        const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "qq")] }, { kind: "text", text: "unreachable -- round 2's own budget check stops the pass before this generation runs" }]);
+        runtimeWith("budget-after-one", provider, { budgetExceeded: () => exceeded });
+        const result = await run({ query: "qq" }, ctx, { fixture, state });
+        expect(result.isError).toBeUndefined();
+        expect(result.output).toContain("Links: ");
+        expect(result.output).toContain("A");
+        expect(result.output).toContain("spending limit");
+        expect(result.output).not.toContain("unreachable");
+      },
+    );
+  });
+});
+
+// =====================================================================================================
 // The result cap.
 // =====================================================================================================
 
 describe("the result cap", () => {
-  test("a result over the cap is sliced, never silently dropped", async () => {
-    const hugeTitle = "x".repeat(WEB_SEARCH_RESULT_CAP + 5_000);
-    await withExaFixture({ respond: () => advancedPayload([{ title: hugeTitle, url: "https://big.example/" }]) }, async (fixture) => {
+  // Twenty hits per search (Exa's own `EXA_MAX_NUM_RESULTS`), each near the client's own per-hit
+  // ceilings (title capped at 300, a URL rejected outright past 2,000) -- three such searches
+  // comfortably clears `WEB_SEARCH_RESULT_CAP` (100,000) so the cap actually engages.
+  const bigHits = Array.from({ length: 20 }, (_, i) => ({ title: "t".repeat(400), url: `https://big.example/${"y".repeat(1960)}/${i}` }));
+
+  test("a result over the cap is capped by DROPPING ITEMS -- never by slicing the finished string -- so the header and the REMINDER footer always survive", async () => {
+    await withExaFixture({ respond: () => advancedPayload(bigHits) }, async (fixture) => {
       const state = createExaBackendState();
       const ctx = makeCtx("cap-result");
-      runtimeWith("cap-result", scriptedProvider([call1Turn(), { kind: "text", text: "done" }]));
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "qq")] }, { kind: "tool_use", calls: [call("c2", "qq")] }, { kind: "tool_use", calls: [call("c3", "qq")] }, { kind: "text", text: "done" }]);
+      runtimeWith("cap-result", provider);
       const result = await run({ query: "qq" }, ctx, { fixture, state });
-      expect(result.output.length).toBe(WEB_SEARCH_RESULT_CAP);
+      // Proves the cap actually engaged (the uncapped render would be far larger than this).
+      expect(result.output.length).toBeLessThanOrEqual(WEB_SEARCH_RESULT_CAP);
+      expect(result.output.length).toBeGreaterThan(1_000);
+      expect(result.output.startsWith('Web search results for query: "qq"')).toBe(true);
+      expect(result.output.endsWith("REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.")).toBe(true);
+    });
+  });
+
+  test("a cap small enough to force EVERY item out still keeps the header and the REMINDER -- the one floor this cannot drop below", async () => {
+    await withExaFixture({ respond: () => advancedPayload(bigHits) }, async (fixture) => {
+      const state = createExaBackendState();
+      const ctx = makeCtx("cap-result-tiny");
+      runtimeWith("cap-result-tiny", scriptedProvider([call1Turn(), { kind: "text", text: "done" }]));
+      const executor = createWebSearchExecutor({ resultCap: 10, exaClientOptions: { endpoint: fixture.endpoint, state } });
+      const result = await executor.execute({ query: "qq" }, ctx);
+      expect(result.output).toBe('Web search results for query: "qq"\n\n\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.');
     });
   });
 });
 
 // =====================================================================================================
-// Spine bug awareness (coordinator note, 2026-09-18): the shared `runInnerModel` tool loop currently
-// bounds TOOL CALLS, not GENERATIONS -- a model that never names the offered tool correctly can run
-// far more generations than `maxToolCalls` before a scripted double's turns run out. A parallel fix
-// lane is adding a hard generation cap. These two tests pin "the executor still returns a sane result
-// and terminates" rather than an exact call/generation count, and are expected to keep passing once
-// that spine fix lands (they do not assert the buggy behaviour, only its absence of a hang/crash).
+// The generation bound is now a CONTRACT (fixed spine, `sdk/web-tools-integration`): an unknown-tool-
+// name call never advances `toolCalls`, so the loop is bounded in GENERATIONS too
+// (`maxToolCalls + 2`), and a tool_use turn with an EMPTY calls array is terminal on the spot. Both
+// are asserted at their EXACT shape -- a provider that repeats forever, a generation counter, and the
+// precise result the executor returns -- rather than "it eventually stops".
 // =====================================================================================================
 
-describe("spine bug awareness: unknown-tool-name and empty-calls-array loops", () => {
-  test("an inner model that names an unknown tool every round still returns a sane, non-throwing result", async () => {
-    const ctx = makeCtx("bug-unknown-tool");
-    const turns: ProviderTurn[] = Array.from({ length: 60 }, (_, i) => ({ kind: "tool_use", calls: [{ id: `u${i}`, name: "NotWebSearch", input: {} }] }));
-    runtimeWith("bug-unknown-tool", scriptedProvider(turns));
+describe("the generation bound is exact", () => {
+  test("an inner model that names an unknown tool EVERY round terminates at exactly maxToolCalls + 2 generations, and the 'no successful search' honesty fires", async () => {
+    const ctx = makeCtx("bound-unknown-tool");
+    let generations = 0;
+    const provider: Provider = {
+      async generate() {
+        generations += 1;
+        return { kind: "tool_use", calls: [{ id: `u${generations}`, name: "NotWebSearch", input: {} }] };
+      },
+    };
+    // The default anonymous per-call cap is 3 (no key, no breaker override) -> maxGenerations = 3 + 2 = 5.
+    runtimeWith("bound-unknown-tool", provider);
     const result = await run({ query: "hello world" }, ctx);
-    expect(typeof result.output).toBe("string");
-    expect(result.output.length).toBeGreaterThan(0);
-  }, 20_000);
+    expect(generations).toBe(5);
+    expect(result).toEqual({ output: "Web search was not performed: the search pass produced no search calls." });
+  });
 
-  test("an inner model that emits an EMPTY calls array every round still terminates with a sane result", async () => {
-    const ctx = makeCtx("bug-empty-calls");
-    const turns: ProviderTurn[] = Array.from({ length: 60 }, () => ({ kind: "tool_use", calls: [] }));
-    runtimeWith("bug-empty-calls", scriptedProvider(turns));
+  test("an inner model that emits an EMPTY calls array is terminal on round 1 -- exactly one generation", async () => {
+    const ctx = makeCtx("bound-empty-calls");
+    let generations = 0;
+    const provider: Provider = {
+      async generate() {
+        generations += 1;
+        return { kind: "tool_use", calls: [] };
+      },
+    };
+    runtimeWith("bound-empty-calls", provider);
     const result = await run({ query: "hello world" }, ctx);
-    expect(typeof result.output).toBe("string");
-    expect(result.output.length).toBeGreaterThan(0);
-  }, 20_000);
+    expect(generations).toBe(1);
+    expect(result).toEqual({ output: "Web search was not performed: the search pass produced no search calls." });
+  });
 });

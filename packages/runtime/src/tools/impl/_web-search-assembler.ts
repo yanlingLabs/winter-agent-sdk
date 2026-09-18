@@ -1,8 +1,9 @@
 // THE OUTPUT ASSEMBLER -- claude's own WebSearch stream-walk and tool_result rendering, reproduced as
-// TWO PURE functions over a claude-shaped event/item list. Registers nothing, imports nothing but its
-// own types, so it is trivially importable from `impl/web-search.ts` and from a future differential
-// test that feeds it a scripted sequence and diffs the RETURNED STRING byte-for-byte against a real
-// `claude` binary's tool_result for the same sequence of searches.
+// PURE functions over a claude-shaped event/item list (plus a capped variant of the render, added for
+// the executor's own result-size ceiling -- see `renderWebSearchToolResultCapped` below). Registers
+// nothing, imports nothing but its own types, so it is trivially importable from `impl/web-search.ts`
+// and from a future differential test that feeds it a scripted sequence and diffs the RETURNED STRING
+// byte-for-byte against a real `claude` binary's tool_result for the same sequence of searches.
 //
 // THE SPLIT MIRRORS CLAUDE'S OWN TWO-STAGE SHAPE (research file, "Output assembly"): a STREAM WALK
 // (`flushWebSearchStream`) turns the raw block sequence (text deltas interleaved with search calls)
@@ -13,23 +14,10 @@
 // turns that structured list into the exact `tool_result` string the model reads. `assembleWebSearchOutput`
 // is both stages composed, for a caller that has no use for the intermediate shape.
 //
-// THE ONE UNVERIFIABLE CHOICE, NAMED HERE SO A DIFFERENTIAL TEST FINDS IT FIRST: the research file
-// says accumulated text is "flushed (trimmed) as a STRING item" before each search and again at the
-// end, with no stated condition on the text being non-empty -- read LITERALLY, every flush point would
-// push an item even when the buffer is empty (round 1 is FORCED, so a call with no leading commentary
-// would flush `""` as its very first item, and every call would end with a spurious trailing `""`
-// after its last search). `FLUSH_EMPTY_TEXT = false` here takes the OTHER reading: a flush with
-// nothing in the buffer contributes NO item at all. Two things point this way over the literal one --
-// neither is proof, both are named so a differential test can weigh them: (1) it is the more likely
-// shape for hand-written stream-walk code (`if (buf) items.push(buf)`, not an unconditional push), and
-// (2) the literal reading produces a VISIBLE artefact on the most common shape of all (a forced round
-// 1 with no preamble): a blank line pair between the header and the first `Links:` block, and another
-// between the header and a lone commentary answer's REMINDER footer when there was no search at all
-// -- neither of which resembles real WebSearch output as this lane recalls it (recall, not evidence).
-// `FLUSH_EMPTY_TEXT` is the one flag governing this; flip it and every fixture below still names the
-// behaviour it is pinning, so a differential test that finds the literal reading correct needs to
-// change exactly one line plus this comment.
-const FLUSH_EMPTY_TEXT = false;
+// THE FLUSH RULE, SETTLED (independent review): claude's own code is `if(u.trim().length>0)
+// o.push(u.trim())` -- a flush contributes an item ONLY when the trimmed buffer is non-empty. A
+// forced round 1 with no leading commentary therefore contributes NO item before its first search
+// (not an empty string), and a call ending on a search contributes no trailing item either.
 
 /** A search hit as the OUTER (main-loop) model is allowed to see it: title and url ONLY -- no highlight, no date, no encrypted content. */
 export interface WebSearchOutputHit {
@@ -51,15 +39,16 @@ export type WebSearchResultItem = string | { content: readonly WebSearchOutputHi
 /**
  * Stage 1: the stream walk. Text concatenates (raw block-delta accumulation, no separator -- the
  * research file's "text blocks accumulate"); a search boundary flushes the trimmed buffer as a STRING
- * item (see `FLUSH_EMPTY_TEXT` above), then pushes the search's own item (a links item for a result,
- * a string for an error); the buffer flushes once more at the end for any trailing commentary.
+ * item WHEN IT IS NON-EMPTY (see the module header), then pushes the search's own item (a links item
+ * for a result, a string for an error); the buffer flushes once more at the end for any trailing
+ * commentary, under the identical non-empty rule.
  */
 export function flushWebSearchStream(events: readonly WebSearchStreamEvent[]): WebSearchResultItem[] {
   const items: WebSearchResultItem[] = [];
   let buffer = "";
   const flush = (): void => {
     const text = buffer.trim();
-    if (FLUSH_EMPTY_TEXT || text.length > 0) items.push(text);
+    if (text.length > 0) items.push(text);
     buffer = "";
   };
   for (const event of events) {
@@ -92,4 +81,28 @@ export function renderWebSearchToolResult(query: string, items: readonly WebSear
 /** Both stages composed -- what a caller with no use for the intermediate item list reaches for. */
 export function assembleWebSearchOutput(query: string, events: readonly WebSearchStreamEvent[]): string {
   return renderWebSearchToolResult(query, flushWebSearchStream(events));
+}
+
+/**
+ * `renderWebSearchToolResult`, but never longer than `cap` -- and the cap NEVER costs the header or
+ * the REMINDER footer (review fix: a raw `text.slice(0, cap)` on the FULL render chops from the end,
+ * which is exactly where the "you MUST include sources" trailer lives -- the one line most worth
+ * keeping when there was the most to cite). Items are dropped from the END, in stream order (the
+ * earliest results and commentary are kept), one at a time, until what remains renders under `cap`;
+ * with zero items left the render is just `header + "\n\n" + REMINDER`, which is the floor this
+ * function can promise -- a `cap` smaller than THAT floor (an unrealistic value for a 100,000-char
+ * default and an ordinary query) is the one input this cannot fully honour, and is left uncapped
+ * further than that floor rather than truncating the header or the reminder itself.
+ */
+export function renderWebSearchToolResultCapped(query: string, items: readonly WebSearchResultItem[], cap: number): string {
+  const full = renderWebSearchToolResult(query, items);
+  if (full.length <= cap) return full;
+  let kept = items;
+  while (kept.length > 0 && renderWebSearchToolResult(query, kept).length > cap) kept = kept.slice(0, -1);
+  return renderWebSearchToolResult(query, kept);
+}
+
+/** Both stages composed, capped -- what `impl/web-search.ts` calls instead of slicing the finished string. */
+export function assembleWebSearchOutputCapped(query: string, events: readonly WebSearchStreamEvent[], cap: number): string {
+  return renderWebSearchToolResultCapped(query, flushWebSearchStream(events), cap);
 }

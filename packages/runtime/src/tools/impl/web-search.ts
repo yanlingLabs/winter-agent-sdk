@@ -12,16 +12,18 @@
 //   - the anonymous-vs-keyed per-call cap (3 vs 8) has no claude analogue at all;
 //   - a search failure's MESSAGE (not just its bare `Web search error: <code>` item) is surfaced once,
 //     at the end, when EVERY attempted search failed -- claude's backend retries transparently and
-//     never needs to tell the model how to add a key; Winter's does.
+//     never needs to tell the model how to add a key; Winter's does;
+//   - the SESSION SPEND CEILING stop (`isBudgetStop`, below) has no claude analogue at all -- Winter's
+//     own inner pass is billed against the session's own `maxBudgetUsd`, a Winter product concept.
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
-import "../descriptors/web-search.ts"; // self-sufficiency: guarantees the "WebSearch" stub is registered before replaceExecutor runs below.
+import { WEB_SEARCH_CANONICAL_NAME } from "../descriptors/web-search.ts"; // self-sufficiency: guarantees the stub is registered before replaceExecutor runs below.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-runtime.ts";
 import { INNER_TOOL_LIMIT_NOTICE, runInnerModel, type InnerModelFailure, type InnerModelStep, type InnerToolHandler } from "./_inner-model.ts";
 import { anonymousBreakerOpen, createExaSearchClient, EXA_DEFAULT_NUM_RESULTS, exaKeyResolverFor, sharedExaBackendState, type ExaBackendState, type ExaSearchClientOptions, type ExaSearchResult } from "./_exa-client.ts";
 import { exaSearchClientForSession } from "./_exa-session-client.ts";
 import { reserveWebSearchCall, resolveMaxWebSearchesPerSession, webSearchBudgetRefusalText } from "./_search-budget.ts";
-import { assembleWebSearchOutput, type WebSearchStreamEvent } from "./_web-search-assembler.ts";
+import { assembleWebSearchOutputCapped, type WebSearchStreamEvent } from "./_web-search-assembler.ts";
 
 type EnvBrand = Pick<BrandProfile, "envPrefix">;
 
@@ -38,6 +40,12 @@ export interface WebSearchInput {
 
 type ParsedInput = { ok: true; input: WebSearchInput } | { ok: false; error: string };
 
+// NIT (independent review, disclosed rather than fixed -- behaviour, not a bug): an explicit EMPTY
+// array (`allowed_domains: []`) collapses to "absent" here, same as an array with only blank/non-
+// string entries. Whether claude's own code treats a truthy-but-empty array the same way is
+// unprovable from the binary (no observed call exercises it); this reading is the more defensible
+// one (an empty list filters nothing, so it is indistinguishable in EFFECT from not having named the
+// field at all), but it is a judgement call, not a transcription.
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const strings = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
@@ -50,6 +58,14 @@ function stringArray(value: unknown): string[] | undefined {
  * length 1 is folded into the SAME `Error: Missing query` claude gives an empty one, rather than
  * inventing a distinct Winter-authored line for a case the binary never had its own text for.
  * Disclosed in this lane's report.
+ *
+ * NIT (independent review, disclosed rather than fixed): the query is TRIMMED before the length
+ * check, and the TRIMMED value is what is searched and rendered into the header -- claude's own
+ * `validateInput` (research file) checks and forwards the RAW string. So `" a "` (one real character,
+ * padded) is refused HERE (`Error: Missing query`, trimmed length 1) but would be ACCEPTED there
+ * (raw length 3, whatever zod's `.min(2)` actually measures). A one-character query padded with
+ * whitespace is not a realistic input either way; trimming before validating is the more useful
+ * behaviour for the common case (accidental leading/trailing whitespace from a model), so it stands.
  */
 function parseInput(raw: unknown): ParsedInput {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
@@ -76,6 +92,19 @@ function compactHitsForInnerModel(hits: readonly { title: string; url: string; h
 
 // --- failure text ----------------------------------------------------------------------------------
 
+/**
+ * The literal `detail` `_inner-model.ts` reports when the SESSION's own spend ceiling (`maxBudgetUsd`,
+ * checked between every inner generation, independent of this tool's own 200-call budget) is crossed
+ * mid-pass. The spine (`sdk/web-tools-integration`) does not export a constant for this string -- it
+ * is inlined at its one call site (`fail("aborted", ..., "budget-exceeded")`) -- so it is matched here
+ * as a plain string literal; disclosed rather than silently assumed stable.
+ */
+const BUDGET_EXCEEDED_DETAIL = "budget-exceeded";
+
+function isBudgetStop(failure: InnerModelFailure): boolean {
+  return failure.code === "aborted" && failure.detail === BUDGET_EXCEEDED_DETAIL;
+}
+
 function innerFailureText(failure: InnerModelFailure): string {
   switch (failure.code) {
     case "not-wired":
@@ -90,7 +119,14 @@ function innerFailureText(failure: InnerModelFailure): string {
     case "provider-error":
       return `Error: the web search failed: ${failure.message}`;
     case "aborted":
-      return "Web search was interrupted.";
+      // A BUDGET STOP is a normal, session-initiated boundary (the same posture as the 200-call
+      // refusal, `_search-budget.ts`'s own `webSearchBudgetRefusalText`) -- distinct wording, and
+      // NEVER `isError` (see the call site below), so the model is told plainly why no more searches
+      // ran rather than reading a generic interrupt it might reasonably retry. A genuine external
+      // interruption (the turn's own abort signal) keeps its own, separate wording.
+      return isBudgetStop(failure)
+        ? "Web search stopped: this session has reached its spending limit, so no further searches will run. Continue with the information already gathered."
+        : "Web search was interrupted.";
   }
 }
 
@@ -116,14 +152,12 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     if (!parsed.ok) return { output: parsed.error, isError: true };
     const { query, allowed_domains, blocked_domains } = parsed.input;
 
-    // --- the session's own budget (counted BEFORE the search runs; see `_search-budget.ts`) --------
-    const brand = deps.brand ?? ctx.brand ?? WINTER_BRAND;
-    const env = ctx.env ?? process.env;
-    const cap = resolveMaxWebSearchesPerSession(env, brand);
-    const reservation = reserveWebSearchCall(ctx.sessionId, cap);
-    if (!reservation.ok) return { output: webSearchBudgetRefusalText(reservation.used, reservation.cap, brand) };
-
-    // --- the session's search wiring ----------------------------------------------------------------
+    // --- the session's search wiring -- checked BEFORE the budget is touched --------------------------
+    //
+    // ORDERING FIX (independent review): a call against an unwired or disabled session has ZERO
+    // chance of ever running a search, so it must not spend budget either -- the session cap is a
+    // count of calls that COULD have searched, not of calls that merely asked. Only input validation
+    // (above) and this wiring/enablement check run before the reservation now.
     const runtime: WebSessionRuntime | undefined = webSessionRuntimeFor(ctx);
     if (runtime === undefined) {
       return { output: "Error: web search is not available for this session (no search runtime is wired up for it -- a host wiring gap, not an input error).", isError: true };
@@ -132,15 +166,12 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
       return { output: "Web search is turned off for this session." };
     }
 
-    const resolveKey = exaKeyResolverFor(runtime);
-    const client = exaSearchClientForSession(ctx.sessionId, () =>
-      createExaSearchClient({
-        ...(resolveKey !== undefined ? { resolveKey } : {}),
-        blockedDomains: runtime.web.blockedDomains,
-        state: backendState,
-        ...deps.exaClientOptions,
-      }),
-    );
+    // --- the session's own budget (counted BEFORE the search runs; see `_search-budget.ts`) --------
+    const brand = deps.brand ?? ctx.brand ?? WINTER_BRAND;
+    const env = ctx.env ?? process.env;
+    const cap = resolveMaxWebSearchesPerSession(env, brand);
+    const reservation = reserveWebSearchCall(ctx.sessionId, cap);
+    if (!reservation.ok) return { output: webSearchBudgetRefusalText(reservation.used, reservation.cap, brand) };
 
     // --- the per-call cap: decided ONCE, before the loop (`maxToolCalls` is fixed for `runInnerModel`) --
     //
@@ -155,28 +186,43 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     const maxToolCalls = breakerOpen && hasKeyConfigured ? runtime.web.search.maxSearchesPerCall : runtime.web.search.anonymousMaxSearchesPerCall;
 
     const outcomes = new Map<string, ExaSearchResult>();
-    const handler: InnerToolHandler = async (rawToolInput, info) => {
-      const toolQuery = typeof rawToolInput === "object" && rawToolInput !== null && typeof (rawToolInput as Record<string, unknown>)["query"] === "string" ? ((rawToolInput as Record<string, unknown>)["query"] as string) : query;
-      const result = await client.search(
-        {
-          query: toolQuery,
-          // The EXECUTOR supplies `objective`, always the OUTER query -- never the inner model's own
-          // per-call query -- so every inner search stays on-task (briefed explicitly; the inner
-          // model is never given a way to set this itself).
-          objective: query,
-          numResults: EXA_DEFAULT_NUM_RESULTS,
-          ...(allowed_domains !== undefined ? { includeDomains: allowed_domains } : {}),
-          ...(blocked_domains !== undefined ? { excludeDomains: blocked_domains } : {}),
-        },
-        info.signal !== undefined ? { signal: info.signal } : {},
-      );
-      outcomes.set(info.toolUseId, result);
-      if (!result.ok) return { output: `Error: the search failed (${result.code}): ${result.message}`, isError: true };
-      return { output: compactHitsForInnerModel(result.hits) };
-    };
 
     let pass;
     try {
+      // The session's Exa client -- its own construction is synchronous and never connects (a
+      // connection happens lazily, inside `.search()`), so it cannot throw today. It is built INSIDE
+      // this try/catch anyway: "this executor never throws" must not depend on a file this lane does
+      // not own (`_exa-session-client.ts` / `_exa-client.ts`) staying that way forever.
+      const resolveKey = exaKeyResolverFor(runtime);
+      const client = exaSearchClientForSession(ctx.sessionId, () =>
+        createExaSearchClient({
+          ...(resolveKey !== undefined ? { resolveKey } : {}),
+          blockedDomains: runtime.web.blockedDomains,
+          state: backendState,
+          ...deps.exaClientOptions,
+        }),
+      );
+
+      const handler: InnerToolHandler = async (rawToolInput, info) => {
+        const toolQuery = typeof rawToolInput === "object" && rawToolInput !== null && typeof (rawToolInput as Record<string, unknown>)["query"] === "string" ? ((rawToolInput as Record<string, unknown>)["query"] as string) : query;
+        const result = await client.search(
+          {
+            query: toolQuery,
+            // The EXECUTOR supplies `objective`, always the OUTER query -- never the inner model's
+            // own per-call query -- so every inner search stays on-task (briefed explicitly; the
+            // inner model is never given a way to set this itself).
+            objective: query,
+            numResults: EXA_DEFAULT_NUM_RESULTS,
+            ...(allowed_domains !== undefined ? { includeDomains: allowed_domains } : {}),
+            ...(blocked_domains !== undefined ? { excludeDomains: blocked_domains } : {}),
+          },
+          info.signal !== undefined ? { signal: info.signal } : {},
+        );
+        outcomes.set(info.toolUseId, result);
+        if (!result.ok) return { output: `Error: the search failed (${result.code}): ${result.message}`, isError: true };
+        return { output: compactHitsForInnerModel(result.hits) };
+      };
+
       pass = await runInnerModel(ctx, {
         system: "You are an assistant for performing a web search tool use",
         prompt: `Perform a web search for the query: ${query}`,
@@ -233,7 +279,8 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     // provider-error detail would be discarded in favour of a message that implies nothing went
     // wrong at all).
     if (!pass.ok) {
-      if (attemptedSearches === 0) return { output: innerFailureText(pass), isError: true };
+      const budgetStop = isBudgetStop(pass);
+      if (attemptedSearches === 0) return { output: innerFailureText(pass), ...(budgetStop ? {} : { isError: true }) };
       events.push({ type: "text", text: innerFailureText(pass) });
     } else if (attemptedSearches === 0 && events.every((e) => e.type === "text")) {
       // The forced round-1 tool call never actually called the tool at all (an adapter that ignores
@@ -250,11 +297,13 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
       events.push({ type: "text", text: lastFailureMessage });
     }
 
-    const text = assembleWebSearchOutput(query, events);
-    return { output: text.length > resultCap ? text.slice(0, resultCap) : text };
+    // Capped by DROPPING ITEMS, never by slicing the finished string -- a raw slice chops from the
+    // END, which is exactly where the REMINDER footer lives (review fix; see
+    // `renderWebSearchToolResultCapped`'s own header).
+    return { output: assembleWebSearchOutputCapped(query, events, resultCap) };
   }
 
   return { execute };
 }
 
-replaceExecutor("WebSearch", createWebSearchExecutor());
+replaceExecutor(WEB_SEARCH_CANONICAL_NAME, createWebSearchExecutor());

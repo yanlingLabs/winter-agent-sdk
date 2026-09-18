@@ -46,6 +46,18 @@ describe("webSearchDescription -- both variants, verbatim minus the ONE dropped 
     expect(occurrences).toBe(1);
   });
 
+  test("GOLDEN: the lean variant, byte-for-byte, month injected -- a stray whitespace change outside an already-asserted fragment cannot slip past this one", () => {
+    expect(webSearchDescription(true, fixedNow)).toBe(
+      'Search the web. Returns result blocks with titles and URLs.\n\n- The current month is September 2026 — use this when searching for recent information.\n- `allowed_domains` / `blocked_domains` filter results.\n- After answering from results, end with a "Sources:" list of the URLs you used as markdown links.',
+    );
+  });
+
+  test("GOLDEN: the full variant, byte-for-byte, month injected", () => {
+    expect(webSearchDescription(false, fixedNow)).toBe(
+      '\n- Allows Claude to search the web and use the results to inform responses\n- Provides up-to-date information for current events and recent data\n- Returns search result information formatted as search result blocks, including links as markdown hyperlinks\n- Use this tool for accessing information beyond Claude\'s knowledge cutoff\n- Searches are performed automatically within a single API call\n\nCRITICAL REQUIREMENT - You MUST follow this:\n  - After answering the user\'s question, you MUST include a "Sources:" section at the end of your response\n  - In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL)\n  - This is MANDATORY - never skip including sources in your response\n  - Example format:\n\n    [Your answer here]\n\n    Sources:\n    - [Source Title 1](https://example.com/1)\n    - [Source Title 2](https://example.com/2)\n\nUsage notes:\n  - Domain filtering is supported to include or block specific websites\n\nIMPORTANT - Use the correct year in search queries:\n  - The current month is September 2026. You MUST use this year when searching for recent information, documentation, or current events.\n  - Example: If the user asks for "latest React docs", search for "React documentation" with the current year, NOT last year\n',
+    );
+  });
+
   test("the month re-renders at call time, not at import/module-load time", () => {
     const january = () => new Date("2027-01-05T00:00:00Z");
     expect(webSearchDescription(true, january)).toContain("January 2027");
