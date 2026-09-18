@@ -10,11 +10,6 @@
 //   (html/text/binary) -> preapproved verbatim passthrough, or the digest pass -> the registry's own
 //   50,000-char result cap (this registry enforces none itself, so it is applied here).
 //
-// THE PRIVATE-ADDRESS POLICY under `"ask"` is decided BEFORE this file runs, by the permission layer
-// (an executor cannot prompt mid-call); what arrives here is `ctx.permission.explicitApproval`. See
-// `effectivePolicyFor` below for exactly when that marker lets a private target through, and for the
-// one case -- a public-looking name that only RESOLVES private -- that a prompt approval never covers.
-//
 // A FIX LANE IS REPAIRING A SPINE BUG IN PARALLEL (not edited here, per this lane's own scope):
 //   `resolveWebToolsConfig` does not validate `privateAddressPolicy` at runtime (config arrives as
 //   untyped JSON) -- `normalizePrivateAddressPolicy` below fails CLOSED: only the exact string
