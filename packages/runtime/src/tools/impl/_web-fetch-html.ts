@@ -251,6 +251,12 @@ function wrapCode(text: string): string {
  * Turndown's list-item shape, from its own `listItem` rule: the marker is `*` plus THREE spaces for a
  * bullet and `N.` plus TWO for a numbered item, and every continuation line is indented by a FIXED
  * four spaces -- not by the marker's width, so item 10's continuation still sits at four.
+ *
+ * ONE DISCLOSED DEVIATION, whitespace only: Turndown pads EVERY newline inside an item
+ * (`/\n/gm -> "\n    "`), so a blank line between two paragraphs of one item -- and the line after
+ * an item that ends in a paragraph -- comes out as four bare spaces. This module never emits a
+ * whitespace-only line (the same posture as its blockquote rule, which writes `>` where Turndown
+ * writes `> `): blank lines stay empty. Every non-blank line is byte-identical.
  */
 const BULLET_MARKER = "*   ";
 const orderedMarker = (n: number): string => `${n}.  `;

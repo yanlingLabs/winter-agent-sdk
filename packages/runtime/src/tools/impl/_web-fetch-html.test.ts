@@ -112,9 +112,10 @@ describe("htmlToMarkdown -- the page title", () => {
   });
 });
 
-// Turndown's own `listItem` rule, byte for byte: `*` + THREE spaces, `N.` + TWO, and a FIXED
-// four-space continuation indent. (This block used to pin `* one`, `3. x` and a two-space nested
-// indent after a blank line -- a generic markdown shape, not Turndown's.)
+// Turndown's own `listItem` rule: `*` + THREE spaces, `N.` + TWO, and a FIXED four-space continuation
+// indent. (This block used to pin `* one`, `3. x` and a two-space nested indent after a blank line --
+// a generic markdown shape, not Turndown's.) Byte-identical on every non-blank line; the one disclosed
+// deviation is that a BLANK line inside an item stays empty, where Turndown writes four bare spaces.
 describe("htmlToMarkdown -- lists", () => {
   test("an unordered list: `*` and three spaces", async () => {
     const md = await htmlToMarkdown("<ul><li>one</li><li>two</li></ul>");
@@ -132,9 +133,11 @@ describe("htmlToMarkdown -- lists", () => {
     expect(await htmlToMarkdown("<ol><li>outer<ol><li>inner</li><li>two</li></ol></li><li>next</li></ol>")).toBe("1.  outer\n    1.  inner\n    2.  two\n2.  next");
   });
 
-  test("the continuation indent is a FIXED four spaces, not the marker's width (item 10 and up)", async () => {
+  test("the continuation indent is a FIXED four spaces, not the marker's width (item 10 and up); a blank line inside an item stays EMPTY (disclosed: Turndown pads it to four spaces)", async () => {
     const md = await htmlToMarkdown(`<ol start="10"><li><p>first</p><p>second</p></li></ol>`);
     expect(md).toBe("10.  first\n\n    second");
+    // The same output with Turndown's padding applied is the ONLY difference.
+    expect(md.replace("\n\n", "\n    \n")).toBe("10.  first\n    \n    second");
   });
 });
 
