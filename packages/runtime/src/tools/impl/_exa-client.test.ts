@@ -337,6 +337,27 @@ describe("timeouts, abort, reconnect, and the output cap -- all owned here, beca
     });
   });
 
+  test("an error the backend ANSWERED with is final -- NOT retried, because that search already counted against the allowance", async () => {
+    let n = 0;
+    await withExaFixture({ respond: () => (++n === 1 ? advancedPayload([{ url: "https://ok.example/" }]) : { content: [{ type: "text", text: "Invalid request: numResults must be at most 100" }], isError: true }) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: true });
+        const second = await client.search({ query: "two" });
+        expect(second).toMatchObject({ ok: false, code: "backend-error" });
+        if (second.ok) throw new Error("unreachable");
+        expect(second.message).toContain("numResults must be at most 100");
+        // Exactly TWO backend searches: the established connection did not earn the error a retry,
+        // and an ordinary error neither opens the breaker nor spends the key.
+        expect(fixture.calls).toHaveLength(2);
+        expect(fixture.calls.every((call) => call.apiKey === null)).toBe(true);
+        expect(anonymousBreakerOpen(state, c.now())).toBe(false);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   test("an unreachable endpoint is a typed `unreachable`, never a throw; a closed client answers without connecting", async () => {
     const { client } = clientFor("http://127.0.0.1:1/mcp", { connectTimeoutMs: 2_000 });
     const result = await client.search({ query: "q" });

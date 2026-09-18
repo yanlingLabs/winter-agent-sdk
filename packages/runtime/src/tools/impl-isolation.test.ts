@@ -58,6 +58,20 @@ describe("an executor module registers ITS OWN tools and no others", () => {
   }, 30_000);
 });
 
+describe("the web tools' shared modules register NOTHING -- not directly, and not through anything they import", () => {
+  // The direct half is easy to see in review (none of them calls `replaceExecutor`). The transitive
+  // half is not: `_inner-model.ts` needs the engine's TYPES, and `engine.ts` value-imports the
+  // advisor's executor and the whole descriptor barrel -- so ONE value import from it (a predicate, a
+  // constant) makes importing the helper register every tool in the codebase, and with it makes
+  // `impl/web-fetch.ts` register `WebSearch`'s executor and vice versa. It was caught exactly once,
+  // by this probe, after every in-process suite had passed; hence a subprocess per module.
+  for (const module of ["impl/_inner-model.ts", "impl/_exa-client.ts", "impl/_domains.ts", "../web/session-runtime.ts"]) {
+    test(`importing ${module} alone registers no tool at all`, async () => {
+      expect([module, await registeredAfterImportingOnly(module)]).toEqual([module, []]);
+    }, 30_000);
+  }
+});
+
 describe("the tripwire: no messaging executor imports another executor module", () => {
   // SCOPED TO THE THREE MESSAGING IMPLS ON PURPOSE. A repo-wide "no impl imports an impl" rule would
   // be red on arrival and for reasons this batch did not create: `edit.ts` imports from `write.ts`

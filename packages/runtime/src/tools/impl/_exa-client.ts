@@ -298,7 +298,13 @@ type CallOutcome =
   | { kind: "auth"; detail: string }
   | { kind: "timeout" }
   | { kind: "aborted" }
-  | { kind: "failed"; detail: string; unreachable: boolean };
+  /**
+   * `transport: true` -- the CALL ITSELF threw (a dropped session, a closed socket): nothing was
+   * searched, so one reconnect-and-retry is free. `transport: false` -- the backend ANSWERED, with an
+   * error result: that search already counted against the allowance, and asking again would spend a
+   * second one to be told the same thing.
+   */
+  | { kind: "failed"; detail: string; unreachable: boolean; transport: boolean };
 
 export function createExaSearchClient(options: ExaSearchClientOptions = {}): ExaSearchClient {
   const state = options.state ?? sharedExaBackendState;
@@ -361,7 +367,7 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
           const text = resultText(result);
           if (RATE_LIMIT_PATTERN.test(text)) return { kind: "rate-limited", detail: detailOf(text) };
           if (AUTH_PATTERN.test(text)) return { kind: "auth", detail: detailOf(text) };
-          return { kind: "failed", detail: detailOf(text), unreachable: false };
+          return { kind: "failed", detail: detailOf(text), unreachable: false, transport: false };
         }
         return { kind: "ok", result };
       })();
@@ -382,7 +388,7 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
       if (classified === "rate-limited") return { kind: "rate-limited", detail: detailOf(errorText(err)) };
       if (classified === "auth") return { kind: "auth", detail: detailOf(errorText(err)) };
       if (classified === "timeout") return { kind: "timeout" };
-      return { kind: "failed", detail: detailOf(errorText(err)), unreachable: err instanceof McpConnectError || UNREACHABLE_PATTERN.test(errorText(err)) };
+      return { kind: "failed", detail: detailOf(errorText(err)), unreachable: err instanceof McpConnectError || UNREACHABLE_PATTERN.test(errorText(err)), transport: true };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
@@ -393,7 +399,9 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
   const callTier = async (tier: ExaTier, apiKey: string | undefined, tool: string, args: Record<string, unknown>, signal: AbortSignal | undefined): Promise<CallOutcome> => {
     const hadConnection = connections[tier] !== undefined;
     const first = await attempt(tier, apiKey, tool, args, signal);
-    if (first.kind !== "failed" || !hadConnection) return first;
+    // ONLY a transport failure on a connection that already existed. A fresh connection that failed
+    // has nothing stale to replace, and an error the backend ANSWERED with is final (see `CallOutcome`).
+    if (first.kind !== "failed" || !first.transport || !hadConnection) return first;
     // `attempt` already dropped the dead connection; this one reconnects from scratch.
     return attempt(tier, apiKey, tool, args, signal);
   };

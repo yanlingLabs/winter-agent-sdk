@@ -26,11 +26,16 @@
 // emits no `stream_event`s (the same rule the compaction summariser, the classifier and the advisor
 // follow). Thinking is disabled -- this is an extraction pass, not a reasoning one.
 //
-// This module imports only types, the session registry (which registers no tool) and the
-// provider-failure predicate, so importing it from `impl/web-fetch.ts` or `impl/web-search.ts`
+// This module imports only TYPES and the session registry (which registers no tool), so importing it from `impl/web-fetch.ts` or `impl/web-search.ts`
 // registers nobody else's tool (`tools/impl-isolation.test.ts`).
 import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
-import { isProviderTurnError, type ContentBlock, type Provider, type ProviderMessage, type ProviderRequest, type ProviderTurn, type ProviderUsage } from "../../engine.ts";
+// TYPE-ONLY, and it has to be. `engine.ts` value-imports the advisor's executor (and with it the whole
+// descriptor barrel), so a single VALUE import from it here would make importing this helper -- and
+// therefore either web tool's impl file -- register every tool in the codebase. That is the exact
+// coupling `tools/impl-isolation.test.ts` exists to forbid, and it is invisible in the suite because
+// the barrel is always loaded there anyway. The one thing this module needed from the engine at
+// runtime (`isProviderTurnError`) is two structural checks, reproduced below.
+import type { ContentBlock, Provider, ProviderMessage, ProviderRequest, ProviderTurn, ProviderUsage } from "../../engine.ts";
 import type { ToolExecutionContext } from "../registry.ts";
 import { webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-runtime.ts";
 
@@ -175,6 +180,16 @@ function abortRace(signal: AbortSignal | undefined): { aborted: Promise<typeof A
   };
 }
 
+/**
+ * `engine.ts`'s `isProviderTurnError`, structurally (see the import note above for why it is not
+ * imported): the engine's own failure class carries a marker so it is recognised across a package
+ * boundary, and its message is REDACTED BY CONSTRUCTION at every construction site -- which is what
+ * makes it safe to show the model.
+ */
+function isProviderFailure(err: unknown): err is Error & { status?: number } {
+  return typeof err === "object" && err !== null && (err as { winterProviderFailure?: unknown }).winterProviderFailure === true && err instanceof Error;
+}
+
 /** A provider failure as text the inner caller may show the model. Provider errors are redacted at construction; anything else contributes its NAME only. */
 function describeFailure(err: unknown): { code: InnerModelFailureCode; message: string; detail?: string } {
   const name = typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
@@ -184,8 +199,8 @@ function describeFailure(err: unknown): { code: InnerModelFailureCode; message: 
     const message = err instanceof Error ? err.message : "the inner model's provider could not be resolved";
     return detail === "no-credential-for-provider" ? { code: "no-credential", message, detail } : { code: "model-unresolvable", message, ...(detail !== undefined ? { detail } : {}) };
   }
-  if (isProviderTurnError(err)) {
-    const status = (err as { status?: number }).status;
+  if (isProviderFailure(err)) {
+    const status = err.status;
     return { code: "provider-error", message: `the inner model's provider failed${status !== undefined ? ` (HTTP ${status})` : ""}: ${err.message}`, ...(detail !== undefined ? { detail } : {}) };
   }
   return { code: "provider-error", message: `the inner model call failed with ${typeof name === "string" ? name : "an unknown error"}` };
