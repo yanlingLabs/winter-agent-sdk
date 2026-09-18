@@ -23,6 +23,7 @@ import {
   type WebFetchExecutorDeps,
 } from "./web-fetch.ts";
 import { WEB_FETCH_MAX_BYTES } from "./_web-fetch-net.ts";
+import { FETCHABLE_TARGET_SHAPE } from "../../web/fetchable-url.ts";
 import { WebFetchCache } from "./_web-fetch-cache.ts";
 import "./web-fetch.ts"; // self-sufficiency: installs the module-load default before getRegisteredTool below
 
@@ -295,8 +296,11 @@ describe("private-address policy 'ask': the executor honours the permission laye
     const { ctx, provider } = askSession("s-ask-unmarked");
     const { fetched, fetchImpl } = recordingFetch();
     const result = await runFetch(createWebFetchExecutor({ net: { fetchImpl } }), { url: "http://192.168.1.10/html", prompt: "p" }, ctx);
+    // Whole-branch review M2: the refusal ends with the one shared sentence about what is fetchable at
+    // all (`web/fetchable-url.ts`'s `FETCHABLE_TARGET_SHAPE`), so this text and the permission layer's
+    // ask never again imply that approving it would reach a plain-http dev server.
     expect(result).toEqual({
-      output: "WebFetch cannot prompt for approval mid-call. 192.168.1.10 is a private/loopback address; the user must explicitly approve WebFetch(domain:192.168.1.10) before this URL can be fetched.",
+      output: `WebFetch cannot prompt for approval mid-call. 192.168.1.10 is a private/loopback address; the user must explicitly approve WebFetch(domain:192.168.1.10) before this URL can be fetched. ${FETCHABLE_TARGET_SHAPE}`,
       isError: true,
     });
     expect(fetched).toHaveLength(0);

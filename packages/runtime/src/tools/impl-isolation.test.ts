@@ -65,7 +65,7 @@ describe("the web tools' shared modules register NOTHING -- not directly, and no
   // constant) makes importing the helper register every tool in the codebase, and with it makes
   // `impl/web-fetch.ts` register `WebSearch`'s executor and vice versa. It was caught exactly once,
   // by this probe, after every in-process suite had passed; hence a subprocess per module.
-  for (const module of ["impl/_inner-model.ts", "impl/_exa-client.ts", "impl/_domains.ts", "../web/session-runtime.ts"]) {
+  for (const module of ["impl/_inner-model.ts", "impl/_exa-client.ts", "impl/_domains.ts", "../web/session-runtime.ts", "../web/fetchable-url.ts"]) {
     test(`importing ${module} alone registers no tool at all`, async () => {
       expect([module, await registeredAfterImportingOnly(module)]).toEqual([module, []]);
     }, 30_000);

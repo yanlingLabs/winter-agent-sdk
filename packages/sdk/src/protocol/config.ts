@@ -696,8 +696,16 @@ export interface AdvisorConfig {
  *
  * WHY THIS IS A HOST DECISION AND NOT A CONSTANT. A sandboxed shell has no network, so `WebFetch` is
  * the only door from a session to the services on the user's own machine and LAN -- an admin page, a
- * metadata endpoint, a dev server. Whether that door opens silently depends on whether the session
- * can ask a human at all: an interactive host can, an unattended one cannot and must refuse.
+ * metadata endpoint. Whether that door opens silently depends on whether the session can ask a human
+ * at all: an interactive host can, an unattended one cannot and must refuse.
+ *
+ * WHAT `"allow"` AND AN APPROVAL CAN AND CANNOT REACH. `WebFetch` upgrades `http` to `https`
+ * unconditionally and refuses any hostname with fewer than two dot-separated labels -- both are the
+ * reference runtime's own rules, kept. So this policy governs an `https` service at an IPv4 literal
+ * (`https://127.0.0.1:8443/`) or at a name the URL parser leaves with two or more labels
+ * (`printer.local`, `api.localhost`). A plain-`http` port and every IPv6 literal (`[::1]` is one
+ * label) are unfetchable whatever this says -- a session pointed at one gets `Invalid URL` from the
+ * tool, and no approval is raised for it, because no answer could make it work.
  */
 export type WebPrivateAddressPolicy = "allow" | "ask" | "deny";
 

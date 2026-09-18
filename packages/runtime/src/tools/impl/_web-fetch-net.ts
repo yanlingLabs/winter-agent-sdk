@@ -69,6 +69,7 @@ import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { isDomainBlocked } from "./_domains.ts";
 import { preapprovedScopeOf, staysWithinScope, type PreapprovedMatch } from "../../web/preapproved-hosts.ts";
 import { classifyIpLiteral, classifyReservedName, classifyResolvedAddress, stripIpv6Brackets, type PrivateAddressFinding } from "../../web/private-address.ts";
+import { fetchTimeUrlRefusal, FETCH_TIME_INVALID_URL, upgradeToHttps } from "../../web/fetchable-url.ts";
 
 export const WEB_FETCH_MAX_BYTES = 10_485_760;
 export const WEB_FETCH_TIMEOUT_MS = 60_000;
@@ -118,13 +119,6 @@ export async function defaultResolveHost(hostname: string): Promise<readonly str
   return results.map((r) => r.address);
 }
 
-function upgradeToHttps(url: URL): URL {
-  if (url.protocol !== "http:") return url;
-  const upgraded = new URL(url.toString());
-  upgraded.protocol = "https:";
-  return upgraded;
-}
-
 /**
  * `validateInput`'s own parse-failure text -- WITH the `Error: ` prefix (fidelity #2).
  *
@@ -139,20 +133,18 @@ export function parseFailureMessage(raw: string): string {
   return `Error: Invalid URL "${raw}". The URL provided could not be parsed.`;
 }
 
-/** The three FETCH-TIME rejects' text: a bare `Invalid URL`, never the fuller parse-failure sentence (fidelity #2, corrected). */
-const FETCH_TIME_INVALID_URL = "Invalid URL";
-
 /**
  * claude's own fetch-time rejects: overlong, embedded credentials, a hostname with fewer than two
  * labels. Run PER HOP (claude runs it once on the raw input; running it again on every upgraded hop
  * is strictly stricter and is kept deliberately -- a disclosed, safe deviation, not a fidelity gap).
+ *
+ * THE RULE ITSELF LIVES IN `web/fetchable-url.ts` (whole-branch review M2), shared with the
+ * permission evaluator so it can stop raising an approval prompt -- and stop offering a
+ * `WebFetch(domain:<host>)` rule -- for a target this function is certain to refuse. `upgradeToHttps`
+ * moved there for the same reason: "what the executor will actually try" is both halves together.
  */
 function validateFetchTimeUrl(url: URL): { ok: true } | { ok: false; message: string } {
-  const str = url.toString();
-  if (str.length > 2000) return { ok: false, message: FETCH_TIME_INVALID_URL };
-  if (url.username !== "" || url.password !== "") return { ok: false, message: FETCH_TIME_INVALID_URL };
-  if (url.hostname.split(".").length < 2) return { ok: false, message: FETCH_TIME_INVALID_URL };
-  return { ok: true };
+  return fetchTimeUrlRefusal(url) === undefined ? { ok: true } : { ok: false, message: FETCH_TIME_INVALID_URL };
 }
 
 function stripWww(hostname: string): string {

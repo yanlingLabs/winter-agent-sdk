@@ -77,6 +77,7 @@ import { normalizeAgentTypeName } from "../subagents/definitions.ts";
 // classifier -- neither reaches back into `permissions/` or `tools/`, so there is no cycle.
 import { isPreapprovedUrl } from "../web/preapproved-hosts.ts";
 import { classifyHostnameLexically } from "../web/private-address.ts";
+import { FETCHABLE_TARGET_SHAPE, isCertainlyUnfetchableUrl } from "../web/fetchable-url.ts";
 import { isExactWebFetchDomainRule, webFetchHostnameOf, webFetchUrlOf } from "./grammar.ts";
 const SKILL_RULE_TOOL = "Skill";
 
@@ -402,7 +403,8 @@ export interface PermissionDecisionRecord {
   deniedBareSchemaRemoval?: boolean;
   /**
    * WHY an `allow` was allowed, where the reason is not already carried by `mechanism`/`ruleRef`.
-   * Set today by exactly one path: the preapproved-host auto-allow (`PREAPPROVED_HOST_REASON`).
+   * Set today by two paths: the preapproved-host auto-allow (`PREAPPROVED_HOST_REASON`) and the
+   * lexically-unfetchable WebFetch short-circuit (`UNFETCHABLE_URL_REASON`).
    */
   decisionReason?: string;
   /**
@@ -987,6 +989,9 @@ const WEB_FETCH_TOOL = "WebFetch";
 /** The reason recorded on a preapproved-host allow -- the reference runtime's own wording. */
 export const PREAPPROVED_HOST_REASON = "Preapproved host";
 
+/** `decisionReason` for the whole-branch review's M2 short-circuit: see `certainlyUnfetchableWebFetchTarget` and the branch that uses it. */
+export const UNFETCHABLE_URL_REASON = "WebFetch refuses this URL before any network access";
+
 /**
  * True for a `WebFetch` call whose INPUT url is on the preapproved list (host, plus path scope where
  * the entry has one). Only WebFetch, only the url the call was made with -- a redirect target is a
@@ -1056,7 +1061,28 @@ function privateAddressRuleHint(target: PrivateWebFetchTarget): string {
 }
 
 function privateAddressAskReason(target: PrivateWebFetchTarget): string {
-  return `${target.hostname} is a private or loopback address (${target.reason}); WebFetch needs explicit approval to reach it. ${privateAddressRuleHint(target)}`;
+  // The trailing shape sentence is the whole-branch review's M2 obligation: the ask used to imply
+  // that approving it would reach any local service, including a plain-http dev server, which the
+  // executor's own lexical rules make impossible. Every text about a private target now says the
+  // same true thing, from the one constant.
+  return `${target.hostname} is a private or loopback address (${target.reason}); WebFetch needs explicit approval to reach it. ${privateAddressRuleHint(target)} ${FETCHABLE_TARGET_SHAPE}`;
+}
+
+/**
+ * WebFetch's target as the EXECUTOR will see it, when the executor is certain to refuse it before any
+ * network access: after the unconditional http->https upgrade, one of claude's three fetch-time
+ * rejects applies (`web/fetchable-url.ts`, which owns the rule both sides share).
+ *
+ * `undefined` for every other call -- another tool, an absent or unparseable `url` (which names no
+ * host, so there is no rule to suggest for it and its own refusal text is a different one), or a URL
+ * the executor will really try.
+ */
+function certainlyUnfetchableWebFetchTarget(call: PermissionCall): { hostname: string; reason: string } | undefined {
+  if (call.toolName !== WEB_FETCH_TOOL) return undefined;
+  const url = webFetchUrlOf(call.input);
+  if (url === undefined) return undefined;
+  const refusal = isCertainlyUnfetchableUrl(url);
+  return refusal === undefined ? undefined : { hostname: url.hostname, reason: refusal };
 }
 
 // Records built from an ANSWER to a permission request (`buildRecordFromPromptResult`, and a
@@ -1727,6 +1753,36 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
   }
+  // --- A URL THE EXECUTOR IS CERTAIN TO REFUSE IS NEVER WORTH A PROMPT (whole-branch review M2) ----
+  //
+  // claude upgrades http to https unconditionally and then refuses any hostname with fewer than two
+  // dot-separated labels, so `http://localhost:5173/` and `http://[::1]:5173/` cannot be fetched at
+  // all -- not after an approval, and not with the `WebFetch(domain:localhost)` rule that the ask
+  // below would suggest and that "always allow" would then SAVE. Winter kept claude's rules (the
+  // parity ruling), so this side is what has to change: such a call is let straight through to the
+  // executor, which answers with its own `Invalid URL` and no prompt is ever raised.
+  //
+  // WHY `allow` IS SAFE HERE, and why it is placed exactly here. `web/fetchable-url.ts`'s predicate is
+  // the SAME rule the executor applies as the FIRST thing it does per hop -- ahead of the domain
+  // floor, ahead of the private-address policy, ahead of DNS -- so nothing is reached, no byte leaves
+  // the process, and the "allow" grants access to nothing. It sits AFTER stage 2 (a deny rule, or a
+  // `privateAddressPolicy: "deny"` posture, still wins and still returns above) and BEFORE the
+  // hook-forced defer, the ask rules and the mode baseline -- which is a deliberate consequence: a
+  // hook-forced ask/defer and a user's ask rule are ALSO skipped for such a call, because there is
+  // nothing for a human to decide about a call that cannot do anything. An UNPARSEABLE url is
+  // deliberately NOT covered (it names no host, so no rule could be saved for it) and keeps
+  // prompting exactly as it always has.
+  const unfetchableTarget = certainlyUnfetchableWebFetchTarget(effectiveCall);
+  if (unfetchableTarget !== undefined) {
+    return {
+      decision: "allow",
+      mechanism: "mode",
+      policyVersion,
+      decisionReason: UNFETCHABLE_URL_REASON,
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+
   // An allow rule naming THIS host is the user's standing consent and satisfies the ask. A glob or a
   // bare `WebFetch` allow does not: it lets a fetch through without ever having named the address.
   const isMandatoryPrivateAddressAsk = privateTarget !== undefined && findExactHostAllowRule(effectiveCall, ctx) === undefined;

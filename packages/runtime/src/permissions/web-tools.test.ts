@@ -12,6 +12,7 @@ import {
   NO_OPINION_PROMPT_STAGE,
   PREAPPROVED_HOST_REASON,
   REAL_SPECIAL_CHECKS,
+  UNFETCHABLE_URL_REASON,
   type AutoEngine,
   type EvaluationContext,
   type HookStage,
@@ -297,6 +298,9 @@ describe("preapproved hosts are allowed without asking -- after deny and ask rul
 // 3. The private-address policy: allow | ask | deny  x  host rule present/absent  x  can/cannot prompt
 // =====================================================================================================
 
+// Lexically private AND something the executor will really try: an IPv4 literal (four labels) or a
+// name the URL parser leaves with two or more dot-separated labels. These are the targets an approval
+// can actually do something about, so these are the ones that ask.
 const PRIVATE_URLS = [
   "http://192.168.1.10:8080/status",
   "http://10.0.0.5/",
@@ -305,13 +309,15 @@ const PRIVATE_URLS = [
   "http://127.1/", // IPv4 shorthand -- the url parser expands it
   "http://169.254.169.254/latest/meta-data/", // link-local: the cloud metadata address
   "http://100.64.0.1/", // CGNAT
-  "http://[::1]:3000/",
-  "http://[fd00::1]/",
-  "http://localhost:5173/",
   "http://api.localhost/",
   "http://printer.local/",
-  "http://LOCALHOST./",
+  "http://LOCALHOST./", // the trailing dot leaves TWO labels, so this one is fetchable (claude's behaviour too)
 ];
+
+// Lexically private AND lexically UNFETCHABLE: `localhost` and every IPv6 literal are a single
+// dot-separated label, which WebFetch refuses before any network access (whole-branch review M2). No
+// prompt is raised for these at all -- see the dedicated describe block at the end of this section.
+const UNFETCHABLE_PRIVATE_URLS = ["http://localhost:5173/", "http://[::1]:3000/", "http://[fd00::1]/", "http://[::1]:5173/"];
 
 describe("privateAddressPolicy 'ask' (the default) -- a real pre-execution ask", () => {
   test("every lexically-private target asks, and the prompt says why and names the rule that would satisfy it", async () => {
@@ -374,11 +380,11 @@ describe("privateAddressPolicy 'ask' (the default) -- a real pre-execution ask",
       expect(record.explicitApproval).toBe("rule"); // under bypass the MODE allowed it, and the rule's consent is still recorded
       expect(h.prompts).toHaveLength(0);
     }
-    // Named hosts and IPv6 literals work the same way.
+    // Named hosts work the same way. (`localhost` and an IPv6 literal are not in this table: they are
+    // lexically unfetchable, so they never reach the ask a rule would satisfy -- see below.)
     for (const [ruleText, url] of [
-      ["WebFetch(domain:localhost)", "http://localhost:5173/"],
+      ["WebFetch(domain:api.localhost)", "http://api.localhost/"],
       ["WebFetch(domain:printer.local)", "http://printer.local/"],
-      ["WebFetch(domain:[::1])", "http://[::1]:3000/"],
       ["WebFetch(domain:127.0.0.1)", "http://127.1/"],
     ] as const) {
       const h = harness({ mode: "dontAsk", privateAddressPolicy: "ask", rules: [rule(ruleText, "allow")] });
@@ -412,17 +418,17 @@ describe("privateAddressPolicy 'ask' (the default) -- a real pre-execution ask",
 
   test("CANNOT PROMPT, no host rule: a session with NO prompt handler is denied -- it does not hang and is not allowed", async () => {
     for (const mode of ["default", "acceptEdits", "plan", "auto", "bypassPermissions"] as const) {
-      const record = await evaluate(fetchCall("http://localhost:5173/"), harness({ mode, privateAddressPolicy: "ask", sessionBypassEnabled: true }).ctx);
+      const record = await evaluate(fetchCall("http://api.localhost:5173/"), harness({ mode, privateAddressPolicy: "ask", sessionBypassEnabled: true }).ctx);
       expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
       expect(record.message).toContain("no prompt handler answered");
-      expect(record.message).toContain("WebFetch(domain:localhost)");
+      expect(record.message).toContain("WebFetch(domain:api.localhost)");
     }
   });
 
   test("CANNOT PROMPT, host rule PRESENT: allowed -- the rule is the consent, no prompt was ever needed", async () => {
-    const rules = [rule("WebFetch(domain:localhost)", "allow")];
-    expect(await evaluate(fetchCall("http://localhost:5173/"), harness({ mode: "dontAsk", privateAddressPolicy: "ask", rules }).ctx)).toMatchObject({ decision: "allow", explicitApproval: "rule" });
-    expect(await evaluate(fetchCall("http://localhost:5173/"), harness({ mode: "default", privateAddressPolicy: "ask", rules }).ctx)).toMatchObject({ decision: "allow", explicitApproval: "rule" });
+    const rules = [rule("WebFetch(domain:api.localhost)", "allow")];
+    expect(await evaluate(fetchCall("http://api.localhost:5173/"), harness({ mode: "dontAsk", privateAddressPolicy: "ask", rules }).ctx)).toMatchObject({ decision: "allow", explicitApproval: "rule" });
+    expect(await evaluate(fetchCall("http://api.localhost:5173/"), harness({ mode: "default", privateAddressPolicy: "ask", rules }).ctx)).toMatchObject({ decision: "allow", explicitApproval: "rule" });
   });
 
   test("a PermissionRequest hook's allow is an ANSWER to the ask, and is marked 'prompt'", async () => {
@@ -520,6 +526,73 @@ describe("privateAddressPolicy 'deny' and 'allow'", () => {
   test("the policy is WebFetch's alone", async () => {
     const h = harness({ mode: "bypassPermissions", privateAddressPolicy: "deny" });
     expect((await evaluate({ toolName: "mcp__http__get", input: { url: "http://192.168.1.10/" } }, h.ctx)).decision).toBe("allow");
+  });
+});
+
+// =====================================================================================================
+// 3b. A URL the EXECUTOR is certain to refuse lexically is never prompted for (whole-branch review M2)
+// =====================================================================================================
+
+describe("a lexically unfetchable WebFetch target raises NO ask and suggests NO rule", () => {
+  test("localhost and an IPv6 literal: no prompt in any mode, and the reason says the executor refuses it", async () => {
+    for (const url of UNFETCHABLE_PRIVATE_URLS) {
+      for (const mode of ALL_MODES) {
+        // `answer: ALLOW` on purpose: a prompt that DID fire would be answered and would pass, so the
+        // only thing this can be measuring is whether one fired at all.
+        const h = harness({ mode, privateAddressPolicy: "ask", answer: ALLOW, sessionBypassEnabled: true });
+        const record = await evaluate(fetchCall(url), h.ctx);
+        expect([url, mode, record.decision]).toEqual([url, mode, "allow"]);
+        expect([url, mode, h.prompts.length]).toEqual([url, mode, 0]);
+        expect([url, mode, record.decisionReason]).toEqual([url, mode, UNFETCHABLE_URL_REASON]);
+        // Nothing was approved for this call, so no marker may make the executor treat it as consented.
+        expect(record.explicitApproval).toBeUndefined();
+      }
+    }
+  });
+
+  test("it holds for a session that CANNOT prompt -- no hang, no denial naming a rule that would not help", async () => {
+    for (const url of ["http://localhost:5173/", "http://[::1]:5173/"]) {
+      const h = harness({ mode: "dontAsk", privateAddressPolicy: "ask" });
+      const record = await evaluate(fetchCall(url), h.ctx);
+      expect([url, record.decision]).toEqual([url, "allow"]);
+      expect(record.message).toBeUndefined();
+      expect(h.prompts).toHaveLength(0);
+    }
+  });
+
+  test("it is not limited to private hosts: a single-label public name, and a url with credentials, are refused by the executor too", async () => {
+    for (const url of ["https://intranet/docs", "https://user:secret@example.com/x"]) {
+      const h = harness({ privateAddressPolicy: "ask", answer: ALLOW });
+      expect([url, (await evaluate(fetchCall(url), h.ctx)).decisionReason]).toEqual([url, UNFETCHABLE_URL_REASON]);
+      expect(h.prompts).toHaveLength(0);
+    }
+  });
+
+  test("a DENY rule still wins over it -- the short-circuit sits after stage 2, never before it", async () => {
+    for (const raw of ["WebFetch", "WebFetch(domain:localhost)"]) {
+      const h = harness({ privateAddressPolicy: "ask", rules: [rule(raw, "deny")], answer: ALLOW });
+      expect([raw, (await evaluate(fetchCall("http://localhost:5173/"), h.ctx)).decision]).toEqual([raw, "deny"]);
+    }
+    // ...and so does the `deny` POSTURE, which is a policy statement rather than a prompt.
+    const denied = await evaluate(fetchCall("http://localhost:5173/"), harness({ privateAddressPolicy: "deny", answer: ALLOW }).ctx);
+    expect(denied).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("an UNPARSEABLE url is NOT covered: it names no host, so it keeps prompting exactly as before", async () => {
+    const h = harness({ privateAddressPolicy: "ask", answer: ALLOW });
+    const record = await evaluate(fetchCall("not a url"), h.ctx);
+    expect(h.prompts).toHaveLength(1);
+    expect(record.decisionReason).not.toBe(UNFETCHABLE_URL_REASON);
+  });
+
+  test("the ask a FETCHABLE private target raises tells the truth about what is reachable", async () => {
+    const h = harness({ privateAddressPolicy: "ask", answer: ALLOW });
+    await evaluate(fetchCall("http://192.168.1.10/"), h.ctx);
+    const reason = h.prompts[0]!.meta.decisionReason!;
+    expect(reason).toContain("WebFetch(domain:192.168.1.10)");
+    expect(reason).toContain("upgrades http to https");
+    expect(reason).toContain("two or more dot-separated labels");
+    expect(reason).not.toContain("dev server"); // the promise the doc and this text used to make
   });
 });
 

@@ -42,6 +42,7 @@ import { webSessionRuntimeFor, type WebSessionRuntime } from "../../web/session-
 import { isDomainBlocked } from "./_domains.ts";
 import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets, UNRESOLVABLE_HOST_REASON } from "../../web/private-address.ts";
 import { isPreapprovedUrl } from "../../web/preapproved-hosts.ts";
+import { FETCHABLE_TARGET_SHAPE } from "../../web/fetchable-url.ts";
 import { convertFetchedHtml, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./_web-fetch-html.ts";
 import { webFetchCache, WebFetchCache, type WebFetchCacheEntry } from "./_web-fetch-cache.ts";
 import { defaultResolveHost, parseFailureMessage, performWebFetch, WEB_FETCH_TIMEOUT_MS, type NormalizedPrivateAddressPolicy, type WebFetchNetDeps } from "./_web-fetch-net.ts";
@@ -316,18 +317,26 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       if (policy === "allow") return undefined; // an explicit allow needs no resolution to proceed
       return { output: `WebFetch could not resolve any address for ${host}.`, isError: true };
     }
+    // Whole-branch review M2: a refusal for a LEXICALLY private host ends with the one shared sentence
+    // about what is fetchable at all (`web/fetchable-url.ts`), so this text, the permission ask and the
+    // `WebPrivateAddressPolicy` doc stop implying that a plain-http dev server on `localhost` becomes
+    // reachable once somebody approves it -- the http->https upgrade and the two-label rule are
+    // unconditional. The LATE case below (a public-looking name that merely RESOLVES private) already
+    // passed both rules, so it does not carry the sentence.
+    const lexicallyPrivate = classifyHostnameLexically(host)?.class === "private";
+    const shape = lexicallyPrivate ? ` ${FETCHABLE_TARGET_SHAPE}` : "";
     if (policy === "deny") {
-      return { output: `WebFetch will not reach ${host}: it is a private/loopback address, and this session's policy denies WebFetch access to private addresses.`, isError: true };
+      return { output: `WebFetch will not reach ${host}: it is a private/loopback address, and this session's policy denies WebFetch access to private addresses.${shape}`, isError: true };
     }
     if (policy === "ask") {
-      if (classifyHostnameLexically(host)?.class !== "private") {
+      if (!lexicallyPrivate) {
         // The late case: private by RESOLUTION only.
         return {
           output: `WebFetch will not reach ${host}: it resolves to a private/loopback address. That is only discoverable at fetch time, so no approval could be asked for it beforehand, and WebFetch cannot prompt for approval mid-call. An allow rule naming the host permits it: WebFetch(domain:${host}).`,
           isError: true,
         };
       }
-      return { output: `WebFetch cannot prompt for approval mid-call. ${host} is a private/loopback address; the user must explicitly approve WebFetch(domain:${host}) before this URL can be fetched.`, isError: true };
+      return { output: `WebFetch cannot prompt for approval mid-call. ${host} is a private/loopback address; the user must explicitly approve WebFetch(domain:${host}) before this URL can be fetched.${shape}`, isError: true };
     }
     return undefined; // "allow"
   }
