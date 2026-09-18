@@ -125,6 +125,41 @@ describe("interpretToolSecret", () => {
   });
 });
 
+describe("interpretToolSecret never quotes STORED CONTENT, and never sends a broken blob as the key", () => {
+  test("an unknown `kind` is stored content -- it may BE the secret -- so it is never quoted; a KNOWN kind still is", () => {
+    const leaky = interpretToolSecret(JSON.stringify({ kind: "sk-live-THE-SECRET-IN-THE-KIND-FIELD" }), "loc");
+    expect(leaky).toMatchObject({ status: "unreadable", code: "malformed" });
+    expect(JSON.stringify(leaky)).not.toContain("sk-live");
+    expect(JSON.stringify(leaky)).toContain("structured JSON");
+    expect(JSON.stringify(interpretToolSecret(JSON.stringify({ kind: "oauth", accessToken: "x" }), "loc"))).toContain("oauth");
+  });
+
+  test("a value that LOOKS structured but does not parse is refused -- never sent whole as `x-api-key`", () => {
+    for (const broken of ['{"kind":"api-key","key":"k"} trailing', "{broken", "[1,2", '  {"kind":"api-key"  ']) {
+      const result = interpretToolSecret(broken, "loc");
+      expect([broken, result.status]).toEqual([broken, "unreadable"]);
+      expect(JSON.stringify(result)).not.toContain("trailing");
+    }
+  });
+
+  test("a raw key containing whitespace is refused (a header value cannot carry it, and it is far likelier a pasted sentence than a key)", () => {
+    expect(interpretToolSecret("my key is abc123", "loc")).toMatchObject({ status: "unreadable", code: "malformed" });
+    expect(interpretToolSecret("abc\tdef", "loc")).toMatchObject({ status: "unreadable", code: "malformed" });
+    expect(JSON.stringify(interpretToolSecret("my key is abc123", "loc"))).not.toContain("abc123");
+    // ...while leading/trailing whitespace is still just trimmed.
+    expect(interpretToolSecret("  abc123\n", "loc")).toEqual({ status: "found", key: "abc123" });
+  });
+
+  test("the JSON literals are not keys: `null` is MISSING, `true`/`false` are unreadable; a digits-only key still is one", () => {
+    expect(interpretToolSecret("null", "loc")).toEqual({ status: "missing" });
+    expect(interpretToolSecret("true", "loc")).toMatchObject({ status: "unreadable" });
+    expect(interpretToolSecret("false", "loc")).toMatchObject({ status: "unreadable" });
+    expect(interpretToolSecret("1234567890", "loc")).toEqual({ status: "found", key: "1234567890" });
+    // A JSON-encoded string is held to the same rule as a bare one.
+    expect(interpretToolSecret(JSON.stringify("has space"), "loc")).toMatchObject({ status: "unreadable" });
+  });
+});
+
 describe("the session wiring exposes it on every arm, and never reaches the real keychain beside an injected store", () => {
   test("a reserved-namespace session (no catalog identity) still resolves a tool secret from the injected store", async () => {
     const wiring = buildSessionProvider({

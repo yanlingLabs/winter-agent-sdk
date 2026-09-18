@@ -52,42 +52,62 @@ export interface ToolSecretResolverDeps {
 
 const MATERIAL_KIND_FIELD = "kind";
 
+/** The material kinds this SDK itself writes. Anything else in a `kind` field is STORED CONTENT of unknown provenance. */
+const KNOWN_MATERIAL_KINDS: ReadonlySet<string> = new Set(["api-key", "bearer", "oauth", "aws", "gcp-service-account", "gcp-access-token"]);
+
+const HOW_TO_STORE = 'store the bare key, or {"kind":"api-key","key":...}';
+
+function malformed(locator: string, what: string): ToolSecretResult {
+  return { status: "unreadable", code: "malformed", message: `the item at ${locator} holds ${what}, not an API key; ${HOW_TO_STORE}` };
+}
+
+/** A BARE key, held to what a key can be: non-empty, and no whitespace (a header value cannot carry it, and it is far likelier a pasted sentence). */
+function bareKey(value: string, locator: string): ToolSecretResult {
+  const key = value.trim();
+  if (key.length === 0) return { status: "missing" };
+  if (/\s/.test(key)) return malformed(locator, "text containing whitespace");
+  return { status: "found", key };
+}
+
 /**
- * What one stored string means. Exported for its own tests; the value never appears in its result's
- * `message`.
+ * What one stored string means. Exported for its own tests.
+ *
+ * NOTHING FROM THE STORED VALUE EVER APPEARS IN A MESSAGE -- these messages travel into a tool
+ * RESULT, which a model reads. That includes the value of a `kind` field: it is quoted only when it
+ * is one of the kinds this SDK writes, because anything else is content of unknown provenance and
+ * may be the secret itself (an item holding `{"kind":"sk-live-..."}` must not be echoed).
  *
  *   JSON `{ "kind": "api-key", "key": "<non-empty>" }`  -> the key
- *   a JSON string                                       -> that string (a host that JSON-encoded it)
- *   any other JSON OBJECT or ARRAY                      -> unreadable: it is structured, and it is
- *                                                          not an API key (an `oauth` record, a typo'd
- *                                                          shape) -- guessing a field would be worse
- *                                                          than saying so
- *   anything else, including text that is not JSON      -> the trimmed text itself
+ *   a JSON string                                       -> that string, held to the bare-key rule
+ *   JSON `null`                                         -> missing (a serialised "no value")
+ *   any other JSON object, array, `true`/`false`        -> unreadable: structured, and not an API key
+ *   text that STARTS like JSON (`{` / `[`) but does not
+ *   parse                                               -> unreadable. It was meant to be structured;
+ *                                                          sending the whole blob as the key header
+ *                                                          would put a broken record on the wire
+ *   any other text                                      -> the trimmed text, if it has no whitespace
  *
- * The last arm deliberately includes a JSON NUMBER/boolean/null: a key made only of digits parses as
- * a number, and it is still the key.
+ * A JSON NUMBER is deliberately a key: one made only of digits parses as a number, and it is still
+ * the key.
  */
 export function interpretToolSecret(raw: string, locator: string): ToolSecretResult {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return { status: "missing" };
+  const looksStructured = trimmed.startsWith("{") || trimmed.startsWith("[");
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    return { status: "found", key: trimmed };
+    return looksStructured ? malformed(locator, "JSON that does not parse") : bareKey(trimmed, locator);
   }
-  if (typeof parsed === "string") {
-    const inner = parsed.trim();
-    return inner.length > 0 ? { status: "found", key: inner } : { status: "missing" };
-  }
-  if (typeof parsed !== "object" || parsed === null) return { status: "found", key: trimmed };
+  if (parsed === null) return { status: "missing" };
+  if (typeof parsed === "string") return bareKey(parsed, locator);
+  if (typeof parsed === "number") return bareKey(trimmed, locator);
+  if (typeof parsed === "boolean") return malformed(locator, "a JSON boolean");
   const record = parsed as Record<string, unknown>;
-  if (!Array.isArray(parsed) && record[MATERIAL_KIND_FIELD] === "api-key" && typeof record["key"] === "string") {
-    const key = record["key"].trim();
-    return key.length > 0 ? { status: "found", key } : { status: "missing" };
-  }
-  const kind = !Array.isArray(parsed) && typeof record[MATERIAL_KIND_FIELD] === "string" ? `"${record[MATERIAL_KIND_FIELD] as string}" credential material` : "structured JSON";
-  return { status: "unreadable", code: "malformed", message: `the item at ${locator} holds ${kind}, not an API key; store the bare key, or {"kind":"api-key","key":...}` };
+  if (!Array.isArray(parsed) && record[MATERIAL_KIND_FIELD] === "api-key" && typeof record["key"] === "string") return bareKey(record["key"], locator);
+  const kind = !Array.isArray(parsed) ? record[MATERIAL_KIND_FIELD] : undefined;
+  return malformed(locator, typeof kind === "string" && KNOWN_MATERIAL_KINDS.has(kind) ? `"${kind}" credential material` : "structured JSON");
 }
 
 function unreadableFrom(err: unknown, locator: string): ToolSecretResult {
@@ -109,8 +129,7 @@ export function createToolSecretResolver(deps: ToolSecretResolverDeps): ToolSecr
       const material = await deps.credentials.get(ref);
       if (material === null) return { status: "missing" };
       if (material.kind !== "api-key") return { status: "unreadable", code: "malformed", message: `the item at ${locator} holds "${material.kind}" credential material, not an API key` };
-      const key = material.key.trim();
-      return key.length > 0 ? { status: "found", key } : { status: "missing" };
+      return bareKey(material.key, locator);
     } catch (err) {
       return unreadableFrom(err, locator);
     }
