@@ -30,6 +30,9 @@ function cacheTtlLabel(): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+/** The name `engine.ts`'s `toolSpecFor` branches on for the lean/full choice, mirroring `WEB_SEARCH_CANONICAL_NAME` -- so no tool name is a literal there. */
+export const WEB_FETCH_CANONICAL_NAME = "WebFetch";
+
 export const WEB_FETCH_DESCRIPTION_LEAN = `Fetches a URL, converts the page to markdown, and answers \`prompt\` against it using a small fast model.
 
 - Fails on authenticated/private URLs — use an authenticated MCP tool or \`gh\` for those instead.

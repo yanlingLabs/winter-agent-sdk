@@ -300,6 +300,10 @@ import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 // The web tools' session seam (see that module's header for why it is a keyed registry and not the
 // advisor's per-run `replaceExecutor`). Type-only in the other direction, so there is no value cycle.
 import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, type WebSessionRuntime } from "./web/session-runtime.ts";
+// The web tools' per-session description choice (`toolSpecFor`) -- names and both variants come from
+// the descriptor modules, so neither tool name is ever a literal in this file.
+import { WEB_FETCH_CANONICAL_NAME, webFetchDescriptionFor } from "./tools/descriptors/web-fetch.ts";
+import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription } from "./tools/descriptors/web-search.ts";
 import type { AuxiliaryModelResolution } from "./provider/session-provider.ts";
 import type { ToolSecretResolver } from "./provider/tool-secret.ts";
 
@@ -6118,6 +6122,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   });
 
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
+    // THE WEB TOOLS' LEAN / FULL DESCRIPTION, chosen PER SESSION. Each ships two variants (a short one
+    // for the lean tier, the long one for everything else), and a descriptor -- a process-wide
+    // singleton -- cannot see this session's model, so both register the FULL text statically and the
+    // choice is made here, per request, by the same `sessionLeanModel` rule and the same live key the
+    // agent listing uses. Per REQUEST, not per run: a `set_model` across the tier boundary moves the
+    // description with it, and WebSearch's month (`webSearchDescription` reads the clock when called)
+    // is computed at advertise time. Schema and advertised name are the descriptor's own, untouched.
+    if (descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME || descriptor.canonicalName === WEB_SEARCH_CANONICAL_NAME) {
+      const lean = sessionLeanModel(currentProviderIdentity?.modelKey ?? currentModel);
+      const description = descriptor.canonicalName === WEB_FETCH_CANONICAL_NAME ? webFetchDescriptionFor(lean) : webSearchDescription(lean);
+      return { name: descriptor.advertisedName, description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
+    }
     if (descriptor.canonicalName !== AGENT_TOOL_CANONICAL_NAME) {
       return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
     }
