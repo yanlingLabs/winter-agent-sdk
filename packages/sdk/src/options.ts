@@ -128,8 +128,11 @@ export function resolveWebToolsConfig(web: WebToolsConfig | undefined): Resolved
   // COERCED, not trusted: this value crosses a process boundary as JSON, so the declared types say
   // nothing about what is actually here. Two fields fail OPEN if read naively -- `enabled: "false"`
   // is truthy, and an unknown policy string would reach a consumer's `switch` with no arm -- so this
-  // ONE reader settles both: only the boolean `false` disables search, and only the three known
-  // policies pass; anything else is the default.
+  // ONE reader settles both. `search.enabled` is an OFF SWITCH, so it fails CLOSED: ABSENT is the
+  // default, the boolean `true` is on, and ANY OTHER defined value (`"false"`, `0`, `null`, `"no"`)
+  // is OFF -- a host that wrote something there meant to say something, and reading a malformed
+  // "off" as ON is the one direction that reaches the network against its stated wish. Only the
+  // three known policies pass; anything else is the default.
   const rawDigest: unknown = web?.fetch?.digestModel;
   const digestModel = typeof rawDigest === "string" ? rawDigest.trim() : undefined;
   const rawPolicy: unknown = web?.fetch?.privateAddressPolicy;
@@ -138,7 +141,7 @@ export function resolveWebToolsConfig(web: WebToolsConfig | undefined): Resolved
   const rawBlocked: unknown = web?.blockedDomains;
   return {
     search: {
-      enabled: rawEnabled === false ? false : WEB_TOOLS_DEFAULTS.searchEnabled,
+      enabled: rawEnabled === undefined ? WEB_TOOLS_DEFAULTS.searchEnabled : rawEnabled === true,
       ...(web?.search?.authRef !== undefined ? { authRef: web.search.authRef } : {}),
       maxSearchesPerCall: positiveIntegerOr(web?.search?.maxSearchesPerCall, WEB_TOOLS_DEFAULTS.maxSearchesPerCall),
       anonymousMaxSearchesPerCall: positiveIntegerOr(web?.search?.anonymousMaxSearchesPerCall, WEB_TOOLS_DEFAULTS.anonymousMaxSearchesPerCall),

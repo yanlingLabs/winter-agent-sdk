@@ -1845,14 +1845,19 @@ test("resolveWebToolsConfig spells every default once and never yields an unusab
   expect(stated.fetch).toEqual({ digestModel: "openai/gpt-4.1", authRef: { kind: "none" }, privateAddressPolicy: "allow" });
 });
 
-test("resolveWebToolsConfig COERCES what arrives as JSON: only the boolean `false` disables search, and an unknown policy is the default", () => {
+test("resolveWebToolsConfig COERCES what arrives as JSON: the OFF SWITCH fails CLOSED (anything defined but `true` is off), and an unknown policy is the default", () => {
   // The config crosses a process boundary as JSON, so the types promise nothing about what is here.
   const stringly = resolveWebToolsConfig({ search: { enabled: "false" as unknown as boolean }, fetch: { privateAddressPolicy: "permit" as unknown as "allow" } });
-  expect(stringly.search.enabled).toBe(true);
+  // A host that wrote `"false"` MEANT off. An off switch that reads a malformed "off" as ON is the
+  // one direction that spends the user's key and reaches the network against their stated wish.
+  expect(stringly.search.enabled).toBe(false);
   expect(stringly.fetch.privateAddressPolicy).toBe(WEB_TOOLS_DEFAULTS.privateAddressPolicy);
-  expect(resolveWebToolsConfig({ search: { enabled: 0 as unknown as boolean } }).search.enabled).toBe(true);
-  expect(resolveWebToolsConfig({ search: { enabled: null as unknown as boolean } }).search.enabled).toBe(true);
+  for (const odd of [0, null, "", "true", 1, {}, "no"]) expect(resolveWebToolsConfig({ search: { enabled: odd as unknown as boolean } }).search.enabled).toBe(false);
   expect(resolveWebToolsConfig({ search: { enabled: false } }).search.enabled).toBe(false);
+  expect(resolveWebToolsConfig({ search: { enabled: true } }).search.enabled).toBe(true);
+  // ABSENT (the key missing, or explicitly `undefined`) is the one case that reads as the default.
+  expect(resolveWebToolsConfig({ search: {} }).search.enabled).toBe(WEB_TOOLS_DEFAULTS.searchEnabled);
+  expect(resolveWebToolsConfig({ search: { enabled: undefined as unknown as boolean } }).search.enabled).toBe(WEB_TOOLS_DEFAULTS.searchEnabled);
   for (const policy of ["allow", "ask", "deny"] as const) expect(resolveWebToolsConfig({ fetch: { privateAddressPolicy: policy } }).fetch.privateAddressPolicy).toBe(policy);
   // A non-array `blockedDomains` and a non-string `digestModel` are dropped rather than thrown on.
   expect(resolveWebToolsConfig({ blockedDomains: "blocked.example" as unknown as string[], fetch: { digestModel: 7 as unknown as string } })).toMatchObject({ blockedDomains: [] });
