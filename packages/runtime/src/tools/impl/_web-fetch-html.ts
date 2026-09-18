@@ -1,0 +1,391 @@
+// HTML -> MARKDOWN for `WebFetch`, in a module that REGISTERS NOTHING (see `_domains.ts`'s own
+// header for why this convention exists: both this file and `impl/web-fetch.ts` must be importable
+// with no risk of registering another tool).
+//
+// THE DEPENDENCY DECISION, recorded here rather than only in the report: no HTML-to-markdown package
+// (turndown or otherwise) is a dependency anywhere in this workspace today (checked before writing
+// this file). Turndown itself needs a DOM to walk (`window.DOMParser` in a browser, `domino`/`jsdom`
+// as its Node fallback) -- a real dependency chain, and one more thing to prove survives
+// `bun build --compile`. Bun ships a SAX-style HTML parser as a language-level global,
+// `HTMLRewriter` (the same lol-html-backed API Cloudflare Workers expose), needing NOTHING from
+// node_modules and therefore nothing to bundle at all: it is part of the `bun` binary itself, proven
+// against THIS repo's own compiled-binary path (`bun build --compile`) before this module was
+// written -- a two-line probe script that imports `HTMLRewriter`, compiles, and runs identically as a
+// standalone executable. That is a stronger guarantee than "turndown's dependency tree is MIT and
+// pure JS": there is no dependency tree to audit at all.
+//
+// `HTMLRewriter` does not decode entities in the text/attribute chunks it hands back (measured:
+// `&amp;` arrives as the literal four characters `&amp;`) -- `decodeHtmlEntities` below is this
+// module's own decoder, covering the numeric forms and the ~40 named entities real pages actually
+// use (the HTML5 spec defines over 2000; a WebFetch digest pass has no use for `&hamilt;`).
+//
+// TURNDOWN-EQUIVALENT DEFAULTS (the extraction's own phrase), reproduced deliberately close to
+// Turndown's actual `options.js` defaults rather than a generic markdown renderer of this module's
+// own invention: `headingStyle: "setext"` (h1/h2 underlined, h3-h6 atx `#`), `hr: "* * *"`,
+// `bulletListMarker: "*"`, `codeBlockStyle: "indented"` (4-space, never fenced), `emDelimiter: "_"`,
+// `strongDelimiter: "**"`, inlined links/images. Turndown's OWN block-element list (no GFM plugin,
+// which this omits exactly as "default options" implies) includes `table`/`tr`/`td`/`th`/`thead`/
+// `tbody`/`tfoot` as ordinary generic blocks -- NOT a markdown table -- so that is what this module
+// does too, however noisy a real table becomes: inventing GFM-shaped table output here would not be
+// "Turndown-equivalent defaults," it would be a different tool.
+
+const HTML_TRUNCATION_LIMIT = 1_048_576;
+export const WEB_FETCH_HTML_TRUNCATION_NOTICE = "\n\n[Content truncated due to length...]";
+
+// --- entity decoding --------------------------------------------------------------------------------
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ensp: " ",
+  emsp: " ",
+  thinsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  ldquo: "“",
+  rdquo: "”",
+  lsquo: "‘",
+  rsquo: "’",
+  laquo: "«",
+  raquo: "»",
+  deg: "°",
+  plusmn: "±",
+  times: "×",
+  divide: "÷",
+  sect: "§",
+  para: "¶",
+  middot: "·",
+  bull: "•",
+  dagger: "†",
+  Dagger: "‡",
+  permil: "‰",
+  euro: "€",
+  pound: "£",
+  yen: "¥",
+  cent: "¢",
+  shy: "­",
+  zwnj: "‌",
+  zwj: "‍",
+  lrm: "‎",
+  rlm: "‏",
+  larr: "←",
+  uarr: "↑",
+  rarr: "→",
+  darr: "↓",
+};
+
+const ENTITY_RE = /&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g;
+
+export function decodeHtmlEntities(input: string): string {
+  if (!input.includes("&")) return input;
+  return input.replace(ENTITY_RE, (whole, body: string) => {
+    if (body[0] === "#") {
+      const isHex = body[1] === "x" || body[1] === "X";
+      const codePoint = Number.parseInt(isHex ? body.slice(2) : body.slice(1), isHex ? 16 : 10);
+      if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return whole;
+      try {
+        return String.fromCodePoint(codePoint);
+      } catch {
+        return whole;
+      }
+    }
+    return NAMED_ENTITIES[body] ?? whole;
+  });
+}
+
+// --- tag classification -----------------------------------------------------------------------------
+
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+// Subtree discarded entirely, whatever it contains -- `head` is added beyond the extraction's literal
+// "style/script/noscript/iframe" because Turndown itself only ever converts `document.body`; walking
+// this module over a full `<html><head>...` document with no equivalent split would otherwise leak a
+// stray `<title>` as a bogus opening paragraph, which real Turndown never produces.
+const SKIP_TAGS = new Set(["script", "style", "noscript", "iframe", "head", "template", "svg", "math"]);
+const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+// Turndown's own block-element list minus the tags with a dedicated rule below (heading/hr/pre/
+// blockquote/ul/ol/li) -- every one of these gets the generic "join children, separate blocks with a
+// blank line" treatment, INCLUDING the table family (see header: no GFM plugin, so no table rule).
+const GENERIC_BLOCK_TAGS = new Set([
+  "address",
+  "article",
+  "aside",
+  "body",
+  "center",
+  "dd",
+  "dir",
+  "div",
+  "dl",
+  "dt",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "header",
+  "hgroup",
+  "html",
+  "main",
+  "menu",
+  "nav",
+  "output",
+  "p",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+]);
+
+// --- pieces + joining --------------------------------------------------------------------------------
+
+interface Piece {
+  tag: string;
+  text: string;
+  isBlock: boolean;
+}
+
+/** Joins a frame's accumulated children: adjacent inline runs concatenate directly; each block piece becomes its own paragraph, blank-line separated. */
+function joinPieces(pieces: readonly Piece[]): string {
+  const parts: { text: string; isBlock: boolean }[] = [];
+  for (const piece of pieces) {
+    if (piece.isBlock) {
+      // Trim BLANK leading/trailing lines only -- not leading whitespace on the first surviving
+      // line, which for a `<pre>` block IS its own indentation (`.trim()` would eat it).
+      const t = piece.text.replace(/^[ \t]*\n+/, "").replace(/\s+$/, "");
+      if (t.length > 0) parts.push({ text: t, isBlock: true });
+    } else {
+      if (piece.text === "") continue;
+      const last = parts[parts.length - 1];
+      if (last !== undefined && !last.isBlock) last.text += piece.text;
+      else parts.push({ text: piece.text, isBlock: false });
+    }
+  }
+  return parts
+    .map((p) => (p.isBlock ? p.text : p.text.trim()))
+    .filter((t) => t.length > 0)
+    .join("\n\n");
+}
+
+/** Verbatim concatenation for `<pre>` content -- no trimming, no whitespace collapsing, no blank-line insertion. */
+function joinVerbatim(pieces: readonly Piece[]): string {
+  return pieces.map((p) => p.text).join("");
+}
+
+function wrapInline(text: string, delim: string): string {
+  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(text);
+  if (m === null) return text;
+  const [, lead, core, trail] = m;
+  if (core === undefined || core === "") return text;
+  return `${lead ?? ""}${delim}${core}${delim}${trail ?? ""}`;
+}
+
+function wrapCode(text: string): string {
+  if (text === "") return "";
+  let fence = "`";
+  while (text.includes(fence)) fence += "`";
+  const pad = text.startsWith("`") || text.endsWith("`") || /^\s|\s$/.test(text) ? " " : "";
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+function indentContinuation(text: string, marker: string): string {
+  const pad = " ".repeat(marker.length);
+  return text
+    .split("\n")
+    .map((line, i) => (i === 0 ? marker + line : line.length > 0 ? pad + line : line))
+    .join("\n");
+}
+
+function attr(map: Readonly<Record<string, string>>, name: string): string | undefined {
+  const v = map[name];
+  return v === undefined || v === "" ? undefined : decodeHtmlEntities(v);
+}
+
+function renderImage(attrs: Readonly<Record<string, string>>): string {
+  const src = attr(attrs, "src") ?? "";
+  const alt = attr(attrs, "alt") ?? "";
+  const title = attr(attrs, "title");
+  return `![${alt}](${src}${title !== undefined ? ` "${title}"` : ""})`;
+}
+
+// --- the frame stack ----------------------------------------------------------------------------
+
+interface Frame {
+  tag: string;
+  attrs: Readonly<Record<string, string>>;
+  buf: Piece[];
+  insidePre: boolean;
+}
+
+function renderFrame(frame: Frame): Piece {
+  const { tag, attrs, buf, insidePre } = frame;
+
+  if (SKIP_TAGS.has(tag)) return { tag, text: "", isBlock: false };
+
+  if (HEADING_TAGS.has(tag)) {
+    const content = joinPieces(buf).replace(/\s*\n+\s*/g, " ").trim();
+    if (content.length === 0) return { tag, text: "", isBlock: false };
+    const level = Number(tag[1]);
+    let text: string;
+    if (level === 1) text = `${content}\n${"=".repeat(Math.max(content.length, 1))}`;
+    else if (level === 2) text = `${content}\n${"-".repeat(Math.max(content.length, 1))}`;
+    else text = `${"#".repeat(level)} ${content}`;
+    return { tag, text, isBlock: true };
+  }
+
+  if (tag === "pre") {
+    const raw = joinVerbatim(buf).replace(/^\n+/, "").replace(/\s+$/, "");
+    if (raw.length === 0) return { tag, text: "", isBlock: false };
+    const indented = raw
+      .split("\n")
+      .map((l) => `    ${l}`)
+      .join("\n");
+    return { tag, text: indented, isBlock: true };
+  }
+
+  if (tag === "blockquote") {
+    const content = joinPieces(buf);
+    if (content.length === 0) return { tag, text: "", isBlock: false };
+    const text = content
+      .split("\n")
+      .map((l) => (l.length > 0 ? `> ${l}` : ">"))
+      .join("\n");
+    return { tag, text, isBlock: true };
+  }
+
+  if (tag === "ul" || tag === "ol") {
+    const ordered = tag === "ol";
+    let n = Number.parseInt(attrs["start"] ?? "1", 10);
+    if (!Number.isFinite(n)) n = 1;
+    const lines: string[] = [];
+    for (const piece of buf) {
+      if (piece.tag !== "li") continue;
+      const marker = ordered ? `${n}. ` : "* ";
+      n += 1;
+      lines.push(indentContinuation(piece.text, marker));
+    }
+    return { tag, text: lines.join("\n"), isBlock: true };
+  }
+
+  if (tag === "li") {
+    return { tag, text: joinPieces(buf), isBlock: true };
+  }
+
+  if (tag === "a") {
+    const inner = insidePre ? joinVerbatim(buf) : joinPieces(buf);
+    const href = attr(attrs, "href");
+    if (href === undefined) return { tag, text: inner, isBlock: false };
+    const title = attr(attrs, "title");
+    return { tag, text: `[${inner}](${href}${title !== undefined ? ` "${title}"` : ""})`, isBlock: false };
+  }
+
+  if (tag === "strong" || tag === "b") {
+    const inner = insidePre ? joinVerbatim(buf) : joinPieces(buf);
+    return { tag, text: insidePre ? inner : wrapInline(inner, "**"), isBlock: false };
+  }
+
+  if (tag === "em" || tag === "i") {
+    const inner = insidePre ? joinVerbatim(buf) : joinPieces(buf);
+    return { tag, text: insidePre ? inner : wrapInline(inner, "_"), isBlock: false };
+  }
+
+  if (tag === "code") {
+    if (insidePre) return { tag, text: joinVerbatim(buf), isBlock: false };
+    return { tag, text: wrapCode(joinPieces(buf)), isBlock: false };
+  }
+
+  if (GENERIC_BLOCK_TAGS.has(tag)) {
+    return { tag, text: joinPieces(buf), isBlock: true };
+  }
+
+  // Unknown / plain inline element (span, small, sub, sup, mark, abbr, cite, q, u, kbd, time, ...):
+  // Turndown's own default for a tag with no matching rule is to keep its text content and drop the
+  // tag, exactly like this.
+  const inner = insidePre ? joinVerbatim(buf) : joinPieces(buf);
+  return { tag, text: inner, isBlock: false };
+}
+
+/**
+ * Converts `html` to markdown using the rules above, driven by Bun's `HTMLRewriter` as a SAX walk
+ * (see the module header). Never throws for malformed markup on its own -- `HTMLRewriter` tolerates
+ * it the way a real HTML5 parser does -- but a genuine internal failure is caught and reported so the
+ * caller can fall back to the raw HTML, matching claude's own "turndown throwing -> raw HTML" rule.
+ */
+export async function htmlToMarkdown(html: string): Promise<string> {
+  const root: Frame = { tag: "#root", attrs: {}, buf: [], insidePre: false };
+  const stack: Frame[] = [root];
+
+  const rewriter = new HTMLRewriter().on("*", {
+    element(el) {
+      const tag = el.tagName.toLowerCase();
+      const attrs: Record<string, string> = {};
+      for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
+      const parent = stack[stack.length - 1]!;
+
+      if (VOID_TAGS.has(tag)) {
+        if (tag === "br") parent.buf.push({ tag, text: "  \n", isBlock: false });
+        else if (tag === "hr") parent.buf.push({ tag, text: "* * *", isBlock: true });
+        else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs), isBlock: false });
+        // meta/link/base/area/col/embed/input/param/source/track/wbr: no useful text -- contribute nothing.
+        return;
+      }
+
+      const frame: Frame = { tag, attrs, buf: [], insidePre: parent.insidePre || tag === "pre" };
+      stack.push(frame);
+      el.onEndTag((end) => {
+        // Defensive against a mismatched end tag under malformed markup: pop until the matching
+        // frame (by name) is found, or stop at the root -- never pop past it.
+        while (stack.length > 1 && stack[stack.length - 1]!.tag !== end.name.toLowerCase()) stack.pop();
+        if (stack.length <= 1) return;
+        const closed = stack.pop()!;
+        const rendered = renderFrame(closed);
+        stack[stack.length - 1]!.buf.push(rendered);
+      });
+    },
+    text(t) {
+      if (t.text === "") return;
+      const frame = stack[stack.length - 1]!;
+      const decoded = decodeHtmlEntities(t.text);
+      const text = frame.insidePre ? decoded : decoded.replace(/[\t\n\r ]+/g, " ");
+      if (!frame.insidePre && text === "") return;
+      frame.buf.push({ tag: "#text", text, isBlock: false });
+    },
+  });
+
+  await rewriter.transform(new Response(html)).text();
+  // Whatever is still open at end-of-stream (malformed/truncated HTML) is force-closed root-ward so
+  // its content is not silently dropped.
+  while (stack.length > 1) {
+    const closed = stack.pop()!;
+    stack[stack.length - 1]!.buf.push(renderFrame(closed));
+  }
+  return joinPieces(root.buf);
+}
+
+/**
+ * The full conversion claude's own WebFetch applies: cap the RAW HTML at 1,048,576 chars first (so a
+ * pathological document costs conversion no more than that), convert what remains, and append the
+ * verbatim truncation notice when it was capped. A conversion failure falls back to the (possibly
+ * capped) raw HTML, per claude's own "turndown throwing -> raw HTML."
+ */
+export async function convertFetchedHtml(html: string): Promise<string> {
+  const truncated = html.length > HTML_TRUNCATION_LIMIT;
+  const capped = truncated ? html.slice(0, HTML_TRUNCATION_LIMIT) : html;
+  let content: string;
+  try {
+    content = await htmlToMarkdown(capped);
+  } catch {
+    content = capped;
+  }
+  return truncated ? content + WEB_FETCH_HTML_TRUNCATION_NOTICE : content;
+}
