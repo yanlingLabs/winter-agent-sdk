@@ -283,6 +283,12 @@ export function isProtectedWrite(path: string, ctx: { cwd: string; home: string;
   // freely. (Under `bypassPermissions` §6.7 already returns `allow`, so that mode was blocked by the
   // stage-2 managed deny alone -- the OTHER half, in evaluator.ts.)
   if (isMemoryCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
+  // THE RESOLVED WINTER HOME, WHOLESALE (dist-session fixes, lane C C3). `isInsideProtectedDirectory`
+  // protects it by its dot-dir SEGMENT, which is all a default home needs (`<home>/.winter/...`); a
+  // `<PREFIX>HOME` pointing anywhere else (`/srv/winter-home`, `~/.winter-dev`) has no such segment,
+  // and its `runtimes/`, `run/`, `backups/` and settings were writable by a shell command as ordinary
+  // files. Checked AFTER the two carve-outs above, which live inside it by design.
+  if (ctx.winterHome !== undefined && ctx.winterHome.length > 0 && isAncestorOfOrEqual(resolve(ctx.winterHome), absPath)) return true;
   const basename = basenameOf(absPath);
   // The instructions file is brand-derived, so it is matched from the PROFILE as well as from the
   // seeded default set -- a reuser's ACME.md must be as protected as Winter's own file is.

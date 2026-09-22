@@ -36,7 +36,7 @@
 //     was ALSO already deny-on-null (T7) — also unchanged by this ruling.
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
-import { FILE_RULE_TOOLS, matchesRule, splitCompound, isRecognizedReadOnly, type ParsedRule } from "./grammar.ts";
+import { FILE_RULE_TOOLS, matchesRule, splitCompound, isRecognizedReadOnly, leadingWord, stripWrappers, type ParsedRule } from "./grammar.ts";
 import { matchFileRuleAtBothEnds, checkSymlinkBothEnds } from "./paths.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
@@ -527,6 +527,71 @@ export function extractCandidateWritePaths(call: PermissionCall, ctx: Evaluation
   return recognized ? recognized.paths : [];
 }
 
+// --- The SHELL write-target floor (dist-session fixes, lane C C3; claude's pathValidation.ts) ------
+//
+// claude validates a shell command's write targets -- output redirections and the targets of the
+// file-writing commands -- BEFORE its allow rules (checkPathConstraints -> validatePath ->
+// checkPathSafetyForAutoEdit), and its safety check is bypass-immune. Winter's protected-write check
+// already saw those targets (`extractCandidateWritePaths` includes redirects); what it lacked, for a
+// SHELL write specifically, is below. Scoped to Bash/Monitor on purpose: the Edit/Write tools keep
+// WS-07 §6.7's matrix, and the host's own deny rules are their floor.
+
+/** The three permission/settings control-plane files. Writing one is a self-grant, wherever it sits. */
+const CONTROL_PLANE_BASENAMES: ReadonlySet<string> = new Set(["permissions.local.json", "settings.json", "settings.local.json"]);
+
+function isShellCall(call: PermissionCall): boolean {
+  return call.toolName === "Bash" || call.toolName === "Monitor";
+}
+
+/** A shell call's write targets, minus `/dev/null` (claude: "always safe - it discards output"). */
+function shellWriteTargets(call: PermissionCall, ctx: EvaluationContext): string[] {
+  if (!isShellCall(call)) return [];
+  return extractCandidateWritePaths(call, ctx).filter((p) => p !== "/dev/null");
+}
+
+/**
+ * Does any subcommand CHANGE DIRECTORY? Then a relative write target is resolved against the wrong
+ * base -- `cd .winter && echo x > permissions.local.json` names a file this check would read as
+ * `<cwd>/permissions.local.json`. claude asks for exactly this compound (pathValidation.ts: "Commands
+ * that change directories and write via output redirection require explicit approval").
+ */
+function shellCommandChangesDirectory(call: PermissionCall): boolean {
+  const raw = call.input["command"];
+  if (typeof raw !== "string") return false;
+  const parts = splitCompound(raw);
+  if (parts === null) return true; // unparseable: never assume the base is the cwd
+  return parts.some((sub) => {
+    const word = leadingWord(stripWrappers(sub, "denyAsk")).word;
+    return word === "cd" || word === "pushd" || word === "popd";
+  });
+}
+
+/**
+ * The shell-only additions to the protected set: a control-plane FILENAME at any depth (so a `cd`
+ * cannot hide it), checked at both ends of a symlink like every other protected path.
+ */
+function isProtectedShellTarget(path: string, ctx: EvaluationContext): boolean {
+  const absPath = resolve(ctx.cwd, path);
+  return checkSymlinkBothEnds(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1))).denyIfEither;
+}
+
+/**
+ * A shell write an allow RULE may not clear by itself (claude's `checkPathConstraints`, run before its
+ * allow rules): a target outside the session's working directories, or any target of a command that
+ * changes directory first. Not bypass-immune -- claude's bypass allows both -- and a caller in
+ * `bypassPermissions` never asks.
+ */
+function shellWriteNeedsApproval(call: PermissionCall, ctx: EvaluationContext): { reason: string } | undefined {
+  const targets = shellWriteTargets(call, ctx);
+  if (targets.length === 0) return undefined;
+  if (shellCommandChangesDirectory(call)) {
+    return { reason: "Commands that change directories and write via output redirection or file commands require explicit approval: the final working directory cannot be determined, so the write targets cannot be checked" };
+  }
+  const outside = targets.find((p) => !isWithinBounds(p, ctx));
+  if (outside === undefined) return undefined;
+  return { reason: `Writing to '${resolve(ctx.cwd, outside)}' requires approval: it is outside the allowed working directories for this session (${boundedRoots(ctx).join(", ")})` };
+}
+
 // The real SpecialChecks seam fill (T6's stub, NO_SPECIAL_CHECKS above, was "always no opinion").
 // Wired into engine.ts's `makeEvalCtx` in place of NO_SPECIAL_CHECKS; every fixture in this file
 // that wants real protected/critical behavior passes this explicitly instead.
@@ -540,10 +605,13 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
     // EITHER end classifies protected" mirrors rider 2's own deny-direction semantics — protected
     // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
     // deny/ask elsewhere in this phase.
-    return extractCandidateWritePaths(call, ctx).some((p) => {
+    const protectedPath = extractCandidateWritePaths(call, ctx).some((p) => {
       const absPath = resolve(ctx.cwd, p);
       return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home, ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}), ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) })).denyIfEither;
     });
+    if (protectedPath) return true;
+    // A SHELL write also may not name a control-plane file anywhere (see isProtectedShellTarget).
+    return shellWriteTargets(call, ctx).some((p) => isProtectedShellTarget(p, ctx));
   },
   isCriticalRemoval(call, ctx) {
     // WS-07 §6.8 is scoped to `rm`/`rmdir` — a shell concept; Edit/Write never "remove" anything.
@@ -1273,15 +1341,20 @@ function resolveCriticalRemoval(mode: PermissionMode, reason: string | undefined
 
 function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, call: PermissionCall): ModeStageResult {
   const message = "Denied: protected path write requires approval (WS-07 §6.7)";
+  // A SHELL write to a protected path is BYPASS-IMMUNE (dist-session fixes, lane C C3): claude's
+  // checkPathSafetyForAutoEdit is a safety check bypass never clears, and for a shell command the
+  // Seatbelt used to be the only floor -- which `dangerouslyDisableSandbox` removes. The Edit/Write
+  // tools keep §6.7's bypass allow below.
+  const bypassImmune = isShellCall(call);
   // WS-07 §6.7 matrix, verbatim per mode:
   if (mode === "dontAsk") return { kind: "deny", message };
-  if (mode === "bypassPermissions") return { kind: "allow" };
+  if (mode === "bypassPermissions" && !bypassImmune) return { kind: "allow" };
   // "allowed when bypass enabled for that session" — the §6.4/§6.5 relaxation carve-out this
   // task's own instruction names. `plan`'s classifier-active branch (Task 12) is handled by
   // evaluate()'s own mustPrompt-routing, below — by the time this function returns "mustPrompt",
   // sessionBypassEnabled is ALREADY guaranteed false for `plan` (this line just intercepted the
   // true case), so evaluate()'s own borrow-gate never needs to re-check bypass for THIS origin.
-  if (mode === "plan" && ctx.sessionBypassEnabled === true) return { kind: "allow" };
+  if (mode === "plan" && ctx.sessionBypassEnabled === true && !bypassImmune) return { kind: "allow" };
   // Task 8 (WS-07 §7.1's `blockedPath`): the SAME per-tool path extraction driving
   // REAL_SPECIAL_CHECKS.isProtectedWrite itself (this function's own caller already confirmed
   // isProtectedWrite is true, so at least one candidate path exists) — the first candidate is
@@ -1410,7 +1483,8 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
       // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
       // — it falls through to "unresolved" below, same as an unrecognized command.
-      if (recognized.paths.every((p) => isWithinBounds(p, ctx))) return { kind: "allow" };
+      // A `cd` first moves the base the paths were resolved against (claude asks for this compound).
+      if (recognized.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) return { kind: "allow" };
     }
     // Out-of-root, unrecognized, or "other"-kind: WS-07 §2 stage 5's standing-exceptions list does
     // NOT name "acceptEdits out-of-root" — an explicit allow rule may still rescue it at stage 5,
@@ -1479,7 +1553,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   // I2 (fix wave, P3 close-out): Monitor excluded from THIS arm's auto-approve outcome too -- see
   // the acceptEdits arm's own identical comment, above, for the full rationale.
   const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
-  if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx))) {
+  if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) {
     return { kind: "allow" };
   }
   return { kind: "unresolved" };
@@ -2202,7 +2276,11 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     ctx,
     policy.mode === "auto" ? { skip: (entry) => isAutoSuspendedAllowRule(entry.rule, { classifyAllShell: policy.autoConfig?.classifyAllShell === true }) } : undefined,
   );
-  if (allowEntry) {
+  // An allow RULE clears a SHELL write only inside the working directories and only when no `cd`
+  // moves the base first -- claude's checkPathConstraints runs before its allow rules and asks for
+  // both (dist-session fixes, lane C C3). The ask then takes this mode's ordinary route below.
+  const ruleBlockedShellWrite = allowEntry !== undefined ? shellWriteNeedsApproval(effectiveCall, ctx) : undefined;
+  if (allowEntry && ruleBlockedShellWrite === undefined) {
     return {
       decision: "allow",
       mechanism: "rule",
@@ -2260,7 +2338,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
 
   // --- Stage 6: canUseTool -------------------------------------------------------------------
   const stage6Meta: PromptStageMeta = {
-    decisionReason: "unmatched action reached the prompt stage",
+    decisionReason: ruleBlockedShellWrite?.reason ?? "unmatched action reached the prompt stage",
     ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
     ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
   };
