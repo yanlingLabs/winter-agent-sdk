@@ -33,7 +33,7 @@ const CWD = "/work/repo";
 function rule(raw: string, behavior: "allow" | "deny" | "ask"): SourcedRuleEntry {
   const m = /^([^\s(]+)\((.*)\)$/s.exec(raw.trim());
   const value: PermissionRuleValue = m ? { toolName: m[1]!, ruleContent: m[2]! } : { toolName: raw.trim() };
-  return sourceRule(value, behavior, "userSettings");
+  return sourceRule(value, behavior, "user");
 }
 
 function ctxWith(mode: PermissionMode, rules: SourcedRuleEntry[], extra: Partial<EvaluationContext> = {}): { ctx: EvaluationContext; prompts: Array<{ call: PermissionCall; meta: PromptStageMeta }> } {
