@@ -33,8 +33,15 @@ export interface DataFrame { type: "data"; message: SdkMessage; [k: string]: unk
 export interface ControlRequestFrame { type: "control_request"; requestId: string; subtype: string; payload: unknown; }
 export interface ControlResponseFrame { type: "control_response"; requestId: string; ok: boolean;
   payload?: unknown; error?: { code: string; message: string }; }
+/**
+ * Runtime -> host: "I stopped waiting for control_request `requestId`" (lane C, C2 -- claude parity:
+ * claude's structuredIO writes `control_cancel_request` when a pending request's signal aborts, e.g.
+ * a turn interrupted while a permission prompt is open). The host aborts the callback it is running
+ * for that request (`canUseTool`'s `signal`) and owes no response; one sent anyway is dropped.
+ */
+export interface ControlCancelRequestFrame { type: "control_cancel_request"; requestId: string; }
 export interface UnknownFrame { type: string; [k: string]: unknown; }
-export type WinterFrame = InitFrame | UserFrame | DataFrame | ControlRequestFrame | ControlResponseFrame | UnknownFrame;
+export type WinterFrame = InitFrame | UserFrame | DataFrame | ControlRequestFrame | ControlResponseFrame | ControlCancelRequestFrame | UnknownFrame;
 
 // Task 10 (WS-08 §9; derived-shapes-p2.md item (d), the frozen pin-time 0.3.250 declaration; Ruling
 // P2-A): the public hook-lifecycle trio + PermissionDenied — Ruling-9 PUBLIC UNION GROWTH. Each is

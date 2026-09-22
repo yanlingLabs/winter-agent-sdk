@@ -118,6 +118,7 @@ export type {
   DataFrame,
   ControlRequestFrame,
   ControlResponseFrame,
+  ControlCancelRequestFrame,
   UnknownFrame,
   // Task 10 (WS-08 §9 / Ruling P2-A; Ruling-9 public union growth): the hook-lifecycle trio +
   // PermissionDenied — new named SdkMessage variants a host can discriminate on `.subtype`.

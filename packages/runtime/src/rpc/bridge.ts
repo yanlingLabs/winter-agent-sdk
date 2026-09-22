@@ -15,7 +15,14 @@ export interface RpcBridge {
   // to reuse one id for both). `opts.timeoutMs` omitted means NO park timeout — WS-04 §3's
   // permission-class RPCs wait indefinitely by design; only pass a timeout for a subtype the spec
   // actually pins a bound for.
-  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }): Promise<T>;
+  //
+  // `opts.signal` (lane C, C2 -- claude parity): when it aborts while the request is still pending,
+  // the entry is dropped, a `{ type: "control_cancel_request", requestId }` frame tells the host the
+  // runtime stopped waiting, and the promise rejects AT ONCE with a `WinterRpcError("cancelled")` --
+  // exactly what claude's structuredIO.sendRequest does (it enqueues `control_cancel_request` and
+  // rejects without waiting for the host). A host answer arriving afterwards takes the ordinary
+  // unknown-requestId path. A signal already aborted issues nothing at all.
+  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal }): Promise<T>;
   // Routes a host->runtime control_response to its correlated pending request. Returns false (and
   // never throws) for a requestId this bridge never issued, or one that already settled (a
   // timed-out request's late answer) — a stale response must never kill the run (WS-04).
@@ -59,6 +66,8 @@ interface PendingRpc {
   resolve(payload: unknown): void;
   reject(err: unknown): void;
   timer?: ReturnType<typeof setTimeout>;
+  /** Detaches the caller's abort listener; called whenever the entry leaves the map. */
+  detach?: () => void;
 }
 
 // Task 2 (WS-04 §3.1, direction inversion): the runtime's half of the bidirectional control-RPC
@@ -86,9 +95,12 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
   let closed = false;
 
   return {
-    request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }): Promise<T> {
+    request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal }): Promise<T> {
       if (closed) {
         return Promise.reject(new WinterRpcError("connection_closed", `rpc bridge is closed: cannot issue a '${subtype}' request`));
+      }
+      if (opts?.signal?.aborted === true) {
+        return Promise.reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled before it was issued`));
       }
       const requestId = opts?.requestId ?? randomUUID();
       return new Promise<T>((resolve, reject) => {
@@ -97,9 +109,22 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
           const timeoutMs = opts.timeoutMs;
           entry.timer = setTimeout(() => {
             pending.delete(requestId);
+            entry.detach?.();
             reject(new WinterRpcTimeoutError(subtype, timeoutMs));
           }, timeoutMs);
           entry.timer.unref?.();
+        }
+        const signal = opts?.signal;
+        if (signal !== undefined) {
+          const onAbort = (): void => {
+            if (pending.get(requestId) !== entry) return;
+            pending.delete(requestId);
+            if (entry.timer !== undefined) clearTimeout(entry.timer);
+            output.write({ type: "control_cancel_request", requestId });
+            reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled: the runtime stopped waiting for it`));
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          entry.detach = () => signal.removeEventListener("abort", onAbort);
         }
         pending.set(requestId, entry);
         const frame: ControlRequestFrame = { type: "control_request", requestId, subtype, payload };
@@ -120,6 +145,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
       }
       pending.delete(frame.requestId);
       if (entry.timer !== undefined) clearTimeout(entry.timer);
+      entry.detach?.();
       if (frame.ok) {
         entry.resolve(frame.payload);
       } else {
@@ -131,6 +157,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
       closed = true; // idempotent: a second call finds an already-empty `pending` and is a no-op
       for (const entry of pending.values()) {
         if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.detach?.();
         entry.reject(err);
       }
       pending.clear();
@@ -139,6 +166,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
       const entry = pending.get(requestId);
       if (entry === undefined) return; // already unknown -- silent no-op, see this method's own doc comment
       if (entry.timer !== undefined) clearTimeout(entry.timer);
+      entry.detach?.();
       pending.delete(requestId);
       // Deliberately NEITHER resolve() NOR reject() -- the caller has already moved on by the time
       // it calls cancel() (its own timer raced ahead); settling this promise now would just be

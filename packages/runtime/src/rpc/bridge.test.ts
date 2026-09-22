@@ -243,3 +243,45 @@ test("Finding 10: cancel() on an unknown requestId (never issued, or already set
   // Already settled and removed from `pending` -- cancelling it again is a no-op, not a crash.
   expect(() => bridge.cancel(req.requestId)).not.toThrow();
 });
+
+// Lane C (C2), claude parity: claude's structuredIO.sendRequest enqueues `control_cancel_request
+// {request_id}` when the request's signal aborts, and rejects the pending promise at once without
+// waiting for the host (cli/structuredIO.ts). The Winter bridge does the same for a request issued
+// with `opts.signal` -- the permission prompt passes the turn's own abort signal.
+test("an aborted signal cancels the request: a control_cancel_request frame names it, the promise rejects at once, and a late answer is dropped", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  const controller = new AbortController();
+  const pending = bridge.request("permission", { toolName: "Bash" }, { requestId: "perm-x", signal: controller.signal });
+  expect(written).toHaveLength(1);
+  controller.abort();
+  await expect(pending).rejects.toBeInstanceOf(WinterRpcError);
+  expect(written[1]).toEqual({ type: "control_cancel_request", requestId: "perm-x" });
+  expect(bridge.ownsRequest("perm-x")).toBe(false);
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(bridge.handleResponse({ type: "control_response", requestId: "perm-x", ok: true, payload: { behavior: "allow" } })).toBe(false);
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("a signal that is ALREADY aborted issues nothing: no request frame, no cancel frame, an immediate rejection", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  const controller = new AbortController();
+  controller.abort();
+  await expect(bridge.request("permission", {}, { signal: controller.signal })).rejects.toBeInstanceOf(WinterRpcError);
+  expect(written).toHaveLength(0);
+});
+
+test("a request that settles normally never emits a cancel frame, even if its signal aborts afterwards", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  const controller = new AbortController();
+  const pending = bridge.request("permission", {}, { requestId: "perm-y", signal: controller.signal });
+  bridge.handleResponse({ type: "control_response", requestId: "perm-y", ok: true, payload: "done" });
+  await expect(pending).resolves.toBe("done");
+  controller.abort();
+  expect(written.map((f) => f.type)).toEqual(["control_request"]);
+});

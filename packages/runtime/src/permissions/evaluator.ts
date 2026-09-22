@@ -284,6 +284,13 @@ export interface EvaluationContext {
   // a mismatch (WS-07 §2's stale-policy-rejection contract).
   policy: PolicyState;
   cwd: string;
+  /**
+   * The CURRENT TURN's abort signal (lane C, C2). The prompt stage hands it to the permission RPC, so
+   * an interrupt while a prompt is open cancels that request at its source -- the bridge writes
+   * `control_cancel_request` and the host's `canUseTool` sees its signal abort (claude parity). Absent
+   * outside a turn (and in every hand-built test context): the request then waits as it always has.
+   */
+  signal?: AbortSignal;
   // RULING P3-L (fix wave, P3 close-out): the engine-owned session root -- see registry.ts's own
   // ToolExecutionContext.session.getSessionRoot doc comment. Distinct from `cwd` (which drifts with
   // every `cd`): moved only by EnterWorktree/ExitWorktree. Consumed today by CronCreate(durable)'s

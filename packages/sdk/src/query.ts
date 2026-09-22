@@ -52,7 +52,12 @@ export type SdkMessage = Extract<RuntimeSdkMessage, { type: "system" } | { type:
 // frame carries (frames.ts), kept as its own type here so query.ts's registry doesn't require
 // callers to build a whole WinterFrame just to answer one.
 export type ControlRequestHandlerResult = { ok: true; payload?: unknown } | { ok: false; error: { code: string; message: string } };
-export type ControlRequestHandler = (payload: unknown) => Promise<ControlRequestHandlerResult>;
+/**
+ * A handler for one runtime-originated control_request subtype. `ctx.signal` aborts when the runtime
+ * CANCELS the request (`control_cancel_request` -- lane C, C2, claude parity): the handler should stop
+ * waiting, and whatever it returns afterwards is not sent (the runtime already stopped waiting).
+ */
+export type ControlRequestHandler = (payload: unknown, ctx?: { signal: AbortSignal }) => Promise<ControlRequestHandlerResult>;
 
 // Winter-only extension beyond the WS-03 §4 pinned Query surface — never part of the upstream
 // drop-in contract (Level 1 compat is measured against interrupt/setPermissionMode/setModel/etc.,
@@ -791,6 +796,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // production yet — is auto-answered ok:false so the runtime never parks forever waiting on a
   // host that doesn't understand it (WS-04 §3.1).
   const controlRequestHandlers = new Map<string, ControlRequestHandler>();
+  /** One abort per IN-FLIGHT runtime-originated request, fired by a `control_cancel_request` naming it. */
+  const incomingRequestAborts = new Map<string, AbortController>();
   async function handleIncomingControlRequest(cf: ControlRequestFrame): Promise<void> {
     // The whole body is wrapped, not just the handler invocation: every proc.stdin.write below
     // (including the no-handler-registered answer) can throw on a real child whose stdin has
@@ -811,8 +818,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
         });
         return;
       }
+      const cancel = new AbortController();
+      incomingRequestAborts.set(cf.requestId, cancel);
       try {
-        const result = await handler(cf.payload);
+        const result = await handler(cf.payload, { signal: cancel.signal });
+        // CANCELLED while the handler ran: the runtime stopped waiting and dropped the request, so an
+        // answer now would only be a stale response it has to discard (claude's orphan handling).
+        if (cancel.signal.aborted) return;
         if (result.ok) {
           writeControlResponse({
             type: "control_response",
@@ -824,9 +836,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: result.error });
         }
       } catch (err) {
+        if (cancel.signal.aborted) return;
         // A throwing handler fails closed — ok:false, never a dropped request or a wrapper crash.
         const message = err instanceof Error ? err.message : String(err);
         writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } });
+      } finally {
+        incomingRequestAborts.delete(cf.requestId);
       }
     } catch {
       /* see policy note above: a stdin write after the child has already exited is swallowed */
@@ -842,11 +857,15 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // pending permission prompt — WS-04 §3's own no-park-timeout rule means only the callback
   // resolving, or the whole query aborting, ever ends the wait).
   function makePermissionHandler(canUseTool: CanUseTool): ControlRequestHandler {
-    return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+    return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
       const req = payload as PermissionRequestPayload;
       const controller = new AbortController();
       if (options.abortController?.signal.aborted) controller.abort();
       else options.abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+      // ...and the runtime's own cancellation of THIS request (control_cancel_request, lane C C2): an
+      // interrupted turn no longer waits for the prompt, so the callback's signal aborts (claude parity).
+      if (handlerCtx?.signal.aborted === true) controller.abort();
+      else handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
 
       let result: PermissionResult | null;
       try {
@@ -1055,6 +1074,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
               if (cf.ok) pendingReq.resolve(cf.payload);
               else pendingReq.reject(new WinterRpcError(cf.error?.code ?? "unknown_error", cf.error?.message ?? "control request failed"));
             }
+            continue;
+          }
+          if (frame.type === "control_cancel_request") {
+            // Lane C (C2): the runtime stopped waiting for one of ITS requests (a permission prompt
+            // open when the turn was interrupted). Abort the handler running for it; it owes no answer.
+            incomingRequestAborts.get((frame as { requestId?: string }).requestId ?? "")?.abort();
             continue;
           }
           if (frame.type === "control_request") {

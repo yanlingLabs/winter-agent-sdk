@@ -2189,3 +2189,55 @@ test("P7a: query() cannot be made to mutate WINTER_BRAND through the profile it 
   expect(WINTER_BRAND.keychainService).toBe("com.winter.core");
   expect((capture.get()["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core");
 });
+
+// Lane C (C2), claude parity: a runtime-originated `control_cancel_request` aborts the host's pending
+// canUseTool callback (claude's SDK aborts the callback it is running for a cancelled request), and
+// the wrapper owes -- and sends -- no control_response for it.
+test("control_cancel_request aborts the pending canUseTool's signal, and no response is written for the cancelled request", async () => {
+  const payload = fullPermissionPayload({ requestId: "perm-cancel" });
+  const writes: string[] = [];
+  let resolveCallbackSawAbort!: () => void;
+  const callbackSawAbort = new Promise<void>((r) => {
+    resolveCallbackSawAbort = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId: "perm-cancel", subtype: "permission", payload });
+      yield encodeFrame({ type: "control_cancel_request", requestId: "perm-cancel" });
+      await callbackSawAbort;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  let aborted = false;
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => proc,
+      canUseTool: (_toolName, _input, opts) =>
+        new Promise((resolve) => {
+          opts.signal.addEventListener("abort", () => {
+            aborted = true;
+            resolveCallbackSawAbort();
+            resolve({ behavior: "deny", message: "cancelled" });
+          });
+        }),
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(aborted).toBe(true);
+  // Give the fire-and-forget handler a tick to (not) write its response.
+  await new Promise((r) => setTimeout(r, 10));
+  expect(decodeControlResponse(writes, "perm-cancel")).toBeUndefined();
+});

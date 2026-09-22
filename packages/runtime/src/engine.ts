@@ -2716,6 +2716,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return isSandboxAvailable();
   };
 
+  /** The in-flight turn's abort signal, read by `makeEvalCtx` -- see `EvaluationContext.signal`. */
+  let currentTurnSignal: AbortSignal | undefined;
   const makeEvalCtx = (): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
@@ -2727,6 +2729,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return {
       policy: policyStateStore.getState(),
       cwd: currentCwd,
+      ...(currentTurnSignal !== undefined ? { signal: currentTurnSignal } : {}),
       sessionRoot,
       home: permissionHome,
       trustedWorkspace,
@@ -6691,6 +6694,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // interrupt also kills the in-flight Bash process group. The race stays -- it is what unwinds the
     // turn promptly -- and the signal is what stops the work the race walked away from.
     const turnAbort = new AbortController();
+    // The permission prompt's cancellation source (lane C, C2): `makeEvalCtx` hands it to the prompt
+    // stage, so an interrupt cancels an open prompt at its source instead of abandoning it.
+    currentTurnSignal = turnAbort.signal;
     // Fix wave (I5): an interrupt abandons the in-flight tool call -- including an Agent call that
     // is awaiting a foreground child -- so the abandoned child is stopped with it. Ordered
     // resolve-then-stop so the turn unwinds immediately; `stop()` is fire-and-forget and settles

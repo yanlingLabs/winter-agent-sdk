@@ -151,7 +151,10 @@ export function createBridgePromptStage(bridge: RpcBridge): PromptStage {
         // that call writes a control_response keyed by WHATEVER id it was given — if the envelope used
         // a different one, handleResponse would never find this pending entry and this promise would
         // never settle (bug found by review; see bridge.ts's own header for the full mechanism).
-        result = await bridge.request<PermissionResult>("permission", payload, { requestId });
+        // `signal`: the turn's own abort (lane C, C2). An interrupt while this prompt is open cancels the
+        // request -- `control_cancel_request` to the host, an immediate rejection here (-> null, the
+        // same "no opinion" every other failed RPC maps to; the engine has already stopped waiting).
+        result = await bridge.request<PermissionResult>("permission", payload, { requestId, ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
       } catch {
         return null; // genuinely no opinion — see this file's own header for every reason this fires
       }
