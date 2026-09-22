@@ -646,7 +646,9 @@ export interface Options {
   autoClassifier?: AutoClassifierConfig;
   /**
    * DISCLOSED WINTER option (P2 carry, wired in T10): the advisor/reviewer backend's model, same
-   * selection path. Its optional `authRef` (fix wave, Ruling E-1) is the advisor's OWN credential:
+   * selection path -- a provider-qualified tag (`<providerId>/<model>`) names its own provider, so a
+   * reviewer on another provider than the session's is just that tag plus that provider's credential
+   * (the `web.fetch.digestModel` shape). Its optional `authRef` (fix wave, Ruling E-1) is the advisor's OWN credential:
    * a target on another provider than the session's never inherits the session's -- it uses the
    * route's ref, else the target provider's own keychain record (`<providerId>:default`), else a
    * typed `no-credential-for-provider` refusal at its first generation.

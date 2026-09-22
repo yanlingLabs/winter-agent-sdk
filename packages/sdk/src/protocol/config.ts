@@ -677,6 +677,18 @@ export interface AutoClassifierConfig {
  * advisor's provider, the advisor's provider refuses with a typed `no-credential-for-provider`.
  */
 export interface AdvisorConfig {
+  /**
+   * The reviewer's model: a PROVIDER-QUALIFIED TAG (`<providerId>/<model>`, e.g.
+   * `codex-oauth/gpt-5.6-sol`) or a slot name, resolved through the SAME selection path as the
+   * session model -- exactly as `WebFetchConfig.digestModel` is.
+   *
+   * THE TAG IS THE PROVIDER IDENTITY; there is deliberately no second field for it. A qualified tag
+   * resolves under ITS OWN provider, never under the session's (`Options.provider`), so an advisor on
+   * another provider than the session's needs nothing but that tag and, in `authRef`, that provider's
+   * own credential. A host that splits the tag down to a bare model id before passing it has thrown
+   * the provider away: a bare id is read as a slot name or canonical id and resolved by the session's
+   * slot rules, which is a different question.
+   */
   model: string;
   authRef?: CredentialRef;
 }
