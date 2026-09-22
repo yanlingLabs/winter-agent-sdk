@@ -180,7 +180,7 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
   /** The window the LAST refusal named, or `undefined` when it named none. */
   let retryAfterMs: number | undefined;
   try {
-    const descriptor = options.descriptors?.(req.model);
+    const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
     const reasoning = resolveReasoning(req, descriptor);
     // The SAME set `responsesTurn` declares (minor 7): this adapter sends the identical body, so a

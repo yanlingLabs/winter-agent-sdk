@@ -109,7 +109,8 @@ function snapNumericEffort(value: number, verified: readonly string[]): string |
 }
 
 /** Resolves a provider-local model id to its catalog row, or `undefined` for an id the catalog does not list. */
-export type DescriptorLookup = (modelId: string) => WinterModelDescriptor | undefined;
+/** The model id a request named, UNDER the request's own provider (`ctx.connection.providerId`, which this adapter passes; dist-session fixes E4). Optional so a one-argument lookup stays assignable. */
+export type DescriptorLookup = (modelId: string, providerId?: string) => WinterModelDescriptor | undefined;
 
 export interface BedrockAdapterOptions {
   /**
@@ -990,7 +991,7 @@ interface TurnDeps {
 
 async function* streamBedrockTurn(req: TurnRequest, ctx: ProviderContext, deps: TurnDeps): AsyncGenerator<ProviderEvent> {
   const region = requireRegion(ctx);
-  const descriptor = deps.options.descriptors(req.model);
+  const descriptor = deps.options.descriptors(req.model, ctx.connection.providerId);
 
   // EVERY CAPABILITY REFUSAL HAPPENS HERE, before a socket exists. A fixture proves each one by
   // asserting the fake's request count did not change — the only form of the claim an adapter

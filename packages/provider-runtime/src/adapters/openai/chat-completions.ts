@@ -404,7 +404,7 @@ export async function* chatTurn(
   let body: string;
   let captureExposed: boolean;
   try {
-    const descriptor = options.descriptors?.(req.model);
+    const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
     const reasoning = resolveReasoning(req, descriptor);
     assertWithinLimits(req, descriptor, [

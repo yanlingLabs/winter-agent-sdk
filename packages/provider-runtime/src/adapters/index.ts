@@ -12,12 +12,16 @@
 // says so in its own header); Lane B takes a `catalog` and derives the same lookup itself. Both
 // shapes are satisfied HERE, from one catalog, so no call site can satisfy one and forget the other.
 //
-// THE LOOKUP IS KEYED BY ADAPTER, NOT BY PROVIDER, and that is load-bearing: one adapter serves many
-// providers (`winter.local-openai` serves twelve local runners, `winter.openai-chat-completions`
-// serves deepseek and openrouter), and the frozen `DescriptorLookup` signature is
-// `(providerLocalModelId) => descriptor` with no provider argument. Searching the rows whose
-// provider points AT THIS ADAPTER is the only resolution that is both correct for a multi-provider
-// adapter and incapable of returning another adapter's row.
+// THE LOOKUP IS KEYED BY PROVIDER, WITHIN THE ADAPTER (dist-session fixes E4). One adapter serves
+// many providers (`winter.local-openai` twelve local runners, `winter.openai-chat-completions` 138), and
+// the SAME bare upstream id is served by several of them -- `deepseek-v4-flash` by deepseek, alibaba,
+// alibaba-cn and more, each row with its OWN evidence. This lookup used to be one index per ADAPTER,
+// bare id -> first provider in catalog order, so a deepseek turn was validated against alibaba-cn's
+// row and refused ("declares no reasoning effort vocabulary") before it was sent. The same model on
+// another provider is a different model (the user's qualified-tags ruling): every adapter now passes
+// the request's own `ctx.connection.providerId`, and a row is found in THAT provider's rows only --
+// exactly the rule the Anthropic and Google families' `findDescriptor(catalog, providerId, model)`
+// already followed.
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderAdapter } from "../types.ts";
 import { identityHeaderLookup } from "../identity.ts";
@@ -28,27 +32,62 @@ import { createResponsesAdapter, createChatCompletionsAdapter, createCodexOauthA
 import { createAzureOpenAIAdapter } from "./openai/azure.ts";
 import { createLocalOpenAIAdapter } from "./openai/local.ts";
 
-/** A per-adapter descriptor lookup: the provider-local model id (or key, or alias) a request named -> its catalog row. */
-export type AdapterDescriptorLookup = (providerLocalModelId: string) => WinterModelDescriptor | undefined;
+/**
+ * A per-adapter descriptor lookup: the model id (provider-local id, catalog key, or alias) a request
+ * named, UNDER the request's own provider -> that provider's catalog row.
+ *
+ * `providerId` is optional only so a one-argument lookup a host hand-writes stays assignable; every
+ * shipped adapter passes `ctx.connection.providerId`. See `descriptorLookupForAdapter` for what an
+ * absent provider can and cannot resolve.
+ */
+export type AdapterDescriptorLookup = (providerLocalModelId: string, providerId?: string) => WinterModelDescriptor | undefined;
 
 /**
- * Every row served by ONE adapter id, indexed by the three spellings a request may use.
+ * Every row served by ONE adapter id, indexed PER PROVIDER by the three spellings a request may use.
  *
- * Built once per registration rather than scanned per request: `streamTurn` calls the lookup on
- * every turn, and a linear scan of the whole catalog per turn is a cost with no reason.
+ * With `providerId`: that provider's rows only -- a provider this adapter does not serve, or a key
+ * naming another provider, finds nothing. That is what makes the lookup incapable of returning another
+ * vendor's evidence for a bare id they happen to share.
+ *
+ * Without `providerId` (a direct caller that has none): a catalog KEY still resolves, because a key
+ * names its provider; a bare id or alias resolves only when this adapter serves exactly ONE provider,
+ * where it cannot be ambiguous. Across several providers a bare id resolves to NONE of them -- never to
+ * whichever sorts first.
+ *
+ * Built once per registration rather than scanned per request: `streamTurn` calls the lookup on every
+ * turn, and a linear scan of the whole catalog per turn is a cost with no reason.
  */
 export function descriptorLookupForAdapter(catalog: WinterCatalog, adapterId: string): AdapterDescriptorLookup {
   const providers = new Set(catalog.providers.filter((p) => p.adapterId === adapterId).map((p) => p.id));
-  const index = new Map<string, WinterModelDescriptor>();
-  for (const model of catalog.models) {
-    if (!providers.has(model.providerId)) continue;
-    // `key` first and never overwritten by a later row's alias: a key is globally unique, an alias
-    // is not, so an alias collision must never shadow a real row.
+  const byKey = new Map<string, WinterModelDescriptor>();
+  const byProvider = new Map<string, Map<string, WinterModelDescriptor>>();
+  const rows = catalog.models.filter((model) => providers.has(model.providerId));
+  const indexFor = (providerId: string): Map<string, WinterModelDescriptor> => {
+    let index = byProvider.get(providerId);
+    if (index === undefined) {
+      index = new Map<string, WinterModelDescriptor>();
+      byProvider.set(providerId, index);
+    }
+    return index;
+  };
+  // TWO PASSES, so no row's ALIAS can shadow another row's key or upstream id: a key is globally
+  // unique and an upstream id is unique within its provider, while an alias is neither.
+  for (const model of rows) {
+    byKey.set(model.key, model);
+    const index = indexFor(model.providerId);
     if (!index.has(model.key)) index.set(model.key, model);
     if (!index.has(model.upstreamId)) index.set(model.upstreamId, model);
+  }
+  for (const model of rows) {
+    const index = indexFor(model.providerId);
     for (const alias of model.aliases) if (!index.has(alias)) index.set(alias, model);
   }
-  return (id) => index.get(id);
+  const soleProvider = providers.size === 1 ? [...providers][0] : undefined;
+  return (id, providerId) => {
+    if (providerId !== undefined) return byProvider.get(providerId)?.get(id);
+    if (soleProvider !== undefined) return byProvider.get(soleProvider)?.get(id);
+    return byKey.get(id);
+  };
 }
 
 /** The adapter ids this build ships, in the order they are registered. Exported so a test can assert the catalog names no adapter this list omits. */

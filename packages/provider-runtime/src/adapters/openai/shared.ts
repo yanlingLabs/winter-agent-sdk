@@ -61,8 +61,16 @@ import type {
 /** How this surface carries a key: OpenAI-style `Authorization: Bearer`, or Azure's own `api-key` header. */
 export type AuthStyle = "bearer" | "azure-api-key";
 
-/** Looks a provider-local model id up in the catalog. See decision 2 in this file's header. */
-export type DescriptorLookup = (providerLocalModelId: string) => WinterModelDescriptor | undefined;
+/**
+ * Looks a provider-local model id up in the catalog, UNDER the request's own provider. See decision 2
+ * in this file's header.
+ *
+ * Every adapter here passes `ctx.connection.providerId` as `providerId` (dist-session fixes E4): one
+ * adapter serves many providers, the same bare upstream id is served by several of them with different
+ * evidence, and a lookup that ignored the provider validated a deepseek turn against alibaba-cn's row.
+ * A one-argument lookup a host hand-wrote is still assignable, and simply ignores the provider.
+ */
+export type DescriptorLookup = (providerLocalModelId: string, providerId?: string) => WinterModelDescriptor | undefined;
 
 export interface OpenAiAdapterOptions {
   /**

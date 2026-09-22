@@ -493,7 +493,7 @@ export interface ResponsesTurnPlan {
 export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: AbortSignal | undefined): AsyncIterable<ProviderEvent> {
   const queue = plan.queue ?? new EventQueue();
   const policy = makeRetryPolicy(plan.options);
-  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(plan.options.descriptors?.(plan.model)));
+  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(plan.options.descriptors?.(plan.model, plan.ctx.connection.providerId)));
   let response: Response;
   try {
     response = yield* pumpEvents(
@@ -618,7 +618,7 @@ export async function* responsesTurn(
 ): AsyncIterable<ProviderEvent> {
   let plan: ResponsesTurnPlan;
   try {
-    const descriptor = options.descriptors?.(req.model);
+    const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
     const reasoning = resolveReasoning(req, descriptor);
     const parametersInPlay = [
