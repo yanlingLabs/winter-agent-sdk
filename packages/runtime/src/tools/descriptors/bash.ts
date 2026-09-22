@@ -23,9 +23,12 @@
 //     sentence names a `/sandbox` command Winter does not have;
 //   - the "Network egress goes through a filtering proxy ... `<sandbox_violations>` block" bullet is
 //     DROPPED: there is no proxy and no violations block.
-// The override bullet is the pinned binary's "This goes through the permission gate (...)": whatever
-// answers it -- a prompt, a hook, the host's `canUseTool`, or `dontAsk`'s outright denial -- the
-// override is always put to the permission gate (RULING P3-J makes it mandatory interaction).
+// The override bullet is the pinned binary's "This goes through the permission gate", WITHOUT its
+// parenthetical "(a user prompt, or the auto-mode classifier when auto mode is active)": the override is
+// MANDATORY INTERACTION here (RULING P3-J), so in auto mode it goes to the PermissionRequest hook and
+// the host's `canUseTool`, never to the classifier (`permissions/evaluator.ts`), and `dontAsk` denies it
+// outright. "Goes through the permission gate" is true of every one of those answers; the clause
+// naming a classifier is not.
 //
 // PER SESSION, like WebFetch's lean/full choice: a descriptor is a process-wide singleton and cannot see
 // a session's sandbox, so the static registration carries the base description and `engine.ts`'s
@@ -63,7 +66,7 @@ export function bashSandboxSection(facts: BashSandboxFacts): string {
     "Evidence of sandbox-caused failures includes:",
     ['"Operation not permitted" errors for file/network operations', "Access denied to specific paths outside allowed directories", "Network connection failures to non-whitelisted hosts", "Unix socket connection errors"],
     "When you see evidence of sandbox-caused failure:",
-    ["Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)", "Briefly explain what sandbox restriction likely caused the failure.", "This goes through the permission gate (a user prompt, or the auto-mode classifier when auto mode is active)"],
+    ["Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)", "Briefly explain what sandbox restriction likely caused the failure.", "This goes through the permission gate"],
     "Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.",
     "Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.",
     "For temporary files, always use the `$TMPDIR` environment variable. TMPDIR is automatically set to the correct sandbox-writable directory in sandbox mode. Do NOT use `/tmp` directly - use `$TMPDIR` instead.",

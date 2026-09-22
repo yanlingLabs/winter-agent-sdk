@@ -32,7 +32,7 @@ const CLAUDE_OVERRIDE_BULLETS = [
   " - When you see evidence of sandbox-caused failure:",
   "  - Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)",
   "  - Briefly explain what sandbox restriction likely caused the failure.",
-  "  - This goes through the permission gate (a user prompt, or the auto-mode classifier when auto mode is active)",
+  "  - This goes through the permission gate",
   " - Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.",
   " - Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.",
   " - For temporary files, always use the `$TMPDIR` environment variable. TMPDIR is automatically set to the correct sandbox-writable directory in sandbox mode. Do NOT use `/tmp` directly - use `$TMPDIR` instead.",
