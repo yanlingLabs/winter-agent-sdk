@@ -139,6 +139,45 @@ describe("the model's OWN reasoning is replayed natively, never decorated -- Ant
   });
 });
 
+/**
+ * EVERY Anthropic-dialect row the registry gives no domain -- WITH OR WITHOUT a reasoning block. The
+ * self path does not read the reasoning flag (claude replays a model's own thinking whatever a catalog
+ * says about it), so a row with no reasoning block at all -- `zai-anthropic`'s GLM rows,
+ * `minimax-anthropic`, the plain `anthropic`/`console` rows -- takes it too: if its endpoint does emit
+ * thinking, that thinking used to leak exactly like deepseek-anthropic's.
+ */
+function anthropicDialectRowsWithoutDomain(): WinterModelDescriptor[] {
+  const catalog = loadCatalog();
+  const adapterOf = new Map(catalog.providers.map((p) => [p.id, p.adapterId]));
+  const blocked = new Set(catalog.providers.filter((p) => p.risk.class === "blocked").map((p) => p.id));
+  return catalog.models.filter(
+    (m) => adapterOf.get(m.providerId) === "winter.anthropic-messages" && !blocked.has(m.providerId) && m.status !== "blocked" && (m.reasoning === undefined || m.reasoning.continuation === "none"),
+  );
+}
+
+describe("every domain-less Anthropic-dialect row replays its own turn natively -- reasoning block or not", () => {
+  const rows = anthropicDialectRowsWithoutDomain();
+
+  test("the probe covers the rows with NO reasoning block too, including minimax-anthropic and zai-anthropic", () => {
+    const providers = new Set(rows.map((m) => m.providerId));
+    expect(providers.has("minimax-anthropic")).toBe(true);
+    expect(providers.has("zai-anthropic")).toBe(true);
+    expect(rows.some((m) => m.reasoning === undefined)).toBe(true);
+  });
+
+  test.each(rows.map((m) => [m.key] as const))("%s: its own thinking block rides back in-dialect, no tag", (modelKey) => {
+    const registry = realRegistry();
+    const { target, origin } = bridgeTarget(registry, modelKey);
+    expect(target.continuationDomain).toBeUndefined();
+    const { messages, report } = createHistoryRenderer(registry).renderWithReport(anthropicTurn(origin), chainOf({ a1: { origin } }), target);
+    expect(report.decorations).toHaveLength(0);
+    expect(report.strippedInDialectBlocks).toBe(0);
+    const assistant = toWireMessages(messages).find((m) => m.role === "assistant")!;
+    expect(assistant.content[0]).toEqual({ type: "thinking", thinking: OWN_THINKING, signature: OWN_SIGNATURE });
+    expect(JSON.stringify(toWireMessages(messages))).not.toContain(RECOVERED_REASONING_TAG);
+  });
+});
+
 describe("the model's OWN exposed reasoning is never decorated -- OpenAI-chat rows with no continuation domain", () => {
   const rows = reasoningRowsWithoutDomain("winter.openai-chat-completions");
 
