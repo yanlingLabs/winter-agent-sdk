@@ -4,9 +4,9 @@
 // THE SANDBOX SECTION (dist-session fixes E3, 2026-09-22). A model that is not told its shell has no
 // network tells the user `curl` works and then watches every first network attempt fail inside the
 // sandbox. claude's Bash tool carries a "command sandbox" section for exactly this; the strings below
-// are COPIED VERBATIM from the pinned claude 0.3.250 binary (its `## <Bash> command sandbox` builder)
-// per the project owner's ruling that claude INTERFACE strings may ship verbatim -- only this comment
-// block and the identifiers are Winter's own. Three things claude says are NOT carried, because each
+// are COPIED VERBATIM from claude (the pinned 0.3.250 binary's `## <Bash> command sandbox` builder,
+// except the one line named below) per the project owner's ruling that claude INTERFACE strings may
+// ship verbatim -- only this comment block and the identifiers are Winter's own. Three things claude says are NOT carried, because each
 // is false here and saying it would add behaviour claude's text promises and Winter does not have:
 //   - "Be sure to mention that the user can use the `/sandbox` command to manage restrictions." --
 //     Winter has no `/sandbox` command;
@@ -17,8 +17,12 @@
 //     mode is active)" -- Winter makes the override MANDATORY INTERACTION (RULING P3-J), never
 //     classifier-approved, so claude's earlier wording of the same bullet, "This will prompt the user
 //     for permission", is the one that is true.
-// The network line is claude's own `Network: {"allowedHosts":[...]}` rendering with an empty list --
-// the shape claude gives a sandbox whose host allowlist admits nothing, which is Winter's only posture.
+// ONE LINE IS NOT FROM THE PINNED BINARY, deliberately: the restrictions line `Network:
+// {"allowedHosts":[]}`. It is claude's own `networkConfig` rendering from its Bash prompt SOURCE (an
+// `allowedHosts` list, here empty) -- the pinned 0.3.250 builder renders only `deniedHosts` and
+// `allowUnixSockets` and instead tells the model "attempt requests and read the error" through the
+// filtering proxy, which is false here. For Winter's deny-all Seatbelt posture the empty allowlist is
+// the only claude-authored string that states the fact the model was missing: nothing is reachable.
 //
 // PER SESSION, like WebFetch's lean/full choice: a descriptor is a process-wide singleton and cannot see
 // a session's sandbox, so the static registration carries the base description and `engine.ts`'s

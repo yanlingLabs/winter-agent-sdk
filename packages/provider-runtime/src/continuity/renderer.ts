@@ -256,11 +256,12 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         // stripped and its own reasoning came back to it as a `<recovered_reasoning>` TEXT block in
         // its own assistant turn -- which the model then imitated in its visible reply. claude
         // replays its own thinking to the model that produced it, natively, and never quotes a
-        // model's reasoning back to it; so does this. Whatever an adapter captured for its own model
-        // is replayable to that model by construction (each adapter captures only what it can send
-        // back: Responses keeps only items with `encrypted_content`, chat keeps `reasoning_content`
-        // only for a full-exposed row), and in-dialect blocks ride with the signature the endpoint
-        // sent, exactly as claude sends them back.
+        // model's reasoning back to it; so does this. What rides back is only what the adapter chose
+        // to capture for its own model -- Responses keeps only reasoning items carrying
+        // `encrypted_content`, the chat adapter keeps `reasoning_content` only for a `full-exposed` row
+        // (no shipped row is both full-exposed and domain-less, so no chat row gains a replay here) --
+        // and in-dialect blocks ride with the signature the endpoint sent (`""` when it sent none),
+        // exactly as claude sends them back to the same endpoint.
         if (message.nativeState !== undefined) report.replayedNatively++;
         if (message.decoration === undefined) return message;
         const { decoration: _stale, ...kept } = message;

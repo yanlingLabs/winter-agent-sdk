@@ -56,9 +56,12 @@ describe("the real catalog: same-model native replay survives, and nothing claim
       const resolved = registry.resolve({ model: modelKey });
       if (resolved instanceof Error) throw resolved;
 
-      // EXACTLY what `adapterAsProvider` builds for `target` (bridge.ts): the adapter's family, the
-      // registry's own continuation domain, and the adapter's readable state. Using anything else
-      // here would prove something about a target the product never constructs.
+      // What `adapterAsProvider` builds for `target` (bridge.ts): the adapter's family, the registry's
+      // own continuation domain, and the adapter's readable state. The bridge ALSO passes the target's
+      // own `providerId`/`modelKey`, and they are OMITTED here DELIBERATELY: with them, `sameModel`
+      // would short-circuit this same-model render and the probe would stop proving what it exists to
+      // prove -- that the certification gate itself keeps the row's own domain id, so native replay
+      // survives on the DOMAIN path (`self-reasoning-real-catalog.test.ts` covers the identity path).
       const capabilities = resolved.descriptor !== undefined ? resolved.adapter.capabilities(resolved.descriptor) : undefined;
       const target: HistoryTarget = {
         family: resolved.adapter.family,
