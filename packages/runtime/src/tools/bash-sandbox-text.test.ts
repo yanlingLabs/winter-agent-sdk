@@ -5,10 +5,10 @@
 // every first network attempt (gh, curl) failed inside the sandbox before a `dangerouslyDisableSandbox`
 // retry -- the Bash tool's description said nothing about the sandbox, its network posture or the
 // override. claude's Bash tool carries a "command sandbox" section for exactly this; these tests pin
-// that Winter now advertises claude's own text (the pinned 0.3.250 binary's strings, verbatim, plus the
-// `Network: {"allowedHosts":[]}` line from claude's prompt SOURCE -- see the descriptor's header for why
-// that one line is not the binary's) for a sandboxed session, rendered from the session's REAL sandbox
-// posture, and nothing that is false for Winter.
+// that Winter now advertises claude's own text (the pinned 0.3.250 binary's strings plus the
+// `Network: {"allowedHosts":[]}` line from claude's prompt SOURCE, with the deviations the descriptor's
+// header lists) for a sandboxed session, rendered from the session's REAL sandbox posture, and nothing
+// that is false for Winter.
 import { describe, expect, test } from "bun:test";
 import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, type Provider, type ProviderRequest } from "../engine.ts";
@@ -32,7 +32,7 @@ const CLAUDE_OVERRIDE_BULLETS = [
   " - When you see evidence of sandbox-caused failure:",
   "  - Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)",
   "  - Briefly explain what sandbox restriction likely caused the failure.",
-  "  - This will prompt the user for permission",
+  "  - This goes through the permission gate (a user prompt, or the auto-mode classifier when auto mode is active)",
   " - Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.",
   " - Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.",
   " - For temporary files, always use the `$TMPDIR` environment variable. TMPDIR is automatically set to the correct sandbox-writable directory in sandbox mode. Do NOT use `/tmp` directly - use `$TMPDIR` instead.",

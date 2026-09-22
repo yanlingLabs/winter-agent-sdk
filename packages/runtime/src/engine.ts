@@ -6213,15 +6213,23 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     backgroundByDefault: backgroundByDefault,
   });
 
-  /** `undefined` when this session's Bash commands do not run sandboxed at all -- the section is then absent, never a false claim. */
+  /**
+   * The facts the Bash sandbox section is rendered from, or `undefined` for no section -- in exactly
+   * the two cases where "your command will be run in a sandbox" would be false:
+   *   - the session's sandbox is OFF (`sandbox.enabled: false`): commands run unsandboxed;
+   *   - this host has no `sandbox-exec`: a command that asks for no override is REFUSED with a typed
+   *     error, never run unsandboxed (`tools/impl/bash.ts`'s posture check, `sandbox/spawn.ts`'s
+   *     `SandboxUnavailableError`) -- that refusal tells the model what happened; the section would not.
+   */
   const bashSandboxFacts = (): BashSandboxFacts | undefined => {
     if (sandboxSettingsForSession.enabled === false || !isSandboxAvailable()) return undefined;
     let networkAllowed = false;
     try {
       networkAllowed = resolveNetworkPosture(sandboxSettingsForSession.network);
     } catch {
-      // A domain-list config the profile refuses (`SandboxConfigError`): the executor refuses every
-      // sandboxed call, so nothing is reachable -- the denied posture is the true statement.
+      // A domain-list network config (`SandboxConfigError`): every sandboxed command is REFUSED with
+      // that typed error before it starts -- again never run unsandboxed -- so no host is reachable
+      // from inside the sandbox and the denied posture is the true statement.
       networkAllowed = false;
     }
     return { networkAllowed };
@@ -6251,8 +6259,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // in a sandbox, what that sandbox lets through, and when to ask for `dangerouslyDisableSandbox`;
     // a model never told that its shell has no network promises the user `curl` and then fails every
     // first network call. Rendered from the SAME facts the executor enforces: no section when the
-    // session's sandbox is off or this host cannot sandbox (claude: none when sandboxing is disabled),
-    // and the network line from the posture the Seatbelt profile is built with.
+    // session's sandbox is off or this host cannot sandbox (see `bashSandboxFacts` -- on such a host a
+    // sandboxed command is refused, not run), and the network line from the posture the Seatbelt
+    // profile is built with.
     if (descriptor.canonicalName === BASH_CANONICAL_NAME) {
       return { name: descriptor.advertisedName, description: bashDescriptionFor(bashSandboxFacts()), inputSchema: descriptor.inputSchema as Record<string, unknown> };
     }
