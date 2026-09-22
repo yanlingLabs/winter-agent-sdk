@@ -9,6 +9,7 @@
 // THIN, by the same convention every other impl file follows: resolution, gating and the attachment
 // payload all live under `skills/`, unit-tested with no registry involvement. This file is the
 // ctx-adapter plus the refusal messages.
+import { dirname } from "node:path";
 import "../descriptors/skill.ts"; // self-sufficiency: the stub must be registered before replaceExecutor runs.
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { invokedSkillsAttachment, type InvokedSkillEntry } from "../../skills/attachment.ts";
@@ -102,7 +103,15 @@ export const skillExecutor: ToolExecutor = {
       // throws must not turn a successful skill load into a failed tool call.
     }
 
-    return { output: loaded.body };
+    // claude's own header, verbatim (claude-code source: `skills/loadSkillsDir.ts`'s
+    // `getPromptForCommand`, the plugin loader and `SkillTool.ts` for remote skills all prefix
+    // `Base directory for this skill: ${baseDir}\n\n` to the body). Without it a skill that points at
+    // its own supporting files ("see root-cause-tracing.md in this directory") leaves the model
+    // guessing where "this directory" is. The directory is the one the SKILL.md was READ from --
+    // `dirname` of the path discovery recorded, never realpath'd, exactly as claude's `baseDir` is
+    // `join(basePath, entry.name)`: a host that hands skills over through a symlinked view gets the
+    // view's path, which is the path the model can use.
+    return { output: `Base directory for this skill: ${dirname(loaded.path)}\n\n${loaded.body}` };
   },
 };
 

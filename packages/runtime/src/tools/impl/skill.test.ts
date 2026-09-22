@@ -3,7 +3,7 @@
 // `{ skill, args? }` in; the RESOLVED SKILL BODY out as the tool result, plus the Winter-defined
 // `invoked_skills` attachment payload. One tool for every skill -- never one tool per skill.
 import { describe, test, expect, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillIndex, PROJECT_PLUGIN_NAME } from "../../skills/store.ts";
@@ -68,17 +68,50 @@ function fixture(opts?: { skills?: string[] | "all"; overrides?: Record<string, 
   return { sessionId, attachments, repo };
 }
 
-describe("skillExecutor: the happy path", () => {
-  test("the RESOLVED BODY is the tool result -- not a pointer, not a summary", async () => {
-    const { sessionId } = fixture();
+describe("skillExecutor: claude's base-directory line", () => {
+  // claude prefixes every loaded skill's content with `Base directory for this skill: <dir>\n\n`
+  // (claude-code source: skills/loadSkillsDir.ts's getPromptForCommand, utils/plugins/loadPluginCommands.ts
+  // for plugin skills, tools/SkillTool/SkillTool.ts for remote ones), where <dir> is the directory
+  // the SKILL.md was read from -- `join(basePath, entry.name)`, never realpath'd. Without it a skill
+  // that says "see root-cause-tracing.md in this directory" leaves the model guessing the path.
+  test("the result is `Base directory for this skill: <skill dir>`, a blank line, then the body", async () => {
+    const { sessionId, repo } = fixture();
     const result = await skillExecutor.execute({ skill: "review" }, ctx(sessionId));
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe("INSTRUCTIONS FOR REVIEW");
+    expect(result.output).toBe(`Base directory for this skill: ${join(repo, ".winter", "skills", "review")}\n\nINSTRUCTIONS FOR REVIEW`);
+  });
+
+  test("the directory is the path the skill was LOADED from: a symlinked view is named as the link, not resolved", async () => {
+    const realRepo = mkTemp("winter-skilldir-real-");
+    const dir = join(realRepo, ".winter", "skills", "traced");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: traced\ndescription: d\n---\n\nSee root-cause-tracing.md in this directory.", "utf8");
+    writeFileSync(join(dir, "root-cause-tracing.md"), "supporting file", "utf8");
+    const linkParent = mkTemp("winter-skilldir-link-");
+    const linkedRepo = join(linkParent, "view");
+    symlinkSync(realRepo, linkedRepo);
+    const sessionId = `sess-${Math.random().toString(36).slice(2)}`;
+    sessions.push(sessionId);
+    registerSkillSessionRuntime(sessionId, { index: SkillIndex.build({ cwd: linkedRepo, winterHome: mkTemp("winter-skilldir-home-") }) });
+    const result = await skillExecutor.execute({ skill: "traced" }, ctx(sessionId));
+    expect(result.output).toBe(`Base directory for this skill: ${join(linkedRepo, ".winter", "skills", "traced")}\n\nSee root-cause-tracing.md in this directory.`);
+  });
+});
+
+describe("skillExecutor: the happy path", () => {
+  test("the RESOLVED BODY is the tool result -- not a pointer, not a summary", async () => {
+    const { sessionId, repo } = fixture();
+    const result = await skillExecutor.execute({ skill: "review" }, ctx(sessionId));
+    expect(result.isError).toBeUndefined();
+    // After claude's base-directory line (see the describe block above), the body itself, whole.
+    expect(result.output).toBe(`Base directory for this skill: ${join(repo, ".winter", "skills", "review")}\n\nINSTRUCTIONS FOR REVIEW`);
   });
 
   test("an alias resolves to the same body", async () => {
-    const { sessionId } = fixture();
-    expect((await skillExecutor.execute({ skill: `${PROJECT_PLUGIN_NAME}:review` }, ctx(sessionId))).output).toBe("INSTRUCTIONS FOR REVIEW");
+    const { sessionId, repo } = fixture();
+    expect((await skillExecutor.execute({ skill: `${PROJECT_PLUGIN_NAME}:review` }, ctx(sessionId))).output).toBe(
+      `Base directory for this skill: ${join(repo, ".winter", "skills", "review")}\n\nINSTRUCTIONS FOR REVIEW`,
+    );
   });
 
   test("the `invoked_skills` attachment is emitted with the resolved identity, source, path and args", async () => {
@@ -113,7 +146,7 @@ describe("skillExecutor: the happy path", () => {
     const seen: InvokedSkillsAttachment[] = [];
     registerSkillSessionRuntime(sessionId, { index: SkillIndex.build({ cwd: repo, winterHome }), onInvoked: (a) => seen.push(a) });
     const result = await skillExecutor.execute({ skill: "tmpl", args: "src/main.ts" }, ctx(sessionId));
-    expect(result.output).toBe("Review [$ARGUMENTS] now.");
+    expect(result.output).toBe(`Base directory for this skill: ${dir}\n\nReview [$ARGUMENTS] now.`);
     expect(seen[0]!.skills[0]!.args).toBe("src/main.ts");
   });
 
