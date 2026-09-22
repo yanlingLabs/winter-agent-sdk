@@ -1144,7 +1144,7 @@ export interface EngineOptions {
    * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
    * knows one (production wiring answers from the catalog). Absent => the bare-id line.
    */
-  describeModel?: (model: string) => { displayName?: string } | undefined;
+  describeModel?: (model: string, providerId?: string) => { displayName?: string } | undefined;
   /** SDK 0.0.16: the engine's clock for the `currentDate` entry and the `date_change` fold. Tests only; absent => `new Date()`. */
   now?: () => Date;
   /**
@@ -5908,7 +5908,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   const promptInput = (): SystemPromptInput => {
     const env = engineEnv ?? process.env;
-    const modelDisplayName = currentModel !== undefined ? describeModel?.(currentModel)?.displayName : undefined;
+    // E4: under the session's OWN provider -- a bare `currentModel` is served by many providers.
+    const modelDisplayName = currentModel !== undefined ? describeModel?.(currentModel, currentProviderIdentity?.providerId)?.displayName : undefined;
     return {
       config,
       cwd: config.cwd,

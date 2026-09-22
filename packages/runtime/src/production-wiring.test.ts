@@ -163,7 +163,9 @@ describe("T8 production wiring: the guards it carries", () => {
     try {
       const row = loadCatalog().models.find((m) => m.displayName.length > 0 && m.aliases.length > 0)!;
       expect(wiring.engineOptions.describeModel(row.key)).toEqual({ displayName: row.displayName });
-      expect(wiring.engineOptions.describeModel(row.upstreamId)?.displayName).toBeDefined();
+      // A provider-local id resolves UNDER ITS PROVIDER (E4): this row's id is also `console`'s, so
+      // without a provider it would be ambiguous and name neither (`describe-model-provider.test.ts`).
+      expect(wiring.engineOptions.describeModel(row.upstreamId, row.providerId)?.displayName).toBe(row.displayName);
       expect(wiring.engineOptions.describeModel("winter-test/echo")).toBeUndefined();
       expect(wiring.childFactoryOptions.describeModel).toBe(wiring.engineOptions.describeModel);
     } finally {

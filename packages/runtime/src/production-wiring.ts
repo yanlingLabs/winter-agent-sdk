@@ -79,7 +79,7 @@ import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence, t
 import { buildModelFamilyListing } from "./provider/family-listing.ts";
 import { validateModelSlots, type ModelSlotsLookup } from "@yanlinglabs/winter-agent-sdk";
 import type { ActiveSlotSet, ModelFamilyListing, ModelSlotSetting } from "@yanlinglabs/winter-agent-sdk";
-import { rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
+import { rowsForCanonicalId, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 
 /**
  * The throwaway slot name the listing's `resolvesTo` probe resolves under.
@@ -508,6 +508,34 @@ export interface ProductionWiring {
  * resolver. Reordering it silently produces an index with no plugin skills, or a resolver whose
  * `/name` set disagrees with the model's own listing.
  */
+/**
+ * The display name the `# Environment` model line uses for `model`, read from the catalog UNDER THE
+ * SESSION'S OWN PROVIDER (dist-session fixes E4).
+ *
+ * A host commonly spawns with the provider-local id plus `Options.provider` (the Winter daemon does),
+ * and one bare id is served by many providers -- `deepseek-v4-flash` by twelve, each with its own row.
+ * A first-match search over the whole catalog named the model by whichever provider sorted first.
+ *
+ *   - with `providerId`: that provider's rows only (key, upstream id or alias) -- so novita's
+ *     provider-local `deepseek/deepseek-v4-flash` names novita's row, not deepseek's KEY;
+ *   - without one: a catalog KEY (globally unique) resolves, and a bare id or alias only when exactly
+ *     ONE row answers to it. Ambiguous -> nothing, and the line keeps the bare id.
+ */
+export function describeCatalogModel(catalog: WinterCatalog, model: string, providerId?: string): { displayName?: string } | undefined {
+  const matches = (m: WinterCatalog["models"][number]): boolean => m.key === model || m.upstreamId === model || m.aliases.includes(model);
+  let row: WinterCatalog["models"][number] | undefined;
+  if (providerId !== undefined) {
+    row = catalog.models.find((m) => m.providerId === providerId && matches(m));
+  } else {
+    row = catalog.models.find((m) => m.key === model);
+    if (row === undefined) {
+      const bare = catalog.models.filter(matches);
+      row = bare.length === 1 ? bare[0] : undefined;
+    }
+  }
+  return row !== undefined && row.displayName.length > 0 ? { displayName: row.displayName } : undefined;
+}
+
 export async function buildProductionWiring(opts: ProductionWiringOptions): Promise<ProductionWiring> {
   const { config, env } = opts;
   // (0) THE BRAND (P7a, D19). THE ONE FALLBACK IN THE RUNTIME, and it is here rather than at each
@@ -911,13 +939,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
   const slotCatalog = providerWiring.catalog;
 
-  // SDK 0.0.16: the `# Environment` model line names the model the way the catalog does. A key, a
-  // provider-local id or an alias all resolve; an unlisted model (the reserved test namespace
-  // included) keeps the bare-id line.
-  const describeModel = (model: string): { displayName?: string } | undefined => {
-    const row = slotCatalog.models.find((m) => m.key === model || m.upstreamId === model || m.aliases.includes(model));
-    return row !== undefined && row.displayName.length > 0 ? { displayName: row.displayName } : undefined;
-  };
+  // SDK 0.0.16: the `# Environment` model line names the model the way the catalog does -- under the
+  // session's OWN provider (E4, see `describeCatalogModel`). An unlisted model (the reserved test
+  // namespace included) keeps the bare-id line.
+  const describeModel = (model: string, providerId?: string): { displayName?: string } | undefined => describeCatalogModel(slotCatalog, model, providerId);
 
   /**
    * WHETHER THIS SESSION HAS A SLOT SURFACE AT ALL.
