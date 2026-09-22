@@ -36,30 +36,26 @@ import { createLocalOpenAIAdapter } from "./openai/local.ts";
  * A per-adapter descriptor lookup: the model id (provider-local id, catalog key, or alias) a request
  * named, UNDER the request's own provider -> that provider's catalog row.
  *
- * `providerId` is optional only so a one-argument lookup a host hand-writes stays assignable; every
- * shipped adapter passes `ctx.connection.providerId`. See `descriptorLookupForAdapter` for what an
- * absent provider can and cannot resolve.
+ * `providerId` is REQUIRED: there is no provider-less spelling, because a provider-less lookup is the
+ * bare-id resolution the qualified-tags ruling forbids (a string can be one provider's provider-local
+ * id AND another provider's catalog key -- novita's `deepseek/deepseek-v4-flash` is deepseek's key).
+ * Every shipped adapter passes `ctx.connection.providerId`. A host's hand-written one-argument lookup
+ * is still assignable (TypeScript admits fewer parameters) and simply ignores the provider.
  */
-export type AdapterDescriptorLookup = (providerLocalModelId: string, providerId?: string) => WinterModelDescriptor | undefined;
+export type AdapterDescriptorLookup = (providerLocalModelId: string, providerId: string) => WinterModelDescriptor | undefined;
 
 /**
  * Every row served by ONE adapter id, indexed PER PROVIDER by the three spellings a request may use.
  *
- * With `providerId`: that provider's rows only -- a provider this adapter does not serve, or a key
- * naming another provider, finds nothing. That is what makes the lookup incapable of returning another
- * vendor's evidence for a bare id they happen to share.
- *
- * Without `providerId` (a direct caller that has none): a catalog KEY still resolves, because a key
- * names its provider; a bare id or alias resolves only when this adapter serves exactly ONE provider,
- * where it cannot be ambiguous. Across several providers a bare id resolves to NONE of them -- never to
- * whichever sorts first.
+ * That provider's rows only -- a provider this adapter does not serve, or a key naming another
+ * provider, finds nothing. That is what makes the lookup incapable of returning another vendor's
+ * evidence for a bare id they happen to share.
  *
  * Built once per registration rather than scanned per request: `streamTurn` calls the lookup on every
  * turn, and a linear scan of the whole catalog per turn is a cost with no reason.
  */
 export function descriptorLookupForAdapter(catalog: WinterCatalog, adapterId: string): AdapterDescriptorLookup {
   const providers = new Set(catalog.providers.filter((p) => p.adapterId === adapterId).map((p) => p.id));
-  const byKey = new Map<string, WinterModelDescriptor>();
   const byProvider = new Map<string, Map<string, WinterModelDescriptor>>();
   const rows = catalog.models.filter((model) => providers.has(model.providerId));
   const indexFor = (providerId: string): Map<string, WinterModelDescriptor> => {
@@ -73,7 +69,6 @@ export function descriptorLookupForAdapter(catalog: WinterCatalog, adapterId: st
   // TWO PASSES, so no row's ALIAS can shadow another row's key or upstream id: a key is globally
   // unique and an upstream id is unique within its provider, while an alias is neither.
   for (const model of rows) {
-    byKey.set(model.key, model);
     const index = indexFor(model.providerId);
     if (!index.has(model.key)) index.set(model.key, model);
     if (!index.has(model.upstreamId)) index.set(model.upstreamId, model);
@@ -82,12 +77,7 @@ export function descriptorLookupForAdapter(catalog: WinterCatalog, adapterId: st
     const index = indexFor(model.providerId);
     for (const alias of model.aliases) if (!index.has(alias)) index.set(alias, model);
   }
-  const soleProvider = providers.size === 1 ? [...providers][0] : undefined;
-  return (id, providerId) => {
-    if (providerId !== undefined) return byProvider.get(providerId)?.get(id);
-    if (soleProvider !== undefined) return byProvider.get(soleProvider)?.get(id);
-    return byKey.get(id);
-  };
+  return (id, providerId) => byProvider.get(providerId)?.get(id);
 }
 
 /** The adapter ids this build ships, in the order they are registered. Exported so a test can assert the catalog names no adapter this list omits. */

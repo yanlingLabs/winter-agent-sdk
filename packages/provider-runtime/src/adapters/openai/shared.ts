@@ -68,9 +68,10 @@ export type AuthStyle = "bearer" | "azure-api-key";
  * Every adapter here passes `ctx.connection.providerId` as `providerId` (dist-session fixes E4): one
  * adapter serves many providers, the same bare upstream id is served by several of them with different
  * evidence, and a lookup that ignored the provider validated a deepseek turn against alibaba-cn's row.
- * A one-argument lookup a host hand-wrote is still assignable, and simply ignores the provider.
+ * `providerId` is REQUIRED (no provider-less lookup exists to get wrong); a one-argument lookup a host
+ * hand-wrote is still assignable, and simply ignores the provider.
  */
-export type DescriptorLookup = (providerLocalModelId: string, providerId?: string) => WinterModelDescriptor | undefined;
+export type DescriptorLookup = (providerLocalModelId: string, providerId: string) => WinterModelDescriptor | undefined;
 
 export interface OpenAiAdapterOptions {
   /**

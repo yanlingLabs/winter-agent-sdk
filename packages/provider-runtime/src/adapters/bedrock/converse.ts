@@ -109,8 +109,8 @@ function snapNumericEffort(value: number, verified: readonly string[]): string |
 }
 
 /** Resolves a provider-local model id to its catalog row, or `undefined` for an id the catalog does not list. */
-/** The model id a request named, UNDER the request's own provider (`ctx.connection.providerId`, which this adapter passes; dist-session fixes E4). Optional so a one-argument lookup stays assignable. */
-export type DescriptorLookup = (modelId: string, providerId?: string) => WinterModelDescriptor | undefined;
+/** The model id a request named, UNDER the request's own provider (`ctx.connection.providerId`, which this adapter passes; dist-session fixes E4). Required; a one-argument lookup is still assignable and ignores it. */
+export type DescriptorLookup = (modelId: string, providerId: string) => WinterModelDescriptor | undefined;
 
 export interface BedrockAdapterOptions {
   /**

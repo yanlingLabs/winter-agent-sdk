@@ -48,16 +48,16 @@ describe("descriptorLookupForAdapter: keyed by the request's own provider", () =
     expect(lookup("alibaba-cn/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 
-  test("with no provider named, a bare id served by several providers resolves to NONE of them; a globally unique key still resolves", () => {
+  test("one string, two providers: novita's provider-local `deepseek/deepseek-v4-flash` is novita's row, and the same string under deepseek is deepseek's KEY", () => {
     const lookup = descriptorLookupForAdapter(loadCatalog(), "winter.openai-chat-completions");
-    expect(lookup("deepseek-v4-flash")).toBeUndefined();
-    expect(lookup("deepseek/deepseek-v4-flash")?.key).toBe("deepseek/deepseek-v4-flash");
+    expect(lookup("deepseek/deepseek-v4-flash", "novita")?.key).toBe("novita/deepseek/deepseek-v4-flash");
+    expect(lookup("deepseek/deepseek-v4-flash", "deepseek")?.key).toBe("deepseek/deepseek-v4-flash");
   });
 });
 
 // --- the turn itself, through the shipped adapter -------------------------------------------------
 
-async function startChatFake(): Promise<{ url: string; bodies: string[]; close(): Promise<void> }> {
+async function startChatFake(opts: { reasoning?: string } = {}): Promise<{ url: string; bodies: string[]; close(): Promise<void> }> {
   const bodies: string[] = [];
   const server = serve({
     hostname: "127.0.0.1",
@@ -66,7 +66,8 @@ async function startChatFake(): Promise<{ url: string; bodies: string[]; close()
       bodies.push(await req.text());
       const chunk = (delta: Record<string, unknown>, finish?: string): string =>
         `data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", model: "deepseek-v4-flash", choices: [{ index: 0, delta, ...(finish !== undefined ? { finish_reason: finish } : {}) }] })}\n\n`;
-      return new Response(chunk({ role: "assistant", content: "" }) + chunk({ content: "ok" }) + chunk({}, "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      const reasoning = opts.reasoning !== undefined ? chunk({ reasoning_content: opts.reasoning }) : "";
+      return new Response(chunk({ role: "assistant", content: "" }) + reasoning + chunk({ content: "ok" }) + chunk({}, "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
     },
   });
   return { url: `http://127.0.0.1:${server.port}`, bodies, close: async () => void (await server.stop(true)) };
@@ -91,6 +92,35 @@ describe("the shipped chat adapter validates a deepseek turn against deepseek's 
       const body = JSON.parse(fake.bodies[0]!) as { model: string; reasoning_effort?: unknown };
       expect(body.model).toBe("deepseek-v4-flash");
       expect(body.reasoning_effort).toBeDefined();
+    } finally {
+      await fake.close();
+    }
+  });
+
+  // THE CALL-SITE WIRING, pinned (review of 024217f): the two tests above would still pass if the
+  // adapter stopped passing its provider -- with no row, an effort passes unvalidated and a request is
+  // sent all the same. These two can only pass when the lookup really returns DEEPSEEK'S OWN ROW.
+  test("deepseek's own row is FULL-EXPOSED, so its `reasoning_content` is captured as native state -- evidence only that row carries", async () => {
+    const fake = await startChatFake({ reasoning: "deepseek's own chain of thought" });
+    try {
+      const adapter = createShippedAdapters(loadCatalog()).find((a) => a.id === "winter.openai-chat-completions")!;
+      const events = await collect(adapter.streamTurn({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek", baseUrl: fake.url, local: true })));
+      const nativeState = events.find((e): e is Extract<ProviderEvent, { type: "native_state" }> => e.type === "native_state");
+      expect(nativeState?.items).toEqual([{ type: "winter.exposed_reasoning", text: "deepseek's own chain of thought" }]);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("an effort outside deepseek's own vocabulary is REFUSED before sending -- validated against deepseek's row, not waved through", async () => {
+    const fake = await startChatFake();
+    try {
+      const adapter = createShippedAdapters(loadCatalog()).find((a) => a.id === "winter.openai-chat-completions")!;
+      const events = await collect(adapter.streamTurn({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }], effort: "medium" }, testContext({ providerId: "deepseek", baseUrl: fake.url, local: true })));
+      const error = events.find((e): e is Extract<ProviderEvent, { type: "error" }> => e.type === "error");
+      expect(error?.error.code).toBe("capability");
+      expect(error?.error.message).toContain("deepseek/deepseek-v4-flash");
+      expect(fake.bodies).toHaveLength(0);
     } finally {
       await fake.close();
     }
