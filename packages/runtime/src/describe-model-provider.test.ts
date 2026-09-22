@@ -8,7 +8,7 @@
 // the session's provider, and without one a bare id shared by several providers names none of them.
 import { describe, expect, test } from "bun:test";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { loadCatalog, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { runEngine, type Provider } from "./engine.ts";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { stubExecutor } from "./provider/mock.ts";
@@ -26,6 +26,19 @@ describe("describeCatalogModel: the session's own provider's row", () => {
 
   test("a provider-local id that is ANOTHER provider's key (novita's `deepseek/deepseek-v4-flash`) names the asking provider's row", () => {
     expect(describeCatalogModel(loadCatalog(), "deepseek/deepseek-v4-flash", "novita")?.displayName).toBe(row("novita/deepseek/deepseek-v4-flash").displayName);
+  });
+
+  test("two passes under a provider: an ALIAS never shadows another row's upstream id", () => {
+    // `p/a` lists `b` as an alias and sorts first; `p/b`'s own upstream id IS `b`. One `find` over
+    // key|upstream|alias named `p/a`.
+    const catalog = {
+      models: [
+        { key: "p/a", providerId: "p", upstreamId: "a", aliases: ["b"], displayName: "Row A" },
+        { key: "p/b", providerId: "p", upstreamId: "b", aliases: [], displayName: "Row B" },
+      ],
+    } as unknown as WinterCatalog;
+    expect(describeCatalogModel(catalog, "b", "p")?.displayName).toBe("Row B");
+    expect(describeCatalogModel(catalog, "a", "p")?.displayName).toBe("Row A");
   });
 
   test("with no provider: a catalog key resolves; a bare id served by several providers names NONE of them", () => {

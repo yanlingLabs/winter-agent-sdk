@@ -501,14 +501,6 @@ export interface ProductionWiring {
 }
 
 /**
- * Build every P5 seam for one session.
- *
- * STARTUP ORDER IS LOAD-BEARING and follows Lane S's recipe exactly -- each step's input is the
- * previous step's output: settings -> plugins -> skill index -> skills-option validation -> command
- * resolver. Reordering it silently produces an index with no plugin skills, or a resolver whose
- * `/name` set disagrees with the model's own listing.
- */
-/**
  * The display name the `# Environment` model line uses for `model`, read from the catalog UNDER THE
  * SESSION'S OWN PROVIDER (dist-session fixes E4).
  *
@@ -516,26 +508,36 @@ export interface ProductionWiring {
  * and one bare id is served by many providers -- `deepseek-v4-flash` by twelve, each with its own row.
  * A first-match search over the whole catalog named the model by whichever provider sorted first.
  *
- *   - with `providerId`: that provider's rows only (key, upstream id or alias) -- so novita's
- *     provider-local `deepseek/deepseek-v4-flash` names novita's row, not deepseek's KEY;
- *   - without one: a catalog KEY (globally unique) resolves, and a bare id or alias only when exactly
- *     ONE row answers to it. Ambiguous -> nothing, and the line keeps the bare id.
+ *   - with `providerId`: that provider's rows only, in TWO PASSES like the adapters' descriptor index --
+ *     key or upstream id first, alias only after -- so an alias can never shadow a real id, and
+ *     novita's provider-local `deepseek/deepseek-v4-flash` names novita's row, not deepseek's KEY;
+ *   - without one (a session with no provider identity at all): the string is read as a catalog KEY
+ *     when it is one (a key names its provider), and a bare id or alias only when exactly ONE row in
+ *     the whole catalog answers to it. Ambiguous -> nothing, and the line keeps the bare id.
  */
 export function describeCatalogModel(catalog: WinterCatalog, model: string, providerId?: string): { displayName?: string } | undefined {
-  const matches = (m: WinterCatalog["models"][number]): boolean => m.key === model || m.upstreamId === model || m.aliases.includes(model);
   let row: WinterCatalog["models"][number] | undefined;
   if (providerId !== undefined) {
-    row = catalog.models.find((m) => m.providerId === providerId && matches(m));
+    const own = catalog.models.filter((m) => m.providerId === providerId);
+    row = own.find((m) => m.key === model || m.upstreamId === model) ?? own.find((m) => m.aliases.includes(model));
   } else {
     row = catalog.models.find((m) => m.key === model);
     if (row === undefined) {
-      const bare = catalog.models.filter(matches);
+      const bare = catalog.models.filter((m) => m.upstreamId === model || m.aliases.includes(model));
       row = bare.length === 1 ? bare[0] : undefined;
     }
   }
   return row !== undefined && row.displayName.length > 0 ? { displayName: row.displayName } : undefined;
 }
 
+/**
+ * Build every P5 seam for one session.
+ *
+ * STARTUP ORDER IS LOAD-BEARING and follows Lane S's recipe exactly -- each step's input is the
+ * previous step's output: settings -> plugins -> skill index -> skills-option validation -> command
+ * resolver. Reordering it silently produces an index with no plugin skills, or a resolver whose
+ * `/name` set disagrees with the model's own listing.
+ */
 export async function buildProductionWiring(opts: ProductionWiringOptions): Promise<ProductionWiring> {
   const { config, env } = opts;
   // (0) THE BRAND (P7a, D19). THE ONE FALLBACK IN THE RUNTIME, and it is here rather than at each
