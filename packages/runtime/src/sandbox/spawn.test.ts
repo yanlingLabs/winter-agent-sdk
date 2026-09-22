@@ -59,6 +59,12 @@ describe("resolveExecutionPath (WS-12 §4.1, first-match-wins)", () => {
     expect(d.sandboxOverrideRequested).toBe(false);
   });
 
+  test("allowUnsandboxedCommands: false IGNORES the override -- the command runs sandboxed, the request still recorded (claude's shouldUseSandbox)", () => {
+    const d = resolveExecutionPath({ settings: { allowUnsandboxedCommands: false }, dangerouslyDisableSandbox: true, command: "curl https://example.com" });
+    expect(d.posture).toBe("sandboxed");
+    expect(d.sandboxOverrideRequested).toBe(true);
+  });
+
   test("dangerouslyDisableSandbox: false is the SAME as omitted -- not an override request", () => {
     const d = resolveExecutionPath({ settings: {}, dangerouslyDisableSandbox: false, command: "ls" });
     expect(d.posture).toBe("sandboxed");

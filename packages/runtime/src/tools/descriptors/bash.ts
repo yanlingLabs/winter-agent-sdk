@@ -23,6 +23,10 @@
 //     sentence names a `/sandbox` command Winter does not have;
 //   - the "Network egress goes through a filtering proxy ... `<sandbox_violations>` block" bullet is
 //     DROPPED: there is no proxy and no violations block.
+// Under `sandbox.allowUnsandboxedCommands: false` the override guidance is replaced by the pinned
+// builder's own "disabled by policy" bullets, verbatim -- true there, because the runtime then IGNORES
+// the flag and runs the command sandboxed (`sandbox/spawn.ts`, claude's shouldUseSandbox).
+//
 // The override bullet is the pinned binary's "This goes through the permission gate", WITHOUT its
 // parenthetical "(a user prompt, or the auto-mode classifier when auto mode is active)": the override is
 // MANDATORY INTERACTION here (RULING P3-J), so in auto mode it goes to the PermissionRequest hook and
@@ -48,6 +52,13 @@ export const BASH_SANDBOX_HEADING = "## Bash command sandbox";
 export interface BashSandboxFacts {
   /** The Seatbelt profile's resolved network posture (`resolveNetworkPosture`). `false` in every v1 configuration. */
   networkAllowed: boolean;
+  /**
+   * Whether `dangerouslyDisableSandbox` can take a command out of the sandbox at all --
+   * `sandbox.allowUnsandboxedCommands !== false`. When it cannot, claude's "disabled by policy"
+   * bullets replace the override guidance (the runtime then ignores the flag, `sandbox/spawn.ts`).
+   * Absent reads as allowed.
+   */
+  unsandboxedAllowed?: boolean;
 }
 
 /** claude's `prependBullets`: a top-level item is ` - item`, a nested one `  - item`. */
@@ -57,18 +68,28 @@ function bullets(items: Array<string | string[]>): string[] {
 
 export function bashSandboxSection(facts: BashSandboxFacts): string {
   const restrictions = facts.networkAllowed ? [] : ['Network: {"allowedHosts":[]}'];
+  const overrideItems: Array<string | string[]> =
+    facts.unsandboxedAllowed === false
+      ? [
+          "All commands MUST run in sandbox mode - the `dangerouslyDisableSandbox` parameter is disabled by policy.",
+          "Commands cannot run outside the sandbox under any circumstances.",
+          "If a command fails due to sandbox restrictions, work with the user to adjust sandbox settings instead.",
+        ]
+      : [
+          "You should always default to running commands within the sandbox. Do NOT attempt to set `dangerouslyDisableSandbox: true` unless:",
+          [
+            "The user *explicitly* asks you to bypass sandbox",
+            "A specific command just failed and you see evidence of sandbox restrictions causing the failure. Note that commands can fail for many reasons unrelated to the sandbox (missing files, wrong arguments, network issues, etc.).",
+          ],
+          "Evidence of sandbox-caused failures includes:",
+          ['"Operation not permitted" errors for file/network operations', "Access denied to specific paths outside allowed directories", "Network connection failures to non-whitelisted hosts", "Unix socket connection errors"],
+          "When you see evidence of sandbox-caused failure:",
+          ["Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)", "Briefly explain what sandbox restriction likely caused the failure.", "This goes through the permission gate"],
+          "Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.",
+          "Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.",
+        ];
   const items: Array<string | string[]> = [
-    "You should always default to running commands within the sandbox. Do NOT attempt to set `dangerouslyDisableSandbox: true` unless:",
-    [
-      "The user *explicitly* asks you to bypass sandbox",
-      "A specific command just failed and you see evidence of sandbox restrictions causing the failure. Note that commands can fail for many reasons unrelated to the sandbox (missing files, wrong arguments, network issues, etc.).",
-    ],
-    "Evidence of sandbox-caused failures includes:",
-    ['"Operation not permitted" errors for file/network operations', "Access denied to specific paths outside allowed directories", "Network connection failures to non-whitelisted hosts", "Unix socket connection errors"],
-    "When you see evidence of sandbox-caused failure:",
-    ["Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)", "Briefly explain what sandbox restriction likely caused the failure.", "This goes through the permission gate"],
-    "Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.",
-    "Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.",
+    ...overrideItems,
     "For temporary files, always use the `$TMPDIR` environment variable. TMPDIR is automatically set to the correct sandbox-writable directory in sandbox mode. Do NOT use `/tmp` directly - use `$TMPDIR` instead.",
   ];
   return [

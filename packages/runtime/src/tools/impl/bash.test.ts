@@ -288,6 +288,15 @@ describe("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).toContain("[sandbox: override-requested]");
   });
 
+  t("allowUnsandboxedCommands: false -- the override is IGNORED: the write fence holds, and the result says the request was made", async () => {
+    const ctx = fakeCtx({ sandboxSettings: { allowUnsandboxedCommands: false } });
+    const sibling = proj();
+    const target = join(sibling, "escaped.txt");
+    const res = await bash()({ command: `echo pwned > ${target}`, dangerouslyDisableSandbox: true }, ctx);
+    expect(existsSync(target)).toBe(false);
+    expect(res.output).toContain("[sandbox: sandboxed, override-requested]");
+  });
+
   // T8 fix round 1 (coordinator-required, brief item 7): runForeground wraps the model's raw
   // command in a pwd-capture script before spawning (buildPwdCaptureScript) but passes
   // matchCommand: input.command through to runCommand -- excludedCommands must match what the

@@ -61,6 +61,15 @@ describe("the Bash sandbox section (pure)", () => {
     expect(section).toContain(CLAUDE_INTRO);
   });
 
+  test("unsandboxed commands disabled by policy: claude's policy variant replaces the override guidance", () => {
+    const section = bashSandboxSection({ networkAllowed: false, unsandboxedAllowed: false });
+    expect(section).toContain(" - All commands MUST run in sandbox mode - the `dangerouslyDisableSandbox` parameter is disabled by policy.");
+    expect(section).toContain(" - Commands cannot run outside the sandbox under any circumstances.");
+    expect(section).toContain(" - If a command fails due to sandbox restrictions, work with the user to adjust sandbox settings instead.");
+    expect(section).not.toContain("Immediately retry with `dangerouslyDisableSandbox: true`");
+    expect(section).toContain(" - For temporary files, always use the `$TMPDIR` environment variable.");
+  });
+
   test("no sandbox -> the base description, byte-identical to the static registration", () => {
     expect(bashDescriptionFor(undefined)).toBe(BASH_DESCRIPTION);
     expect(bashDescriptionFor({ networkAllowed: false })).toBe(`${BASH_DESCRIPTION}\n\n${bashSandboxSection({ networkAllowed: false })}`);
@@ -103,6 +112,12 @@ describe("the Bash tool a session advertises", () => {
     expect(description).toContain(BASH_SANDBOX_HEADING);
     expect(description).toContain('Network: {"allowedHosts":[]}');
     expect(description).toContain("  - Network connection failures to non-whitelisted hosts");
+  });
+
+  test.if(isSandboxAvailable())("a session whose policy forbids unsandboxed commands is told so (the override is ignored there)", async () => {
+    const { description } = await advertisedBash({ sandbox: { allowUnsandboxedCommands: false } } as Partial<RuntimeConfig>);
+    expect(description).toContain("the `dangerouslyDisableSandbox` parameter is disabled by policy");
+    expect(description).not.toContain("Immediately retry with");
   });
 
   test("a session with the sandbox switched OFF advertises no sandbox section at all (claude: none when sandboxing is disabled)", async () => {

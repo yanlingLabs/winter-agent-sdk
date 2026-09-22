@@ -105,7 +105,8 @@ export interface ExecutionPathDecision {
 /**
  * WS-12 §4.1's own table, first-match-wins:
  *   1. `sandbox.enabled === false`                                  -> unsandboxed (config-disabled)
- *   2. `dangerouslyDisableSandbox: true` on the call                -> unsandboxed (override-requested)
+ *   2. `dangerouslyDisableSandbox: true` on the call, UNLESS `allowUnsandboxedCommands === false`
+ *                                                                   -> unsandboxed (override-requested)
  *   3. command matches `excludedCommands` AND `allowUnsandboxedCommands` -> unsandboxed (excluded)
  *   4. otherwise                                                    -> sandboxed
  *
@@ -117,7 +118,11 @@ export interface ExecutionPathDecision {
 export function resolveExecutionPath(input: ResolveExecutionPathInput): ExecutionPathDecision {
   const sandboxOverrideRequested = input.dangerouslyDisableSandbox === true;
   if (input.settings.enabled === false) return { posture: "config-disabled", sandboxOverrideRequested };
-  if (sandboxOverrideRequested) return { posture: "override-requested", sandboxOverrideRequested };
+  // `allowUnsandboxedCommands: false` IGNORES the override (dist-session fixes, lane C C3): the
+  // command runs sandboxed exactly as claude's shouldUseSandbox runs it ("Don't sandbox if explicitly
+  // overridden AND unsandboxed commands are allowed by policy"), and the request is still recorded on
+  // the result. It used to honour the override whatever the policy said.
+  if (sandboxOverrideRequested && input.settings.allowUnsandboxedCommands !== false) return { posture: "override-requested", sandboxOverrideRequested };
   const isExcluded = input.settings.excludedCommands?.includes(input.command) === true;
   if (isExcluded && input.settings.allowUnsandboxedCommands === true) {
     return { posture: "excluded", sandboxOverrideRequested };

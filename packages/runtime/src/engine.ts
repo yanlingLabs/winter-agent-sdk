@@ -2712,7 +2712,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (sandboxSettingsForSession.autoAllowBashIfSandboxed !== true) return false;
     if (sandboxSettingsForSession.enabled === false) return false;
     if (call.toolName !== "Bash") return false;
-    if (call.input["dangerouslyDisableSandbox"] === true) return false;
+    // An override takes the call OUT of the sandbox -- unless the policy forbids unsandboxed commands,
+    // in which case the flag is ignored and the call runs sandboxed (`sandbox/spawn.ts`).
+    if (call.input["dangerouslyDisableSandbox"] === true && sandboxSettingsForSession.allowUnsandboxedCommands !== false) return false;
     return isSandboxAvailable();
   };
 
@@ -6282,7 +6284,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // from inside the sandbox and the denied posture is the true statement.
       networkAllowed = false;
     }
-    return { networkAllowed };
+    return { networkAllowed, unsandboxedAllowed: sandboxSettingsForSession.allowUnsandboxedCommands !== false };
   };
 
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
