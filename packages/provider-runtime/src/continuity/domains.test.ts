@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createRegistry } from "../registry.ts";
-import { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
+import { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, sameModel, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
 import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "./fixtures.ts";
 
 describe("sameDomain: evidence only, never HTTP shape", () => {
@@ -265,5 +265,48 @@ describe("endpoint resolution through the registry", () => {
     resolveFacts(origin);
     resolveFacts(origin);
     expect(calls).toBe(1);
+  });
+});
+
+// Review round on E1 (dist-session fixes): the two edges `sameModel` now leans on.
+describe("createEndpointResolver: one cache entry per (provider, model), never per model string alone", () => {
+  test("the SAME model string under two providers resolves to each provider's OWN facts", () => {
+    // A bare provider-local id two providers both serve -- the shape an origin carries when its
+    // `modelKey` is not a catalog key (the official-leg structural fallback reads `message.model`
+    // verbatim). A cache keyed by `modelKey` alone answered the SECOND provider with the FIRST's facts.
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "pa" }), fixtureProvider({ id: "pb" })],
+      [
+        fixtureModel({ key: "pa/m", providerId: "pa", upstreamId: "m", reasoning: fixtureReasoning({ readableState: "summary", domain: ["pa/m"] }) }),
+        fixtureModel({ key: "pb/m", providerId: "pb", upstreamId: "m", reasoning: fixtureReasoning({ readableState: "full-exposed", domain: ["pb/m"] }) }),
+      ],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "pa-adapter" }));
+    registry.register(scriptedAdapter({ id: "pb-adapter" }));
+    const resolve = createEndpointResolver(registry);
+    const a = resolve({ providerId: "pa", modelKey: "m", family: "openai" });
+    const b = resolve({ providerId: "pb", modelKey: "m", family: "openai" });
+    expect(a.providerId).toBe("pa");
+    expect(b.providerId).toBe("pb");
+    expect(b.modelKey).toBe("pb/m");
+    expect(b.readableState).toBe("full-exposed");
+    expect(sameModel(a, b)).toBe(false);
+  });
+});
+
+describe("sameModel: identity only when BOTH ids are present, non-empty and equal", () => {
+  test("equal provider and model -> true; either differing -> false", () => {
+    expect(sameModel({ providerId: "p", modelKey: "p/m" }, { providerId: "p", modelKey: "p/m" })).toBe(true);
+    expect(sameModel({ providerId: "p", modelKey: "p/m" }, { providerId: "p", modelKey: "p/n" })).toBe(false);
+    expect(sameModel({ providerId: "p", modelKey: "p/m" }, { providerId: "q", modelKey: "p/m" })).toBe(false);
+  });
+
+  test("an absent OR EMPTY id is unknown, and unknown is never the same model -- not even as another empty id", () => {
+    expect(sameModel({ providerId: "", modelKey: "" }, { providerId: "", modelKey: "" })).toBe(false);
+    expect(sameModel({ providerId: "p", modelKey: "" }, { providerId: "p", modelKey: "" })).toBe(false);
+    expect(sameModel({ providerId: "", modelKey: "p/m" }, { providerId: "", modelKey: "p/m" })).toBe(false);
+    expect(sameModel({ providerId: "p", modelKey: "p/m" }, { providerId: "p" })).toBe(false);
+    expect(sameModel(undefined, { providerId: "p", modelKey: "p/m" })).toBe(false);
   });
 });

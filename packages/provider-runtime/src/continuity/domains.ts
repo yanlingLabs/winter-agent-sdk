@@ -87,13 +87,15 @@ export function sameDomain(a: DomainFacts | undefined, b: DomainFacts | undefine
  * handed the model its own reasoning back as a quoted `<recovered_reasoning>` text block, which it
  * imitated (dist session s_5d314c81045e, `deepseek-anthropic/deepseek-v4-flash`).
  *
- * BOTH ids must be present and equal. A side that does not name its identity is never "the same
- * model": absence is unknown here exactly as it is for a domain id, and unknown must fall to the
- * conservative (cross-domain) path.
+ * BOTH ids must be present, NON-EMPTY and equal. A side that does not name its identity is never "the
+ * same model": absence is unknown here exactly as it is for a domain id, and unknown must fall to the
+ * conservative (cross-domain) path. An EMPTY id is absence spelled differently (a blank stamp, a
+ * default that was never filled in), so two blanks are two unknowns, never one identity.
  */
 export function sameModel(a: { providerId?: string; modelKey?: string } | undefined, b: { providerId?: string; modelKey?: string } | undefined): boolean {
-  if (a?.providerId === undefined || a.modelKey === undefined || b?.providerId === undefined || b.modelKey === undefined) return false;
-  return a.providerId === b.providerId && a.modelKey === b.modelKey;
+  const known = (v: string | undefined): v is string => v !== undefined && v.length > 0;
+  if (!known(a?.providerId) || !known(a?.modelKey) || !known(b?.providerId) || !known(b?.modelKey)) return false;
+  return a!.providerId === b!.providerId && a!.modelKey === b!.modelKey;
 }
 
 /** The evidence confidences that CERTIFY a shared continuation domain (§8.4's own word). Anything weaker is a guess, and a guess must not buy a suppressed warning. */
@@ -140,16 +142,21 @@ export function shouldRequestSummary(descriptor: WinterModelDescriptor | undefin
  * knows its own provider, model and domain, and degrading it to "unknown" would drop a valid native
  * replay because a catalog row was renamed.
  *
- * Cached per `modelKey` for the lifetime of the returned function: one render pass asks about the
- * same handful of models once per message, and `resolve` walks the catalog indexes each time.
+ * Cached per (`providerId`, `modelKey`) for the lifetime of the returned function: one render pass
+ * asks about the same handful of models once per message, and `resolve` walks the catalog indexes
+ * each time. BOTH ids key the entry, because the resolution is `resolve({ model, provider })` -- the
+ * same model string under two providers (a bare provider-local id, which the official-leg structural
+ * fallback carries verbatim) is two rows with two sets of facts, and a cache keyed by the model alone
+ * answered the second provider with the first's.
  */
 export function createEndpointResolver(registry: ProviderRegistry): (origin: MessageOrigin) => ContinuityEndpoint {
   const cache = new Map<string, ContinuityEndpoint>();
   return (origin: MessageOrigin): ContinuityEndpoint => {
-    const cached = cache.get(origin.modelKey);
+    const key = `${origin.providerId}\u0000${origin.modelKey}`;
+    const cached = cache.get(key);
     if (cached !== undefined) return cached;
     const facts = endpointFromRegistry(registry, origin);
-    cache.set(origin.modelKey, facts);
+    cache.set(key, facts);
     return facts;
   };
 }
