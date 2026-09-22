@@ -30,6 +30,8 @@ import {
   // a second structural copy in this file is exactly the drift R6-D exists to avoid.
   type SDKAssistantMessageError,
   type WireStreamEvent,
+  // Dist-session fixes (C1): claude's full `result.usage` shape.
+  type WireResultUsage,
   // WS-13c §7 (P6.6): the `list_model_families` control response's payload shape.
   type ModelFamilyListing,
   // WS-13c §3 (P6.6): the active slot set the Agent tool's `model` schema is rendered from.
@@ -1551,6 +1553,21 @@ type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
 // is abandoned (interrupted) and later settles anyway, that settlement never surfaces as an
 // unhandled rejection — Provider/ToolExecutor take no AbortSignal at P1, so "abort" here means
 // "the engine stops waiting," not "the underlying call actually stops" (WS-04 §5).
+/** A result that ran no main-loop generation of its own (the /compact built-in): claude's EMPTY_USAGE, fresh per call (a host may hold and mutate it). */
+const emptyResultUsage = (): WireResultUsage => ({
+  output_tokens_details: { thinking_tokens: 0 },
+  input_tokens: 0,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+  output_tokens: 0,
+  server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+  service_tier: "standard",
+  cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+  inference_geo: "",
+  iterations: [],
+  speed: "standard",
+});
+
 function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<RaceOutcome<T>> {
   p.catch(() => {});
   return Promise.race([
@@ -2736,7 +2753,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (typeof command === "string" && sandboxSettingsForSession.allowUnsandboxedCommands === true && sandboxSettingsForSession.excludedCommands?.includes(command) === true) return false;
     return true;
   };
-  const makeEvalCtx = (): EvaluationContext => {
+  /**
+   * `signal` pins the turn this evaluation belongs to (see `evaluateWithFreshPolicy`); absent reads the
+   * current turn's -- right for every caller that evaluates synchronously within its own turn.
+   */
+  const makeEvalCtx = (signal: AbortSignal | undefined = currentTurnSignal): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
     // making an untouched `extraBoundedRoots` (the common case) start including the key on its own.
@@ -2747,7 +2768,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return {
       policy: policyStateStore.getState(),
       cwd: currentCwd,
-      ...(currentTurnSignal !== undefined ? { signal: currentTurnSignal } : {}),
+      ...(signal !== undefined ? { signal } : {}),
       sessionRoot,
       home: permissionHome,
       trustedWorkspace,
@@ -2795,9 +2816,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // on. Re-evaluating under the now-current snapshot is the correct recovery (not merely rejecting):
   // the call still needs an answer under WHATEVER policy is active now.
   async function evaluateWithFreshPolicy(call: PermissionCall) {
-    let record = await evaluate(call, makeEvalCtx());
+    // The turn's signal is captured ONCE, here (review of f2bbe09): a policy-change RETRY of an
+    // evaluation an interrupt abandoned must stay bound to ITS turn. Rebuilding the context from the
+    // mutable current-turn signal let a retry that ran after the next turn had started raise a
+    // permission prompt on that turn's live signal -- a prompt no turn was waiting on.
+    const signal = currentTurnSignal;
+    let record = await evaluate(call, makeEvalCtx(signal));
     while (record.policyVersion !== policyStateStore.getState().version) {
-      record = await evaluate(call, makeEvalCtx());
+      record = await evaluate(call, makeEvalCtx(signal));
     }
     return record;
   }
@@ -6748,6 +6774,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
     const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    // claude's full `NonNullableUsage` shape around the four real counts (frames.ts's WireResultUsage
+    // says what each filled field means).
+    const resultUsage = (): WireResultUsage => ({
+      output_tokens_details: { thinking_tokens: 0 },
+      input_tokens: turnUsage.input_tokens,
+      cache_creation_input_tokens: turnUsage.cache_creation_input_tokens,
+      cache_read_input_tokens: turnUsage.cache_read_input_tokens,
+      output_tokens: turnUsage.output_tokens,
+      server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+      service_tier: "standard",
+      cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: turnUsage.cache_creation_input_tokens },
+      inference_geo: "",
+      iterations: [],
+      speed: "standard",
+    });
 
     // --- Phase 5 Task 3 (R5-14): command resolution, BEFORE the model sees the prompt -------------
     //
@@ -6778,7 +6819,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const compactOutcome = await runManualCompaction(builtinCommand.args);
       // `usage` too, like every result (claude parity, C1): a built-in runs no main-loop generation of
       // this turn's own, so its block is all zeros.
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, permission_denials: [] } });
+      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, usage: emptyResultUsage(), permission_denials: [] } });
       await flushStore();
       endTurn();
       continue;
@@ -7654,14 +7695,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // a Winter-defined discovery channel.
       // Lane N: the ONE terminal-result door. `costFields()` is stamped INSIDE it -- at write time, not
       // here -- because a HELD result is re-stamped with the session totals when it finally flushes.
-      writeTurnResult({ ...finalResult, usage: { ...turnUsage }, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } as unknown as TurnResultMessage);
+      writeTurnResult({ ...finalResult, usage: resultUsage(), permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } as TurnResultMessage);
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
       sessionAborted = true;
-      writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, usage: { ...turnUsage }, permission_denials: turnPermissionDenials });
+      writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, usage: resultUsage(), permission_denials: turnPermissionDenials });
     }
     // Fix r1 (M1): the messaging facet's own quiescent boundary, fired on BOTH branches. It used to
     // sit inside the success arm beside `emitNotification("idle", ...)`, which is also success-only --

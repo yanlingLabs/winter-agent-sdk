@@ -335,7 +335,7 @@ test("interrupt: ack + provisional interrupted result, back to idle; a later end
   expect(ack.ok).toBe(true);
   const result = dataMessages(seen).at(-1);
   // Finding 3 (P2 fix-wave): permission_denials is now always present -- [] here, this turn denied nothing.
-  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true, usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, permission_denials: [] });
+  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true, usage: { output_tokens_details: { thinking_tokens: 0 }, input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 }, service_tier: "standard", cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }, inference_geo: "", iterations: [], speed: "standard" }, permission_denials: [] });
 
   // back to idle: a later end_input exits cleanly (no dangling turn, no hang)
   host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
@@ -1868,7 +1868,7 @@ test("Task 8 (WS-07 §7.2): a deny answer with interrupt:true stops the round AN
     is_error: false,
     interrupted: true,
     // The turn's one generation (the tool call the deny interrupted) is what its usage block sums.
-    usage: { input_tokens: 1, output_tokens: 13, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    usage: { output_tokens_details: { thinking_tokens: 0 }, input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 13, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 }, service_tier: "standard", cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }, inference_geo: "", iterations: [], speed: "standard" },
     permission_denials: [{ tool_name: "mystery_tool", tool_use_id: "call1", tool_input: {} }],
   });
 

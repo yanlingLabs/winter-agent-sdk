@@ -159,7 +159,8 @@ describe("Ruling E-4 (R6-H): cost goes LIVE on the result frame", () => {
       await withFake({}, async (fake) => {
         const r = await drive({ fake, catalog: catalogFor(fake.url), config: config(), turns: ["one", "two"] });
         for (const result of r.results) {
-          expect(result.usage).toEqual({ input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+          // claude's full NonNullableUsage shape; the four token counts are this turn's.
+          expect(result.usage).toEqual({ output_tokens_details: { thinking_tokens: 0 }, input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 10, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 }, service_tier: "standard", cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }, inference_geo: "", iterations: [], speed: "standard" });
         }
       });
     }

@@ -39,6 +39,34 @@ export interface ControlResponseFrame { type: "control_response"; requestId: str
  * a turn interrupted while a permission prompt is open). The host aborts the callback it is running
  * for that request (`canUseTool`'s `signal`) and owes no response; one sent anyway is dropped.
  */
+/**
+ * `result.usage`: claude's `NonNullableUsage` (every `BetaUsage` field, none null), carrying THIS
+ * turn's main-loop generations -- claude builds a fresh QueryEngine per prompt in SDK mode, so its
+ * `totalUsage` starts at EMPTY_USAGE each turn. The four token counts are real; the rest is filled the
+ * way the pinned binary's own EMPTY_USAGE fills a value it has no data for, and says so:
+ *   - `cache_creation`: every cache write Winter marks is the default 5-minute ephemeral one (the
+ *     adapters send `{type: "ephemeral"}` with no ttl), so `ephemeral_5m_input_tokens` equals
+ *     `cache_creation_input_tokens` and `ephemeral_1h_input_tokens` is 0;
+ *   - `server_tool_use`: Winter's WebSearch/WebFetch run client-side, never as billed server tools: 0/0;
+ *   - `output_tokens_details.thinking_tokens`: 0 -- providers' reasoning-token counts are not threaded
+ *     through Winter's usage yet (they are included in `output_tokens`);
+ *   - `service_tier: "standard"`, `inference_geo: ""`, `iterations: []`, `speed: "standard"`: the
+ *     pinned EMPTY_USAGE's own values.
+ */
+export interface WireResultUsage {
+  output_tokens_details: { thinking_tokens: number };
+  input_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  output_tokens: number;
+  server_tool_use: { web_search_requests: number; web_fetch_requests: number };
+  service_tier: "standard" | "priority" | "batch";
+  cache_creation: { ephemeral_1h_input_tokens: number; ephemeral_5m_input_tokens: number };
+  inference_geo: string;
+  iterations: unknown[];
+  speed: "standard" | "fast";
+}
+
 export interface ControlCancelRequestFrame { type: "control_cancel_request"; requestId: string; }
 export interface UnknownFrame { type: string; [k: string]: unknown; }
 export type WinterFrame = InitFrame | UserFrame | DataFrame | ControlRequestFrame | ControlResponseFrame | ControlCancelRequestFrame | UnknownFrame;
@@ -731,6 +759,8 @@ export type SdkMessage =
       structured_output?: unknown;
       terminal_reason?: "structured_output_retry_exhausted" | "api_error" | string;
       api_error_status?: number | null;
+      /** THIS turn's main-loop usage -- claude's `result.usage` (dist-session fixes C1); see `WireResultUsage`. */
+      usage?: WireResultUsage;
       permission_denials: SDKPermissionDenial[];
       [k: string]: unknown;
     }

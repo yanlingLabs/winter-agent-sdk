@@ -160,6 +160,17 @@ describe("a subagent's generations are PRICED, and roll up into the session's co
     expect((r.result.modelUsage as Record<string, Record<string, number>>)["prova/main"]).toMatchObject({ inputTokens: 2300, outputTokens: 23 });
   });
 
+  test("the PARENT's per-turn `usage` counts ONLY its own main-loop generations -- the child's tokens land in `modelUsage`, not there (claude: a subagent's query is not the parent's totalUsage)", async () => {
+    // Unpriced on purpose: the child's tokens must still reach the session's modelUsage row.
+    const unpriced: NonNullable<EngineOptions["priceUsage"]> = () => undefined;
+    const r = await drive({}, { engine: { priceUsage: unpriced }, factory: { priceUsage: unpriced } });
+    // parent 2 x (1000 in, 10 out); the child's 300/3 is NOT in the parent's turn usage...
+    expect(r.result.usage).toMatchObject({ input_tokens: 2000, output_tokens: 20 });
+    // ...but IS in the session's modelUsage, at costUSD 0 (nothing priced).
+    expect((r.result.modelUsage as Record<string, Record<string, number>>)["prova/main"]).toMatchObject({ inputTokens: 2300, outputTokens: 23, costUSD: 0 });
+    expect("total_cost_usd" in r.result).toBe(false);
+  });
+
   test("`maxBudgetUsd` SEES subagent spend: the parent request that follows an over-budget child never goes out", async () => {
     // parent round 1 (1010) + child (303) = 1313 > 1200, so the parent's second request is refused.
     const r = await drive({ maxBudgetUsd: 1200 }, { engine: { priceUsage }, factory: { priceUsage } });

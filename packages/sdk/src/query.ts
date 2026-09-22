@@ -1079,7 +1079,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           if (frame.type === "control_cancel_request") {
             // Lane C (C2): the runtime stopped waiting for one of ITS requests (a permission prompt
             // open when the turn was interrupted). Abort the handler running for it; it owes no answer.
-            incomingRequestAborts.get((frame as { requestId?: string }).requestId ?? "")?.abort();
+            // Dropped from the map HERE, not only when the handler returns: a host callback that never
+            // settles must not keep its entry alive for the rest of the query (review of f2bbe09).
+            const cancelledId = (frame as { requestId?: string }).requestId ?? "";
+            const cancelled = incomingRequestAborts.get(cancelledId);
+            incomingRequestAborts.delete(cancelledId);
+            cancelled?.abort();
             continue;
           }
           if (frame.type === "control_request") {
