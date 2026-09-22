@@ -284,7 +284,7 @@ import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
 // RegistryToolExecutorDeps.sandboxSettings's own comment (registry.ts) for the seam this feeds.
-import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
+import { DEFAULT_SANDBOX_SETTINGS, resolveNetworkPosture } from "./sandbox/profile.ts";
 // B-H1(a): whether this HOST can actually sandbox -- a session that asked for one on a machine
 // without `sandbox-exec` gets no containment, and therefore earns no auto-allow.
 import { isSandboxAvailable } from "./sandbox/spawn.ts";
@@ -313,6 +313,8 @@ import { webFetchCache } from "./tools/impl/_web-fetch-cache.ts";
 import { forgetWebFetchBinarySaveBudgetForSession } from "./tools/impl/web-fetch.ts";
 import { WEB_FETCH_CANONICAL_NAME, webFetchDescriptionFor, webFetchInputSchemaFor } from "./tools/descriptors/web-fetch.ts";
 import { WEB_SEARCH_CANONICAL_NAME, webSearchDescription, webSearchInputSchemaFor } from "./tools/descriptors/web-search.ts";
+// E3: the Bash tool's sandbox section is rendered per session from the session's own sandbox posture.
+import { BASH_CANONICAL_NAME, bashDescriptionFor, type BashSandboxFacts } from "./tools/descriptors/bash.ts";
 import type { AuxiliaryModelResolution } from "./provider/session-provider.ts";
 import type { ToolSecretResolver } from "./provider/tool-secret.ts";
 
@@ -6210,6 +6212,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     backgroundByDefault: backgroundByDefault,
   });
 
+  /** `undefined` when this session's Bash commands do not run sandboxed at all -- the section is then absent, never a false claim. */
+  const bashSandboxFacts = (): BashSandboxFacts | undefined => {
+    if (sandboxSettingsForSession.enabled === false || !isSandboxAvailable()) return undefined;
+    let networkAllowed = false;
+    try {
+      networkAllowed = resolveNetworkPosture(sandboxSettingsForSession.network);
+    } catch {
+      // A domain-list config the profile refuses (`SandboxConfigError`): the executor refuses every
+      // sandboxed call, so nothing is reachable -- the denied posture is the true statement.
+      networkAllowed = false;
+    }
+    return { networkAllowed };
+  };
+
   const toolSpecFor = (descriptor: { advertisedName: string; canonicalName: string; description: string; inputSchema: unknown }): ProviderToolSpec => {
     // THE WEB TOOLS' LEAN / FULL DESCRIPTION, chosen PER SESSION. Each ships two variants (a short one
     // for the lean tier, the long one for everything else), and a descriptor -- a process-wide
@@ -6229,6 +6245,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         description: isFetch ? webFetchDescriptionFor(lean) : webSearchDescription(lean),
         inputSchema: isFetch ? webFetchInputSchemaFor(firstParty) : webSearchInputSchemaFor(firstParty),
       };
+    }
+    // THE BASH SANDBOX SECTION, per session (E3). claude's Bash tool tells the model its commands run
+    // in a sandbox, what that sandbox lets through, and when to ask for `dangerouslyDisableSandbox`;
+    // a model never told that its shell has no network promises the user `curl` and then fails every
+    // first network call. Rendered from the SAME facts the executor enforces: no section when the
+    // session's sandbox is off or this host cannot sandbox (claude: none when sandboxing is disabled),
+    // and the network line from the posture the Seatbelt profile is built with.
+    if (descriptor.canonicalName === BASH_CANONICAL_NAME) {
+      return { name: descriptor.advertisedName, description: bashDescriptionFor(bashSandboxFacts()), inputSchema: descriptor.inputSchema as Record<string, unknown> };
     }
     if (descriptor.canonicalName !== AGENT_TOOL_CANONICAL_NAME) {
       return { name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> };
