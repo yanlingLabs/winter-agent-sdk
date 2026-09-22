@@ -59,7 +59,7 @@ export interface HistoryRenderer {
   render(
     messages: ProviderMessage[],
     chain: ContinuationChain,
-    target: { family: string; continuationDomain?: string; readableState: "none" | "summary" | "full-exposed" },
+    target: { family: string; continuationDomain?: string; readableState: "none" | "summary" | "full-exposed"; providerId?: string; modelKey?: string },
   ): ProviderMessage[];
 }
 
@@ -162,6 +162,12 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
     family: adapter.family as string,
     ...(resolved.continuationDomain !== undefined ? { continuationDomain: resolved.continuationDomain } : {}),
     readableState: capabilities?.readableState ?? ("none" as const),
+    // The target's OWN identity, the same two ids `stampNativeState` and the engine's `origin` carry.
+    // Without them the renderer cannot recognise the model's own prior turns on a row the catalog
+    // gives no continuation domain (`continuation: "none"`), and handed the model its own reasoning
+    // back as a quoted `<recovered_reasoning>` text block (provider-runtime `sameModel`).
+    providerId: resolved.providerId,
+    modelKey: resolved.modelKey,
   };
 
   return {

@@ -73,6 +73,29 @@ export function sameDomain(a: DomainFacts | undefined, b: DomainFacts | undefine
   return left === right;
 }
 
+/**
+ * Is this the SAME model at the SAME provider -- one model reading back what it produced itself?
+ *
+ * NOT THE FORBIDDEN TEST ABOVE, and the difference is the whole point. `sameDomain` answers "may
+ * model A's state be replayed into model B", an interoperability claim that provider or family
+ * equality must never stand in for. This answers a different question with no interoperability in
+ * it at all: `certifiedDomain`'s own header names it -- "SELF-REPLAY ('this model accepts its own
+ * state') never needs certification. A model replaying what it just produced is not an
+ * interoperability claim." It exists because a row that declares `continuation: "none"` gets NO
+ * domain id (`registry.ts`'s `continuationDomainOf`), so `sameDomain` is false even for the model's
+ * own previous step -- and the renderer then treated that step as FOREIGN, stripped its thinking and
+ * handed the model its own reasoning back as a quoted `<recovered_reasoning>` text block, which it
+ * imitated (dist session s_5d314c81045e, `deepseek-anthropic/deepseek-v4-flash`).
+ *
+ * BOTH ids must be present and equal. A side that does not name its identity is never "the same
+ * model": absence is unknown here exactly as it is for a domain id, and unknown must fall to the
+ * conservative (cross-domain) path.
+ */
+export function sameModel(a: { providerId?: string; modelKey?: string } | undefined, b: { providerId?: string; modelKey?: string } | undefined): boolean {
+  if (a?.providerId === undefined || a.modelKey === undefined || b?.providerId === undefined || b.modelKey === undefined) return false;
+  return a.providerId === b.providerId && a.modelKey === b.modelKey;
+}
+
 /** The evidence confidences that CERTIFY a shared continuation domain (§8.4's own word). Anything weaker is a guess, and a guess must not buy a suppressed warning. */
 export const CERTIFIED_DOMAIN_CONFIDENCES: ReadonlySet<EvidenceConfidence> = new Set<EvidenceConfidence>(["verified", "declared"]);
 

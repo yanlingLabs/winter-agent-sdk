@@ -33,13 +33,22 @@
 import type { ProviderRegistry } from "../registry.ts";
 import type { ContentBlockLike, MessageOrigin, ProviderMessageLike, ProviderNativeState } from "../types.ts";
 import { MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, type Decoration, type DecorationDoor } from "./decoration.ts";
-import { createEndpointResolver, sameDomain, type ContinuityEndpoint, type ReadableState } from "./domains.ts";
+import { createEndpointResolver, sameDomain, sameModel, type ContinuityEndpoint, type ReadableState } from "./domains.ts";
 
 /** The target of THIS request. Structurally the `target` argument of the runtime's frozen `HistoryRenderer` seam. */
 export interface HistoryTarget {
   family: string;
   continuationDomain?: string;
   readableState: ReadableState;
+  /**
+   * The target model's OWN identity -- the resolved provider id and catalog key (runtime `bridge.ts`
+   * passes `resolved.providerId`/`resolved.modelKey`). Read only by `sameModel`: a message produced by
+   * this exact provider and model is the model's own prior turn, replayed exactly and never decorated,
+   * even when the catalog gives the row no continuation domain. Optional so a caller built before the
+   * fields existed keeps its exact behaviour; absent means "unknown", which never matches.
+   */
+  providerId?: string;
+  modelKey?: string;
 }
 
 /** One assistant entry's folded sidecar records. Structurally `ContinuationLink` from the runtime's `store/provider-state.ts`. */
@@ -234,11 +243,24 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       }
 
       const source = resolveEndpoint(origin);
-      if (sameDomain(source, target)) {
+      if (sameDomain(source, target) || sameModel(source, target)) {
         // EXACT REPLAY. Native state and in-dialect blocks ride unchanged, and no decoration is
         // added: the target can read the real thing, and a summary beside it would be the merge §9.5
         // forbids. A decoration the input happened to carry is REMOVED rather than passed on -- it
         // would be another family's material sitting on a message this target authored itself.
+        //
+        // `sameModel` is the SELF case, and it is what makes a model's own previous step its own even
+        // when the catalog row declares `continuation: "none"` and so carries no domain id at all
+        // (every Anthropic-dialect sibling row, and every OpenAI-chat reasoning row, without one).
+        // Before it, such a step went down the cross-domain path below: its thinking blocks were
+        // stripped and its own reasoning came back to it as a `<recovered_reasoning>` TEXT block in
+        // its own assistant turn -- which the model then imitated in its visible reply. claude
+        // replays its own thinking to the model that produced it, natively, and never quotes a
+        // model's reasoning back to it; so does this. Whatever an adapter captured for its own model
+        // is replayable to that model by construction (each adapter captures only what it can send
+        // back: Responses keeps only items with `encrypted_content`, chat keeps `reasoning_content`
+        // only for a full-exposed row), and in-dialect blocks ride with the signature the endpoint
+        // sent, exactly as claude sends them back.
         if (message.nativeState !== undefined) report.replayedNatively++;
         if (message.decoration === undefined) return message;
         const { decoration: _stale, ...kept } = message;

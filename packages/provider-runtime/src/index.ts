@@ -138,6 +138,7 @@ export {
   readableStateOf,
   sameDomain,
   sameFamily,
+  sameModel,
   shouldRequestSummary,
   summaryRequestOf,
   applyDecorationToContent,

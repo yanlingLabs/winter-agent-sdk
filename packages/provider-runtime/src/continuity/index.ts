@@ -11,7 +11,7 @@
 export { RECOVERED_REASONING_TAG, LEGACY_RECOVERED_REASONING_TAG, MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, escapeAttribute, escapeInline, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
 export type { Decoration, DecorationDoor, DecorationInput, DecorationKind, DecorationSource } from "./decoration.ts";
 
-export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
+export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, sameModel, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
 export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.ts";
 
 export { applyDecorationToContent, createHistoryRenderer, stripOpaque } from "./renderer.ts";
