@@ -108,7 +108,24 @@
       "structured_output": {
         "answer": 42
       },
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 1148,
+        "output_tokens": 19,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 1148,
+          "outputTokens": 19,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]

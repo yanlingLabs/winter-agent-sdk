@@ -5,7 +5,7 @@
 // the ground truth off the result frames, the store double's identity stamps and the fake's log.
 import { describe, expect, test } from "bun:test";
 import type { ProtocolSdkMessage as SdkMessage, RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { loadCatalog, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { buildSessionProvider } from "./session-provider.ts";
 import { runEngine, type ProviderUsage } from "../engine.ts";
@@ -45,6 +45,7 @@ async function drive(opts: { fake: RawChatFake; catalog: WinterCatalog; config: 
     providerIdentity: { providerId: identity.providerId, modelKey: identity.modelKey, family: String(wiring.resolved!.adapter.family), adapterId: identity.adapterId, adapterVersion: identity.adapterVersion, catalogVersion: identity.catalogVersion, authRefKind: identity.authRefKind },
     resolveModelSwitch: wiring.resolveModelSwitch,
     priceUsage: (modelKey: string, usage: ProviderUsage) => wiring.priceUsage(modelKey, usage),
+    usageRowFacts: (modelKey: string) => wiring.usageRowFacts(modelKey),
     ...(wiring.classifier !== undefined ? { classifier: wiring.classifier } : {}),
     ...(wiring.classifierIdentity !== undefined ? { classifierIdentity: wiring.classifierIdentity } : {}),
     autoAudit: { record: (entry: AutoAuditRecord) => void audits.push(entry) },
@@ -115,17 +116,53 @@ describe("Ruling E-4 (R6-H): cost goes LIVE on the result frame", () => {
     });
   });
 
-  test("an UNPRICED row: no cost field at all -- never an invented zero -- and `maxBudgetUsd` is inert", async () => {
+  test("an UNPRICED row: no invented cost -- `total_cost_usd` stays absent and `maxBudgetUsd` is inert -- but its TOKENS are reported (claude: modelUsage covers every API call)", async () => {
+    // Dist-session fixes (lane C, C1): every row the user actually runs (a codex-oauth subscription,
+    // deepseek, deepseek-anthropic, zai-anthropic) is unpriced, so a ledger that recorded PRICED
+    // generations only reported nothing and the host's token counters read 0/0 forever. claude folds
+    // every API call into `modelUsage` whatever its price (cost-tracker's addToTotalModelUsage) and
+    // puts a `usage` block on every result.
     await withFake({}, async (fake) => {
-      const catalog = chatCatalog([chatProvider("prova", fake.url)], [chatModel({ key: "prova/m1", providerId: "prova", upstreamId: "m1" })]);
+      const catalog = chatCatalog([chatProvider("prova", fake.url)], [chatModel({ key: "prova/m1", providerId: "prova", upstreamId: "m1", contextWindow: 4096 })]);
       const r = await drive({ fake, catalog, config: config({ maxBudgetUsd: 0.0000001 }), turns: ["one", "two"] });
       for (const result of r.results) {
         expect("total_cost_usd" in result).toBe(false);
-        expect("modelUsage" in result).toBe(false);
         expect(result.subtype).toBe("success");
       }
+      const first = (r.results[0]!.modelUsage as Record<string, Record<string, unknown>>)["prova/m1"]!;
+      expect(first).toMatchObject({ inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0, canonicalModel: "prova/m1", contextWindow: 4096 });
+      // No price basis is claimed for a row nothing priced.
+      expect("costBasis" in first).toBe(false);
+      // Session-cumulative, like the priced ledger: the second result's row carries both turns.
+      expect((r.results[1]!.modelUsage as Record<string, Record<string, unknown>>)["prova/m1"]).toMatchObject({ inputTokens: 200, outputTokens: 20, costUSD: 0 });
       expect(fake.requests).toHaveLength(2);
     });
+  });
+
+  test("on the REAL catalog a subscription row (codex-oauth) prices nothing but still describes its modelUsage row", () => {
+    const wiring = buildSessionProvider({
+      config: { sessionId: "c1", cwd: process.cwd(), model: "codex-oauth/gpt-5.6-sol", persistSession: false, provider: { providerId: "codex-oauth", authRef: { kind: "inline", value: "fixture" } } } as RuntimeConfig,
+      env: {},
+      catalog: loadCatalog(),
+      credentials: createMemoryCredentialStore(),
+    });
+    expect(wiring.priceUsage("codex-oauth/gpt-5.6-sol", { inputTokens: 1, outputTokens: 1 })).toBeUndefined();
+    expect(wiring.usageRowFacts("codex-oauth/gpt-5.6-sol")?.canonicalModel).toBe("codex-oauth/gpt-5.6-sol");
+    expect(wiring.usageRowFacts("no-such-provider/model")).toBeUndefined();
+  });
+
+  test("EVERY result carries claude's per-turn `usage` block -- this turn's main-loop generations, priced or not", async () => {
+    // claude's SDK mode runs each prompt through a fresh QueryEngine (print.ts's ask() per dequeued
+    // command, QueryEngine.ts's `totalUsage = EMPTY_USAGE`), so `result.usage` is THIS TURN's sum,
+    // while `modelUsage`/`total_cost_usd` are the session's.
+    for (const catalogFor of [pricedCatalog, (api: string) => chatCatalog([chatProvider("prova", api)], [chatModel({ key: "prova/m1", providerId: "prova", upstreamId: "m1" })])]) {
+      await withFake({}, async (fake) => {
+        const r = await drive({ fake, catalog: catalogFor(fake.url), config: config(), turns: ["one", "two"] });
+        for (const result of r.results) {
+          expect(result.usage).toEqual({ input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+        }
+      });
+    }
   });
 
   test("`maxBudgetUsd`: the request that would cross an already-exceeded ceiling never goes out -- the turn ends on the pinned `error_max_budget_usd` result, carrying the cost that crossed it", async () => {

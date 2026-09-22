@@ -100,6 +100,7 @@ export interface DefaultChildEngineFactoryOptions {
   describeModel?: EngineOptions["describeModel"];
   /** The session's pricing and the web tools' two wiring-level seams -- see `ChildEngineFactoryDeps.priceUsage`. */
   priceUsage?: EngineOptions["priceUsage"];
+  usageRowFacts?: EngineOptions["usageRowFacts"];
   resolveAuxiliaryModel?: EngineOptions["resolveAuxiliaryModel"];
   resolveToolSecret?: EngineOptions["resolveToolSecret"];
 }
@@ -178,6 +179,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.settingsRules !== undefined ? { settingsRules: opts.settingsRules } : {}),
       ...(opts.describeModel !== undefined ? { describeModel: opts.describeModel } : {}),
       ...(opts.priceUsage !== undefined ? { priceUsage: opts.priceUsage } : {}),
+      ...(opts.usageRowFacts !== undefined ? { usageRowFacts: opts.usageRowFacts } : {}),
       ...(opts.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: opts.resolveAuxiliaryModel } : {}),
       ...(opts.resolveToolSecret !== undefined ? { resolveToolSecret: opts.resolveToolSecret } : {}),
     }),

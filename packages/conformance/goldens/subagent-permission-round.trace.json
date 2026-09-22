@@ -244,7 +244,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "parent finished",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 2430,
+        "output_tokens": 38,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 5485,
+          "outputTokens": 62,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]

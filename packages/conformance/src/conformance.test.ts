@@ -449,11 +449,12 @@ const FIX_WAVE_ROWS: ConformanceRow[] = [
   {
     id: "WS13-I17",
     spec: "WS-13 §13 (integration)",
-    bullet: "usage accounting reaches the host: a priced row's results carry `total_cost_usd` and `modelUsage` from the descriptor's pricing evidence; an unpriced row carries no cost field; `maxBudgetUsd` stops the next request on `error_max_budget_usd` (R6-H amendment, Ruling E-4)",
+    bullet: "usage accounting reaches the host: a priced row's results carry `total_cost_usd` and `modelUsage` from the descriptor's pricing evidence; an unpriced row invents no `total_cost_usd` but still reports its tokens on `modelUsage` at `costUSD: 0`, and every result carries the turn's `usage` block (claude parity, dist-session fixes C1); `maxBudgetUsd` stops the next request on `error_max_budget_usd` (R6-H amendment, Ruling E-4)",
     status: "new",
     citations: [
       { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "a PRICED row: the result carries the exact" },
-      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "an UNPRICED row: no cost field at all" },
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "an UNPRICED row: no invented cost" },
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "EVERY result carries claude's per-turn `usage` block" },
       { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "the request that would cross an already-exceeded ceiling never goes out" },
       { file: "../goldens/p6-anthropic-fake.trace.json", testName: "\"modelUsage\"" },
     ],

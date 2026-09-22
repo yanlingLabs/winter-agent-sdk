@@ -89,7 +89,7 @@ import { rowsForCanonicalId, type WinterCatalog } from "@yanlinglabs/winter-prov
  * something to ask for.
  */
 const LISTING_PROBE_SLOT_NAME = "probe";
-import type { EngineOptions, PricedUsage, ProviderUsage, ResolveModelSwitch } from "./engine.ts";
+import type { EngineOptions, PricedUsage, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -395,6 +395,8 @@ export interface ProductionWiring {
     fallbackModels?: string[];
     /** P6 fix wave (Ruling E-4): R6-H's price of one generation, from the session's own wiring. */
     priceUsage?: (modelKey: string, usage: ProviderUsage) => PricedUsage | undefined;
+    /** Dist-session fixes (C1): the catalog facts for an UNPRICED generation's `modelUsage` row. */
+    usageRowFacts?: (modelKey: string) => UsageRowFacts | undefined;
     /** P6 fix wave (Ruling E-5): the classifier model's key, for the session pin -- present exactly when `classifier` is. */
     classifierIdentity?: { modelKey: string };
     /** R6-I: the `list_models` control handler's source. */
@@ -466,7 +468,7 @@ export interface ProductionWiring {
   childFactoryOptions: Required<
     Pick<
       DefaultChildEngineFactoryOptions,
-      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel" | "priceUsage" | "resolveToolSecret"
+      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel" | "priceUsage" | "usageRowFacts" | "resolveToolSecret"
     >
   > &
     // OPTIONAL on the wiring itself (withheld on the arms with no catalog identity), so it cannot sit
@@ -1291,6 +1293,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // P6 fix wave (Rulings E-4 / E-5): cost from the catalog's own pricing evidence; the classifier
       // model's key for the R6-14 pin.
       priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
+      usageRowFacts: (modelKey) => providerWiring.usageRowFacts(modelKey),
       ...(providerWiring.classifierIdentity !== undefined ? { classifierIdentity: providerWiring.classifierIdentity } : {}),
       // P7a LANE B (D29/D30): the advisor's reviewer route. WITHHELD on the two arms that withhold
       // it themselves (the reserved `winter-test/<name>` namespace, a session whose own model failed
@@ -1334,6 +1337,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // A child's generations are priced from the SAME catalog evidence as the parent's, and its web
       // tools resolve a stated model and a tool secret through the SAME wiring.
       priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
+      usageRowFacts: (modelKey) => providerWiring.usageRowFacts(modelKey),
       resolveToolSecret: providerWiring.resolveToolSecret,
       ...(providerWiring.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: providerWiring.resolveAuxiliaryModel } : {}),
       // NEW-4: the settings seed. Everything else in this object is a mirror of what the parent got;

@@ -94,7 +94,7 @@
           {
             "type": "tool_result",
             "tool_use_id": "p5-skill-1",
-            "content": "P5 SKILL BODY MARKER\n"
+            "content": "Base directory for this skill: /winter-home/skills/p5probe\n\nP5 SKILL BODY MARKER\n"
           }
         ]
       }
@@ -125,7 +125,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "skill done",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 2458,
+        "output_tokens": 23,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 2458,
+          "outputTokens": 23,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]

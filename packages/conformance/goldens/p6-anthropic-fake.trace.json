@@ -136,6 +136,12 @@
       "subtype": "success",
       "is_error": false,
       "result": "the provider scenario is done",
+      "usage": {
+        "input_tokens": 14,
+        "output_tokens": 7,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
       "permission_denials": [],
       "modelUsage": {
         "anthropic/claude-sonnet-5": {

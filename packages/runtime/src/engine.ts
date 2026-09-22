@@ -1438,6 +1438,15 @@ export interface EngineOptions {
    */
   priceUsage?: (modelKey: string, usage: ProviderUsage) => PricedUsage | undefined;
   /**
+   * The catalog facts a `modelUsage` row carries for a generation `priceUsage` could NOT price (a
+   * subscription or pricing-less row): the key, the window, the provider family. Such a generation's
+   * TOKENS still land on `modelUsage` at `costUSD: 0` -- claude folds every API call into it whatever
+   * its price -- while `total_cost_usd` and `maxBudgetUsd` stay governed by priced generations only.
+   * Absent (a scripted double), or `undefined` for a key the catalog cannot resolve: the row carries
+   * the key as its `canonicalModel` and nothing it would have to invent.
+   */
+  usageRowFacts?: (modelKey: string) => UsageRowFacts | undefined;
+  /**
    * P6 fix wave (Ruling E-5, R6-14): the classifier's own resolved identity, so the session can PIN it
    * on the first successful classification. Present only when `classifier` is.
    */
@@ -1501,11 +1510,25 @@ export interface EngineOptions {
   ancestorBudgetExceeded?: () => boolean;
 }
 
-/** One PRICED generation, as it travels up the agent tree: the model it ran on, what it used, what that cost. */
+/**
+ * One generation, as it travels up the agent tree: the model it ran on, what it used, and -- when
+ * the row is priced -- what that cost. `priced` ABSENT is an unpriced generation (subscription or
+ * pricing-less row): its tokens still land on `modelUsage` at `costUSD: 0`, described by `row`.
+ */
 export interface PricedGenerationEntry {
   modelKey: string;
   usage: ProviderUsage;
-  priced: PricedUsage;
+  priced?: PricedUsage;
+  /** For an unpriced generation: the row facts `modelUsage` carries (from `EngineOptions.usageRowFacts`). */
+  row?: UsageRowFacts;
+}
+
+/** What a `modelUsage` row states about a model it could not price. Omitted fields are unknown, never invented. */
+export interface UsageRowFacts {
+  canonicalModel: string;
+  provider?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 /**
@@ -1867,6 +1890,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     resolveModelSwitch,
     fallbackModels,
     priceUsage,
+    usageRowFacts,
     ancestorBudgetExceeded,
     classifierIdentity,
     autoAudit,
@@ -2517,16 +2541,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // newest result and never adds them); `modelUsage` is keyed by the QUALIFIED `provider/model`
   // CATALOG KEY the session was generating with whenever a provider identity exists -- not the raw
   // string the host passed, which this comment used to claim (whole-branch review, NIT; see
-  // `priceGeneration` below for the one rule) -- with the same key as `canonicalModel`. Nothing is
-  // emitted until a generation has actually been PRICED, so a session on an unpriced row -- and every
-  // pre-P6 golden -- carries no cost field at all rather than an invented zero.
+  // `priceGeneration` below for the one rule) -- with the same key as `canonicalModel`.
+  // `total_cost_usd` is emitted only once a generation has actually been PRICED, so an unpriced
+  // session carries no invented zero; its `modelUsage` rows (dist-session fixes C1, claude parity:
+  // cost-tracker's `addToTotalModelUsage` folds every API call) still report every generation's
+  // tokens, at `costUSD: 0` and with no `costBasis`. A session that generated nothing carries neither.
   //
   // `webSearchRequests` IS ALWAYS 0, disclosed (whole-branch review MINOR 7). The pin reports the
   // number of server-side searches a generation billed for; Winter's searches are the WebSearch tool's
   // own inner pass against its own backend, and the count is known only inside that executor, after its
-  // loop -- not at this fold, which sees one generation's `{modelKey, usage, priced}`. Reporting it
-  // would mean folding a zero-token entry from the tool, which flips `costLedger.priced` and can make a
-  // result frame carry cost fields it otherwise would not. Left honest at 0 rather than half-true.
+  // loop -- not at this fold, which sees one generation's `{modelKey, usage, priced?}`. Reporting it
+  // would mean folding a zero-token entry from the tool onto a row of its own. Left honest at 0 rather
+  // than half-true.
   interface ModelUsageRow {
     inputTokens: number;
     outputTokens: number;
@@ -2538,8 +2564,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     maxOutputTokens?: number;
     canonicalModel: string;
     provider?: string;
-    costBasis: "list";
+    /** Present only on a row something PRICED; an unpriced row claims no price basis. */
+    costBasis?: "list";
   }
+  // `priced` still means "something was actually PRICED" -- `total_cost_usd` and `maxBudgetUsd` read
+  // it. `models` holds EVERY generation's row, priced or not (claude's modelUsage covers every API call).
   const costLedger = { priced: false, totalUsd: 0, models: new Map<string, ModelUsageRow>() };
   // `pricedUnder` exists for ONE caller besides the main loop: a tool's INNER generation (the web
   // tools' digest and search passes), which may run on a DIFFERENT model than the session's and must
@@ -2561,8 +2590,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // A stated inner model arrives already qualified and passes through untouched.
     const modelKey = stated === currentModel && currentProviderIdentity !== undefined ? currentProviderIdentity.modelKey : stated;
     const priced = priceUsage(modelKey, usage);
-    if (priced === undefined) return;
-    foldPricedGeneration({ modelKey, usage, priced });
+    if (priced !== undefined) {
+      foldPricedGeneration({ modelKey, usage, priced });
+      return;
+    }
+    // UNPRICED, and still reported (claude parity, dist-session fixes C1): the tokens land on this
+    // model's `modelUsage` row at `costUSD: 0`; nothing about cost or the budget changes.
+    foldPricedGeneration({ modelKey, usage, row: usageRowFacts?.(modelKey) ?? { canonicalModel: modelKey } });
   };
   // THE ONE FOLD into the ledger, shared by this run's own generations (above) and by every
   // DESCENDANT's (`recordDescendantCost`, the run context's cost roll-up). It then reports upward, so
@@ -2570,8 +2604,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // it, and the root's is the session's.
   const foldPricedGeneration = (entry: PricedGenerationEntry): void => {
     const { modelKey, usage, priced } = entry;
-    costLedger.priced = true;
-    costLedger.totalUsd += priced.costUsd;
+    if (priced !== undefined) {
+      costLedger.priced = true;
+      costLedger.totalUsd += priced.costUsd;
+    }
+    // The row's descriptive facts: the pricing answer's when priced, the catalog's row facts otherwise.
+    const facts: UsageRowFacts = priced ?? entry.row ?? { canonicalModel: modelKey };
     const row = costLedger.models.get(modelKey) ?? {
       inputTokens: 0,
       outputTokens: 0,
@@ -2579,17 +2617,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       cacheCreationInputTokens: 0,
       webSearchRequests: 0,
       costUSD: 0,
-      ...(priced.contextWindow !== undefined ? { contextWindow: priced.contextWindow } : {}),
-      ...(priced.maxOutputTokens !== undefined ? { maxOutputTokens: priced.maxOutputTokens } : {}),
-      canonicalModel: priced.canonicalModel,
-      ...(priced.provider !== undefined ? { provider: priced.provider } : {}),
-      costBasis: "list" as const,
+      ...(facts.contextWindow !== undefined ? { contextWindow: facts.contextWindow } : {}),
+      ...(facts.maxOutputTokens !== undefined ? { maxOutputTokens: facts.maxOutputTokens } : {}),
+      canonicalModel: facts.canonicalModel,
+      ...(facts.provider !== undefined ? { provider: facts.provider } : {}),
     };
+    if (priced !== undefined) row.costBasis = "list";
     row.inputTokens += usage.inputTokens;
     row.outputTokens += usage.outputTokens;
     row.cacheReadInputTokens += usage.cacheReadTokens ?? 0;
     row.cacheCreationInputTokens += usage.cacheWriteTokens ?? 0;
-    row.costUSD += priced.costUsd;
+    if (priced !== undefined) row.costUSD += priced.costUsd;
     costLedger.models.set(modelKey, row);
     try {
       onPricedGeneration?.(entry);
@@ -2597,8 +2635,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       /* a parent's ledger failing must never break this run's generation */
     }
   };
-  /** The cost trio a result frame carries once anything was priced: `total_cost_usd` + `modelUsage` (`usage` stays absent, disclosed). */
-  const costFields = (): Record<string, unknown> => (costLedger.priced ? { total_cost_usd: costLedger.totalUsd, modelUsage: Object.fromEntries(costLedger.models) } : {});
+  /**
+   * The session-cumulative fields a result frame carries: `total_cost_usd` once anything was PRICED
+   * (never an invented zero), and `modelUsage` once any generation ran at all, priced or not. The
+   * per-turn `usage` block is stamped separately, at the turn's own terminal write.
+   */
+  const costFields = (): Record<string, unknown> => ({
+    ...(costLedger.priced ? { total_cost_usd: costLedger.totalUsd } : {}),
+    // SNAPSHOTS, never the ledger's own row objects: an in-process host holds every result it was
+    // given, and a later generation mutating a shared row rewrote an EARLIER result's modelUsage.
+    ...(costLedger.models.size > 0 ? { modelUsage: Object.fromEntries([...costLedger.models].map(([key, row]) => [key, { ...row }])) } : {}),
+  });
   const budgetExceeded = (): boolean => {
     if (config.maxBudgetUsd !== undefined && costLedger.priced && costLedger.totalUsd > config.maxBudgetUsd) return true;
     // ...or any ANCESTOR's (see `EngineOptions.ancestorBudgetExceeded`). A probe that throws reads as
@@ -6672,6 +6719,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // both fail-closed-defer denials (no durable approval store; persisting the record itself
     // failed) already route through — nothing else needs separate instrumentation.
     const turnPermissionDenials: SDKPermissionDenial[] = [];
+    // claude's per-turn `result.usage` (a fresh QueryEngine's `totalUsage` per prompt in SDK mode):
+    // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
+    // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
+    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 
     // --- Phase 5 Task 3 (R5-14): command resolution, BEFORE the model sees the prompt -------------
     //
@@ -6700,7 +6751,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // the field is pin-verified always-present.
       interruptCurrentTurn.current = null;
       const compactOutcome = await runManualCompaction(builtinCommand.args);
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, permission_denials: [] } });
+      // `usage` too, like every result (claude parity, C1): a built-in runs no main-loop generation of
+      // this turn's own, so its block is all zeros.
+      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, permission_denials: [] } });
       await flushStore();
       endTurn();
       continue;
@@ -6855,6 +6908,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (turn.usage !== undefined) {
           contextAccountant.record(turn.usage);
           priceGeneration(turn.usage);
+          turnUsage.input_tokens += turn.usage.inputTokens;
+          turnUsage.output_tokens += turn.usage.outputTokens;
+          turnUsage.cache_read_input_tokens += turn.usage.cacheReadTokens ?? 0;
+          turnUsage.cache_creation_input_tokens += turn.usage.cacheWriteTokens ?? 0;
         }
         // --- Phase 6 Task 3 (R6-C): the pinned REFUSAL frames -----------------------------------
         //
@@ -7572,14 +7629,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // a Winter-defined discovery channel.
       // Lane N: the ONE terminal-result door. `costFields()` is stamped INSIDE it -- at write time, not
       // here -- because a HELD result is re-stamped with the session totals when it finally flushes.
-      writeTurnResult({ ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } as TurnResultMessage);
+      writeTurnResult({ ...finalResult, usage: { ...turnUsage }, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } as unknown as TurnResultMessage);
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
       sessionAborted = true;
-      writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials });
+      writeTurnResult({ type: "result", subtype: "success", is_error: false, interrupted: true, usage: { ...turnUsage }, permission_denials: turnPermissionDenials });
     }
     // Fix r1 (M1): the messaging facet's own quiescent boundary, fired on BOTH branches. It used to
     // sit inside the success arm beside `emitNotification("idle", ...)`, which is also success-only --

@@ -84,7 +84,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "reply 1",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 100,
+          "outputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -112,7 +129,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "reply 2",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 200,
+          "outputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -140,7 +174,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "reply 3",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 300,
+          "outputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -168,7 +219,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "reply 4",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 950,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 1250,
+          "outputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -196,7 +264,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "reply 5",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 950,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 2200,
+          "outputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -234,6 +319,12 @@
       "subtype": "success",
       "is_error": false,
       "result": "Compacted the conversation. 8 message(s) retained alongside the summary.",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
       "permission_denials": []
     }
   }

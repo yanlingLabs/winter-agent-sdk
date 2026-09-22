@@ -163,6 +163,12 @@
       "subtype": "success",
       "is_error": false,
       "result": "tool round done",
+      "usage": {
+        "input_tokens": 2345,
+        "output_tokens": 20,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
       "permission_denials": [
         {
           "tool_name": "test_tool",
@@ -171,7 +177,18 @@
             "probe": true
           }
         }
-      ]
+      ],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 2345,
+          "outputTokens": 20,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]

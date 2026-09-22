@@ -61,7 +61,7 @@ import { createProviderContext, redactCredentialRef, resolveSessionProvider, typ
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
-import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
+import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "../engine.ts";
 import { computeActiveSlotSet, resolveSlotToProvider, type SlotProviderResolution } from "./slots.ts";
 import { resolveAdvisorRoute, selectAdvisorCandidate } from "./advisor-route.ts";
 
@@ -339,6 +339,8 @@ export interface SessionProviderWiring {
   fallbackModelKeys: string[];
   /** P6 fix wave (Ruling E-4, R6-H): prices one generation for the model it ran on, from the catalog's `pricing` evidence. `undefined` for an unpriced row. */
   priceUsage(modelKey: string, usage: ProviderUsage): PricedUsage | undefined;
+  /** The catalog facts for a `modelUsage` row of ANY resolvable model, priced or not (dist-session fixes C1). `undefined` for a key the catalog cannot resolve. */
+  usageRowFacts(modelKey: string): UsageRowFacts | undefined;
   /** P6 fix wave (Ruling E-5, R6-14): the resolved classifier model's key, for the session pin. Present exactly when `classifier` is. */
   classifierIdentity?: { modelKey: string };
   /** R6-I: the `supportedModels()` rows for this session. */
@@ -842,6 +844,24 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     };
   };
 
+  // Dist-session fixes (C1): the SAME resolution as `priceUsage`, with none of its pricing conditions --
+  // a subscription or pricing-less row still has a key, a window and a provider family, and its
+  // tokens are still reported (claude's modelUsage covers every API call, priced or not).
+  const usageRowFacts = (modelKey: string): UsageRowFacts | undefined => {
+    const providerId = modelKey.includes("/") ? undefined : sessionProviderId();
+    const result = registry.resolve({ model: modelKey, ...(providerId !== undefined ? { provider: { providerId } } : {}) });
+    if (result instanceof WinterProviderResolutionError || result.descriptor === undefined) return undefined;
+    const apiProvider = apiProviderFor(result.providerId);
+    const contextWindow = result.descriptor.contextWindow?.value;
+    const maxOutputTokens = result.descriptor.maxOutputTokens?.value;
+    return {
+      canonicalModel: result.descriptor.key,
+      ...(apiProvider !== undefined ? { provider: apiProvider } : {}),
+      ...(typeof contextWindow === "number" ? { contextWindow } : {}),
+      ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
+    };
+  };
+
   const deps: SelectionDeps = {
     registry,
     credentials,
@@ -889,6 +909,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       resolveModelSwitch,
       fallbackModelKeys: [],
       priceUsage: () => undefined,
+      usageRowFacts: () => undefined,
       resolveToolSecret,
       supportedModels: () => [],
       accountInfo: () => ({}),
@@ -917,6 +938,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       resolveModelSwitch,
       fallbackModelKeys: [],
       priceUsage: () => undefined,
+      usageRowFacts: () => undefined,
       resolveToolSecret,
       supportedModels: () => [],
       accountInfo: () => ({}),
@@ -1195,6 +1217,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     // engagement time, so a candidate is always built fresh under the rule in force then.
     fallbackModelKeys: selection.fallbackModels.map((candidate) => candidate.modelKey),
     priceUsage,
+    usageRowFacts,
     supportedModels: () => registry.listModelInfo(resolved.providerId),
     accountInfo: () => {
       const apiProvider = apiProviderFor(resolved.providerId);

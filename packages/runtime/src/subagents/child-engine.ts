@@ -281,6 +281,8 @@ export interface ChildEngineFactoryDeps {
    * child that cannot see the root's registration.
    */
   priceUsage?: EngineOptions["priceUsage"];
+  /** The row facts for a child's UNPRICED generations -- see `EngineOptions.usageRowFacts`. Remapped to the child's own key exactly like `priceUsage`. */
+  usageRowFacts?: EngineOptions["usageRowFacts"];
   resolveAuxiliaryModel?: EngineOptions["resolveAuxiliaryModel"];
   resolveToolSecret?: EngineOptions["resolveToolSecret"];
   // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
@@ -1118,6 +1120,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           ? {
               priceUsage: (modelKey: string, usage: ProviderUsage) =>
                 deps.priceUsage!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey, usage),
+            }
+          : {}),
+        ...(deps.usageRowFacts !== undefined
+          ? {
+              usageRowFacts: (modelKey: string) =>
+                deps.usageRowFacts!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey),
             }
           : {}),
         ...(runCtx.recordDescendantCost !== undefined ? { onPricedGeneration: runCtx.recordDescendantCost } : {}),

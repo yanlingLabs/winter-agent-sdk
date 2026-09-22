@@ -84,7 +84,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<system-reminder>\\nAvailable agent types for the Agent tool:\\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\\n- Explore: Fast read-only search agent for locating code. Use it to find files by pattern (eg. \\\"src/components/**/*.tsx\\\"), grep for symbols or keywords (eg. \\\"API endpoints\\\"), or answer \\\"where is X defined / which files reference Y.\\\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \\\"quick\\\" for a single targeted lookup, \\\"medium\\\" for moderate exploration, or \\\"very thorough\\\" to search across multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\\n\\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\\n</system-reminder>\\n\"},{\"type\":\"text\",\"text\":\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# currentDate\\nToday's date is <FIXTURE-DATE>.\\n\\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\\n</system-reminder>\\n\\n\"},{\"type\":\"text\",\"text\":\"first\"}]}]",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 1146,
+        "output_tokens": 519,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 1146,
+          "outputTokens": 519,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -172,7 +189,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<system-reminder>\\nAvailable agent types for the Agent tool:\\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\\n- Explore: Fast read-only search agent for locating code. Use it to find files by pattern (eg. \\\"src/components/**/*.tsx\\\"), grep for symbols or keywords (eg. \\\"API endpoints\\\"), or answer \\\"where is X defined / which files reference Y.\\\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \\\"quick\\\" for a single targeted lookup, \\\"medium\\\" for moderate exploration, or \\\"very thorough\\\" to search across multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\\n\\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\\n</system-reminder>\\n\"},{\"type\":\"text\",\"text\":\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# currentDate\\nToday's date is <FIXTURE-DATE>.\\n\\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\\n</system-reminder>\\n\\n\"},{\"type\":\"text\",\"text\":\"first\"}]},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"<system-reminder>\\\\nAvailable agent types for the Agent tool:\\\\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\\\\n- Explore: Fast read-only search agent for locating code. Use it to find files by pattern (eg. \\\\\\\"src/components/**/*.tsx\\\\\\\"), grep for symbols or keywords (eg. \\\\\\\"API endpoints\\\\\\\"), or answer \\\\\\\"where is X defined / which files reference Y.\\\\\\\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \\\\\\\"quick\\\\\\\" for a single targeted lookup, \\\\\\\"medium\\\\\\\" for moderate exploration, or \\\\\\\"very thorough\\\\\\\" to search across multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\\\\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\\\\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\\\\n\\\\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\\\\n</system-reminder>\\\\n\\\"},{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"<system-reminder>\\\\nAs you answer the user's questions, you can use the following context:\\\\n# currentDate\\\\nToday's date is <FIXTURE-DATE>.\\\\n\\\\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\\\\n</system-reminder>\\\\n\\\\n\\\"},{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"first\\\"}]}]\"},{\"role\":\"user\",\"content\":\"second\"}]",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 1665,
+        "output_tokens": 1072,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 1665,
+          "outputTokens": 1072,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]

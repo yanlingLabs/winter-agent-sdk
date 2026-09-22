@@ -136,7 +136,26 @@
       "subtype": "success",
       "is_error": false,
       "result": "the provider scenario is done",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 14,
+        "output_tokens": 8,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "deepseek/deepseek-v4-pro": {
+          "inputTokens": 14,
+          "outputTokens": 8,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 384000,
+          "canonicalModel": "deepseek/deepseek-v4-pro"
+        }
+      }
     }
   }
 ]

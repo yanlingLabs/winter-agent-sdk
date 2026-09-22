@@ -119,7 +119,24 @@
       "subtype": "success",
       "is_error": false,
       "result": "first done",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 2329,
+        "output_tokens": 15,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 2329,
+          "outputTokens": 15,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   },
   {
@@ -196,13 +213,30 @@
       "subtype": "success",
       "is_error": false,
       "result": "second done",
+      "usage": {
+        "input_tokens": 2415,
+        "output_tokens": 15,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
       "permission_denials": [
         {
           "tool_name": "mystery_tool",
           "tool_use_id": "c2",
           "tool_input": {}
         }
-      ]
+      ],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 4744,
+          "outputTokens": 30,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]

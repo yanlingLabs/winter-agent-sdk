@@ -184,7 +184,24 @@
       "is_error": true,
       "result": "Failed to provide valid structured output after 3 attempts",
       "terminal_reason": "structured_output_retry_exhausted",
-      "permission_denials": []
+      "usage": {
+        "input_tokens": 3679,
+        "output_tokens": 66,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      },
+      "permission_denials": [],
+      "modelUsage": {
+        "winter-test/echo": {
+          "inputTokens": 3679,
+          "outputTokens": 66,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0,
+          "canonicalModel": "winter-test/echo"
+        }
+      }
     }
   }
 ]
