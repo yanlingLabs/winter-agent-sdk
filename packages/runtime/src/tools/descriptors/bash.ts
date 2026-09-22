@@ -28,11 +28,12 @@
 // the flag and runs the command sandboxed (`sandbox/spawn.ts`, claude's shouldUseSandbox).
 //
 // The override bullet is the pinned binary's "This goes through the permission gate", WITHOUT its
-// parenthetical "(a user prompt, or the auto-mode classifier when auto mode is active)": the override is
-// MANDATORY INTERACTION here (RULING P3-J), so in auto mode it goes to the PermissionRequest hook and
-// the host's `canUseTool`, never to the classifier (`permissions/evaluator.ts`), and `dontAsk` denies it
-// outright. "Goes through the permission gate" is true of every one of those answers; the clause
-// naming a classifier is not.
+// parenthetical "(a user prompt, or the auto-mode classifier when auto mode is active)": an escape is
+// decided by the permission gate as claude decides it -- an allow rule or bypass runs it, dontAsk
+// denies it -- but one nothing sanctioned goes to the PermissionRequest hook and the host's
+// `canUseTool` in EVERY other mode, auto included, never to the classifier
+// (`permissions/evaluator.ts`'s `resolveSandboxEscape`). "Goes through the permission gate" is true of
+// every one of those answers; the clause naming a classifier is not.
 //
 // PER SESSION, like WebFetch's lean/full choice: a descriptor is a process-wide singleton and cannot see
 // a session's sandbox, so the static registration carries the base description and `engine.ts`'s

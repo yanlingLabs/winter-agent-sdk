@@ -613,19 +613,19 @@ const WS12_11: ConformanceRow[] = [
   {
     id: "WS12-03",
     spec: "WS-12 §11",
-    bullet: "dangerouslyDisableSandbox is surfaced under every permission policy, is never silenced by a rule, and its override state appears in the result",
+    bullet: "dangerouslyDisableSandbox is decided by the permission gate as claude decides it -- an allow rule or bypass runs it, dontAsk denies it, one nothing sanctioned reaches the host's canUseTool in every other mode (never the classifier) -- and its override state appears in the result",
     status: "covered",
     citations: [
-      {
-        file: "../permissions/evaluator.test.ts",
-        testName: "the override reaches the prompt stage even with a BARE Bash(*) allow rule present — never rule-silenced, never auto-approved by acceptEdits/auto, spec-literal \"under every policy\" including bypass",
-      },
-      { file: "../permissions/evaluator.test.ts", testName: "a deny rule targeting Bash still wins outright (stage 2 runs before stage 3's mandatory interaction)" },
+      { file: "../permissions/sandbox-escape.test.ts", testName: "a matching allow RULE runs an escape with no prompt" },
+      { file: "../permissions/sandbox-escape.test.ts", testName: "an escape no rule sanctions reaches the host's canUseTool -- never the classifier" },
+      { file: "../permissions/sandbox-escape.test.ts", testName: "bypassPermissions: an unsanctioned escape is ALLOWED with no prompt" },
+      { file: "../permissions/sandbox-escape.test.ts", testName: "dontAsk: an unsanctioned escape is DENIED, no prompt" },
+      { file: "../permissions/evaluator.test.ts", testName: "a deny rule targeting Bash still wins outright (stage 2)" },
       { file: "./impl/bash.test.ts", testName: "a background override call reports override-requested in the started message; the notification summary follows the pinned wording instead" },
       { file: "./impl/bash.test.ts", testName: "an ordinary sandboxed background call reports [sandbox: sandboxed] in the started message; the notification summary is the pinned wording" },
     ],
     note:
-      "'Under every permission policy' is proven by a SINGLE mode-parameterized test (template-literal title, one concrete test per mode -- the cited substring is the fixed, non-interpolated portion) rather than six separately-registered tests. 'A deny rule still wins' is the one legitimate exception the RULING P3-J implementation itself preserves (stage 2 precedes stage 3), not a counterexample to 'never silenced' -- a deny is a DENIAL, not a silent bypass of the override's own visibility. Task-frames parity (2026-09-17 contract §4 \"Summary wording\"): the pin's own task_notification.summary carries no sandbox note at all, so the override's visibility now lives on the started-message surface alone -- the two bash.test.ts titles below were renamed to say so; this citation moved with them.",
+      "RULING P3-J (the override as mandatory interaction, ahead of the allow rules and even under bypass) is SUPERSEDED by the pinned claude 0.3.250 Bash checkPermissions (dist-session fixes, lane C C3): the ordinary evaluation decides, a MODE allow of an escape is escalated to an ask (\"Run outside of the sandbox\"), a RULE allow is not, and bypass turns the ask into an allow. The host requirement on top: an escape no rule sanctions reaches canUseTool in auto and plan too. Task-frames parity (2026-09-17 contract §4 \"Summary wording\"): the pin's own task_notification.summary carries no sandbox note at all, so the override's visibility lives on the started-message surface alone.",
   },
   {
     id: "WS12-04",

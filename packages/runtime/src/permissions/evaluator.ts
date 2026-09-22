@@ -285,6 +285,16 @@ export interface EvaluationContext {
   policy: PolicyState;
   cwd: string;
   /**
+   * Does this Bash call's `dangerouslyDisableSandbox` actually take it OUT of a sandbox it would
+   * otherwise run in? (dist-session fixes, lane C C3 -- claude's `!shouldUseSandbox(input) &&
+   * shouldUseSandbox({...input, dangerouslyDisableSandbox: false})`.) False when the session's sandbox
+   * is off, when the policy forbids unsandboxed commands (the flag is then ignored), or when the
+   * command is an allowed `excludedCommands` entry. Only such a call is an ESCAPE, handled by
+   * `resolveSandboxEscape`. Injected because the evaluator cannot see the session's sandbox settings;
+   * ABSENT reads as "the flag escapes" -- the conservative answer.
+   */
+  bashSandboxEscape?: (call: PermissionCall) => boolean;
+  /**
    * The CURRENT TURN's abort signal (lane C, C2). The prompt stage hands it to the permission RPC, so
    * an interrupt while a prompt is open cancels that request at its source -- the bridge writes
    * `control_cancel_request` and the host's `canUseTool` sees its signal abort (claude parity). Absent
@@ -350,7 +360,7 @@ export interface EvaluationContext {
    * INJECTED rather than computed here, for the same reason `requiresInteraction` and
    * `skillIdentities` are: the answer depends on the session's resolved `SandboxSettings`, on
    * `sandbox-exec` being available on this host, and on the call's own `dangerouslyDisableSandbox`
-   * (P3-J), none of which this module can see. Absent = the pre-fix behaviour, i.e. the setting
+   * (an escape -- see `bashSandboxEscape`), none of which this module can see. Absent = the pre-fix behaviour, i.e. the setting
    * stays inert for any caller that does not supply it.
    */
   bashRunsSandboxed?: (call: PermissionCall) => boolean;
@@ -1433,9 +1443,9 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   //
   // THE PREDICATE IS INJECTED, not computed here: whether a given Bash call will ACTUALLY run under
   // the sandbox depends on the session's resolved `SandboxSettings`, on `sandbox-exec` being
-  // available on this host, and on the call's own `dangerouslyDisableSandbox` (RULING P3-J -- which
-  // must STILL prompt, because a call that opts out of the fence has none of the containment this
-  // allow is paying for). `evaluator.ts` knows none of those; `engine.ts` knows all three.
+  // available on this host, and on the call's own `dangerouslyDisableSandbox` (a call that opts out of
+  // the fence has none of the containment this allow is paying for; it is an escape, handled by
+  // `resolveSandboxEscape`). `evaluator.ts` knows none of those; `engine.ts` knows all three.
   if ((mode === "default" || mode === "dontAsk" || mode === "acceptEdits" || mode === "auto") && ctx.bashRunsSandboxed?.(call) === true) {
     return { kind: "allow" };
   }
@@ -1720,6 +1730,67 @@ async function resolveAutoDecision(
   return record;
 }
 
+// --- `dangerouslyDisableSandbox` (dist-session fixes, lane C C3), replacing RULING P3-J -------------
+//
+// P3-J made every escape mandatory interaction ahead of the allow rules and even under bypass. The
+// pinned claude 0.3.250 Bash `checkPermissions` does something narrower, and this is it:
+//
+//   r = <the ordinary evaluation>;
+//   if (input.dangerouslyDisableSandbox && r.behavior !== "deny" && r.behavior !== "ask"
+//       && !Kit(r.decisionReason)            // the allow did NOT come from a rule
+//       && !shouldUseSandbox(input) && shouldUseSandbox({...input, dangerouslyDisableSandbox: false}))
+//     return { behavior: "ask", decisionReason: { type: "sandboxOverride" }, message: "Run outside of the sandbox" };
+//
+// and `sandboxOverride` is absent from its bypass-immune table, so bypassPermissions turns that ask
+// into an allow. So: deny rules, ask rules, hooks and the protected-path/critical-removal floors
+// decide exactly as for any Bash call; a matching allow RULE runs the escape; bypass runs it; dontAsk
+// denies it; and an escape nothing sanctioned is ASKED -- in every other mode, auto and plan included,
+// through the PermissionRequest hook and the host's canUseTool, never the classifier (the host's own
+// reviewer clears escapes there, so an unsanctioned escape must always reach it).
+
+export const SANDBOX_ESCAPE_REASON = "Run outside of the sandbox";
+
+function isSandboxEscape(call: PermissionCall, ctx: EvaluationContext): boolean {
+  if (call.toolName !== "Bash" || call.input["dangerouslyDisableSandbox"] !== true) return false;
+  return ctx.bashSandboxEscape?.(call) ?? true;
+}
+
+async function resolveSandboxEscape(
+  call: PermissionCall,
+  ctx: EvaluationContext,
+  policyVersion: number,
+  carriedTransform: Record<string, unknown> | undefined,
+  reason: string,
+): Promise<PermissionDecisionRecord> {
+  if (ctx.policy.mode === "dontAsk") {
+    return {
+      decision: "deny",
+      mechanism: "mode",
+      policyVersion,
+      message: "Denied: dontAsk mode denies running a Bash command outside of the sandbox (dangerouslyDisableSandbox) without an allow rule for it",
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+  const meta: PromptStageMeta = {
+    decisionReason: reason,
+    ...(call.toolUseId !== undefined ? { toolUseID: call.toolUseId } : {}),
+    ...(call.agentId !== undefined ? { agentID: call.agentId } : {}),
+  };
+  const hookAnswer = await tryPermissionRequestHook(call, ctx, meta, policyVersion, carriedTransform);
+  if (hookAnswer !== undefined) return hookAnswer;
+  const result = await ctx.promptStage.prompt(call, ctx, meta);
+  if (result === null) {
+    return {
+      decision: "deny",
+      mechanism: "mode",
+      policyVersion,
+      message: "Denied: running a Bash command outside of the sandbox (dangerouslyDisableSandbox) needs approval and no prompt handler answered it",
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+  return buildRecordFromPromptResult(result, policyVersion, carriedTransform);
+}
+
 export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Promise<PermissionDecisionRecord> {
   // The six stages decide; the explicit-approval marker is then stamped in this ONE place, so that no
   // return site among the stages' dozens can forget it (see `PermissionDecisionRecord.explicitApproval`).
@@ -1928,43 +1999,23 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // it's keyed on `policy.mode`, not on `askEntry` specifically). A DENY rule targeting the tool
   // still wins outright — stage 2 already returned before this stage ever runs.
   const isMandatoryAskUserQuestion = effectiveCall.toolName === ASK_USER_QUESTION_TOOL_NAME;
-  // RULING P3-J (Task 8, P3 close-out; WS-12 §4/§11): "the call is always surfaced for approval,
-  // under every policy, and no permission rule may silence it" — a Bash call carrying
-  // `dangerouslyDisableSandbox: true` joins AskUserQuestion as mandatory interaction, for the
-  // IDENTICAL structural reason: checked here, at stage 3, strictly before stage 4's mode baseline
-  // (so acceptEdits/auto never auto-approve it) and stage 5's allow-rule lookup (so a `Bash(*)`
-  // allow — or any other Bash allow rule — never silences it). "Under every policy" is true by
-  // CONSTRUCTION once this line is added: stage 3 runs unconditionally, for every mode including
-  // `bypassPermissions` (mirroring how AskUserQuestion is already mandatory under bypass, WS-07
-  // §6.4's own "does NOT override ... AskUserQuestion" carve-out) — the only mode that converts this
-  // into an outright denial is `dontAsk` (the SAME dontAsk-converts-to-denial branch below, keyed on
-  // `policy.mode` alone, already covers it). CAPTURE-PENDING (WS-12 §4's own text): a future
-  // differential capture MAY show the real product loosens the bypass cell specifically for this
-  // override; until then this is the spec-literal reading, not a guess, and the override's own
-  // request flag is preserved verbatim in `effectiveCall.input` regardless of how this resolves (a
-  // PreToolUse hook's `transformedInput` is the only thing that could ever change it, exactly like
-  // any other field) — engine.ts still records it as "override-requested" on the sandbox posture
-  // whenever bash.ts's own executor eventually runs (see registry.ts's ToolExecutionContext.session
-  // and WS-12 §4's "the result MUST record the sandbox-override state"), never silently normalized
-  // away by this stage regardless of allow/deny outcome.
-  const isMandatoryDangerousBashOverride = effectiveCall.toolName === "Bash" && effectiveCall.input["dangerouslyDisableSandbox"] === true;
-  // Phase 4 Task 3 (WS-09 §6): a FIFTH mandatory-interaction reason, structurally identical to
-  // RULING P3-J immediately above (same stage-3 placement, same "never rule-silenced, never
-  // auto-approved by acceptEdits/auto, dontAsk denies it" shape) -- see EvaluationContext.
+  // RULING P3-J (the `dangerouslyDisableSandbox` mandate) used to sit here, ahead of the allow rules
+  // and even under bypass; it is replaced by claude's own rule -- see `resolveSandboxEscape`.
+  // Phase 4 Task 3 (WS-09 §6): a mandatory-interaction reason (stage-3 placement: "never
+  // rule-silenced, never auto-approved by acceptEdits/auto, dontAsk denies it") -- see EvaluationContext.
   // requiresInteraction's own header for why this is an injected seam rather than a direct registry
   // lookup. `?.` + `=== true` mirrors this file's own established "exact boolean, never a
   // truthy-coercion" posture for a descriptor-derived signal (registry.ts's own `_meta['anthropic/
   // requiresUserInteraction'] === true` check for the identical reason).
   const isMandatoryMcpInteraction = ctx.requiresInteraction?.(effectiveCall.toolName) === true;
   // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a reason to reach the
-  // prompt path — priority among the five, when more than one applies simultaneously, is askEntry >
-  // isMandatoryAskUserQuestion > isMandatoryDangerousBashOverride > isMandatoryMcpInteraction >
-  // hookForcedAsk (a documented judgment call: the more specific attribution's own message/mechanism
+  // prompt path — priority, when more than one applies simultaneously, is askEntry >
+  // isMandatoryAskUserQuestion > isMandatoryMcpInteraction > hookForcedAsk (a documented judgment call: the more specific attribution's own message/mechanism
   // wins; every case still ends in the identical "prompt, then fail closed on no answer" behavior
-  // regardless of which one is picked). In practice the first four are mutually exclusive (a call
-  // cannot simultaneously BE AskUserQuestion and Bash and an MCP tool), so this ordering is a
-  // tie-break with no live ambiguity today.
-  if (askEntry || isMandatoryAskUserQuestion || isMandatoryDangerousBashOverride || isMandatoryMcpInteraction || isMandatoryPrivateAddressAsk || hookForcedAsk) {
+  // regardless of which one is picked). In practice the first three are mutually exclusive (a call
+  // cannot simultaneously BE AskUserQuestion and an MCP tool), so this ordering is a tie-break with
+  // no live ambiguity today.
+  if (askEntry || isMandatoryAskUserQuestion || isMandatoryMcpInteraction || isMandatoryPrivateAddressAsk || hookForcedAsk) {
     if (policy.mode === "dontAsk") {
       // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
       // own rule-denial message/mechanism; AskUserQuestion / a hook-forced ask with no matching rule
@@ -1981,24 +2032,10 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
-      if (isMandatoryDangerousBashOverride) {
-        // RULING P3-J: dontAsk denies the override outright — "every would-prompt outcome becomes a
-        // denial" (WS-07 §6.3) applies here exactly as it does to AskUserQuestion just below; the
-        // message names the flag by name so the transcript records WHAT was refused, not just that
-        // something was.
-        return {
-          decision: "deny",
-          mechanism: "mode",
-          policyVersion,
-          message: "Denied: dontAsk mode denies a Bash call requesting dangerouslyDisableSandbox (WS-07 §6.3; WS-12 §4/§11, RULING P3-J)",
-          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
-        };
-      }
       if (isMandatoryMcpInteraction) {
-        // Phase 4 Task 3 (WS-09 §6): mechanism "mode" — mirrors isMandatoryDangerousBashOverride's
-        // own dontAsk branch exactly (no rule was involved; the descriptor's own metadata forced
-        // this, and dontAsk's own §6.3 "every would-prompt outcome becomes a denial" applies
-        // identically here).
+        // Phase 4 Task 3 (WS-09 §6): mechanism "mode" -- no rule was involved; the descriptor's own
+        // metadata forced this, and dontAsk's own §6.3 "every would-prompt outcome becomes a denial"
+        // applies.
         return {
           decision: "deny",
           mechanism: "mode",
@@ -2058,13 +2095,11 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
         `matched ask rule ${formatRuleRef(askEntry)}${privateTarget !== undefined ? `; ${privateAddressAskReason(privateTarget)}` : ""}`
       : isMandatoryAskUserQuestion
         ? "AskUserQuestion requires mandatory interaction (WS-07 §8)"
-        : isMandatoryDangerousBashOverride
-          ? "Bash dangerouslyDisableSandbox requires mandatory interaction (WS-12 §4/§11, RULING P3-J)"
-          : isMandatoryMcpInteraction
-            ? `'${effectiveCall.toolName}' is marked requiresUserInteraction and requires mandatory interaction (WS-09 §6)`
-            : isMandatoryPrivateAddressAsk && privateTarget !== undefined
-              ? privateAddressAskReason(privateTarget)
-              : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
+        : isMandatoryMcpInteraction
+          ? `'${effectiveCall.toolName}' is marked requiresUserInteraction and requires mandatory interaction (WS-09 §6)`
+          : isMandatoryPrivateAddressAsk && privateTarget !== undefined
+            ? privateAddressAskReason(privateTarget)
+            : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
     const meta: PromptStageMeta = {
       decisionReason,
       ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
@@ -2086,15 +2121,6 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
           source: askEntry.source,
           ruleRef: formatRuleRef(askEntry),
           message: ruleAskUnresolvedMessage(askEntry),
-          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
-        };
-      }
-      if (isMandatoryDangerousBashOverride) {
-        return {
-          decision: "deny",
-          mechanism: "mode",
-          policyVersion,
-          message: "Denied: a Bash call requesting dangerouslyDisableSandbox requires interaction and no prompt handler answered it (WS-12 §4/§11, RULING P3-J)",
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
@@ -2179,9 +2205,13 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     }
   }
 
+  // An ESCAPE (see `resolveSandboxEscape`): a MODE allow does not clear it -- except bypass's -- and an
+  // allow RULE (stage 5) does.
+  const sandboxEscape = isSandboxEscape(effectiveCall, ctx);
+
   // --- Stage 4: permission mode ------------------------------------------------------------------
   const modeResult = evaluateModeStage(effectiveCall, ctx, policy.mode);
-  if (modeResult.kind === "allow") {
+  if (modeResult.kind === "allow" && !(sandboxEscape && policy.mode !== "bypassPermissions")) {
     return {
       decision: "allow",
       mechanism: "mode",
@@ -2289,6 +2319,12 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
       ruleRef: formatRuleRef(allowEntry),
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
+  }
+
+  // An escape no allow rule sanctioned: asked, through the hook and the host's canUseTool, in every
+  // mode but dontAsk (denied) -- never the classifier (auto/plan) and never the generic stage 6.
+  if (sandboxEscape) {
+    return await resolveSandboxEscape(effectiveCall, ctx, policyVersion, carriedTransform, ruleBlockedShellWrite?.reason ?? SANDBOX_ESCAPE_REASON);
   }
 
   // --- Post-allow-stage fallback (mode-specific) --------------------------------------------------

@@ -2720,6 +2720,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   /** The in-flight turn's abort signal, read by `makeEvalCtx` -- see `EvaluationContext.signal`. */
   let currentTurnSignal: AbortSignal | undefined;
+  /**
+   * Does this call's `dangerouslyDisableSandbox` take it OUT of a sandbox it would otherwise run in?
+   * (EvaluationContext.bashSandboxEscape; claude's `!shouldUseSandbox(input) &&
+   * shouldUseSandbox({...input, dangerouslyDisableSandbox: false})`.) Not when the session's sandbox
+   * is off, not when the policy forbids unsandboxed commands (the flag is then ignored,
+   * `sandbox/spawn.ts`), not for an allowed `excludedCommands` entry (it runs unsandboxed anyway). A
+   * host with no `sandbox-exec` still counts: there the flag turns a REFUSED command into a running one.
+   */
+  const bashSandboxEscape = (call: PermissionCall): boolean => {
+    if (call.toolName !== "Bash" || call.input["dangerouslyDisableSandbox"] !== true) return false;
+    if (sandboxSettingsForSession.enabled === false) return false;
+    if (sandboxSettingsForSession.allowUnsandboxedCommands === false) return false;
+    const command = call.input["command"];
+    if (typeof command === "string" && sandboxSettingsForSession.allowUnsandboxedCommands === true && sandboxSettingsForSession.excludedCommands?.includes(command) === true) return false;
+    return true;
+  };
   const makeEvalCtx = (): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
@@ -2750,6 +2766,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // B-H1(a) / WS-12 §1: "will this exact Bash call run under the OS sandbox, with
       // `autoAllowBashIfSandboxed` on?" -- the three facts the evaluator cannot see, answered here.
       bashRunsSandboxed: bashRunsSandboxed,
+      bashSandboxEscape,
       hookStage: realHookStage,
       promptStage: realPromptStage,
       autoEngine: realAutoEngine,
