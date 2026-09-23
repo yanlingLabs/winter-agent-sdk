@@ -12,7 +12,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirS
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFileCheckpointSink, CHECKPOINT_BACKUPS_DIRNAME } from "./sink.ts";
+import { createFileCheckpointSink, CHECKPOINT_DIRNAME } from "./sink.ts";
 import { checkpointPathHash } from "./file-history.ts";
 import { describeRefusal } from "./rewind.ts";
 
@@ -29,10 +29,10 @@ afterEach(() => {
 });
 
 const sinkFor = (sessionUuid = "sess-1") => createFileCheckpointSink({ home, cwd: work, sessionUuid });
-const backupsDir = (sessionUuid = "sess-1") => join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+const backupsDir = (sessionUuid = "sess-1") => join(home, CHECKPOINT_DIRNAME, sessionUuid);
 const blobs = (sessionUuid = "sess-1") => readdirSync(backupsDir(sessionUuid)).filter((f) => f.includes("@v")).sort();
 
-describe("checkpoint/file-history.ts -- the backup layout (R5-11 as amended)", () => {
+describe("checkpoint/file-history.ts -- the checkpoint layout (WS-21 lane L1b Task L1b.4, F18, reversing R5-11)", () => {
   test("the path hash is the first 16 hex of sha256 of the ABSOLUTE path", () => {
     // DISCLOSED: R5-11 marks the hash algorithm capture-pending and names this as the fallback.
     const abs = join(work, "a.ts");
@@ -42,15 +42,16 @@ describe("checkpoint/file-history.ts -- the backup layout (R5-11 as amended)", (
     expect(checkpointPathHash(abs)).not.toBe(checkpointPathHash(join(work, "b.ts")));
   });
 
-  test("backups live at <home>/backups/<session>/<path-hash>@v<n> -- NOT file-history/<uuid>/", async () => {
-    // The R5-11 amendment (derived-shapes-p5 capture (2)): the pinned runtime grew a `backups/`
-    // sibling of `projects/`, not the `file-history/<uuid>/` path WS-11 §9's mechanism row assumed.
+  test("checkpoints live at <home>/file-history/<sessionId>/<path-hash>@v<n> -- NOT backups/<uuid>/", async () => {
+    // WS-21 F18 REVERSES the R5-11 amendment this test used to pin: claude's own on-disk name for
+    // this exact mechanism is `file-history/<sessionId>/`, and `backups/` was the wrong name all
+    // along (F18: "Winter's `backups/` actually holds checkpoints, so that is the wrong name").
     writeFileSync(join(work, "a.ts"), "original\n");
     await sinkFor().beforeMutation({ path: join(work, "a.ts"), tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
     const expected = `${checkpointPathHash(join(work, "a.ts"))}@v1`;
     expect(existsSync(join(backupsDir(), expected))).toBe(true);
     expect(readFileSync(join(backupsDir(), expected), "utf8")).toBe("original\n");
-    expect(existsSync(join(home, "file-history"))).toBe(false);
+    expect(existsSync(join(home, "backups"))).toBe(false); // the OLD name no longer exists at all
   });
 
   test("a RELATIVE candidate path is resolved against cwd before hashing", async () => {
@@ -115,7 +116,7 @@ describe("checkpoint/sink.ts -- beforeMutation", () => {
   test("the sink writes nothing outside <home>/backups", async () => {
     writeFileSync(join(work, "a.ts"), "x\n");
     await sinkFor().beforeMutation({ path: join(work, "a.ts"), tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
-    expect(readdirSync(home).sort()).toEqual([CHECKPOINT_BACKUPS_DIRNAME, "work"]);
+    expect(readdirSync(home).sort()).toEqual([CHECKPOINT_DIRNAME, "work"]);
   });
 
   test("a backup blob is byte-exact, not utf8-normalised", async () => {
@@ -254,7 +255,7 @@ describe("checkpoint/rewind.ts -- rewind", () => {
   test("a dryRun on a session with no checkpoints at all creates no backups directory", async () => {
     const result = await createFileCheckpointSink({ home, cwd: work, sessionUuid: "untouched" }).rewind("u-1", { dryRun: true });
     expect(result.canRewind).toBe(false);
-    expect(existsSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "untouched"))).toBe(false);
+    expect(existsSync(join(home, CHECKPOINT_DIRNAME, "untouched"))).toBe(false);
   });
 });
 
@@ -479,7 +480,7 @@ describe("checkpoint -- the SCOPE boundary: Bash and subagent changes (WS-11 §9
 // is constructed with the session's `cwd`, exactly as T8's production wiring constructs it.
 describe("rider 25: the rewind is fenced to the session's own writable roots", () => {
   function tamperIndex(sessionUuid: string, record: Record<string, unknown>): void {
-    const dir = join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+    const dir = join(home, CHECKPOINT_DIRNAME, sessionUuid);
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "index.jsonl"), `${JSON.stringify(record)}\n`);
   }
@@ -532,7 +533,7 @@ describe("rider 25: the rewind is fenced to the session's own writable roots", (
       writeFileSync(join(work, "a.ts"), "v1\n");
       // A forged snapshot WITH a blob the attacker also wrote: the bytes that would land on `victim`.
       const hash = checkpointPathHash(victim);
-      writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-1", `${hash}@v1`), "ATTACKER KEY\n");
+      writeFileSync(join(home, CHECKPOINT_DIRNAME, "sess-1", `${hash}@v1`), "ATTACKER KEY\n");
       tamperIndex("sess-1", {
         kind: "snapshot",
         userMessageUuid: "u-1",
@@ -591,7 +592,7 @@ describe("rider 25: the rewind is fenced to the session's own writable roots", (
 // given a hostile index, only inside the session's roots", was false as written.
 describe("rider 25 (round 2): the root fence resolves symlinks -- a linked ancestor cannot smuggle a path out", () => {
   function tamperIndex(sessionUuid: string, record: Record<string, unknown>): void {
-    const dir = join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+    const dir = join(home, CHECKPOINT_DIRNAME, sessionUuid);
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "index.jsonl"), `${JSON.stringify(record)}\n`);
   }
@@ -646,7 +647,7 @@ describe("rider 25 (round 2): the root fence resolves symlinks -- a linked ances
       writeFileSync(join(work, "a.ts"), "v1\n");
       const through = join(link, "id_rsa");
       const hash = checkpointPathHash(through);
-      writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-1", `${hash}@v1`), "ATTACKER KEY\n");
+      writeFileSync(join(home, CHECKPOINT_DIRNAME, "sess-1", `${hash}@v1`), "ATTACKER KEY\n");
       tamperIndex("sess-1", { kind: "snapshot", userMessageUuid: "u-1", path: through, pathHash: hash, tool: "Write", at: new Date().toISOString(), version: 1 });
 
       expect((await sink.rewind("u-1", { dryRun: true })).filesChanged).not.toContain(through);
@@ -691,7 +692,7 @@ describe("A-12 (fix wave): the retained `parentRealPath` guard, on the LEGACY re
   // swapped for a link to a SIBLING package is in-root, so the retained guard is the only thing
   // standing between the pre-image and the wrong file.
   function legacyRecord(sessionUuid: string, record: Record<string, unknown>): void {
-    const dir = join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+    const dir = join(home, CHECKPOINT_DIRNAME, sessionUuid);
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "index.jsonl"), `${JSON.stringify(record)}\n`);
   }
@@ -707,8 +708,8 @@ describe("A-12 (fix wave): the retained `parentRealPath` guard, on the LEGACY re
     writeFileSync(join(sibling, "config.ts"), "ANOTHER PACKAGE'S FILE\n");
 
     const hash = checkpointPathHash(target);
-    mkdirSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid), { recursive: true });
-    writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid, `${hash}@v1`), "v0-preimage\n");
+    mkdirSync(join(home, CHECKPOINT_DIRNAME, sessionUuid), { recursive: true });
+    writeFileSync(join(home, CHECKPOINT_DIRNAME, sessionUuid, `${hash}@v1`), "v0-preimage\n");
     legacyRecord(sessionUuid, {
       kind: "snapshot",
       userMessageUuid: "u-1",
@@ -766,10 +767,10 @@ describe("A-12b (fix wave): a refusal names a REAL path component, never the lit
     const outside = join(work, "sibling.ts");
     writeFileSync(outside, "current\n");
     const hash = checkpointPathHash(outside);
-    mkdirSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-12b"), { recursive: true });
-    writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-12b", `${hash}@v1`), "preimage\n");
+    mkdirSync(join(home, CHECKPOINT_DIRNAME, "sess-12b"), { recursive: true });
+    writeFileSync(join(home, CHECKPOINT_DIRNAME, "sess-12b", `${hash}@v1`), "preimage\n");
     appendFileSync(
-      join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-12b", "index.jsonl"),
+      join(home, CHECKPOINT_DIRNAME, "sess-12b", "index.jsonl"),
       `${JSON.stringify({ kind: "snapshot", userMessageUuid: "u-1", path: outside, pathHash: hash, tool: "Write", at: new Date().toISOString(), version: 1, anchorPath: anchor, anchorRealPath: realpathSync(anchor) })}\n`,
     );
 

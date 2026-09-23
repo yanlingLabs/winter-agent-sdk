@@ -27,7 +27,7 @@ describe("descriptorLookupForAdapter: keyed by the request's own provider", () =
   test("the reported case: deepseek's bare `deepseek-v4-flash` is deepseek's row (effort vocabulary includes `max`), alibaba-cn's is alibaba-cn's", () => {
     const lookup = descriptorLookupForAdapter(loadCatalog(), "winter.openai-chat-completions");
     const deepseek = lookup("deepseek-v4-flash", "deepseek");
-    expect(deepseek?.key).toBe("deepseek/deepseek-v4-flash");
+    expect(deepseek?.key).toBe("deepseek/deepseek-flash");
     expect(deepseek?.reasoning?.efforts).toContain("max");
     expect(lookup("deepseek-v4-flash", "alibaba-cn")?.key).toBe("alibaba-cn/deepseek-v4-flash");
   });
@@ -48,10 +48,18 @@ describe("descriptorLookupForAdapter: keyed by the request's own provider", () =
     expect(lookup("alibaba-cn/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 
-  test("one string, two providers: novita's provider-local `deepseek/deepseek-v4-flash` is novita's row, and the same string under deepseek is deepseek's KEY", () => {
+  // The 2026-09-19 refresh renamed deepseek's FLASH key to "deepseek/deepseek-flash", so the pair
+  // this test used to pin the "one string, two providers" fact on (`deepseek/deepseek-v4-flash`) no
+  // longer collides -- deepseek's PRO row was untouched by the refresh and still makes the same
+  // point: `novita/deepseek/deepseek-v4-pro`'s upstream id is byte-for-byte `deepseek/deepseek-v4-pro`,
+  // deepseek's own real catalog key.
+  test("one string, two providers: novita's provider-local `deepseek/deepseek-v4-pro` is novita's row, and the same string under deepseek is deepseek's KEY", () => {
     const lookup = descriptorLookupForAdapter(loadCatalog(), "winter.openai-chat-completions");
-    expect(lookup("deepseek/deepseek-v4-flash", "novita")?.key).toBe("novita/deepseek/deepseek-v4-flash");
-    expect(lookup("deepseek/deepseek-v4-flash", "deepseek")?.key).toBe("deepseek/deepseek-v4-flash");
+    expect(lookup("deepseek/deepseek-v4-pro", "novita")?.key).toBe("novita/deepseek/deepseek-v4-pro");
+    expect(lookup("deepseek/deepseek-v4-pro", "deepseek")?.key).toBe("deepseek/deepseek-v4-pro");
+    // The FLASH id's own coincidence is gone: novita's provider-local flash id is no longer any
+    // provider's key at all (deepseek's flash key moved to "deepseek/deepseek-flash").
+    expect(lookup("deepseek/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 });
 
@@ -119,7 +127,7 @@ describe("the shipped chat adapter validates a deepseek turn against deepseek's 
       const events = await collect(adapter.streamTurn({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }], effort: "medium" }, testContext({ providerId: "deepseek", baseUrl: fake.url, local: true })));
       const error = events.find((e): e is Extract<ProviderEvent, { type: "error" }> => e.type === "error");
       expect(error?.error.code).toBe("capability");
-      expect(error?.error.message).toContain("deepseek/deepseek-v4-flash");
+      expect(error?.error.message).toContain("deepseek/deepseek-flash");
       expect(fake.bodies).toHaveLength(0);
     } finally {
       await fake.close();

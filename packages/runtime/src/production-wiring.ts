@@ -21,7 +21,8 @@
 // is a live GETTER rather than a snapshot, so a host that re-resolves does not have to rebuild the
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
-import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { join } from "node:path";
+import type { InitPluginInfo, RuntimeConfig, SdkPluginConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
 import { applyHostManagedSettingsFilter, filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
 // P7a (D19): the two process-level brand surfaces this module installs per session -- see (10b).
@@ -39,6 +40,7 @@ import type { DefaultChildEngineFactoryOptions } from "./subagents/register-defa
 import { resolveOutputStyle } from "./context/output-styles.ts";
 import { isAuthoredPromptRegion } from "./context/assembler.ts";
 import { loadPlugins } from "./plugins/loader.ts";
+import { resolveEnabledPlugins } from "./plugins/installed.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
 import { SkillIndex } from "./skills/store.ts";
 import { buildSkillListing, type SkillOverrides } from "./skills/listing.ts";
@@ -129,6 +131,23 @@ function asStrictPluginOnly(v: unknown): StrictPluginOnlyCustomization | undefin
   if (typeof v === "boolean") return v;
   if (Array.isArray(v) && v.every((item) => typeof item === "string")) return v as readonly string[];
   return undefined;
+}
+
+/**
+ * `Settings.enabledPlugins`' own type also admits `string[]`/an object per key (claude-native shapes
+ * this build's own management API never writes) -- narrowed to the strict `Record<string, boolean>`
+ * `resolveEnabledPlugins` takes; a non-boolean entry is DROPPED here rather than coerced, matching
+ * this file's own "malformed value is dropped, never coerced" rule stated above. `readEnabledFromSettings`
+ * (the SDK's `manage.ts`) makes the identical `=== true` strict check on read, so the two readers of
+ * one settings field can never disagree about which plugins are on.
+ */
+function asEnabledPlugins(v: unknown): Record<string, boolean> | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const out: Record<string, boolean> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === "boolean") out[k] = val;
+  }
+  return out;
 }
 
 /**
@@ -659,7 +678,22 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const trustedWorkspace = defaultTrustSource(config).verdict(config.cwd).trusted;
 
   // (2) PLUGINS.
-  const plugins = loadPlugins(config.plugins, { cwd: config.cwd, brand });
+  //
+  // WS-21 §5.2/§6.3 item 5: the shared plugins root is `pluginCacheDir ?? (storeHome ?? winterHome)/plugins`
+  // -- the twin of claude's own `CLAUDE_CODE_PLUGIN_CACHE_DIR ?? <config dir>/plugins` rule. Using
+  // `pluginCacheDir`/`storeHome` (resolved above, §3.7/item 11) rather than `winterHome` alone is
+  // what lets a plugin installed under the SHARED store home still load on an incarnation whose OWN
+  // `winterHome` is a disposable per-run folder. Every plugin the settings' own `enabledPlugins` map
+  // turns on is resolved from THAT root's `installed_plugins.json` -- installed there by
+  // `winter plugin install` (the SDK's `manage.ts`) or by claude itself, since both runtimes read the
+  // identical file (§2.2). `config.plugins` (a host's own explicit local-plugin list, `sdk.d.ts:4597-4610`,
+  // unrelated to the marketplace/install flow) is tried FIRST, so an explicit host entry wins any
+  // root/name collision -- `loadPlugins`'s own first-occurrence-wins dedup handles the merge without
+  // a second pass here.
+  const pluginsRoot = pluginCacheDir ?? join(storeHome ?? winterHome, "plugins");
+  const enabledPluginRecords = resolveEnabledPlugins(pluginsRoot, asEnabledPlugins(effective["enabledPlugins"]));
+  const resolvedPluginConfigs: SdkPluginConfig[] = enabledPluginRecords.map((record) => ({ type: "local", path: record.installPath }));
+  const plugins = loadPlugins([...(config.plugins ?? []), ...resolvedPluginConfigs], { cwd: config.cwd, brand });
   for (const rejection of plugins.rejected) {
     warnings.push(`plugin "${rejection.path}" was not loaded (${rejection.kind}): ${rejection.reason}`);
   }

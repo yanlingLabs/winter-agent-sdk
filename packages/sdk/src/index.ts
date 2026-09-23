@@ -325,3 +325,19 @@ export type {
   HookCallbackMatcher,
   HookInvocationPayload,
 } from "./permissions/types.ts";
+
+// --- Lane L1b (WS-21 §6.3 item 7 / §8 step 5): plugins, catalog, checkpoints -------------------
+//
+// A TRAILING block, by file ownership (the WS-21 plan's lane table): L1a owns the first export
+// block above and packages/sdk/src/{paths,protocol,settings}/query.ts/options.ts; L1b owns
+// packages/sdk/src/plugins/ and this package's re-export of the catalog's own rename table.
+//
+// Task L1b.1 (spec §8 step 5; F23): the catalog's own derived old-tag -> new-key map, re-exported
+// here so a host (the daemon's `canonicalModelTag`) never depends on `@yanlinglabs/winter-provider-catalog`
+// directly just to read it.
+export { CATALOG_TAG_RENAMES } from "@yanlinglabs/winter-provider-catalog";
+
+// Task L1b.3 (spec §6.3 item 7; F15): the plugin-management API matching `claude plugin …`,
+// implemented once here and exported for `winter plugin` (the CLI verb, not shipped in this task).
+export { PluginManagerError, listMarketplaces, addMarketplace, removeMarketplace, updateMarketplace, installPlugin, uninstallPlugin, setPluginEnabled, updatePlugin, listPlugins } from "./plugins/manage.ts";
+export type { PluginScope, PluginManagerOptions, MarketplaceInfo, InstalledPlugin, PluginListing } from "./plugins/manage.ts";

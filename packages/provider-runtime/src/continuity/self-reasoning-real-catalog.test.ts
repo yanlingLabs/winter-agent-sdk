@@ -113,7 +113,7 @@ describe("the model's OWN reasoning is replayed natively, never decorated -- Ant
   const rows = reasoningRowsWithoutDomain("winter.anthropic-messages");
 
   test("the probe has real rows to examine, and the reported row is one of them (a vacuous pass is not a pass)", () => {
-    expect(rows.map((m) => m.key)).toContain("deepseek-anthropic/deepseek-v4-flash");
+    expect(rows.map((m) => m.key)).toContain("deepseek-anthropic/deepseek-flash");
   });
 
   test.each(rows.map((m) => [m.key] as const))("%s: step 2's request carries step 1's thinking block natively and no <recovered_reasoning> text", (modelKey) => {

@@ -26,6 +26,7 @@ import type {
   AdmissionTier,
   CapabilityEvidence,
   ModelFamilyDescriptor,
+  ModelPricing,
   ProviderAuthKind,
   ProviderProtocol,
   ReasoningCapabilities,
@@ -927,7 +928,26 @@ export function compareRejections(a: LedgerRejection, b: LedgerRejection): numbe
 }
 
 /** The overlay files a re-sync must NEVER write. Exported so the sync script's own guard and its test read the same list. */
-export const OVERLAY_FILES = ["overlay/providers.json", "overlay/models.json", "overlay/families.json"] as const;
+export const OVERLAY_FILES = ["overlay/providers.json", "overlay/models.json", "overlay/families.json", "overlay/pricing.json"] as const;
+
+/** Exact provider/model price evidence. A price is not a model override: it must never erase fields extracted for the same row. */
+export type ModelPricingPatches = Record<string, CapabilityEvidence<ModelPricing>>;
+
+/**
+ * Applies the reviewed price-only overlay after a whole-row merge. The explicit unknown-key refusal
+ * makes a stale price row fail closed instead of becoming orphaned documentation after an upstream
+ * model rename.
+ */
+export function applyPricingPatches<T extends UnstampedModelDescriptor>(models: readonly T[], pricingPatches: Readonly<ModelPricingPatches>): T[] {
+  const modelKeys = new Set(models.map((model) => model.key));
+  for (const key of Object.keys(pricingPatches)) {
+    if (!modelKeys.has(key)) throw new Error(`pricing overlay references unknown model key ${key}`);
+  }
+  return models.map((model) => {
+    const pricing = pricingPatches[model.key];
+    return pricing === undefined ? model : { ...model, pricing };
+  });
+}
 
 /**
  * The overlay-wins merge, mirroring `scripts/provider-catalog.ts`.
@@ -953,11 +973,15 @@ export function mergeLayers(
   overlay: { providers: WinterProviderDescriptor[]; models: UnstampedModelDescriptor[] },
   pin: WinterCatalog["upstream"],
   families: readonly ModelFamilyDescriptor[] = [],
+  pricingPatches: Readonly<ModelPricingPatches> = {},
 ): WinterCatalog {
   const overlayProviderIds = new Set(overlay.providers.map((p) => p.id));
   const overlayModelKeys = new Set(overlay.models.map((m) => m.key));
   const providers = [...upstream.providers.filter((p) => !overlayProviderIds.has(p.id)), ...overlay.providers];
-  const merged = [...upstream.models.filter((m) => !overlayModelKeys.has(m.key)), ...overlay.models];
+  const merged = applyPricingPatches(
+    [...upstream.models.filter((m) => !overlayModelKeys.has(m.key)), ...overlay.models],
+    pricingPatches,
+  );
   providers.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   merged.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const sortedFamilies = [...families].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

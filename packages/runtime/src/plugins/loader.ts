@@ -11,6 +11,7 @@
 // verdict a caller can branch on. T8 decides whether `kind: "unsupported-type"` aborts `query()`
 // construction; it has everything it needs to.
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import type { Dirent } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import type { BrandProfile, SdkPluginConfig } from "@yanlinglabs/winter-agent-sdk";
 import { parseSkillFile } from "../skills/frontmatter.ts";
@@ -93,12 +94,39 @@ function identityKey(root: string): string {
   }
 }
 
+/**
+ * Admit a `readdirSync` entry as a directory, WS-21 §6.3 item 1 (F6, F7): claude follows a symlinked
+ * plugin skill directory the same way it follows a symlinked user/project one (`skills/loader.ts`'s
+ * own `isDirEntry`, mirrored here for the plugin scan). A dangling link, or a link to a non-directory,
+ * is excluded silently -- the same fate an ordinary subdirectory with no `SKILL.md` already has.
+ */
+function isDirEntry(root: string, e: Dirent): boolean {
+  if (e.isDirectory()) return true;
+  if (!e.isSymbolicLink()) return false;
+  try {
+    return statSync(join(root, e.name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** The file-entry twin of `isDirEntry` (WS-21 §6.3 item 1, F6/F7), mirroring `commands/resolver.ts`'s own `isFileEntry`. */
+function isFileEntry(dir: string, e: Dirent): boolean {
+  if (e.isFile()) return true;
+  if (!e.isSymbolicLink()) return false;
+  try {
+    return statSync(join(dir, e.name)).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function scanPluginSkills(root: string, pluginName: string): PluginSkillEntry[] {
   const skillsRoot = join(root, "skills");
   let dirs: string[];
   try {
     dirs = readdirSync(skillsRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
+      .filter((e) => isDirEntry(skillsRoot, e))
       .map((e) => e.name)
       .sort();
   } catch {
@@ -137,7 +165,7 @@ function scanPluginCommands(root: string, pluginName: string): PluginCommandEntr
   let files: string[];
   try {
     files = readdirSync(commandsRoot, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith(".md"))
+      .filter((e) => isFileEntry(commandsRoot, e) && e.name.endsWith(".md"))
       .map((e) => e.name)
       .sort();
   } catch {
@@ -246,6 +274,38 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
   return { servers, ...(configPath !== undefined ? { configPath } : {}) };
 }
 
+/**
+ * `<plugin>/hooks/hooks.json` (WS-21 §5.1/§6.3 item 5, F15): claude's OWN hooks file, a SEPARATE file
+ * from the manifest -- not the manifest-embedded `hooks` block Winter's own plugin format also
+ * accepts (`PluginManifest.hooks`, kept for backward compatibility with a manifest already written
+ * that way). Same settings-shaped `{<Event>: [{matcher?, hooks:[...]}]}` document either way, carried
+ * verbatim and unparsed here exactly like the manifest's own block -- `pluginHookEntries` is the one
+ * parser. Absent, unreadable or malformed never fails the plugin's load, the same posture every other
+ * optional plugin file takes.
+ */
+function readPluginHooksJson(root: string): unknown {
+  const path = join(root, "hooks", "hooks.json");
+  try {
+    if (!statSync(path).isFile()) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    return isPlainObject(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The remaining default component dirs (WS-21 §6.3 item 5, F15's own list) this build does not yet
+ * wire into a consumer -- `output-styles/` and `workflows/` are owned by lane L1a's own subsystems
+ * (`context/output-styles.ts`, `workflows/store.ts`), and `bin/` has no consumer of any kind yet.
+ * Exposed as resolved ABSOLUTE PATHS only, present iff the directory exists, so a future consumer (in
+ * either lane) can read them without this module inventing a wiring shape nothing has asked for yet.
+ */
+function componentDirIfPresent(root: string, dir: string): string | undefined {
+  const path = join(root, dir);
+  return isDirectory(path) ? path : undefined;
+}
+
 function metadataOf(manifest: PluginManifest | undefined): PluginMetadata {
   if (!manifest) return {};
   const author = manifestAuthor(manifest.author);
@@ -321,9 +381,15 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
 
     const skipMcpDiscovery = config.skipMcpDiscovery === true;
     const mcp = skipMcpDiscovery ? { servers: {} } : collectMcpServers(root, manifest);
-    const hooks = manifest?.hooks;
+    // `hooks/hooks.json` (claude's own file) wins over a manifest-embedded `hooks` block when both
+    // exist -- it is the canonical source (F15); the manifest block stays as the fallback for a
+    // manifest already written that way.
+    const hooks = readPluginHooksJson(root) ?? manifest?.hooks;
     const scannedAgents = scanPluginAgents(root, name);
     agentFileRejections.push(...scannedAgents.rejected);
+    const outputStylesPath = componentDirIfPresent(root, "output-styles");
+    const workflowsPath = componentDirIfPresent(root, "workflows");
+    const binPath = componentDirIfPresent(root, "bin");
 
     seenRoots.add(identity);
     seenNames.add(name);
@@ -340,6 +406,9 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       mcpServers: mcp.servers,
       ...(mcp.configPath !== undefined ? { mcpConfigPath: mcp.configPath } : {}),
       skipMcpDiscovery,
+      ...(outputStylesPath !== undefined ? { outputStylesPath } : {}),
+      ...(workflowsPath !== undefined ? { workflowsPath } : {}),
+      ...(binPath !== undefined ? { binPath } : {}),
     });
   }
 

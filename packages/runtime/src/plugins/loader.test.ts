@@ -182,6 +182,43 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(hooks);
   });
 
+  // WS-21 §5.1/§6.3 item 5 (F15): `hooks/hooks.json` -- claude's OWN hooks file, a SEPARATE file from
+  // the manifest -- carried verbatim for a MANIFESTLESS plugin exactly as a manifest-embedded block
+  // already was.
+  test("a MANIFESTLESS plugin's `hooks/hooks.json` is carried verbatim, same shape as a manifest block", () => {
+    const parent = mkTemp("winter-plugin-hooks-json-");
+    const root = join(parent, "hooked-manifestless");
+    mkdirSync(root, { recursive: true });
+    const hooks = { SessionStart: [{ hooks: [{ type: "command", command: "echo start" }] }] };
+    write(join(root, "hooks", "hooks.json"), JSON.stringify(hooks));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.hooks).toEqual(hooks);
+    expect(bundle.manifestPath).toBeUndefined(); // still manifestless -- hooks.json needs no manifest
+  });
+
+  test("`hooks/hooks.json` wins over a manifest-embedded `hooks` block when both exist", () => {
+    const parent = mkTemp("winter-plugin-hooks-both-");
+    const root = join(parent, "hooked-both");
+    mkdirSync(root, { recursive: true });
+    const fromManifest = { PreToolUse: [{ hooks: [{ type: "command", command: "manifest" }] }] };
+    const fromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "file" }] }] };
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: fromManifest }));
+    write(join(root, "hooks", "hooks.json"), JSON.stringify(fromFile));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(fromFile);
+  });
+
+  test("a malformed `hooks/hooks.json` never fails the plugin's load -- absent hooks, not an error", () => {
+    const parent = mkTemp("winter-plugin-hooks-malformed-");
+    const root = join(parent, "hooked-malformed");
+    mkdirSync(root, { recursive: true });
+    write(join(root, "hooks", "hooks.json"), "{not json");
+    write(join(root, "skills", "ship", "SKILL.md"), "---\nname: ship\ndescription: ships\n---\n\nSHIP BODY");
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.rejected).toEqual([]);
+    expect(result.bundles[0]!.hooks).toBeUndefined();
+    expect(result.bundles[0]!.skills).toHaveLength(1); // the rest of the plugin still loads
+  });
+
   test("metadata (description/author/homepage/keywords) is carried for `system/init`", () => {
     const root = plugin({ manifestDir: WINTER_PLUGIN_MANIFEST_DIR, manifest: { description: "does things", author: "someone", homepage: "https://example.invalid", keywords: ["a"] } });
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.metadata).toEqual({ description: "does things", author: "someone", homepage: "https://example.invalid", keywords: ["a"] });
@@ -193,6 +230,34 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     const link = join(linkParent, "linked");
     symlinkSync(root, link);
     expect(loadPlugins([{ type: "local", path: link }]).bundles[0]!.skills).toHaveLength(1);
+  });
+
+  // WS-21 §6.3 item 1 (F6, F7): claude follows a symlinked skill directory / command file INSIDE an
+  // otherwise-real plugin root, not just a symlinked root itself (the test above). Mirrors
+  // `skills/loader.ts`'s and `commands/resolver.ts`'s own tests for the identical fix.
+  test("a SYMLINKED skill directory and a SYMLINKED command file, inside a real plugin root, are both admitted", () => {
+    const root = plugin({ dirName: "symlink-target-parent" });
+    const external = mkTemp("winter-plugin-symlink-external-");
+    mkdirSync(join(external, "linked-skill"), { recursive: true });
+    // A skill's NAME is always the DIRECTORY's own name (F7/§6.3 item 9 -- "skill identity is the
+    // directory name"), never a frontmatter field: `parseSkillFile` never reads one. The symlink's
+    // OWN name ("linked-skill", not the real directory's) is therefore what should win.
+    write(join(external, "linked-skill", "SKILL.md"), "---\ndescription: reached through a symlink\n---\nBODY");
+    write(join(external, "linked-command.md"), "---\ndescription: reached through a symlink\n---\nDO IT");
+    symlinkSync(join(external, "linked-skill"), join(root, "skills", "linked-skill"));
+    symlinkSync(join(external, "linked-command.md"), join(root, "commands", "linked-command.md"));
+
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.skills.map((s) => s.qualifiedName).sort()).toEqual(["symlink-target-parent:linked-skill", "symlink-target-parent:ship"]);
+    expect(bundle.commands.map((c) => c.name).sort()).toEqual(["deploy", "linked-command"]);
+  });
+
+  test("a DANGLING symlinked skill directory is excluded silently, not a rejection", () => {
+    const root = plugin({ dirName: "dangling-symlink-parent" });
+    symlinkSync(join(root, "skills", "does-not-exist"), join(root, "skills", "dangling"));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.rejected).toEqual([]);
+    expect(result.bundles[0]!.skills.map((s) => s.name)).toEqual(["ship"]); // the dangling link contributes nothing, silently
   });
 });
 

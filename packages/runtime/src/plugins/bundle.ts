@@ -59,6 +59,16 @@ export interface PluginBundle {
   /** Absolute path of the `.mcp.json` that contributed, when one did. */
   mcpConfigPath?: string;
   skipMcpDiscovery: boolean;
+  // WS-21 §6.3 item 5 (F15): the remaining default component dirs this package does not yet wire
+  // into a consumer of its own -- `output-styles/`/`workflows/` are lane L1a's own subsystems
+  // (`context/output-styles.ts`, `workflows/store.ts`), and `bin/` has no consumer yet. Present iff
+  // the directory exists; a future consumer resolves its own contents from the path.
+  /** Absolute path of `<plugin>/output-styles/`, when it exists. */
+  outputStylesPath?: string;
+  /** Absolute path of `<plugin>/workflows/`, when it exists. */
+  workflowsPath?: string;
+  /** Absolute path of `<plugin>/bin/`, when it exists. */
+  binPath?: string;
 }
 
 /**

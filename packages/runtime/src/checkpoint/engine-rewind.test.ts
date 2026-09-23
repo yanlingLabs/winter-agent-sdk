@@ -12,7 +12,7 @@ import { join } from "node:path";
 import type { ControlResponseFrame, RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type Provider, type ProviderTurn, type ToolExecutor } from "../engine.ts";
-import { createFileCheckpointSink, CHECKPOINT_BACKUPS_DIRNAME } from "./sink.ts";
+import { createFileCheckpointSink, CHECKPOINT_DIRNAME } from "./sink.ts";
 
 let home = "";
 let work = "";
@@ -107,7 +107,7 @@ describe("checkpoint -- the real sink through the real engine (R5-11)", () => {
     expect(readFileSync(tracked, "utf8")).toBe("the model's version\n");
     expect(readFileSync(byBash, "utf8")).toBe("bash made this\n");
     // Exactly ONE backup blob: the Write was intercepted, the Bash round was not.
-    const blobs = readdirSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionId)).filter((f) => f.includes("@v"));
+    const blobs = readdirSync(join(home, CHECKPOINT_DIRNAME, sessionId)).filter((f) => f.includes("@v"));
     expect(blobs).toHaveLength(1);
 
     // --- turn 2 (a later run): the host asks to rewind through the control request ---------------

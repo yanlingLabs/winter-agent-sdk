@@ -784,6 +784,7 @@ describe("WS-13c: the two assemblers agree byte-for-byte on the real layers", ()
     const overlayProviders = (await read("../../overlay/providers.json"))["providers"] as never[];
     const overlayModels = (await read("../../overlay/models.json"))["models"] as never[];
     const overlayFamilies = (await read("../../overlay/families.json"))["families"] as never[];
+    const pricingPatches = (await read("../../overlay/pricing.json"))["pricing"] as never;
     const layer = await read("../../generated/upstream-layer.json");
     const pin = (await read("../../UPSTREAM.json"))["upstream"] as never;
 
@@ -792,6 +793,7 @@ describe("WS-13c: the two assemblers agree byte-for-byte on the real layers", ()
       { providers: overlayProviders, models: overlayModels },
       pin,
       overlayFamilies,
+      pricingPatches,
     );
     expect(JSON.stringify(viaMerge)).toBe(JSON.stringify(buildCatalog().catalog));
     // ...and the thing that makes the comparison worth making: the stamp actually ran.

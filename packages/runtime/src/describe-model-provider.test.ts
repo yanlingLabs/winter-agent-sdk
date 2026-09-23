@@ -19,13 +19,13 @@ const row = (key: string) => loadCatalog().models.find((m) => m.key === key)!;
 describe("describeCatalogModel: the session's own provider's row", () => {
   test("a bare id names the row of the provider it was asked under -- never another provider's", () => {
     const catalog = loadCatalog();
-    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek-anthropic")?.displayName).toBe(row("deepseek-anthropic/deepseek-v4-flash").displayName);
-    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek")?.displayName).toBe(row("deepseek/deepseek-v4-flash").displayName);
+    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek-anthropic")?.displayName).toBe(row("deepseek-anthropic/deepseek-flash").displayName);
+    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek")?.displayName).toBe(row("deepseek/deepseek-flash").displayName);
     expect(describeCatalogModel(catalog, "deepseek-v4-flash", "alibaba-cn")?.displayName).toBe(row("alibaba-cn/deepseek-v4-flash").displayName);
   });
 
-  test("a provider-local id that is ANOTHER provider's key (novita's `deepseek/deepseek-v4-flash`) names the asking provider's row", () => {
-    expect(describeCatalogModel(loadCatalog(), "deepseek/deepseek-v4-flash", "novita")?.displayName).toBe(row("novita/deepseek/deepseek-v4-flash").displayName);
+  test("a provider-local id that is ANOTHER provider's key (novita's `deepseek/deepseek-v4-pro`) names the asking provider's row", () => {
+    expect(describeCatalogModel(loadCatalog(), "deepseek/deepseek-v4-pro", "novita")?.displayName).toBe(row("novita/deepseek/deepseek-v4-pro").displayName);
   });
 
   test("two passes under a provider: an ALIAS never shadows another row's upstream id", () => {
@@ -43,7 +43,7 @@ describe("describeCatalogModel: the session's own provider's row", () => {
 
   test("with no provider: a catalog key resolves; a bare id served by several providers names NONE of them", () => {
     const catalog = loadCatalog();
-    expect(describeCatalogModel(catalog, "deepseek/deepseek-v4-flash")?.displayName).toBe(row("deepseek/deepseek-v4-flash").displayName);
+    expect(describeCatalogModel(catalog, "deepseek/deepseek-flash")?.displayName).toBe(row("deepseek/deepseek-flash").displayName);
     expect(describeCatalogModel(catalog, "deepseek-v4-flash")).toBeUndefined();
     expect(describeCatalogModel(catalog, "winter-test/echo")).toBeUndefined();
   });

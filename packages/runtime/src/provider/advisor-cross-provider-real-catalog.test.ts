@@ -24,7 +24,7 @@ function hostConfig(advisor: RuntimeConfig["advisor"]): RuntimeConfig {
   return {
     sessionId: "e2",
     cwd: process.cwd(),
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     persistSession: false,
     provider: { providerId: "deepseek-anthropic", authRef: SESSION_REF },
     ...(advisor !== undefined ? { advisor } : {}),
@@ -34,7 +34,7 @@ function hostConfig(advisor: RuntimeConfig["advisor"]): RuntimeConfig {
 describe("E2: a provider-qualified advisor tag runs on ITS OWN provider and credential, whatever the session's provider", () => {
   test("session on deepseek-anthropic, advisor `codex-oauth/gpt-5.6-sol` + codex-oauth's own authRef -> the reviewer is codex-oauth's row, built on the advisor's ref", () => {
     const wiring = buildSessionProvider({ config: hostConfig({ model: "codex-oauth/gpt-5.6-sol", authRef: ADVISOR_REF }), env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
-    expect(wiring.resolved?.modelKey).toBe("deepseek-anthropic/deepseek-v4-flash");
+    expect(wiring.resolved?.modelKey).toBe("deepseek-anthropic/deepseek-flash");
 
     const reviewer = wiring.resolveReviewer?.();
     expect(reviewer).toBeDefined();

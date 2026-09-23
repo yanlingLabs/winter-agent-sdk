@@ -85,7 +85,9 @@ export function sameDomain(a: DomainFacts | undefined, b: DomainFacts | undefine
  * domain id (`registry.ts`'s `continuationDomainOf`), so `sameDomain` is false even for the model's
  * own previous step -- and the renderer then treated that step as FOREIGN, stripped its thinking and
  * handed the model its own reasoning back as a quoted `<recovered_reasoning>` text block, which it
- * imitated (dist session s_5d314c81045e, `deepseek-anthropic/deepseek-v4-flash`).
+ * imitated (dist session s_5d314c81045e, `deepseek-anthropic/deepseek-v4-flash` -- renamed
+ * `deepseek-anthropic/deepseek-flash` by the 2026-09-19 catalog refresh, F23; the session's own
+ * stored tag is the historical fact and is quoted as it was spawned, not rewritten).
  *
  * BOTH ids must be present, NON-EMPTY and equal. A side that does not name its identity is never "the
  * same model": absence is unknown here exactly as it is for a domain id, and unknown must fall to the

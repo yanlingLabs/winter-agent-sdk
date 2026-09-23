@@ -22,12 +22,12 @@ import {
   parentRealPathOf,
   readCheckpointIndex,
   readPreImage,
-  sessionBackupsDir,
+  sessionCheckpointDir,
   type CheckpointRecord,
 } from "./file-history.ts";
 import { rewindToCheckpoint } from "./rewind.ts";
 
-export { CHECKPOINT_BACKUPS_DIRNAME, CHECKPOINT_INDEX_FILENAME } from "./file-history.ts";
+export { CHECKPOINT_DIRNAME, CHECKPOINT_INDEX_FILENAME } from "./file-history.ts";
 
 export interface FileCheckpointSinkOptions {
   /**
@@ -177,7 +177,7 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
         ...anchorFields,
       };
       if (preImage !== undefined) {
-        const dir = sessionBackupsDir(home, sessionUuid);
+        const dir = sessionCheckpointDir(home, sessionUuid);
         mkdirSync(dir, { recursive: true });
         // The BLOB IS WRITTEN BEFORE THE RECORD that names it. A crash between the two leaves an
         // orphan blob no rewind reads; the other order would leave a record pointing at bytes that
