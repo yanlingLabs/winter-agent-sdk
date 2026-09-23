@@ -1,6 +1,6 @@
 // WS-21 §6.3 item 4 (F17): `@import` expansion, claude's tier rule.
 import { describe, test, expect, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,6 +133,50 @@ describe("expandImports: project/local tier scope (F17)", () => {
     const result = expandImports({ content: "see @./x.md", filePath, tier: "project", projectRoot: null });
     expect(result.content).toBe("see @./x.md");
     expect(result.dropped).toEqual(["/repo/.winter/x.md"]);
+  });
+
+  // WS-21 §6.3 item 7 (fix round 1): `resolve()` alone is LEXICAL -- a symlink INSIDE the project
+  // root that points OUTSIDE it resolved to a path textually under `projectRoot` and passed the old
+  // scope check, even though the bytes it actually reads live elsewhere. `isInsideRoot` now
+  // realpath-canonicalizes both sides once the target exists.
+  describe("a symlink inside the project root pointing outside it (item 7)", () => {
+    test("@./link/secret.md is DROPPED, not expanded, when `link` escapes the root", () => {
+      // realpathSync up front: mkdtemp lands under a path (macOS's /tmp) that is ITSELF a symlink
+      // (-> /private/tmp), and the outside-target assertion below needs a genuinely different real
+      // tree to prove the escape was caught, not an artifact of the two mkdtemp roots coincidentally
+      // sharing an unresolved prefix.
+      const repo = realpathSync(mkTemp("imports-symlink-repo-"));
+      const outside = realpathSync(mkTemp("imports-symlink-outside-"));
+      write(outside, "secret.md", "OUTSIDE-THE-ROOT SECRET");
+      symlinkSync(outside, join(repo, "link"));
+      const filePath = join(repo, "WINTER.md");
+      const result = expandImports({ content: "see @./link/secret.md here", filePath, tier: "project", projectRoot: repo });
+      expect(result.content, "the token stays literal -- the escape is refused, not silently expanded").toBe("see @./link/secret.md here");
+      expect(result.content).not.toContain("OUTSIDE-THE-ROOT SECRET");
+      expect(result.dropped).toEqual([join(repo, "link", "secret.md")]);
+    });
+
+    test("a symlink inside the root pointing to ANOTHER location inside the root still expands (no over-blocking)", () => {
+      const repo = realpathSync(mkTemp("imports-symlink-inside-repo-"));
+      write(repo, "real.md", "REAL IN-ROOT CONTENT");
+      symlinkSync(join(repo, "real.md"), join(repo, "alias.md"));
+      const filePath = join(repo, "WINTER.md");
+      const result = expandImports({ content: "see @./alias.md here", filePath, tier: "project", projectRoot: repo });
+      expect(result.content).toBe("see REAL IN-ROOT CONTENT here");
+      expect(result.dropped).toEqual([]);
+    });
+
+    test("a project file's @import naming a target that does not exist stays literal text -- never realpath'd, never dropped", () => {
+      // The whole point of the "target exists" gate: `realpathSync` on a path with nothing at the
+      // end of it would just throw. Confirms this reaches the pre-existing "missing file ->
+      // unresolved" rule (imports.test.ts's own "an unresolved token is kept" describe block, for
+      // the `tier: "user"` case) rather than a NEW "missing -> scope-dropped" outcome.
+      const repo = realpathSync(mkTemp("imports-symlink-missing-repo-"));
+      const filePath = join(repo, "WINTER.md");
+      const result = expandImports({ content: "see @./nowhere/ghost.md here", filePath, tier: "project", projectRoot: repo });
+      expect(result.content).toBe("see @./nowhere/ghost.md here");
+      expect(result.dropped).toEqual([]);
+    });
   });
 });
 

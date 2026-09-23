@@ -26,7 +26,7 @@
 // AN UNRESOLVED TOKEN (missing file, depth exceeded, out-of-scope, or not even shaped like a valid
 // import) STAYS AS LITERAL TEXT -- there is nothing to substitute, so the `@path` the author wrote
 // is left exactly as written, never silently deleted.
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -68,10 +68,41 @@ function resolveImportPath(token: string, containingFileDir: string): string {
   return resolve(containingFileDir, token); // "./x" or a bare relative "x" -- claude treats them alike
 }
 
+/**
+ * WS-21 §6.3 item 7 (fix round 1): `resolve()` alone is a LEXICAL check -- a project/local file's
+ * `@import` naming `link/secret.md`, where `link` is a symlink inside `projectRoot` pointing at
+ * `/etc` (or anywhere else outside the repo), resolved to a path textually under `projectRoot` and
+ * therefore passed this gate, even though the file it actually reads lives outside the scope this
+ * tier is supposed to be confined to.
+ *
+ * Realpath-canonicalizes both sides so the comparison is on where the bytes actually come from, not
+ * on the text of the path -- but ONLY when the TARGET exists: a target that does not exist yet has
+ * nothing on disk whose real location could diverge from its written path, and `realpathSync` would
+ * just throw ENOENT for no benefit. That case falls back to the plain lexical comparison (byte-
+ * identical to this function's pre-fix behaviour), and the pre-existing "missing file -> unresolved,
+ * literal text stays" rule a few lines below in `replaceImportTokens` is what decides its fate --
+ * never a scope-drop for a path that merely looks out-of-root before anything has been written there.
+ *
+ * `root` is realpath'd too (falling back to its lexical form if that fails, e.g. a root that does
+ * not exist): a legitimate in-root target must not fail this check only because `projectRoot` itself
+ * is reached through an OS-level symlink (macOS's `/tmp` -> `/private/tmp` is the recurring case
+ * every fixture in this workspace has to account for), the same class of gotcha `sandbox/profile.ts`'s
+ * `canonicalizePath` exists for on the sandbox side.
+ */
 function isInsideRoot(path: string, root: string): boolean {
   const p = resolve(path);
   const r = resolve(root);
-  return p === r || p.startsWith(r.endsWith("/") ? r : `${r}/`);
+  if (!existsSync(p)) {
+    return p === r || p.startsWith(r.endsWith("/") ? r : `${r}/`);
+  }
+  const canonicalPath = realpathSync(p);
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = realpathSync(r);
+  } catch {
+    canonicalRoot = r;
+  }
+  return canonicalPath === canonicalRoot || canonicalPath.startsWith(canonicalRoot.endsWith("/") ? canonicalRoot : `${canonicalRoot}/`);
 }
 
 /** Splits `content` into lines, each RETAINING its own trailing `\n` (the last line may have none), so segments can be rejoined with no separator and reproduce the original byte-for-byte. */
