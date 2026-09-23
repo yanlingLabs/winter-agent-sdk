@@ -248,6 +248,34 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({ PreToolUse: "not an array" });
   });
 
+  // Fix round 4 (minors): the sibling ordering bug the test directly above did not cover -- a
+  // malformed manifest value must not REPLACE an earlier VALID hooks.json array for the same event.
+  // Pre-fix `merged[event] = Array.isArray(existing) && Array.isArray(entries) ? [...] : entries`
+  // fell to the `entries` branch whenever EITHER side was malformed, so a later malformed value won
+  // outright even over an earlier valid array -- silently discarding real, working hooks.
+  test("minors: a malformed manifest value does NOT replace a valid hooks.json array for the same event -- the valid one is kept", () => {
+    const parent = mkTemp("winter-plugin-hooks-malformed-overwrite-");
+    const root = join(parent, "hooked-malformed-overwrite");
+    mkdirSync(root, { recursive: true });
+    const validFromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "real" }] }] };
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: validFromFile }));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: { PreToolUse: "not an array" } }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(validFromFile);
+  });
+
+  // The reverse ordering: an EARLIER malformed value (hooks.json) must not survive over a LATER
+  // valid manifest array either -- "keep the valid one" holds regardless of which source it came
+  // from, not just "the first source always wins."
+  test("minors: a later VALID manifest array replaces an earlier malformed hooks.json value for the same event", () => {
+    const parent = mkTemp("winter-plugin-hooks-malformed-then-valid-");
+    const root = join(parent, "hooked-malformed-then-valid");
+    mkdirSync(root, { recursive: true });
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: { PreToolUse: "not an array" } }));
+    const validFromManifest = { PreToolUse: [{ hooks: [{ type: "command", command: "manifest" }] }] };
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: validFromManifest }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(validFromManifest);
+  });
+
   test("a manifest with no hooks.json on disk still loads its own embedded `hooks` block", () => {
     const parent = mkTemp("winter-plugin-hooks-manifest-only-");
     const root = join(parent, "hooked-manifest-only");

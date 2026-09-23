@@ -623,7 +623,13 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // through to "no shared store home", never resolve to a real, empty-string path.
   const storeHomeEnv = env[storeHomeEnvName(brand)];
   const storeHome = config.storeHome ?? (isUnset(storeHomeEnv) ? undefined : storeHomeEnv);
-  const pluginCacheDir = config.pluginCacheDir ?? env[pluginCacheDirEnvName(brand)];
+  // Fix round 4 (minors, M-6 sibling): the SAME blank-is-unset rule, for the sibling this module's
+  // own M-6 fix (above) did not also cover -- claude's own `pi()` (the plugin-cache-dir reader) is
+  // `if(e)`, which is falsy on `""` exactly like `isUnset` treats it, so `WINTER_PLUGIN_CACHE_DIR=""`
+  // must fall through to "no shared plugin cache" (`pluginsRoot`'s own `?? join(storeHome ??
+  // winterHome, "plugins")` fallback below), never resolve to a relative empty-string path.
+  const pluginCacheDirEnv = env[pluginCacheDirEnvName(brand)];
+  const pluginCacheDir = config.pluginCacheDir ?? (isUnset(pluginCacheDirEnv) ? undefined : pluginCacheDirEnv);
   const hostManaged = env[providerManagedByHostEnvName(brand)] === "1" || env[providerManagedByHostEnvName(brand)] === "true";
   const warnings: string[] = [];
   const settingSources: SettingSource[] | undefined = config.settingSources;

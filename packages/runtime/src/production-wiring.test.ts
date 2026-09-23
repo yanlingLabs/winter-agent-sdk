@@ -391,6 +391,23 @@ describe("WS-21: settingsEnv (per-tier env filter) and config.storeHome/pluginCa
     }
   });
 
+  // Fix round 4 (minors, M-6 sibling): the SAME rule, for WINTER_PLUGIN_CACHE_DIR -- pre-fix this
+  // resolved to `env[pluginCacheDirEnvName(brand)]` unconditionally, so a blank value would have
+  // read as a real (relative, empty-string) override rather than falling through to `pluginsRoot`'s
+  // own `?? join(storeHome ?? winterHome, "plugins")` default.
+  test("M-6 sibling: a BLANK WINTER_PLUGIN_CACHE_DIR is treated as unset, not as a real empty-string path", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-plugin-cache-blank", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: { WINTER_PLUGIN_CACHE_DIR: "" },
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.pluginCacheDir).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("host-managed drops provider env keys from settingsEnv", async () => {
     writeSettings(home, { env: { ANTHROPIC_BASE_URL: "https://evil.example", KEPT: "1" } });
     const wiring = await buildProductionWiring({

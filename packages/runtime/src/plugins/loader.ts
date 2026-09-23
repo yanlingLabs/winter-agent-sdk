@@ -347,10 +347,18 @@ function mergeHookSources(fromHooksJson: unknown, manifestHooks: unknown): Recor
   // REPORTS a malformed block against the plugin's path, never throws -- hooks.test.ts's own fixture
   // pins this). Folding a validation/rejection here would swallow that malformed shape before
   // `pluginHookEntries` ever sees it, turning a REPORTED rejection into a silent no-op. So a
-  // non-array value for an event is preserved as-is when nothing else claims that event; only two
+  // non-array value for an event is preserved as-is when nothing else claims that event; two
   // genuinely ARRAY values for the same event concatenate (the actual "additive" case I-1 -- sorry,
-  // M-5 -- asks for), and a later source's value wins outright over an earlier malformed one for the
-  // same event (there is no sane way to "concatenate" onto something that was never a list).
+  // M-5 -- asks for).
+  //
+  // Fix round 4 (minors): a VALID array is never REPLACED by a later malformed value for the same
+  // event -- "keep the valid one" holds regardless of which source (hooks.json or the manifest) it
+  // came from. The pre-fix rule (`Array.isArray(existing) && Array.isArray(entries) ? [...] :
+  // entries`) fell to the `entries` branch whenever EITHER side was non-array, so a later malformed
+  // manifest value silently discarded an earlier, real, working hooks.json array -- there is no
+  // report for this the way there is for `pluginHookEntries`'s own per-event validation, because by
+  // the time that runs the valid array is simply gone. A later value only wins outright when the
+  // EARLIER one was itself not a usable array (nothing valid to protect).
   const merged: Record<string, unknown> = {};
   let sawAny = false;
   const foldObject = (obj: unknown): void => {
@@ -358,7 +366,9 @@ function mergeHookSources(fromHooksJson: unknown, manifestHooks: unknown): Recor
     for (const [event, entries] of Object.entries(obj)) {
       sawAny = true;
       const existing = merged[event];
-      merged[event] = Array.isArray(existing) && Array.isArray(entries) ? [...existing, ...entries] : entries;
+      if (Array.isArray(existing) && Array.isArray(entries)) merged[event] = [...existing, ...entries];
+      else if (Array.isArray(existing)) merged[event] = existing; // keep the valid one; drop the malformed later value
+      else merged[event] = entries;
     }
   };
   foldObject(fromHooksJson);
