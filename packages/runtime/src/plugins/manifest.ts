@@ -90,6 +90,20 @@ export interface PluginManifest {
    * miscast, and so the shadow-on-presence check still fires for it.
    */
   commands?: string | string[] | Record<string, { source?: string; content?: string }>;
+  /**
+   * WS-21 fix round 5: `skills` is a manifest custom-path override too, but content-search confirmed
+   * against the installed claude CLI binary (2.1.280) shows a DIFFERENT precedence than every other
+   * component here -- ADDITIVE, not shadow-on-presence. The builder's own gate (`_t=Le`, no `!j.
+   * skills` negation, unlike `commands`' `ht=!j.commands&&Me`/`agents`' `pt=!j.agents&&Fe`/
+   * `workflows`' `Lt=!j.workflows&&Be`) sets the default `ve.skillsPath` REGARDLESS of whether
+   * `j.skills` is also present; the CONSUMER (a separate chunk of the same binary) confirms it:
+   * `if(h.skillsPath){...load the default...}if(h.skillsPaths){...ALSO load every override entry...}`
+   * -- both run, never either/or. Consistent with this: `skills` is ABSENT from the
+   * `folder-shadowed-by-manifest` tuple list (`["commands",...],["agents",...],["outputStyles",...],
+   * ["themes",...]` -- no `"skills"` entry), so no shadow warning is possible for it.
+   * `plugins/loader.ts`'s `scanPluginSkillsOverride` is where this is resolved and merged.
+   */
+  skills?: string | string[];
   [key: string]: unknown;
 }
 

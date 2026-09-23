@@ -144,12 +144,17 @@ function isFileEntry(dir: string, e: Dirent): boolean {
   }
 }
 
-function scanPluginSkills(root: string, pluginName: string): PluginSkillEntry[] {
-  const skillsRoot = join(root, "skills");
+/**
+ * ONE "parent of skill directories" scan -- shared by the default `skills/` directory and, fix
+ * round 5, every entry a manifest `skills` override names (each an EQUALLY-shaped parent directory,
+ * content-search confirmed against the installed claude CLI binary, 2.1.280: the consumer calls the
+ * IDENTICAL scan function on the default `skillsPath` and on each `skillsPaths` entry).
+ */
+function scanPluginSkillsAt(skillsParentDir: string, pluginName: string): PluginSkillEntry[] {
   let dirs: string[];
   try {
-    dirs = readdirSync(skillsRoot, { withFileTypes: true })
-      .filter((e) => isDirEntry(skillsRoot, e))
+    dirs = readdirSync(skillsParentDir, { withFileTypes: true })
+      .filter((e) => isDirEntry(skillsParentDir, e))
       .map((e) => e.name)
       .sort();
   } catch {
@@ -157,7 +162,7 @@ function scanPluginSkills(root: string, pluginName: string): PluginSkillEntry[] 
   }
   const out: PluginSkillEntry[] = [];
   for (const dir of dirs) {
-    const path = join(skillsRoot, dir, "SKILL.md");
+    const path = join(skillsParentDir, dir, "SKILL.md");
     let parsed: ReturnType<typeof parseSkillFile>;
     try {
       if (!statSync(path).isFile()) continue;
@@ -175,6 +180,30 @@ function scanPluginSkills(root: string, pluginName: string): PluginSkillEntry[] 
     });
   }
   return out;
+}
+
+/**
+ * Fix round 5: a manifest `skills` override, resolved and merged ADDITIVELY with the default
+ * `skills/` directory -- see `PluginManifest.skills`'s own header for the dump evidence that skills
+ * is the one component here that does NOT shadow. `requireDirectory: true` (claude's own `Tb` call
+ * for `skills` is the one place it passes `!0`, unlike every other component's `!1` -- a skill is
+ * inherently a directory containing `SKILL.md`, never a bare file). A name collision between the
+ * default directory and an override entry -- or between two override entries -- keeps the LAST
+ * occurrence, matching the "later wins" convention this round's own agents/commands overrides
+ * already use; claude's own builder additionally excludes an override entry that resolves to
+ * EXACTLY the default directory before assigning `skillsPaths` at all (`gr===qn`, dump-confirmed),
+ * a pure double-scan optimisation this port skips: the eventual name-level dedup below produces the
+ * identical final list either way, since re-scanning the same directory twice yields the same
+ * entries.
+ */
+function resolvePluginSkills(root: string, pluginName: string, declared: PluginManifest["skills"], warnings: string[]): PluginSkillEntry[] {
+  const defaultSkills = scanPluginSkillsAt(join(root, "skills"), pluginName);
+  const overridePaths = resolveManifestComponentOverride(root, pluginName, "skills", declared, true, warnings);
+  if (overridePaths === undefined) return defaultSkills;
+  const overrideSkills = overridePaths.flatMap((path) => scanPluginSkillsAt(path, pluginName));
+  const byName = new Map<string, PluginSkillEntry>();
+  for (const entry of [...defaultSkills, ...overrideSkills]) byName.set(entry.name, entry);
+  return [...byName.values()];
 }
 
 /**
@@ -562,7 +591,16 @@ function resolveManifestComponentOverride(
       continue;
     }
     if (requireDirectory && !stat.isDirectory()) {
-      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" is a file, not a directory -- ignoring it`);
+      // Claude's own `Tb` gives `skills` a SPECIFIC hint when the file is literally `SKILL.md` --
+      // "path is a file; skills entries must be directories containing SKILL.md — point to the
+      // parent directory ... instead" (dump-confirmed) -- the single author mistake this check
+      // exists to catch (a manifest entry pointing AT the file rather than at its containing
+      // directory). Ported only for `componentKey === "skills"`, the one caller this round passes
+      // `requireDirectory: true` for at all.
+      const skillHint = componentKey === "skills" && basename(entry).toLowerCase() === "skill.md" ? ` -- point to its parent directory instead` : "";
+      warnings.push(
+        `plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" is a file, not a directory${componentKey === "skills" ? " (skills entries must be directories containing SKILL.md)" : ""}${skillHint} -- ignoring it`,
+      );
       continue;
     }
     resolved.push(full);
@@ -735,7 +773,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       ...(typeof manifest?.version === "string" ? { version: manifest.version } : {}),
       ...(manifestResult.path !== undefined ? { manifestPath: manifestResult.path } : {}),
       metadata: metadataOf(manifest),
-      skills: scanPluginSkills(root, name),
+      skills: resolvePluginSkills(root, name, manifest?.skills, manifestPathWarnings),
       commands: scannedCommands,
       agents: scannedAgents.agents,
       ...(hooks !== undefined ? { hooks } : {}),

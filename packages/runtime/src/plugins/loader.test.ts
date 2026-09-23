@@ -652,6 +652,88 @@ describe("loadPlugins: a manifest `commands` override (fix round 5)", () => {
   });
 });
 
+// Fix round 5: a manifest `skills` override -- ADDITIVE, not shadow-on-presence, the advisor's own
+// correction to the "workflows-style" assumption the round's initial plan made (`PluginManifest.
+// skills`'s own header has the full dump evidence for both the builder and consumer sides).
+describe("loadPlugins: a manifest `skills` override (fix round 5, ADDITIVE not shadowing)", () => {
+  function skillFile(description = "d"): string {
+    return `---\ndescription: ${description}\n---\n\nSKILL BODY`;
+  }
+
+  test("the default skills/ directory AND a manifest override BOTH load -- never either/or", () => {
+    const parent = mkTemp("winter-plugin-skills-additive-");
+    const root = join(parent, "sk-plugin");
+    write(join(root, "skills", "default-skill", "SKILL.md"), skillFile());
+    write(join(root, "extra-skills", "extra-skill", "SKILL.md"), skillFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ skills: "./extra-skills" }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.skills.map((s) => s.name).sort()).toEqual(["default-skill", "extra-skill"]);
+  });
+
+  test("an ARRAY of override directories all contribute", () => {
+    const parent = mkTemp("winter-plugin-skills-array-");
+    const root = join(parent, "sk-plugin");
+    write(join(root, "more-a", "skill-a", "SKILL.md"), skillFile());
+    write(join(root, "more-b", "skill-b", "SKILL.md"), skillFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ skills: ["./more-a", "./more-b"] }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.skills.map((s) => s.name).sort()).toEqual(["skill-a", "skill-b"]);
+  });
+
+  test("a SYMLINK override entry resolving outside the plugin root is refused (fix round 5's realpath fence)", () => {
+    const parent = mkTemp("winter-plugin-skills-symlink-out-");
+    const root = join(parent, "sk-plugin");
+    mkdirSync(root, { recursive: true });
+    const outside = mkTemp("winter-plugin-skills-symlink-target-");
+    write(join(outside, "secret", "leaked-skill", "SKILL.md"), skillFile());
+    symlinkSync(join(outside, "secret"), join(root, "escape-link"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ skills: "./escape-link" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.skills).toEqual([]);
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("an override entry that is a FILE (requireDirectory:true) is refused, with claude's own SKILL.md hint", () => {
+    const parent = mkTemp("winter-plugin-skills-file-entry-");
+    const root = join(parent, "sk-plugin");
+    write(join(root, "loose", "SKILL.md"), skillFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ skills: "./loose/SKILL.md" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.skills).toEqual([]);
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("is a file, not a directory");
+    expect(result.manifestPathWarnings[0]).toContain("point to its parent directory instead");
+  });
+
+  test("no folder-shadowed-by-manifest warning is EVER possible for skills -- it is absent from that tuple list", () => {
+    const parent = mkTemp("winter-plugin-skills-no-shadow-warning-");
+    const root = join(parent, "sk-plugin");
+    write(join(root, "skills", "default-skill", "SKILL.md"), skillFile());
+    write(join(root, "extra-skills", "extra-skill", "SKILL.md"), skillFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ skills: "./extra-skills" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.manifestPathWarnings).toEqual([]);
+  });
+
+  test("a name collision between the default directory and an override entry keeps the override's copy (later wins)", () => {
+    const parent = mkTemp("winter-plugin-skills-collision-");
+    const root = join(parent, "sk-plugin");
+    write(join(root, "skills", "shared-name", "SKILL.md"), "---\ndescription: default version\n---\n\nDEFAULT");
+    write(join(root, "extra-skills", "shared-name", "SKILL.md"), "---\ndescription: override version\n---\n\nOVERRIDE");
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ skills: "./extra-skills" }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.skills).toHaveLength(1);
+    expect(bundle.skills[0]!.description).toBe("override version");
+  });
+
+  test("no `skills` key at all falls back to the default directory exactly as before this feature existed", () => {
+    const root = plugin({ manifestDir: WINTER_PLUGIN_MANIFEST_DIR, manifest: {} });
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.skills.map((s) => s.name)).toEqual(["ship"]); // plugin()'s own default fixture skill
+  });
+});
+
 describe("readPluginManifest", () => {
   test("a missing manifest is neither an error nor a manifest", () => {
     expect(readPluginManifest(mkTemp("winter-nomanifest-"))).toEqual({});
