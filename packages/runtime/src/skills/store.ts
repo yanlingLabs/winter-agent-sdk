@@ -106,6 +106,18 @@ export interface SkillIndexOptions {
    */
   strictPluginOnlyCustomization?: StrictPluginOnlyCustomization | undefined;
   bodyBytes?: number | undefined;
+  /**
+   * Fix round 4 (I-E, the router same-view test): a workflow, registered as a SYNTHETIC skill so
+   * `Skill("<name>")` and the slash-command surface both run it -- claude's own `m()` turns every
+   * discovered workflow into exactly this shape (dump-confirmed: `{type:"prompt", kind:"workflow",
+   * ...}`). Unlike every other entry `discover()` finds, a synthetic entry carries its own BODY
+   * directly (`load()` returns it as-is, never reading `path` from disk -- there is no SKILL.md a
+   * workflow script's own identity could point `load()` at). `path` is still required on the
+   * resulting `SkillMeta` (a synthetic, non-filesystem marker -- `workflows/store.ts`'s own
+   * `WorkflowListingEntry.path`, the REAL `.js` script path, doubles as it: informative for a
+   * listing/debug consumer, never read from by `load()` for a synthetic entry).
+   */
+  syntheticSkills?: readonly { name: string; description: string; body: string; source: SkillTier; path: string; plugin?: string }[];
 }
 
 function sourcesAllow(settingSources: SettingSource[] | undefined, tier: SettingSource): boolean {
@@ -147,6 +159,19 @@ function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: Sk
     }
   }
   if (!pluginOnly && opts.disableBundledSkills !== true) all.push(...(opts.builtinSkills ?? []));
+  // Fix round 4 (I-E): synthetic (workflow-backed) entries go through the SAME discover()/build()
+  // pipeline as everything else -- the identical name-jail, first-occurrence-wins precedence and
+  // (for a project-tier one) the identical PROJECT_PLUGIN_NAME alias every other project skill gets,
+  // for free, by construction rather than a parallel special case.
+  for (const synthetic of opts.syntheticSkills ?? []) {
+    all.push({
+      name: synthetic.name,
+      description: synthetic.description,
+      source: synthetic.source,
+      path: synthetic.path,
+      ...(synthetic.plugin !== undefined ? { plugin: synthetic.plugin } : {}),
+    });
+  }
   return { all, errors };
 }
 
@@ -160,17 +185,22 @@ export class SkillIndex {
   private readonly byName: Map<string, SkillMeta>;
   private readonly bodyBytes: number;
   private readonly scanErrors: SkillScanError[];
+  /** Fix round 4 (I-E): a synthetic entry's own body, keyed by its PRIMARY name -- `load()` checks this before ever touching disk. */
+  private readonly syntheticBodies: Map<string, string>;
 
-  private constructor(entries: SkillMeta[], byName: Map<string, SkillMeta>, bodyBytes: number, scanErrors: SkillScanError[]) {
+  private constructor(entries: SkillMeta[], byName: Map<string, SkillMeta>, bodyBytes: number, scanErrors: SkillScanError[], syntheticBodies: Map<string, string>) {
     this.entries = entries;
     this.byName = byName;
     this.bodyBytes = bodyBytes;
     this.scanErrors = scanErrors;
+    this.syntheticBodies = syntheticBodies;
   }
 
   static build(opts: SkillIndexOptions): SkillIndex {
     const entries: SkillMeta[] = [];
     const byName = new Map<string, SkillMeta>();
+    const syntheticBodies = new Map<string, string>();
+    for (const synthetic of opts.syntheticSkills ?? []) syntheticBodies.set(synthetic.name, synthetic.body);
     const discovered = discover(opts);
     const errors = discovered.errors;
     for (const found of discovered.all) {
@@ -202,7 +232,7 @@ export class SkillIndex {
       // primary name, the project skill keeps its bare identity and simply has no alias slot.
       for (const alias of aliases) if (!byName.has(alias)) byName.set(alias, meta);
     }
-    return new SkillIndex(entries, byName, opts.bodyBytes ?? DEFAULT_SKILL_BODY_BYTES, errors);
+    return new SkillIndex(entries, byName, opts.bodyBytes ?? DEFAULT_SKILL_BODY_BYTES, errors, syntheticBodies);
   }
 
   /**
@@ -242,10 +272,17 @@ export class SkillIndex {
    * Read a skill's body FROM DISK, byte-capped. `null` for an unknown name and for a skill whose
    * file has since been deleted, moved or made unparseable -- an invocation must degrade to a typed
    * tool error, never crash the turn.
+   *
+   * Fix round 4 (I-E): a SYNTHETIC entry (a workflow registered as a skill) returns its own
+   * pre-built body directly, keyed by the RESOLVED meta's primary name (so an alias lookup still
+   * finds it) -- never touching disk at all, since there is no SKILL.md a workflow script's identity
+   * could point this at.
    */
   load(name: string): { name: string; body: string; source: SkillTier; path: string } | null {
     const meta = this.byName.get(name);
     if (!meta) return null;
+    const synthetic = this.syntheticBodies.get(meta.name);
+    if (synthetic !== undefined) return { name: meta.name, body: capBytes(synthetic, this.bodyBytes), source: meta.source, path: meta.path };
     // UNBOUNDED, deliberately: the index-time prefix bound (A-11) exists so discovery does not read
     // bodies it drops. This call is the invocation, and the body is the whole point of it.
     const read = readSkillMetadata(meta.path, meta.name);

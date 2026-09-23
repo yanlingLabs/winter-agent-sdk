@@ -1869,6 +1869,58 @@ describe("SV-5: plugin/project/user workflows are listed in all three init surfa
     }
   });
 
+  // Fix round 4 (I-E, the router same-view test): the coordinator's own required test -- proves the
+  // FULL chain through the real production wiring, not just the listing: Skill("sv-plugin:sv-flow")
+  // resolves through the REAL Skill tool executor and its body instructs the model to invoke the
+  // Workflow tool with the SAME qualified name (tools/impl/workflow.test.ts's own SV-5 end-to-end
+  // test already proves the Workflow tool itself resolves that exact name).
+  test('I-E: Skill("sv-plugin:sv-flow") resolves through the real Skill tool and instructs a Workflow({name}) call', async () => {
+    const pluginDir = join(home, "plugin-src", "sv-plugin-ie");
+    writeSvPluginWorkflow(pluginDir);
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "sv-plugin-ie@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "sv-plugin-ie@m": true } });
+
+    const sessionId = "s-ie-skill-workflow";
+    const wiring = await buildProductionWiring({
+      config: { sessionId, cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const { getSkillSessionRuntime } = await import("./skills/runtime.ts");
+      const { skillExecutor } = await import("./tools/impl/skill.ts");
+      const runtime = getSkillSessionRuntime(sessionId);
+      expect(runtime, "production-wiring must have registered a skill session runtime").toBeDefined();
+      const ctx = {
+        cwd,
+        home,
+        sessionId,
+        readState: { markRead: () => {}, hasRead: () => false } as unknown as import("./tools/registry.ts").ToolExecutionContext["readState"],
+        emitFrame: () => {},
+        permissions: { probeReadAccess: () => "silent" as const },
+        tempDir: "/nowhere",
+        sandboxSettings: {} as import("./tools/registry.ts").ToolExecutionContext["sandboxSettings"],
+        session: {
+          setCwd() {},
+          addBoundedRoot() {},
+          removeBoundedRoot() {},
+          setPermissionMode() {},
+          getBoundedRoots: () => [],
+          getPermissionMode: () => "default",
+          getSessionRoot: () => cwd,
+          setSessionRoot() {},
+        },
+      } as import("./tools/registry.ts").ToolExecutionContext;
+      const result = await skillExecutor.execute({ skill: "sv-plugin-ie:sv-flow" }, ctx);
+      expect(result.isError).toBeUndefined();
+      expect(result.output).toContain('Workflow({ name: "sv-plugin-ie:sv-flow" })');
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("a project workflow (trusted workspace) is listed by its bare meta.name, not its filename", async () => {
     mkdirSync(join(cwd, ".winter", "workflows"), { recursive: true });
     writeFileSync(join(cwd, ".winter", "workflows", "whatever-filename.js"), `export const meta = { name: "proj-flow", description: "A project flow" };\nreturn 1;`);

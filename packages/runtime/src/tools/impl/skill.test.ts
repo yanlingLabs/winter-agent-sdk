@@ -215,6 +215,53 @@ describe("skillExecutor: typed refusals, never a throw", () => {
   });
 });
 
+// Fix round 4 (I-E, the router same-view test): a workflow registered as a synthetic skill --
+// Skill("<name>") must resolve and its body must instruct the model to invoke the Workflow tool
+// with the SAME qualified name (which tools/impl/workflow.test.ts's own SV-5 end-to-end test
+// already proves the Workflow tool itself resolves -- together the two prove the full chain).
+describe("skillExecutor: I-E -- a workflow registered as a synthetic skill", () => {
+  test('Skill("sv-plugin:sv-flow") resolves and its body instructs the model to call Workflow with the same name', async () => {
+    const repo = mkTemp("winter-skill-workflow-repo-");
+    const winterHome = mkTemp("winter-skill-workflow-home-");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      syntheticSkills: [
+        {
+          name: "sv-plugin:sv-flow",
+          description: "Runs the SV-5 flow",
+          body: 'Run the "sv-plugin:sv-flow" workflow.\n\nRuns the SV-5 flow\n\nTo run it, call the Workflow tool with this exact name: Workflow({ name: "sv-plugin:sv-flow" })',
+          source: "plugin",
+          path: join(repo, "plugin-src", "sv-plugin", "workflows", "flow-file.js"),
+          plugin: "sv-plugin",
+        },
+      ],
+    });
+    const sessionId = `sess-${Math.random().toString(36).slice(2)}`;
+    sessions.push(sessionId);
+    registerSkillSessionRuntime(sessionId, { index });
+    const result = await skillExecutor.execute({ skill: "sv-plugin:sv-flow" }, ctx(sessionId));
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('Workflow({ name: "sv-plugin:sv-flow" })');
+  });
+
+  test("a synthetic entry's body is returned verbatim (byte-capped, never re-derived) -- proving load() never tries to read the workflow script itself as a SKILL.md", async () => {
+    const repo = mkTemp("winter-skill-workflow-repo2-");
+    const winterHome = mkTemp("winter-skill-workflow-home2-");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      syntheticSkills: [{ name: "my-flow", description: "d", body: "SYNTHETIC BODY, NOT A REAL FILE READ", source: "user", path: "/does/not/exist/on/disk.js" }],
+    });
+    const sessionId = `sess-${Math.random().toString(36).slice(2)}`;
+    sessions.push(sessionId);
+    registerSkillSessionRuntime(sessionId, { index });
+    const result = await skillExecutor.execute({ skill: "my-flow" }, ctx(sessionId));
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain("SYNTHETIC BODY, NOT A REAL FILE READ");
+  });
+});
+
 describe("skillExecutor: registration", () => {
   test("the executor is installed over the descriptor stub under the pinned tool name", () => {
     expect(SKILL_TOOL_NAME).toBe("Skill");

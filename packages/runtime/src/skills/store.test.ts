@@ -406,3 +406,64 @@ describe("SkillIndex: the lazy-body contract (WS-11 §2.1 -- bodies are never bu
     expect(index.load("gone")).toBeNull();
   });
 });
+
+// Fix round 4 (I-E, the router same-view test): a workflow registered as a SYNTHETIC skill, so
+// Skill("<name>") can invoke it -- claude's own m() turns every discovered workflow into exactly
+// this shape. The body is supplied directly (no SKILL.md a workflow script's identity could point a
+// disk read at), and goes through the SAME discover()/build() pipeline (name jail, precedence,
+// project-tier aliasing) as every other entry.
+describe("I-E: synthetic (workflow-backed) skill entries", () => {
+  test("a synthetic entry lists and loads its OWN pre-built body, no disk read at all", () => {
+    const repo = mkTemp("winter-synth-repo-");
+    const winterHome = mkTemp("winter-synth-home-");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      syntheticSkills: [{ name: "sv-plugin:sv-flow", description: "Runs the flow", body: "Run the sv-flow workflow.\n\nWorkflow({ name: \"sv-plugin:sv-flow\" })", source: "plugin", path: "/nonexistent/flow-file.js", plugin: "sv-plugin" }],
+    });
+    expect(index.get("sv-plugin:sv-flow")?.description).toBe("Runs the flow");
+    expect(index.names()).toContain("sv-plugin:sv-flow");
+    const loaded = index.load("sv-plugin:sv-flow");
+    expect(loaded?.body).toContain('Workflow({ name: "sv-plugin:sv-flow" })');
+    expect(loaded?.source).toBe("plugin");
+  });
+
+  test("a real skill and a synthetic entry coexist -- neither shadows the other under different names", () => {
+    const repo = mkTemp("winter-synth-mix-repo-");
+    const winterHome = mkTemp("winter-synth-mix-home-");
+    writeSkill(join(repo, ".winter", "skills"), "review", { name: "review", description: "real skill" }, "REAL BODY");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      syntheticSkills: [{ name: "my-flow", description: "a workflow", body: "SYNTHETIC BODY", source: "project", path: "/x/flow.js" }],
+    });
+    expect(index.load("review")?.body).toBe("REAL BODY");
+    expect(index.load("my-flow")?.body).toBe("SYNTHETIC BODY");
+  });
+
+  test("a project-tier synthetic entry gets the SAME project alias every other project skill does", () => {
+    const repo = mkTemp("winter-synth-alias-repo-");
+    const winterHome = mkTemp("winter-synth-alias-home-");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      syntheticSkills: [{ name: "my-flow", description: "a workflow", body: "BODY", source: "project", path: "/x/flow.js" }],
+    });
+    expect(index.identities("my-flow")).toContain(`${PROJECT_PLUGIN_NAME}:my-flow`);
+    expect(index.load(`${PROJECT_PLUGIN_NAME}:my-flow`)?.body).toBe("BODY");
+  });
+
+  test("a synthetic entry's body is byte-capped exactly like a real one's", () => {
+    const repo = mkTemp("winter-synth-cap-repo-");
+    const winterHome = mkTemp("winter-synth-cap-home-");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      bodyBytes: 16,
+      syntheticSkills: [{ name: "big-flow", description: "d", body: "x".repeat(200), source: "user", path: "/x/big.js" }],
+    });
+    const loaded = index.load("big-flow");
+    expect(loaded?.body.endsWith(SKILL_TRUNCATION_MARKER)).toBe(true);
+    expect(loaded?.body.length).toBe(16 + SKILL_TRUNCATION_MARKER.length);
+  });
+});

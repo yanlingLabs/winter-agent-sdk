@@ -42,9 +42,9 @@ import { isAuthoredPromptRegion } from "./context/assembler.ts";
 import { loadPlugins } from "./plugins/loader.ts";
 import { resolveEnabledPlugins } from "./plugins/installed.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
-import { SkillIndex, type SkillMeta } from "./skills/store.ts";
+import { SkillIndex } from "./skills/store.ts";
 import { buildSkillListing, type SkillOverrides } from "./skills/listing.ts";
-import { listWorkflowsForListing } from "./workflows/store.ts";
+import { listWorkflowsForListing, buildWorkflowSkillPrompt } from "./workflows/store.ts";
 import { autoSkillPermissionEntries, isSkillEnabled, validateSkillsOption } from "./skills/option.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime } from "./skills/runtime.ts";
 import { FilesystemCommandResolver } from "./commands/resolver.ts";
@@ -720,6 +720,39 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const pluginWorkflows: { name: string; workflowsPath?: string }[] = plugins.bundles
     .filter((b) => b.workflowsPath !== undefined)
     .map((b) => ({ name: b.name, workflowsPath: b.workflowsPath! }));
+  // SV-5 (the router same-view test, real claude 2.1.250): claude's `getWorkflowCommands` folds
+  // EVERY discovered workflow (plugin + project + user) into the SAME `{type:"prompt", ...}` shape
+  // as a markdown slash command / "user-invocable" skill, and that shape feeds the init `skills`,
+  // init `slash_commands` AND the model-facing Skill listing alike -- a plugin workflow named
+  // `sv-flow` in plugin `sv-plugin` is listed as `sv-plugin:sv-flow` in all three, never under its
+  // filename, and the fixture proved Winter listed it in NONE of them. `workflows/store.ts`'s
+  // `listWorkflowsForListing` is the ONE discovery read all three surfaces share (`workflows/
+  // store.ts`'s own header: this file resolves the user tier for the FIRST time, closing WS-11 §11
+  // OQ2). Computed HERE, before `skillIndex` below, because fix round 4 (I-E) registers each
+  // discovered workflow AS a synthetic skill entry -- the index itself is now this listing's one
+  // consumer for `initSkills`/the Skill listing, not a second, parallel splice.
+  const workflowListing = listWorkflowsForListing({
+    cwd: config.cwd,
+    trustedWorkspace,
+    brand,
+    winterHome,
+    ...(settingSources !== undefined ? { settingSources } : {}),
+    ...(pluginWorkflows.length > 0 ? { pluginWorkflows } : {}),
+  });
+  // Fix round 4 (I-E, the router same-view test): claude's own `m()` (dump-confirmed) turns every
+  // discovered workflow into a `{type:"prompt", kind:"workflow", ...}` command whose prompt RUNS the
+  // workflow -- so `Skill("<name>")` and the slash-command surface both work, not merely list the
+  // name. Each becomes a SYNTHETIC skill entry, registered into the real SkillIndex below (never a
+  // parallel splice past it): `buildWorkflowSkillPrompt`'s own header has the full "Winter-authored
+  // prompt, claude's own structure" reasoning.
+  const workflowSyntheticSkills = workflowListing.map((w) => ({
+    name: w.name,
+    description: w.description,
+    body: buildWorkflowSkillPrompt(w),
+    source: w.source,
+    path: w.path,
+    ...(w.source === "plugin" ? { plugin: w.name.slice(0, w.name.indexOf(":")) } : {}),
+  }));
   // Review r2 finding 2 (whole-branch): a rejected `<plugin>/agents/*.md` file (missing/invalid
   // `name:`, missing `description:`) used to vanish with no report at all -- the plugin itself
   // still loads (`rejected` above is per-PLUGIN, this is per-FILE within one that loaded), so this
@@ -743,6 +776,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     plugins: pluginSkillContributions(plugins.bundles),
     ...(disableBundledSkills !== undefined ? { disableBundledSkills } : {}),
     ...(strictPluginOnlyCustomization !== undefined ? { strictPluginOnlyCustomization } : {}),
+    // Fix round 4 (I-E): every discovered workflow, registered as a synthetic skill -- see
+    // `workflowSyntheticSkills`'s own comment just above for why this makes Skill("<name>") and the
+    // slash-command surface both actually RUN the workflow, not merely list its name.
+    ...(workflowSyntheticSkills.length > 0 ? { syntheticSkills: workflowSyntheticSkills } : {}),
   });
 
   // (4) SKILLS-OPTION VALIDATION, before the run starts (WS-11 §10: "`skills` list validation before
@@ -952,20 +989,6 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // EVERY discovered workflow (plugin + project + user) into the SAME `{type:"prompt", ...}` shape
   // as a markdown slash command / "user-invocable" skill, and that shape feeds the init `skills`,
   // init `slash_commands` AND the model-facing Skill listing alike -- a plugin workflow named
-  // `sv-flow` in plugin `sv-plugin` is listed as `sv-plugin:sv-flow` in all three, never under its
-  // filename, and the fixture proved Winter listed it in NONE of them. `workflows/store.ts`'s
-  // `listWorkflowsForListing` is the ONE discovery read shared by all three surfaces below, so they
-  // can never disagree about what exists (`workflows/store.ts`'s own header: this file resolves the
-  // user tier for the FIRST time, closing WS-11 §11 OQ2).
-  const workflowListing = listWorkflowsForListing({
-    cwd: config.cwd,
-    trustedWorkspace,
-    brand,
-    winterHome,
-    ...(settingSources !== undefined ? { settingSources } : {}),
-    ...(pluginWorkflows.length > 0 ? { pluginWorkflows } : {}),
-  });
-
   // (14) THE INIT FRAME's four P5 fields.
   //
   // `slash_commands` comes from `slashCommandNames(resolver, cwd)` -- which ALREADY includes the
@@ -974,16 +997,23 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // SV-5: a workflow's qualified/bare name is APPENDED, matching claude's own `getWorkflowCommands`
   // fold -- ordering evidence for "relative to skills" was not found in the pinned dump (disclosed
   // in the lane report), so workflows are appended AFTER the resolver's own names, a disclosed
-  // default rather than an invented pin.
+  // default rather than an invented pin. `commandResolver` itself is NOT (yet) wired to EXECUTE a
+  // `/<workflow>` slash command -- fix round 4 (I-E)'s own scope is the Skill tool path
+  // (`workflowSyntheticSkills`, registered into `skillIndex` above); this listing splice is
+  // unchanged from SV-5 and is disclosed as a deferred gap in the lane report.
   const initSlashCommands = [...slashCommandNames(commandResolver, config.cwd), ...workflowListing.map((w) => w.name)];
   // `skills` reflects the session FILTER, not the whole index: a session configured with
   // `skills: ["review"]` should not advertise every skill on disk as available. `validateSkillsOption`
   // returns `index.names()` for `undefined`/`"all"` (capture (4): omission is not "skills off") and
   // the caller's own list otherwise -- including the empty one, which is a real configuration.
-  // SV-5: workflow names are UNCONDITIONALLY appended, never run through `isSkillEnabled`'s
-  // `config.skills` filter -- claude's own discovery has no equivalent "skills allowlist" axis for
-  // workflows, and `WorkflowListingEntry` carries no field such a filter could match against.
-  const initSkills = [...(validation.ok ? validation.skills : []), ...workflowListing.map((w) => w.name)];
+  // Fix round 4 (I-E): a workflow's name now reaches `initSkills` because it is a REAL entry in
+  // `skillIndex` (registered as a synthetic skill above), so `validation.skills` already includes it
+  // -- no separate splice needed the way SV-5's first cut required. This is a DELIBERATE REFINEMENT
+  // over SV-5's own "workflow names are unconditionally appended, never filtered" note: a workflow is
+  // now subject to the SAME `config.skills`/`skillOverrides` filtering as any other skill, which is
+  // the natural (and more principled) consequence of actually registering it as one, per I-E's own
+  // ruling -- disclosed in the lane report as a refinement, not a silent behaviour change.
+  const initSkills = validation.ok ? validation.skills : [];
   const initPlugins = pluginInitInfo(plugins.bundles);
   // The pinned field is REQUIRED (`sdk.d.ts:4879`). It reports the CONFIGURED name -- the same chain
   // the assembler resolves with -- never a name invented because the file behind it is missing:
@@ -1036,14 +1066,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // skills" configuration whose empty list a `size === 0 || ...` guard would read as "all" (the
   // exact inversion), and `isSkillEnabled` is alias-aware in both directions, so an option listing
   // `.winter:review` enables an invocation of `review` and vice versa.
-  // SV-5: a workflow becomes a SYNTHETIC `SkillMeta` entry, carrying the meta description straight
-  // into the same listing text a real skill's `description` would -- `SkillTier` has no dedicated
-  // "workflow" member (`skills/loader.ts`), so `source` is tagged with the ORIGIN tier a workflow
-  // actually has (`"project"` / `"user"` / `"plugin"`), which is also the pinned binary's own
-  // `loadedFrom` grouping in spirit (its `"skills"` catch-all for anything not built-in/plugin).
-  // Never filtered through `isSkillEnabled` -- see `initSkills`'s comment just above.
-  const workflowSkillEntries: SkillMeta[] = workflowListing.map((w) => ({ name: w.name, description: w.description, source: w.source, path: w.path }));
-  const listedSkills = [...skillIndex.list().filter((skill) => isSkillEnabled(config.skills, skill.name, skillIndex)), ...workflowSkillEntries];
+  // Fix round 4 (I-E): a workflow is now a REAL entry in `skillIndex` (registered as a synthetic
+  // skill above, `workflowSyntheticSkills`), so `skillIndex.list()` already includes it and this
+  // filter already applies to it -- no separate splice needed the way SV-5's first cut required. See
+  // `initSkills`'s own comment for the same refinement, stated once there.
+  const listedSkills = skillIndex.list().filter((skill) => isSkillEnabled(config.skills, skill.name, skillIndex));
   const skillListing = buildSkillListing(listedSkills, {
     ...(skillOverrides !== undefined ? { skillOverrides } : {}),
     ...(skillListingMaxDescChars !== undefined ? { maxDescChars: skillListingMaxDescChars } : {}),

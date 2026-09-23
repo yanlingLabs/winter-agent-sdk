@@ -9,7 +9,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveWorkflowByName, listBuiltinWorkflows, listWorkflowsForListing, persistWorkflowScript, workflowTranscriptDir, workflowRunsDir } from "./store.ts";
+import { resolveWorkflowByName, listBuiltinWorkflows, listWorkflowsForListing, buildWorkflowSkillPrompt, persistWorkflowScript, workflowTranscriptDir, workflowRunsDir } from "./store.ts";
 import { isWorkflowScriptCarveOut, isProtectedWrite } from "../permissions/protected.ts";
 
 function project(): string {
@@ -389,5 +389,68 @@ describe("persistWorkflowScript -- capture (3)'s durable location, and P5-B's ca
 
   test("the JOURNAL root is session-TEMP, not the durable area -- resume is same-session-only by contract and WS-01 forbids an invented durable name", () => {
     expect(workflowRunsDir("/tmp/winter-abc/session-temp")).toBe(join("/tmp/winter-abc/session-temp", "workflows", "runs"));
+  });
+});
+
+// Fix round 4 (I-E, the router same-view test): claude's own m() carries whenToUse and phases
+// alongside name/description for every discovered workflow -- listWorkflowsForListing must carry
+// them through too, so a synthetic skill prompt (buildWorkflowSkillPrompt) can include them.
+describe("listWorkflowsForListing -- I-E: whenToUse and phases carried through", () => {
+  test("a workflow declaring whenToUse and phases has both in its listing entry", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-wf-store-"));
+    mkdirSync(join(cwd, ".winter", "workflows"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".winter", "workflows", "full.js"),
+      `export const meta = { name: "full", description: "d", whenToUse: "when the user asks", phases: [{ title: "Plan" }, { title: "Execute", detail: "do the work" }] };\nreturn 1;`,
+    );
+    const listing = listWorkflowsForListing({ cwd, trustedWorkspace: true });
+    const entry = listing.find((w) => w.name === "full");
+    expect(entry?.whenToUse).toBe("when the user asks");
+    expect(entry?.phases).toEqual([{ title: "Plan" }, { title: "Execute", detail: "do the work" }]);
+  });
+
+  test("a workflow with no whenToUse/phases carries neither -- undefined, not empty placeholders", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-wf-store-"));
+    mkdirSync(join(cwd, ".winter", "workflows"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "workflows", "bare.js"), `export const meta = { name: "bare", description: "d" };\nreturn 1;`);
+    const listing = listWorkflowsForListing({ cwd, trustedWorkspace: true });
+    const entry = listing.find((w) => w.name === "bare");
+    expect(entry?.whenToUse).toBeUndefined();
+    expect(entry?.phases).toBeUndefined();
+  });
+});
+
+describe("buildWorkflowSkillPrompt -- I-E: the Winter-authored synthetic skill prompt", () => {
+  test("includes the name, description, whenToUse, phases and an exact Workflow({name}) invoke line", () => {
+    const prompt = buildWorkflowSkillPrompt({
+      name: "sv-plugin:sv-flow",
+      description: "Runs the SV-5 flow",
+      source: "plugin",
+      path: "/x/flow-file.js",
+      whenToUse: "when the user asks for the flow",
+      phases: [{ title: "Plan" }, { title: "Execute", detail: "carry it out" }],
+    });
+    expect(prompt).toContain("sv-plugin:sv-flow");
+    expect(prompt).toContain("Runs the SV-5 flow");
+    expect(prompt).toContain("when the user asks for the flow");
+    expect(prompt).toContain("Plan");
+    expect(prompt).toContain("Execute");
+    expect(prompt).toContain("carry it out");
+    expect(prompt).toContain('Workflow({ name: "sv-plugin:sv-flow" })');
+  });
+
+  test("omits whenToUse/phases sections entirely when absent, rather than printing empty labels", () => {
+    const prompt = buildWorkflowSkillPrompt({ name: "bare", description: "d", source: "user", path: "/x/bare.js" });
+    expect(prompt).not.toContain("When to use it:");
+    expect(prompt).not.toContain("Phases:");
+    expect(prompt).toContain('Workflow({ name: "bare" })');
+  });
+
+  test("the prompt text is WINTER-AUTHORED -- it does not reproduce claude's own dump wording", () => {
+    const prompt = buildWorkflowSkillPrompt({ name: "x", description: "d", source: "project", path: "/x/x.js" });
+    // A loose sanity check: the pinned binary's own progressMessage string ("running dynamic
+    // workflow") is never reproduced verbatim, matching the ruling that prompt CONTENT stays
+    // Winter's own wording even where interface strings may ship verbatim elsewhere.
+    expect(prompt).not.toContain("running dynamic workflow");
   });
 });

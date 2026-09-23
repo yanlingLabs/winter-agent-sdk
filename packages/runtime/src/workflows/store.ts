@@ -22,7 +22,7 @@
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { parseWorkflowMeta } from "./meta.ts";
+import { parseWorkflowMeta, type WorkflowMetaPhase } from "./meta.ts";
 
 /**
  * The path-traversal guard, applied BEFORE any filesystem call ever sees the name -- `name` arrives
@@ -214,8 +214,18 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
 // earlier one when the later fails; Winter's meta parser deliberately never executes or fully
 // validates a script BODY (security rationale, meta.ts's own header), so there is no equivalent
 // validity oracle to gate on here -- the later file always wins.
-function discoverWorkflowsInDir(dir: string): Map<string, { name: string; description: string; path: string; source: string }> {
-  const out = new Map<string, { name: string; description: string; path: string; source: string }>();
+interface DiscoveredWorkflowFile {
+  name: string;
+  description: string;
+  path: string;
+  source: string;
+  /** Fix round 4 (I-E): carried through from the ALREADY-parsed meta so a listing consumer never re-parses the script to build a synthetic skill prompt. */
+  whenToUse?: string;
+  phases?: WorkflowMetaPhase[];
+}
+
+function discoverWorkflowsInDir(dir: string): Map<string, DiscoveredWorkflowFile> {
+  const out = new Map<string, DiscoveredWorkflowFile>();
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -235,7 +245,14 @@ function discoverWorkflowsInDir(dir: string): Map<string, { name: string; descri
     }
     const parsed = parseWorkflowMeta(source);
     if (!parsed.ok) continue;
-    out.set(parsed.meta.name, { name: parsed.meta.name, description: parsed.meta.description, path, source });
+    out.set(parsed.meta.name, {
+      name: parsed.meta.name,
+      description: parsed.meta.description,
+      path,
+      source,
+      ...(parsed.meta.whenToUse !== undefined ? { whenToUse: parsed.meta.whenToUse } : {}),
+      ...(parsed.meta.phases !== undefined ? { phases: parsed.meta.phases } : {}),
+    });
   }
   return out;
 }
@@ -246,6 +263,9 @@ export interface WorkflowListingEntry {
   source: "project" | "user" | "plugin";
   /** The script's real filesystem path -- carried through so a caller building a `SkillMeta`-shaped synthetic entry (production-wiring.ts) never has to invent one. */
   path: string;
+  /** Fix round 4 (I-E): carried through for a synthetic skill/command prompt's own structure -- claude's own `m()` includes both alongside name/description. */
+  whenToUse?: string;
+  phases?: WorkflowMetaPhase[];
 }
 
 /**
@@ -266,25 +286,64 @@ export interface WorkflowListingEntry {
  */
 export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): WorkflowListingEntry[] {
   const out: WorkflowListingEntry[] = [];
+  const toEntry = (w: DiscoveredWorkflowFile, source: WorkflowListingEntry["source"], name: string): WorkflowListingEntry => ({
+    name,
+    description: w.description,
+    source,
+    path: w.path,
+    ...(w.whenToUse !== undefined ? { whenToUse: w.whenToUse } : {}),
+    ...(w.phases !== undefined ? { phases: w.phases } : {}),
+  });
   for (const plugin of opts.pluginWorkflows ?? []) {
     if (plugin.workflowsPath === undefined) continue;
     for (const w of [...discoverWorkflowsInDir(plugin.workflowsPath).values()].sort((a, b) => a.name.localeCompare(b.name))) {
-      out.push({ name: `${plugin.name}:${w.name}`, description: w.description, source: "plugin", path: w.path });
+      out.push(toEntry(w, "plugin", `${plugin.name}:${w.name}`));
     }
   }
   const merged = new Map<string, WorkflowListingEntry>();
   if (sourcesAllow(opts.settingSources, "user") && opts.winterHome !== undefined) {
     for (const w of discoverWorkflowsInDir(join(opts.winterHome, "workflows")).values()) {
-      merged.set(w.name, { name: w.name, description: w.description, source: "user", path: w.path });
+      merged.set(w.name, toEntry(w, "user", w.name));
     }
   }
   if (opts.trustedWorkspace && sourcesAllow(opts.settingSources, "project")) {
     for (const w of discoverWorkflowsInDir(join(opts.cwd, projectWorkflowsDir(opts.brand))).values()) {
-      merged.set(w.name, { name: w.name, description: w.description, source: "project", path: w.path });
+      merged.set(w.name, toEntry(w, "project", w.name));
     }
   }
   for (const w of [...merged.values()].sort((a, b) => a.name.localeCompare(b.name))) out.push(w);
   return out;
+}
+
+/**
+ * Fix round 4 (I-E, the router same-view test): claude's own `m()` (dump-confirmed) turns every
+ * discovered workflow into a `{type:"prompt", kind:"workflow", ...}` command whose PROMPT runs the
+ * named workflow and carries the description, `whenToUse` and phases, ending with an instruction to
+ * invoke the Workflow tool by name. `SkillMeta` has no dedicated "workflow" shape, so this builds the
+ * BODY TEXT `SkillIndex`'s own synthetic-entry seam (`SkillIndexOptions.syntheticSkills`) stores for
+ * `Skill("<name>")` to return -- the WS-11 §2.3 contract ("invocation inserts the resolved skill
+ * instructions into the main conversation") applied to a workflow instead of a SKILL.md body.
+ *
+ * THE PROMPT TEXT IS WINTER-AUTHORED, per the user's own ruling that prompts stay Winter's own
+ * wording while INTERFACE strings (a field name, a listing label, an error message) may ship
+ * verbatim from the pinned binary -- this is prompt content the model reads and acts on, not an
+ * interface string, so it is worded fresh here rather than reproduced from the dump. The
+ * STRUCTURE claude's own `m()` carries (name, description, `whenToUse`, phases, then the invoke
+ * instruction) is preserved; the wording is not claude's.
+ */
+export function buildWorkflowSkillPrompt(entry: WorkflowListingEntry): string {
+  const lines: string[] = [`This skill runs the "${entry.name}" workflow.`, "", entry.description];
+  if (entry.whenToUse !== undefined && entry.whenToUse.length > 0) {
+    lines.push("", `When to use it: ${entry.whenToUse}`);
+  }
+  if (entry.phases !== undefined && entry.phases.length > 0) {
+    lines.push("", "Phases:");
+    entry.phases.forEach((phase, index) => {
+      lines.push(`${index + 1}. ${phase.title}${phase.detail !== undefined && phase.detail.length > 0 ? ` — ${phase.detail}` : ""}`);
+    });
+  }
+  lines.push("", `To run it, call the Workflow tool with this exact name: Workflow({ name: ${JSON.stringify(entry.name)} })`);
+  return lines.join("\n");
 }
 
 // --- Persistence (WS-11 §1.3 + capture (3)) -------------------------------------------------------
