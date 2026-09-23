@@ -158,7 +158,9 @@ describe("checkpoint/seam.ts -- FileCheckpointSink (Lane K implements)", () => {
       config: baseConfig({ enableFileCheckpointing: true, allowedTools: ["Bash"] }),
       input: runtime.input,
       output: runtime.output,
-      provider: oneToolRound("Bash", { command: "echo hi > /w/a.ts" }),
+      // Inside the session's cwd: a rule-allowed shell write OUTSIDE the working directories asks
+      // (claude's checkPathConstraints, dist-session fixes C3), and this test is about the sink.
+      provider: oneToolRound("Bash", { command: "echo hi > /tmp/x/a.ts" }),
       tools: stubExecutor,
       fileCheckpointSink: fakeFileCheckpointSink({ mutations }),
     });

@@ -17,13 +17,17 @@ import { createFileCheckpointSink, CHECKPOINT_BACKUPS_DIRNAME } from "./sink.ts"
 let home = "";
 let work = "";
 
+// The project lives OUTSIDE the winter home, as a real one does: everything under the resolved winter
+// home is a protected write (protected.ts, dist-session fixes C3), so a project nested inside it would
+// be put to a person on every Write.
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "winter-lane-k-e2e-"));
-  work = join(home, "work");
+  work = mkdtempSync(join(tmpdir(), "winter-lane-k-e2e-work-"));
   mkdirSync(work, { recursive: true });
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
+  rmSync(work, { recursive: true, force: true });
 });
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {

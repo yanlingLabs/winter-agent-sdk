@@ -37,7 +37,7 @@
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, splitCompound, isRecognizedReadOnly, leadingWord, stripWrappers, type ParsedRule } from "./grammar.ts";
-import { matchFileRuleAtBothEnds, checkSymlinkBothEnds } from "./paths.ts";
+import { matchFileRuleAtBothEnds, checkSymlinkBothEnds, resolveRealTarget } from "./paths.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
 import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
@@ -586,6 +586,32 @@ function isProtectedShellTarget(path: string, ctx: EvaluationContext): boolean {
 }
 
 /**
+ * Is a shell write target inside one of the session's working directories? Compared on RESOLVED
+ * paths -- the target's real location (symlinks followed, a not-yet-existing file resolved through its
+ * nearest existing ancestor) against each root's -- so a macOS `/var/...` cwd and its own
+ * `/private/var/...` files agree, and a link inside the cwd that points OUT of it is outside. (The
+ * rule-pattern `isWithinBounds` is the wrong tool here: it requires the link AND the target text to
+ * match the unresolved root, which a `/var` -> `/private/var` cwd never satisfies.)
+ */
+function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boolean {
+  let real: string;
+  try {
+    real = resolveRealTarget(resolve(ctx.cwd, path));
+  } catch {
+    return false; // unresolvable (EACCES mid-walk): never assume it is inside
+  }
+  return boundedRoots(ctx).some((root) => {
+    let realRoot: string;
+    try {
+      realRoot = resolveRealTarget(resolve(root));
+    } catch {
+      return false;
+    }
+    return real === realRoot || real.startsWith(realRoot.endsWith("/") ? realRoot : `${realRoot}/`);
+  });
+}
+
+/**
  * A shell write an allow RULE may not clear by itself (claude's `checkPathConstraints`, run before its
  * allow rules): a target outside the session's working directories, or any target of a command that
  * changes directory first. Not bypass-immune -- claude's bypass allows both -- and a caller in
@@ -597,7 +623,7 @@ function shellWriteNeedsApproval(call: PermissionCall, ctx: EvaluationContext): 
   if (shellCommandChangesDirectory(call)) {
     return { reason: "Commands that change directories and write via output redirection or file commands require explicit approval: the final working directory cannot be determined, so the write targets cannot be checked" };
   }
-  const outside = targets.find((p) => !isWithinBounds(p, ctx));
+  const outside = targets.find((p) => !isShellTargetInWorkingDirs(p, ctx));
   if (outside === undefined) return undefined;
   return { reason: `Writing to '${resolve(ctx.cwd, outside)}' requires approval: it is outside the allowed working directories for this session (${boundedRoots(ctx).join(", ")})` };
 }
