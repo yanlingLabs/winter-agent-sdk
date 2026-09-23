@@ -48,16 +48,150 @@ describe("parseFrontmatter", () => {
     expect(parseFrontmatter(raw).attrs["description"]).toBe("a quoted helper");
   });
 
-  test("an unterminated frontmatter block (no closing ---) is treated as a whole-file body, never thrown", () => {
+  test("an unterminated frontmatter block (no closing --- anywhere) is treated as a whole-file body, never thrown", () => {
     const raw = ["---", "description: oops, no closer", "the rest of the file"].join("\n");
     const result = parseFrontmatter(raw);
     expect(result.attrs).toEqual({});
     expect(result.body).toBe(raw);
   });
 
-  test("a line the minimal parser doesn't recognize is skipped, never guessed at", () => {
+  // WS-21 §6.3 item 2 (fix-round-2): parseFrontmatter now matches claude's own pinned split
+  // (FRONTMATTER_REGEX + Bun.YAML.parse + the quoteProblematicValues retry, ported verbatim from
+  // claude-code-reference @ 6f6f12b's src/utils/frontmatterParser.ts) instead of a hand-rolled
+  // line-by-line key:value scanner. The hand-rolled parser's old "a line it doesn't recognize is
+  // skipped" leniency is GONE: a malformed frontmatter BLOCK (invalid YAML throughout) now loses the
+  // whole block, matching what claude's own two-attempt parse/retry does with the same input --
+  // never a partial, guessed-at result.
+  test("a malformed frontmatter block (invalid YAML) loses the whole block -- no per-line leniency", () => {
     const raw = ["---", "description: ok", "not a valid key line at all !!", "model: opus", "---", "body"].join("\n");
-    expect(parseFrontmatter(raw).attrs).toEqual({ description: "ok", model: "opus" });
+    expect(parseFrontmatter(raw).attrs).toEqual({});
+  });
+
+  test("the closing fence need not be on its own line -- claude's regex is lazy, not line-based", () => {
+    const result = parseFrontmatter("---\nname: x\n---body");
+    expect(result.attrs).toEqual({ name: "x" });
+    expect(result.body).toBe("body");
+  });
+
+  test("a YAML block scalar (|) is a real multi-line value, not the literal pipe character", () => {
+    const raw = "---\ndescription: |\n  multi\n  line\n---\nbody";
+    expect(parseFrontmatter(raw).attrs["description"]).toBe("multi\nline\n");
+  });
+
+  test("a trailing # comment on a scalar line is stripped by real YAML, not kept as text", () => {
+    const raw = "---\nname: foo # comment\n---\nbody";
+    expect(parseFrontmatter(raw).attrs["name"]).toBe("foo");
+  });
+
+  test("a YAML-typed value stays typed (number/boolean), never coerced to a string", () => {
+    expect(parseFrontmatter("---\nname: 123\n---\nbody").attrs["name"]).toBe(123);
+    expect(parseFrontmatter("---\ndescription: true\n---\nbody").attrs["description"]).toBe(true);
+  });
+
+  test("an empty scalar (`model:` with nothing after) is YAML null, not an empty string", () => {
+    const raw = "---\nname: x\ndescription: d\nmodel:\n---\nbody";
+    expect(parseFrontmatter(raw).attrs["model"]).toBeNull();
+  });
+
+  test("a bare colon-space mid-value (invalid on the first YAML pass) survives via the quoting retry, claude parity", () => {
+    const raw = "---\nname: x\ndescription: Use when: foo\n---\nbody";
+    expect(parseFrontmatter(raw).attrs["description"]).toBe("Use when: foo");
+  });
+
+  test("an inline YAML list parses as a real array", () => {
+    const raw = "---\nname: x\ndescription: d\ntools: [Read, Grep]\n---\nbody";
+    expect(parseFrontmatter(raw).attrs["tools"]).toEqual(["Read", "Grep"]);
+  });
+
+  // WS-21 §6.3 item 2 (fix-round-2): a BOM survives whatever the read gave `parseFrontmatter` --
+  // nothing in this function strips one, single or double, matching claude's own reference (which
+  // has no BOM-strip step in its agent-loading path either: `^---` anchors to the TRUE string start,
+  // so ANY leading BOM defeats the fence, exactly as any other leading character would). Measured
+  // empirically through `readFileSync(path, "utf8")` before writing this test: neither Bun nor Node
+  // strips a BOM on a plain utf8 read, so single- and double-BOM behave identically here -- there is
+  // no leniency to add, and none to remove.
+  test("a leading BOM (single or double) defeats the frontmatter fence -- no frontmatter is found, matching claude", () => {
+    const singleBom = "﻿---\nname: x\n---\nbody";
+    const doubleBom = "﻿﻿---\nname: x\n---\nbody";
+    expect(parseFrontmatter(singleBom)).toEqual({ attrs: {}, body: singleBom });
+    expect(parseFrontmatter(doubleBom)).toEqual({ attrs: {}, body: doubleBom });
+  });
+});
+
+// WS-21 §6.3 item 2 (fix-round-2): a differential harness against claude's own reference parser,
+// ported into this test file rather than trusted from memory -- `claudeReference` below is
+// FRONTMATTER_REGEX + Bun.YAML.parse + quoteProblematicValues, verbatim from
+// claude-code-reference @ 6f6f12b's src/utils/frontmatterParser.ts (the pin this repo's other
+// pinned-reference citations use, e.g. context/imports.ts's own header). For every shape, Winter's
+// `parseFrontmatter` must find the SAME keys claude would -- the coordinator's own stated bar.
+function claudeReference(raw: string): { attrs: Record<string, unknown>; body: string } {
+  const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)---\s*\n?/;
+  const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
+  const quoteProblematicValues = (text: string): string =>
+    text
+      .split("\n")
+      .map((line) => {
+        const m = /^([a-zA-Z_-]+):\s+(.+)$/.exec(line);
+        if (!m) return line;
+        const key = m[1]!;
+        const value = m[2]!;
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return line;
+        if (YAML_SPECIAL_CHARS.test(value)) return `${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+        return line;
+      })
+      .join("\n");
+  const match = FRONTMATTER_REGEX.exec(raw);
+  if (!match) return { attrs: {}, body: raw };
+  const frontmatterText = match[1] ?? "";
+  const body = raw.slice(match[0].length);
+  let attrs: Record<string, unknown> = {};
+  try {
+    const parsed = Bun.YAML.parse(frontmatterText) as unknown;
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
+  } catch {
+    try {
+      const parsed = Bun.YAML.parse(quoteProblematicValues(frontmatterText)) as unknown;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
+    } catch {
+      /* both attempts failed -- attrs stays {}, matching the reference's own silent degrade */
+    }
+  }
+  return { attrs, body };
+}
+
+describe("parseFrontmatter vs. claude's own reference parser (differential, WS-21 §6.3 item 2)", () => {
+  const shapes: { label: string; raw: string }[] = [
+    { label: "plain", raw: ["---", "name: x", "description: d", "---", "body"].join("\n") },
+    { label: "CRLF", raw: "---\r\nname: x\r\ndescription: d\r\n---\r\nbody" },
+    { label: "no frontmatter", raw: "just a prompt" },
+    { label: "unterminated (no closing --- anywhere)", raw: "---\nname: x\nthe rest" },
+    { label: "closing not on its own line", raw: "---\nname: x\n---body" },
+    { label: "block scalar", raw: "---\ndescription: |\n  multi\n  line\n---\nbody" },
+    { label: "trailing comment", raw: "---\nname: foo # comment\n---\nbody" },
+    { label: "typed number", raw: "---\nname: 123\n---\nbody" },
+    { label: "typed boolean", raw: "---\ndescription: true\n---\nbody" },
+    { label: "empty scalar", raw: "---\nname: x\nmodel:\n---\nbody" },
+    { label: "mid-value colon", raw: "---\nname: x\ndescription: Use when: foo\n---\nbody" },
+    { label: "inline list", raw: "---\nname: x\ntools: [Read, Grep]\n---\nbody" },
+    { label: "malformed block", raw: "---\nname: x\nnot valid !!\n---\nbody" },
+  ];
+  for (const { label, raw } of shapes) {
+    test(`${label}: same keys as claude`, () => {
+      const winter = parseFrontmatter(raw);
+      const claude = claudeReference(raw);
+      expect(Object.keys(winter.attrs).sort()).toEqual(Object.keys(claude.attrs).sort());
+      expect(winter.attrs).toEqual(claude.attrs);
+      expect(winter.body).toBe(claude.body);
+    });
+  }
+
+  test("single and double BOM: same keys as claude (both empty -- neither strips a BOM)", () => {
+    for (const raw of ["﻿---\nname: x\n---\nbody", "﻿﻿---\nname: x\n---\nbody"]) {
+      const winter = parseFrontmatter(raw);
+      const claude = claudeReference(raw);
+      expect(Object.keys(winter.attrs)).toEqual(Object.keys(claude.attrs));
+      expect(winter.body).toBe(claude.body);
+    }
   });
 });
 
@@ -151,6 +285,48 @@ describe("parseAgentDefinitionFile (spawn-surface parity: name+description requi
     const raw = ["---", "name: x", "description: d", "isolation: docker", "---", "body"].join("\n");
     const parsed = parseAgentDefinitionFile(raw, "x.md");
     expect(parsed.ok && parsed.definition.isolation).toBeUndefined();
+  });
+
+  // WS-21 §6.3 item 2 (fix-round-2): claude parity for TYPE, not just presence -- `name`/`description`
+  // must be YAML STRINGS. A YAML-typed `name: 123` (a real number, not a quoted "123") is claude's
+  // own rejection shape (`typeof agentType !== 'string'`), and Winter's frontmatter no longer forces
+  // every scalar through a string coercion the way the old hand-rolled line parser did.
+  test("a non-string name (real YAML number, unquoted) is rejected, not stringified", () => {
+    const raw = ["---", "name: 123", "description: d", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok).toBe(false);
+    expect(!parsed.ok && parsed.reason).toContain('missing required frontmatter field "name"');
+  });
+
+  test("a non-string description (real YAML boolean, unquoted) is rejected, not stringified", () => {
+    const raw = ["---", "name: x", "description: true", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok).toBe(false);
+    expect(!parsed.ok && parsed.reason).toContain('missing required frontmatter field "description"');
+  });
+
+  test("an empty scalar field (model: with nothing after) is YAML null, so the field is simply absent -- never an empty string", () => {
+    const raw = ["---", "name: x", "description: d", "model:", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.model).toBeUndefined();
+  });
+
+  test("a background value survives as a real YAML boolean (unquoted true), not only its quoted string form", () => {
+    const raw = ["---", "name: x", "description: d", "background: true", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.background).toBe(true);
+  });
+
+  test("an inline YAML list (tools: [Read, Grep]) parses identically to the comma-string form", () => {
+    const raw = ["---", "name: x", "description: d", "tools: [Read, Grep]", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.tools).toEqual(["Read", "Grep"]);
+  });
+
+  test("a description containing a bare mid-value colon (Use when: foo) survives via the quoting retry", () => {
+    const raw = ["---", "name: x", "description: Use when: foo", "---", "body"].join("\n");
+    const parsed = parseAgentDefinitionFile(raw, "x.md");
+    expect(parsed.ok && parsed.definition.description).toBe("Use when: foo");
   });
 });
 

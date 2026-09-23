@@ -17,11 +17,12 @@
 // LOAD time (`LoadedRule.projectBase`) rather than recomputed at match time. A relative glob
 // starting with `..` never matches, for either tier.
 //
-// FRONTMATTER. No YAML dependency exists anywhere in this workspace (subagents/definitions.ts's own
-// header states this and is the parser reused here): `paths:` is a flat scalar, either a bracketed
-// `[a/**, b/**]` list or a bare comma list, exactly `parseFrontmatter`'s existing sibling parsers
-// accept for `tools:`/`skills:`. A rule file with no frontmatter at all is entirely valid -- the
-// whole file is its content, unconditionally.
+// FRONTMATTER. `parseFrontmatter` (imported from subagents/definitions.ts, WS-21 §6.3 item 2 fix
+// round 2: now Bun.YAML.parse under claude's own pinned regex/retry split, not a hand-rolled scanner
+// -- that file's own header has the detail) is the SHARED extraction step; `paths:` accepts either a
+// real YAML list (`[a/**, b/**]`), a bracketed comma STRING, or a bare comma string, exactly
+// `splitList`'s sibling logic in that file accepts for `tools:`/`skills:`. A rule file with no
+// frontmatter at all is entirely valid -- the whole file is its content, unconditionally.
 import { readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import type { BrandProfile } from "@yanlinglabs/winter-agent-sdk";
@@ -61,14 +62,28 @@ export interface LoadRulesInput {
   brand: Pick<BrandProfile, "projectDirName">;
 }
 
-/** Splits a frontmatter scalar into a glob list. Mirrors subagents/definitions.ts's private `splitList` (not exported, so duplicated here at the same small scope). */
-function splitPathsList(value: string | undefined): string[] | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  const stripped = value.trim().replace(/^\[/, "").replace(/\]$/, "");
-  const items = stripped
-    .split(",")
-    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-    .filter((s) => s.length > 0);
+/**
+ * Splits a frontmatter scalar into a glob list. Mirrors subagents/definitions.ts's private
+ * `splitList` (not exported, so duplicated here at the same small scope) -- including its WS-21
+ * §6.3 item 2 fix-round-2 widening to `unknown`, since `attrs["paths"]` now comes from a real YAML
+ * parse and may already be an array, not only a string.
+ */
+function splitPathsList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  let parts: string[];
+  if (Array.isArray(value)) {
+    parts = value.filter((v): v is string => typeof v === "string");
+  } else if (typeof value === "string") {
+    if (value.trim() === "") return undefined;
+    parts = value
+      .trim()
+      .replace(/^\[/, "")
+      .replace(/\]$/, "")
+      .split(",");
+  } else {
+    return undefined;
+  }
+  const items = parts.map((s) => s.trim().replace(/^["']|["']$/g, "")).filter((s) => s.length > 0);
   return items.length > 0 ? items : undefined;
 }
 

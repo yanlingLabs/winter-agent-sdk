@@ -35,59 +35,131 @@ export interface SourcedAgentDefinition extends RuntimeAgentDefinition {
  */
 export type PluginAgentDefinition = RuntimeAgentDefinition & { plugin: string };
 
-// --- Filesystem loading: a minimal, deliberately small frontmatter parser -------------------------
+// --- Filesystem loading: frontmatter parsing, matching claude's own pinned split -------------------
 //
-// No YAML dependency exists anywhere in this workspace (verified: no package.json in this monorepo
-// declares one) -- adding one is a NEW DEPENDENCY (R4-10: "New dependency = NEEDS_CONTEXT"), so this
-// parses ONLY the flat `key: value` shape a hand-authored agent file actually needs (WS-10 §2's own
-// field table: description/tools/disallowedTools/model/skills/initialPrompt/maxTurns/background/
-// memory/effort/permissionMode -- every one of them either a bare scalar or a comma-separated list,
-// never nested YAML). A frontmatter line this minimal parser doesn't recognize is SKIPPED, never
-// guessed at -- a disclosed MVP scope limit, not a silent mis-parse.
+// WS-21 §6.3 item 2 (fix round 2): `Bun.YAML` is a Bun BUILT-IN (no package.json entry), not an npm
+// package -- the earlier "no YAML dependency exists in this workspace" rationale for a hand-rolled
+// `key: value` scanner was itself about R4-10's "new dependency" rule, which a runtime built-in never
+// trips. `FRONTMATTER_REGEX`, `YAML_SPECIAL_CHARS` and `quoteProblematicValues` below are ported
+// VERBATIM from the pinned reference (claude-code-reference @ 6f6f12b, src/utils/frontmatterParser.ts
+// -- the same clone context/imports.ts's own header cites), not reinvented: a hand-rolled line
+// scanner's own "a line it doesn't recognize is skipped" leniency let a frontmatter block Winter
+// half-parsed disagree, silently, with what claude either fully parses or fully drops.
+//
+// `attrs` is `Record<string, unknown>` now, not `Record<string, string>`: real YAML returns a typed
+// value (`effort: 5` is the number 5, `background: true` is the boolean true, `model:` with nothing
+// after is `null`, not `""`) exactly as claude's own `Bun.YAML.parse` does, so every reader below
+// narrows defensively instead of assuming a string -- claude's own `typeof x !== 'string'` gate for
+// `name`/`description` is the same discipline, ported into `parseAgentDefinitionFile`.
 export interface FrontmatterResult {
-  attrs: Record<string, string>;
+  attrs: Record<string, unknown>;
   body: string;
 }
 
-const FRONTMATTER_DELIM = /^---\s*$/;
+// Ported verbatim (claude's own `FRONTMATTER_REGEX`). LAZY (`[\s\S]*?`): the closing fence need not
+// be alone on its own line and needs no trailing newline, unlike the old line-based scanner's
+// `/^---\s*$/`-per-line requirement -- `"---\nname: x\n---body"` finds frontmatter under this regex
+// (claude does too) where the old scanner called it unterminated.
+//
+// `^` anchors to the TRUE start of the string, which is what makes a leading BOM (single OR double --
+// nothing in this function or its caller strips one, matching claude's own agent-loading path, which
+// has no BOM-strip step either) defeat the fence exactly like any other leading character would:
+// there is no leniency to add here, and none to remove.
+const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)---\s*\n?/;
+
+// Ported verbatim (claude's own `YAML_SPECIAL_CHARS` / `quoteProblematicValues`). A value with a bare
+// `: ` mid-string (`description: Use when: foo`) is invalid YAML on the first pass (a nested mapping)
+// -- this is the retry that quotes it and tries again, rather than losing the whole file to one
+// common, unquoted author mistake.
+const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
+
+function quoteProblematicValues(frontmatterText: string): string {
+  const lines = frontmatterText.split("\n");
+  const result: string[] = [];
+  for (const line of lines) {
+    const match = /^([a-zA-Z_-]+):\s+(.+)$/.exec(line);
+    if (match) {
+      const key = match[1]!;
+      const value = match[2]!;
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        result.push(line);
+        continue;
+      }
+      if (YAML_SPECIAL_CHARS.test(value)) {
+        const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        result.push(`${key}: "${escaped}"`);
+        continue;
+      }
+    }
+    result.push(line);
+  }
+  return result.join("\n");
+}
 
 export function parseFrontmatter(raw: string): FrontmatterResult {
-  const lines = raw.split(/\r\n|\n/);
-  if (lines.length === 0 || !FRONTMATTER_DELIM.test(lines[0] ?? "")) {
-    return { attrs: {}, body: raw };
-  }
-  let end = -1;
-  for (let i = 1; i < lines.length; i++) {
-    if (FRONTMATTER_DELIM.test(lines[i] ?? "")) {
-      end = i;
-      break;
+  const match = FRONTMATTER_REGEX.exec(raw);
+  if (!match) return { attrs: {}, body: raw };
+  const frontmatterText = match[1] ?? "";
+  const body = raw.slice(match[0].length);
+  let attrs: Record<string, unknown> = {};
+  try {
+    const parsed = Bun.YAML.parse(frontmatterText) as unknown;
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
+  } catch {
+    // YAML parsing failed -- retry once after quoting problematic values (claude's own two-attempt
+    // structure), rather than losing the whole file to one fixable shape.
+    try {
+      const parsed = Bun.YAML.parse(quoteProblematicValues(frontmatterText)) as unknown;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
+    } catch {
+      // Both attempts failed -- attrs stays {}, matching the reference's own silent degrade (it logs
+      // for debugging there; here, a required field simply being absent from `{}` is what surfaces
+      // as `parseAgentDefinitionFile`'s own typed rejection a few lines below, so the failure is
+      // still disclosed to a caller, just at the field-validation layer rather than this one).
     }
   }
-  if (end === -1) return { attrs: {}, body: raw }; // unterminated frontmatter -- treat the whole file as body, never throw
-  const attrs: Record<string, string> = {};
-  for (const line of lines.slice(1, end)) {
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(line);
-    if (!m) continue;
-    const key = m[1]!;
-    const value = m[2] ?? "";
-    attrs[key] = value.trim().replace(/^["']|["']$/g, "");
-  }
-  const body = lines
-    .slice(end + 1)
-    .join("\n")
-    .trim();
   return { attrs, body };
 }
 
-function splitList(value: string | undefined): string[] | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  // Accepts a bracketed `[a, b]` inline-YAML-ish form or a bare comma list -- both reduce to the
-  // same split, matching this parser's own "flat scalars/lists only" scope.
-  const stripped = value.trim().replace(/^\[/, "").replace(/\]$/, "");
-  const items = stripped
-    .split(",")
-    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-    .filter((s) => s.length > 0);
+/** `typeof v === "string"` only -- a YAML-typed number/boolean/null is never silently stringified (claude parity: it is treated as ABSENT, never coerced). */
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+/** Accepts a real YAML boolean OR its quoted string form (`background: true` and `background: "true"` both work) -- claude's own `parseAgentFromMarkdown` accepts both shapes for this one field. */
+function asBoolean(v: unknown): boolean | undefined {
+  if (v === true || v === "true") return true;
+  if (v === false || v === "false") return false;
+  return undefined;
+}
+
+/** A real YAML number OR a numeric string -- `Number.isFinite`, never a positivity check (unchanged scope from the pre-fix-round-2 behaviour). `null`/an object/an array all fall through to `undefined`. */
+function asFiniteNumber(v: unknown): number | undefined {
+  if (typeof v !== "number" && typeof v !== "string") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Accepts a real YAML array (an inline `[a, b]` list, or a block list) OR a bare/bracketed comma-separated string -- the shape `tools:`/`disallowedTools:`/`skills:` frontmatter has always accepted, now sourced from a real YAML value instead of one hand-split line. */
+function splitList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  let parts: string[];
+  if (Array.isArray(value)) {
+    parts = value.filter((v): v is string => typeof v === "string");
+  } else if (typeof value === "string") {
+    if (value.trim() === "") return undefined;
+    // A bracketed `[a, b]` STRING (as opposed to a real YAML array, already handled above) still
+    // reaches here when the surrounding value was itself quoted (`tools: "[a, b]"`) -- stripped the
+    // same way the pre-fix-round-2 parser did.
+    parts = value
+      .trim()
+      .replace(/^\[/, "")
+      .replace(/\]$/, "")
+      .split(",");
+  } else {
+    return undefined;
+  }
+  const items = parts.map((s) => s.trim().replace(/^["']|["']$/g, "")).filter((s) => s.length > 0);
   return items.length > 0 ? items : undefined;
 }
 
@@ -95,8 +167,9 @@ function isMemoryValue(v: string | undefined): v is "user" | "project" | "local"
   return v === "user" || v === "project" || v === "local";
 }
 
-function toEffortValue(raw: string): NonNullable<RuntimeAgentDefinition["effort"]> {
-  const trimmed = raw.trim();
+function toEffortValue(raw: unknown): NonNullable<RuntimeAgentDefinition["effort"]> {
+  if (typeof raw === "number") return raw;
+  const trimmed = String(raw).trim();
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
   return trimmed as NonNullable<RuntimeAgentDefinition["effort"]>;
 }
@@ -120,42 +193,54 @@ function isValidAgentName(name: string): boolean {
 // frontmatter never carries `prompt` itself, since the body IS the prompt, matching this project's
 // own tracked subagent-file convention).
 export function parseAgentDefinitionFile(raw: string, filePath: string): ParsedAgentDefinitionResult {
-  const { attrs, body } = parseFrontmatter(raw);
-  if (body.trim().length === 0) return { ok: false, filePath, reason: "no prompt body (the file's content after any frontmatter block is empty)" };
+  const { attrs, body: rawBody } = parseFrontmatter(raw);
+  // `parseFrontmatter` no longer trims (claude's own generic parser doesn't either -- see its
+  // header); the trim moves here, to the ONE caller that turns a body into a `prompt`.
+  const body = rawBody.trim();
+  if (body.length === 0) return { ok: false, filePath, reason: "no prompt body (the file's content after any frontmatter block is empty)" };
 
-  const name = attrs["name"];
+  // claude parity, TYPE not just presence: `typeof x !== 'string'` rejects a YAML-typed `name: 123`/
+  // `description: true` exactly as claude's own `parseAgentFromMarkdown` does -- `asString` returns
+  // `undefined` for anything that isn't a real string (including YAML `null`), so these two checks
+  // read identically to the pre-fix-round-2 code, just sourced from a type-narrowed value.
+  const name = asString(attrs["name"]);
   if (name === undefined || name.trim().length === 0) return { ok: false, filePath, reason: 'missing required frontmatter field "name"' };
   if (!isValidAgentName(name)) return { ok: false, filePath, reason: `invalid agent name "${name}" -- must not start with "-" or contain ":"` };
 
-  const description = attrs["description"];
+  const description = asString(attrs["description"]);
   if (description === undefined || description.trim().length === 0) return { ok: false, filePath, reason: 'missing required frontmatter field "description"' };
 
   const tools = splitList(attrs["tools"]);
   const disallowedTools = splitList(attrs["disallowedTools"]);
   const skills = splitList(attrs["skills"]);
-  const maxTurnsRaw = attrs["maxTurns"];
-  const maxTurns = maxTurnsRaw !== undefined && Number.isFinite(Number(maxTurnsRaw)) ? Number(maxTurnsRaw) : undefined;
-  const memory = attrs["memory"];
-  const isolation = attrs["isolation"];
+  const maxTurns = asFiniteNumber(attrs["maxTurns"]);
+  const memory = asString(attrs["memory"]);
+  const isolation = asString(attrs["isolation"]);
+  const model = asString(attrs["model"]);
+  const initialPrompt = asString(attrs["initialPrompt"]);
+  const permissionMode = asString(attrs["permissionMode"]);
+  const color = asString(attrs["color"]);
+  const background = asBoolean(attrs["background"]);
+  const effortRaw = attrs["effort"];
   const definition: RuntimeAgentDefinition = {
     description,
     prompt: body,
     ...(tools !== undefined ? { tools } : {}),
     ...(disallowedTools !== undefined ? { disallowedTools } : {}),
-    ...(attrs["model"] !== undefined ? { model: attrs["model"] } : {}),
-    ...(attrs["initialPrompt"] !== undefined ? { initialPrompt: attrs["initialPrompt"] } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(initialPrompt !== undefined ? { initialPrompt } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
-    ...(attrs["background"] !== undefined ? { background: attrs["background"] === "true" } : {}),
+    ...(background !== undefined ? { background } : {}),
     ...(isMemoryValue(memory) ? { memory } : {}),
-    ...(attrs["effort"] !== undefined ? { effort: toEffortValue(attrs["effort"]) } : {}),
-    ...(attrs["permissionMode"] !== undefined ? { permissionMode: attrs["permissionMode"] } : {}),
+    ...(effortRaw !== undefined && effortRaw !== null ? { effort: toEffortValue(effortRaw) } : {}),
+    ...(permissionMode !== undefined ? { permissionMode } : {}),
     ...(skills !== undefined ? { skills } : {}),
     // Scope item 2: "accept isolation (worktree|remote) and color". An unrecognised isolation value
     // is dropped rather than mis-typed through (the same posture `isMemoryValue` already applies to
     // `memory` above) -- a typo in a hand-authored file must not silently become an unsupported
     // literal the spawn path chokes on later.
     ...(isolation === "worktree" || isolation === "remote" ? { isolation } : {}),
-    ...(attrs["color"] !== undefined ? { color: attrs["color"] } : {}),
+    ...(color !== undefined ? { color } : {}),
   };
   return { ok: true, name, definition };
 }
