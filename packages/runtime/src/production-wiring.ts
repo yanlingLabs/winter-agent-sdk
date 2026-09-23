@@ -780,9 +780,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // but carries no "hooks" key) is a warning here too, the same "the plugin still loads, this just
   // names the broken file" shape as the agent-file rejections immediately above.
   for (const warning of plugins.hookFileWarnings) warnings.push(warning);
-  // Fix round 4 (minors, M-3's last bullet): same fold, for a manifest `workflows` entry the loader
-  // could not use.
-  for (const warning of plugins.workflowsPathWarnings) warnings.push(warning);
+  // Fix round 4/5 (minors, M-3's last bullet; generalised in round 5 from workflowsPathWarnings):
+  // same fold, for any manifest custom-path override entry the loader could not use, across every
+  // component the loader resolves one for.
+  for (const warning of plugins.manifestPathWarnings) warnings.push(warning);
 
   // (3) SKILL INDEX. Addressed by the RESOLVED winter root -- never `permissionHome`.
   const skillIndex = SkillIndex.build({

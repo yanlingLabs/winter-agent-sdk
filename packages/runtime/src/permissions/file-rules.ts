@@ -77,6 +77,7 @@
 //     rule in the group matched.
 import { isAbsolute, relative, sep } from "node:path";
 import ignoreFactory from "ignore";
+import { resolveRealTarget } from "./paths.ts";
 
 // ---------------------------------------------------------------------------------------------
 // SV-7: the tool -> rule-kind map
@@ -347,6 +348,51 @@ export function isPathWithinRoot(childPath: string, rootPath: string, opts: { ca
   if (rel === "") return true;
   if (rel === ".." || rel.startsWith(`..${sep}`)) return false;
   return !isAbsolute(rel);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fix round 5: the plugin-manifest traversal fence (Aoe/KGe)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The traversal fence for a plugin MANIFEST's own declared component paths (`commands`/`agents`/
+ * `skills`/`output-styles`/`workflows`) -- REALPATH-AWARE, unlike `isPathWithinRoot` alone (a pure
+ * lexical prefix test), which would let a SYMLINK planted lexically inside the plugin root but
+ * resolving OUTSIDE it through unchallenged. Ported from claude's own `KGe` (dump-confirmed by
+ * content search against the installed claude CLI binary, 2.1.280 -- the pinned 2.1.250 build was
+ * unavailable locally, so this is cited by content, not by offset): realpath the candidate,
+ * realpath the root (`plugins/loader.ts`'s `resolveRoot` deliberately does NOT realpath the plugin
+ * root at load time -- its own header explains why -- so a symlinked plugin root would otherwise
+ * fail every inside-check falsely if only the candidate side were resolved; `KGe`'s own
+ * `anchor.roots.some(...)`, plural, is this same both-sides requirement), then check containment.
+ * `resolveRealTarget` (paths.ts) already has the graceful "walk up to the nearest existing ancestor"
+ * fallback `KGe`'s own `ben` sibling function provides for a candidate that does not exist YET --
+ * reused rather than re-derived.
+ *
+ * `resolveRealTarget` RETHROWS a non-ENOENT failure (ELOOP on a symlink cycle, EACCES, ...) -- caught
+ * here and treated as a refusal, mirroring `KGe`'s own "it could not be resolved" `escapes` verdict,
+ * rather than letting a malformed manifest entry crash the whole plugin-loading pass.
+ *
+ * DISCLOSED SIMPLIFICATION: `KGe`'s own `wen` sibling cross-checks `stat(candidate)` against
+ * `stat(real)` by raw `(dev,ino)` identity, as a defence against a TOCTOU race between its own
+ * `realpath()` call and a later read -- belt-and-suspenders against the filesystem changing under a
+ * concurrent reader. Winter's loader runs synchronously within one `loadPlugins()` call in a single
+ * process; that race window does not exist here the same way, so this is not ported.
+ */
+export function resolvesWithinPluginRoot(candidatePath: string, pluginRoot: string): boolean {
+  // `KGe`'s own defensive check (a literal backslash "is not resolved reliably on this platform").
+  // Inert on macOS -- the only platform this codebase targets (CLAUDE.md's own latest-OS-floors
+  // rule) -- ported anyway for parity and because it is genuinely one line.
+  if (candidatePath.includes("\\")) return false;
+  let realCandidate: string;
+  let realRoot: string;
+  try {
+    realCandidate = resolveRealTarget(candidatePath);
+    realRoot = resolveRealTarget(pluginRoot);
+  } catch {
+    return false;
+  }
+  return isPathWithinRoot(realCandidate, realRoot);
 }
 
 // ---------------------------------------------------------------------------------------------

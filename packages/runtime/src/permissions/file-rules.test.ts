@@ -8,7 +8,20 @@
 // is what paths.test.ts's own (now-superseded) corpus pinned, and claude's answer is the bar this
 // module must clear.
 import { describe, expect, test } from "bun:test";
-import { fileRuleKindFor, canonicalFileRuleAuthoringToolName, matchFileRulesGrouped, resolveFileRuleAnchor, unanchorTrailingDoubleStar, normalizeFileRulePattern, escapeFileRulePathSegment, type FileRuleCandidate } from "./file-rules.ts";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  fileRuleKindFor,
+  canonicalFileRuleAuthoringToolName,
+  matchFileRulesGrouped,
+  resolveFileRuleAnchor,
+  unanchorTrailingDoubleStar,
+  normalizeFileRulePattern,
+  escapeFileRulePathSegment,
+  resolvesWithinPluginRoot,
+  type FileRuleCandidate,
+} from "./file-rules.ts";
 
 const CWD = "/w/proj";
 const HOME = "/h";
@@ -260,6 +273,75 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
     // Proves it is not ALSO accidentally over-matching a DIFFERENT, unescaped sibling name (one bracket
     // character standing in for "wip") the way a raw, un-escaped class would.
     expect(matchFileRulesGrouped(candidates, "/home/nameW/projects/x.jsonl", { cwd: "/w", home: "/h" }, "denyAsk")).toBeNull();
+  });
+});
+
+// Unit-level: this function's OWN contract, called with the already-lexically-resolved candidate a
+// loader would hand it (`resolve(root, entry)`'s result) -- the LOADER-level test suite
+// (plugins/loader.test.ts) is where a raw manifest entry like "../x" is exercised end to end,
+// since collapsing "../" is `path.resolve`'s own job, done before this function is ever called.
+describe("resolvesWithinPluginRoot -- fix round 5, the plugin-manifest traversal fence (Aoe/KGe)", () => {
+  function mkTemp(prefix: string): string {
+    return mkdtempSync(join(tmpdir(), prefix));
+  }
+
+  test("a plain subdirectory is within the root", () => {
+    const root = mkTemp("winter-fence-root-");
+    mkdirSync(join(root, "sub"), { recursive: true });
+    expect(resolvesWithinPluginRoot(join(root, "sub"), root)).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("an absolute path pointing outside the root is refused", () => {
+    const root = mkTemp("winter-fence-root-");
+    const outside = mkTemp("winter-fence-outside-");
+    writeFileSync(join(outside, "x.txt"), "");
+    expect(resolvesWithinPluginRoot(join(outside, "x.txt"), root)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("a SYMLINK inside the root that resolves OUTSIDE it is refused -- the realpath check, not just the lexical one", () => {
+    const root = mkTemp("winter-fence-root-");
+    const outside = mkTemp("winter-fence-outside-");
+    mkdirSync(join(outside, "secret"), { recursive: true });
+    symlinkSync(join(outside, "secret"), join(root, "escape-link"));
+    expect(resolvesWithinPluginRoot(join(root, "escape-link"), root)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("a SYMLINK inside the root that resolves to ANOTHER place inside the root is allowed", () => {
+    const root = mkTemp("winter-fence-root-");
+    mkdirSync(join(root, "real-target"), { recursive: true });
+    symlinkSync(join(root, "real-target"), join(root, "inside-link"));
+    expect(resolvesWithinPluginRoot(join(root, "inside-link"), root)).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a SYMLINKED plugin root itself still admits a real subdirectory -- both sides are realpath'd", () => {
+    const realRoot = mkTemp("winter-fence-real-root-");
+    mkdirSync(join(realRoot, "sub"), { recursive: true });
+    const parent = mkTemp("winter-fence-link-parent-");
+    const linkedRoot = join(parent, "linked-root");
+    symlinkSync(realRoot, linkedRoot);
+    // The candidate is spelled through the SYMLINKED root, as a loader that never realpaths
+    // `resolveRoot`'s own result (plugins/loader.ts:84's own deliberate choice) would spell it.
+    expect(resolvesWithinPluginRoot(join(linkedRoot, "sub"), linkedRoot)).toBe(true);
+    rmSync(realRoot, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  });
+
+  test("a not-yet-existing candidate under a real root is still admitted -- resolveRealTarget's own graceful fallback", () => {
+    const root = mkTemp("winter-fence-root-");
+    expect(resolvesWithinPluginRoot(join(root, "not-created-yet.js"), root)).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a literal backslash refuses outright -- KGe's own defensive check, ported for parity", () => {
+    const root = mkTemp("winter-fence-root-");
+    expect(resolvesWithinPluginRoot(join(root, "a\\b"), root)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
   });
 });
 

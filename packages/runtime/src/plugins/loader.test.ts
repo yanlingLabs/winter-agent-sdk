@@ -74,7 +74,7 @@ describe("loadPlugins: `type: \"local\"` is the only accepted config (WS-11 §4)
   });
 
   test("no plugins at all is an empty result, not an error", () => {
-    const empty = { bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [], workflowsPathWarnings: [] };
+    const empty = { bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [], manifestPathWarnings: [] };
     expect(loadPlugins(undefined)).toEqual(empty);
     expect(loadPlugins([])).toEqual(empty);
   });
@@ -372,9 +372,9 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     // Advisor catch: claude's own D.push({type:"folder-shadowed-by-manifest",...}) diagnostic --
     // the plugin author is TOLD their workflows/ folder is being ignored, not left to notice by its
     // absence from a listing.
-    expect(result.workflowsPathWarnings).toHaveLength(1);
-    expect(result.workflowsPathWarnings[0]).toContain("workflows/");
-    expect(result.workflowsPathWarnings[0]).toContain("not auto-loaded");
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("workflows/");
+    expect(result.manifestPathWarnings[0]).toContain("not auto-loaded");
   });
 
   test("no folder-shadowed-by-manifest warning when the default directory does not exist -- there is nothing to shadow", () => {
@@ -384,7 +384,47 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     // No `workflows/` directory this time.
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./custom-workflows" }));
     const result = loadPlugins([{ type: "local", path: root }]);
-    expect(result.workflowsPathWarnings).toEqual([]);
+    expect(result.manifestPathWarnings).toEqual([]);
+  });
+
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): round 4 omitted claude's own
+  // `O1t` suppression -- an author who explicitly re-lists the default directory alongside (or
+  // instead of) a custom path is not silently losing it, so no shadow warning should fire.
+  test("O1t: no folder-shadowed-by-manifest warning when the override names the default directory itself", () => {
+    const parent = mkTemp("winter-plugin-workflows-self-named-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "workflows"), { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./workflows" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.manifestPathWarnings).toEqual([]);
+    expect(result.bundles[0]!.workflowsPaths).toEqual([resolve(root, "workflows")]);
+  });
+
+  test("O1t: naming the default directory as ONE of several entries also suppresses the warning", () => {
+    const parent = mkTemp("winter-plugin-workflows-self-named-array-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "workflows"), { recursive: true });
+    mkdirSync(join(root, "extra"), { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: ["./extra", "./workflows"] }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.manifestPathWarnings).toEqual([]);
+  });
+
+  // Fix round 5: the traversal fence is now REALPATH-aware (resolvesWithinPluginRoot), closing a
+  // round-4 gap where a symlink planted lexically inside the plugin root but resolving OUTSIDE it
+  // would have been admitted.
+  test("a workflows override entry that is a SYMLINK resolving outside the plugin root is refused", () => {
+    const parent = mkTemp("winter-plugin-workflows-symlink-out-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(root, { recursive: true });
+    const outside = mkTemp("winter-plugin-workflows-symlink-target-");
+    mkdirSync(join(outside, "secret"), { recursive: true });
+    symlinkSync(join(outside, "secret"), join(root, "escape-link"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./escape-link" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.workflowsPaths).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
   test("an ARRAY override resolves every entry, directories and files alike", () => {
@@ -406,8 +446,23 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     expect(result.rejected).toEqual([]);
     expect(result.bundles[0]!.workflowsPaths).toBeUndefined(); // the one entry was invalid, so nothing survived
     expect(result.bundles[0]!.workflowsPath).toBeUndefined(); // still shadowed -- the key was present
-    expect(result.workflowsPathWarnings).toHaveLength(1);
-    expect(result.workflowsPathWarnings[0]).toContain("escapes the plugin directory");
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  // Round 5's own explicit ruling: an ABSOLUTE path entry must be refused too, when it resolves
+  // outside the plugin root -- `resolve(root, entry)` discards `root` entirely for an absolute later
+  // argument (ordinary node:path semantics), so this exercises the SAME escape check from a
+  // different spelling than "../".
+  test("an ABSOLUTE entry pointing outside the plugin directory is dropped with a warning", () => {
+    const parent = mkTemp("winter-plugin-workflows-absolute-escape-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "/etc" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.workflowsPaths).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
   test("an entry that does not exist on disk is dropped with a warning", () => {
@@ -417,8 +472,8 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./does-not-exist" }));
     const result = loadPlugins([{ type: "local", path: root }]);
     expect(result.bundles[0]!.workflowsPaths).toBeUndefined();
-    expect(result.workflowsPathWarnings).toHaveLength(1);
-    expect(result.workflowsPathWarnings[0]).toContain("was not found");
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("was not found");
   });
 
   test("a mix of valid and invalid entries keeps only the valid ones, and warns once per invalid entry", () => {
@@ -428,7 +483,7 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: ["./good", "./missing", "../escapes"] }));
     const result = loadPlugins([{ type: "local", path: root }]);
     expect(result.bundles[0]!.workflowsPaths).toEqual([resolve(root, "good")]);
-    expect(result.workflowsPathWarnings).toHaveLength(2);
+    expect(result.manifestPathWarnings).toHaveLength(2);
   });
 
   test("no `workflows` key at all falls back to the default directory exactly as before this feature existed", () => {

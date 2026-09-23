@@ -12,13 +12,13 @@
 // construction; it has everything it needs to.
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import type { BrandProfile, SdkPluginConfig } from "@yanlinglabs/winter-agent-sdk";
 import { parseSkillFile } from "../skills/frontmatter.ts";
 import { pluginNameError } from "../skills/frontmatter.ts";
 import { parseAgentDefinitionFile } from "../subagents/definitions.ts";
 import type { AgentDefinitionRejection, PluginAgentDefinition } from "../subagents/definitions.ts";
-import { isPathWithinRoot } from "../permissions/file-rules.ts";
+import { resolvesWithinPluginRoot } from "../permissions/file-rules.ts";
 import { manifestAuthor, readPluginManifest, type PluginManifest } from "./manifest.ts";
 import type { PluginBundle, PluginCommandEntry, PluginMetadata, PluginSkillEntry } from "./bundle.ts";
 
@@ -54,13 +54,18 @@ export interface LoadPluginsResult {
    */
   hookFileWarnings: string[];
   /**
-   * WS-21 fix round 4 (minors, M-3's last bullet): a manifest `workflows` entry that could not be
-   * used -- not a string, escapes the plugin directory, or does not exist -- named per-plugin,
-   * per-entry, on the SAME "recoverable, not a whole-plugin rejection" footing `hookFileWarnings`
-   * above already established for a malformed `hooks.json`. `production-wiring.ts` folds these into
-   * the same `warnings` list too.
+   * WS-21 fix round 4/5 (minors, M-3's last bullet; generalised and renamed in round 5 from
+   * `workflowsPathWarnings` -- ONE fold site, one channel, for every manifest custom-path override
+   * this loader resolves, not a parallel field per component): a manifest `workflows`/`agents`/
+   * `output-styles`/`commands`/`skills` entry that could not be used -- not a string, escapes the
+   * plugin directory (lexically OR through a symlink -- fix round 5's own Aoe/KGe port), does not
+   * exist, or (skills only) is a file where a directory is required -- plus a
+   * `folder-shadowed-by-manifest` notice when an override silently drops an existing default
+   * directory. Named per-plugin, per-entry, on the SAME "recoverable, not a whole-plugin rejection"
+   * footing `hookFileWarnings` above already established for a malformed `hooks.json`.
+   * `production-wiring.ts` folds these into the same `warnings` list too.
    */
-  workflowsPathWarnings: string[];
+  manifestPathWarnings: string[];
 }
 
 /**
@@ -393,50 +398,88 @@ function componentDirIfPresent(root: string, dir: string): string | undefined {
 }
 
 /**
- * WS-21 fix round 4 (minors, M-3's last bullet): the manifest's own `workflows` override, resolved.
- * `undefined` means the manifest declares no `workflows` key at all (the caller falls back to the
- * default `workflows/` directory); an array (possibly empty) means it DOES, so the default directory
- * is shadowed regardless of how many entries survive validation (`manifest.ts`'s own citation for
- * both the shape and the `Lt=!j.workflows&&...` gate this mirrors).
+ * WS-21 fix round 4/5 (minors, M-3's last bullet, generalised in round 5): a plugin manifest's own
+ * custom-path override for ONE component -- the array-of-paths shape `workflows`/`agents`/
+ * `output-styles`/the plain-array half of `commands` all share (claude's own `Tb`, dump-confirmed:
+ * every one of these four call sites differs only in `componentKey`/label text and the
+ * `requireDirectory` argument). `skills` has its own ADDITIVE variant (`resolveSkillsOverride`,
+ * below -- round 5's re-review N-1/N-2 sibling advisor catch: skills does NOT shadow the default
+ * directory, confirmed by `_t=Le` carrying no `!j.skills` negation unlike every other component's
+ * `!j.X&&Y` gate, and by `skills` being ABSENT from the `folder-shadowed-by-manifest` tuple list).
+ * `commands`' own inline `{name:{source|content}}` object-map form is a materially separate, larger
+ * mechanism -- see `loadPlugins`'s own commands call site for the disclosed scope decision.
+ *
+ * `undefined` means the manifest declares no override at all (the caller falls back to the default
+ * directory); an array (possibly empty) means it DOES, so the default directory is SHADOWED
+ * regardless of how many entries survive validation.
  *
  * Each declared entry is resolved against the plugin root and kept only if it both stays within the
- * plugin directory (a manifest-declared relative path is untrusted content the same way a symlink
- * target is; `isPathWithinRoot` is fix round 4's own C-1/I-G primitive, reused rather than a second
- * hand-rolled traversal guard) and exists on disk -- a directory or a single file, both valid for
- * `workflows` (unlike `skills`, which the SAME citation's `Tb` call requires a directory for). An
- * entry that fails either check is dropped with a warning (`workflowsPathWarnings`) rather than
- * failing the whole plugin, on the same "recoverable, not a whole-plugin rejection" footing
- * `hookFileWarnings` already established for a malformed `hooks.json`.
+ * plugin directory -- REALPATH-aware (`resolvesWithinPluginRoot`, fix round 5's own Aoe/KGe port,
+ * `permissions/file-rules.ts`; closes a round-4 gap where a manifest-declared relative path was
+ * checked only LEXICALLY, letting a symlink planted inside the plugin root but resolving outside it
+ * through) -- and exists on disk. `requireDirectory` mirrors claude's own `Tb`'s tenth argument:
+ * `false` for workflows/agents/output-styles (a bare file is a valid single-entry override), and this
+ * function is never called for skills (see above). An entry that fails a check is dropped with a
+ * warning (`manifestPathWarnings`) rather than failing the whole plugin, on the same "recoverable,
+ * not a whole-plugin rejection" footing `hookFileWarnings` already established.
  */
-function pluginWorkflowsOverride(root: string, pluginName: string, manifest: PluginManifest | undefined, warnings: string[]): string[] | undefined {
-  const declared = manifest?.workflows;
+function resolveManifestComponentOverride(
+  root: string,
+  pluginName: string,
+  componentKey: string,
+  declared: string | string[] | undefined,
+  requireDirectory: boolean,
+  warnings: string[],
+): string[] | undefined {
   if (declared === undefined) return undefined;
   const entries = Array.isArray(declared) ? declared : [declared];
   const resolved: string[] = [];
   for (const entry of entries) {
     if (typeof entry !== "string" || entry.length === 0) {
-      warnings.push(`plugin "${pluginName}"'s manifest "workflows" entry ${JSON.stringify(entry)} is not a non-empty string -- ignoring it`);
+      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" entry ${JSON.stringify(entry)} is not a non-empty string -- ignoring it`);
       continue;
     }
     const full = resolve(root, entry);
-    if (!isPathWithinRoot(full, root)) {
-      warnings.push(`plugin "${pluginName}"'s manifest "workflows" path "${entry}" escapes the plugin directory -- ignoring it`);
+    if (!resolvesWithinPluginRoot(full, root)) {
+      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" escapes the plugin directory -- ignoring it`);
       continue;
     }
-    let exists: boolean;
+    let stat: ReturnType<typeof statSync> | undefined;
     try {
-      statSync(full);
-      exists = true;
+      stat = statSync(full);
     } catch {
-      exists = false;
+      stat = undefined;
     }
-    if (!exists) {
-      warnings.push(`plugin "${pluginName}"'s manifest "workflows" path "${entry}" was not found at ${full} -- ignoring it`);
+    if (stat === undefined) {
+      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" was not found at ${full} -- ignoring it`);
+      continue;
+    }
+    if (requireDirectory && !stat.isDirectory()) {
+      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" is a file, not a directory -- ignoring it`);
       continue;
     }
     resolved.push(full);
   }
   return resolved;
+}
+
+/**
+ * `O1t`'s own suppression check, dump-confirmed: a `folder-shadowed-by-manifest` warning does NOT
+ * fire when the override's own resolved entries already include the default directory itself (an
+ * author who explicitly re-lists `./workflows` alongside a custom path is not silently losing it --
+ * round 5's own promoted minor: "the 'workflows folder is shadowed' warning fires even when the
+ * manifest's `workflows` names `./workflows` itself"). Matches `O1t`'s own `(resolved+sep).
+ * startsWith(default+sep)` test, which also catches an entry pointing INSIDE the default directory,
+ * not only an exact match.
+ */
+function manifestOverrideIncludesDefaultDir(resolvedEntries: readonly string[], defaultDirPath: string): boolean {
+  const normalizedDefault = defaultDirPath + sep;
+  return resolvedEntries.some((entry) => (entry + sep).startsWith(normalizedDefault));
+}
+
+/** The `folder-shadowed-by-manifest` warning itself, shared by every component that can shadow a default directory (workflows/agents/output-styles/commands -- never skills, which is additive). */
+function shadowedFolderWarning(pluginName: string, componentDirName: string, manifestFieldName: string): string {
+  return `plugin "${pluginName}": the "${componentDirName}/" folder exists but is not auto-loaded because the manifest sets "${manifestFieldName}"`;
 }
 
 function metadataOf(manifest: PluginManifest | undefined): PluginMetadata {
@@ -461,7 +504,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
   const rejected: RejectedPlugin[] = [];
   const agentFileRejections: AgentDefinitionRejection[] = [];
   const hookFileWarnings: string[] = [];
-  const workflowsPathWarnings: string[] = [];
+  const manifestPathWarnings: string[] = [];
   const seenRoots = new Set<string>();
   const seenNames = new Set<string>();
 
@@ -525,23 +568,32 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     const scannedAgents = scanPluginAgents(root, name);
     agentFileRejections.push(...scannedAgents.rejected);
     const outputStylesPath = componentDirIfPresent(root, "output-styles");
-    // Fix round 4 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
+    // Fix round 4/5 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
     // directory the moment the key is present, regardless of how many of its entries resolve --
-    // `pluginWorkflowsOverride`'s own header has the citation for why this checks `!== undefined`
-    // rather than `.length > 0`.
-    const workflowsOverride = pluginWorkflowsOverride(root, name, manifest, workflowsPathWarnings);
+    // `resolveManifestComponentOverride`'s own header has the citation for why this checks
+    // `!== undefined` rather than `.length > 0`. `requireDirectory: false` -- claude's own `Tb` call
+    // for `workflows` accepts a bare file.
+    const workflowsOverride = resolveManifestComponentOverride(root, name, "workflows", manifest?.workflows, false, manifestPathWarnings);
     const workflowsPath = workflowsOverride === undefined ? componentDirIfPresent(root, "workflows") : undefined;
     // Fix round 4 (minors, M-3's last bullet), advisor catch: claude's own `Tb` call site is guarded
     // by `if(j.workflows&&Be){...D.push({type:"folder-shadowed-by-manifest",...})}` a few lines
-    // above the citation `pluginWorkflowsOverride`'s own header quotes -- a warning fires whenever
-    // the override key is present AND the default directory ALSO exists on disk, telling the plugin
-    // author their `workflows/` folder is being ignored rather than leaving them to notice by its
-    // absence from the listing. Checked independently of whether any override entry resolved (the
+    // above the citation `resolveManifestComponentOverride`'s own header quotes -- a warning fires
+    // whenever the override key is present AND the default directory ALSO exists on disk, telling the
+    // plugin author their `workflows/` folder is being ignored rather than leaving them to notice by
+    // its absence from the listing. Checked independently of whether any override entry resolved (the
     // same `!== undefined` reasoning `workflowsPath`'s own suppression above already uses).
-    if (workflowsOverride !== undefined && componentDirIfPresent(root, "workflows") !== undefined) {
-      workflowsPathWarnings.push(
-        `plugin "${name}": the "workflows/" folder exists but is not auto-loaded because the manifest sets "workflows"`,
-      );
+    //
+    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): round 4 omitted `O1t`'s own
+    // suppression -- the warning must NOT fire when the override's own resolved entries already
+    // include the default `workflows/` directory itself (an author who explicitly re-lists
+    // `./workflows` alongside a custom path is not silently losing it).
+    const defaultWorkflowsDir = join(root, "workflows");
+    if (
+      workflowsOverride !== undefined &&
+      componentDirIfPresent(root, "workflows") !== undefined &&
+      !manifestOverrideIncludesDefaultDir(workflowsOverride, defaultWorkflowsDir)
+    ) {
+      manifestPathWarnings.push(shadowedFolderWarning(name, "workflows", "workflows"));
     }
     const binPath = componentDirIfPresent(root, "bin");
 
@@ -567,5 +619,5 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     });
   }
 
-  return { bundles, rejected, agentFileRejections, hookFileWarnings, workflowsPathWarnings };
+  return { bundles, rejected, agentFileRejections, hookFileWarnings, manifestPathWarnings };
 }

@@ -63,7 +63,8 @@ export interface PluginManifest {
    * (scanned the same way as the default one) or a single FILE (the SAME `Tb` call site passes
    * `requireDirectory:!1` for `workflows`, unlike the `!0` it passes for `skills`, which is the
    * fourth-from-last argument and the one place the two calls differ). `plugins/loader.ts`'s
-   * `pluginWorkflowsOverride` is where this is resolved into `PluginBundle.workflowsPaths`.
+   * `resolveManifestComponentOverride` (fix round 5's own generalisation) is where this is resolved
+   * into `PluginBundle.workflowsPaths`.
    */
   workflows?: string | string[];
   [key: string]: unknown;
