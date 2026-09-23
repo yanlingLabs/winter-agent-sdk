@@ -49,4 +49,25 @@ describe("filterSettingsEnv: host-managed (F20)", () => {
     expect(applyHostManagedSettingsFilter(settings, true)).toEqual({ outputStyle: "default" });
     expect(applyHostManagedSettingsFilter(settings, false)).toBe(settings); // unchanged, same reference
   });
+
+  // Fix round 1 (Important 3): `/^ANTHROPIC_/` alone missed every OTHER provider's own base-URL
+  // override -- F20's "provider... keys" is provider-agnostic, so a settings env block redirecting
+  // OpenAI's or DeepSeek's endpoint is the identical class of hole a redirected Anthropic one is.
+  test("host-managed drops OPENAI_BASE_URL", () => {
+    const env = { OPENAI_BASE_URL: "https://evil.example", KEPT: "1" };
+    expect(filterSettingsEnv(env, "user", { hostManaged: true })).toEqual({ KEPT: "1" });
+    expect(filterSettingsEnv(env, "user", { hostManaged: false })).toEqual({ OPENAI_BASE_URL: "https://evil.example", KEPT: "1" });
+  });
+
+  test("host-managed drops DEEPSEEK_BASE_URL", () => {
+    const env = { DEEPSEEK_BASE_URL: "https://evil.example", KEPT: "1" };
+    expect(filterSettingsEnv(env, "user", { hostManaged: true })).toEqual({ KEPT: "1" });
+    expect(filterSettingsEnv(env, "user", { hostManaged: false })).toEqual({ DEEPSEEK_BASE_URL: "https://evil.example", KEPT: "1" });
+  });
+
+  test("host-managed drops claude's provider-switch variables and their Winter-brand twin", () => {
+    const env = { CLAUDE_CODE_USE_BEDROCK: "1", WINTER_USE_BEDROCK: "1", KEPT: "1" };
+    expect(filterSettingsEnv(env, "user", { hostManaged: true })).toEqual({ KEPT: "1" });
+    expect(filterSettingsEnv(env, "user", { hostManaged: false })).toEqual(env);
+  });
 });

@@ -68,11 +68,24 @@ export const ALL_TIER_REFUSED_ENV: readonly string[] = [
   disableCronEnvName(WINTER_BRAND),
 ];
 
+/** A regex-metacharacter-safe literal match, for building a pattern out of a brand-derived name (never a hardcoded `WINTER_*` string -- see this file's own header). */
+function escapeRegExpLiteral(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * F20: once host-managed provider auth is on, every tier's `env` additionally loses every
  * provider/auth/proxy/TLS key -- DISCLOSED, not exhaustively pinned against a live capture (F20's
  * own wording is categorical: "provider, auth, proxy and TLS keys", not a closed name list). Grown
  * by a fixture the way V19's own repo-read enumeration is, rather than guessed complete here.
+ *
+ * Fix round 1 (Important 3): `/^ANTHROPIC_/` alone caught Anthropic's own `ANTHROPIC_BASE_URL`, but
+ * every OTHER provider's base-URL override (`OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, ...) sailed
+ * through -- F20's own wording ("provider... keys") is provider-AGNOSTIC, and a settings `env`
+ * block redirecting ANY provider's endpoint is the identical class of hole a redirected Anthropic
+ * endpoint is. `/^CLAUDE_CODE_USE_/` (+ its Winter-brand twin) closes the PROVIDER-SWITCH class
+ * (claude's own `CLAUDE_CODE_USE_BEDROCK`/`CLAUDE_CODE_USE_VERTEX`-shaped variables): flipping which
+ * backend a host-managed session talks to is an endpoint redirect by another name.
  */
 export const HOST_MANAGED_REFUSED_ENV_PATTERNS: readonly RegExp[] = [
   /^ANTHROPIC_/, // provider identity + endpoint (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ...)
@@ -83,6 +96,10 @@ export const HOST_MANAGED_REFUSED_ENV_PATTERNS: readonly RegExp[] = [
   /^(HTTPS?_PROXY|ALL_PROXY|NO_PROXY|https?_proxy|all_proxy|no_proxy)$/, // proxy
   /^(NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR)$/, // TLS
   /_CA_(CERT|BUNDLE)$/,
+  /_BASE_URL$/, // any provider's endpoint override (OPENAI_BASE_URL, DEEPSEEK_BASE_URL, ANTHROPIC_BASE_URL, ...)
+  /_API_BASE$/, // the same override shape under its other common suffix
+  /^CLAUDE_CODE_USE_/, // claude's own provider-switch variables (CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX, ...)
+  new RegExp(`^${escapeRegExpLiteral(envName(WINTER_BRAND, "USE_"))}`), // the Winter-brand twin (WINTER_USE_*)
 ];
 
 /**
