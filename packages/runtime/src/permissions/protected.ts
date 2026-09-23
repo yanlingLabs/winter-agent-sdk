@@ -19,7 +19,7 @@ import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
  */
 export type ProtectedBrand = Pick<BrandProfile, "homeDirName" | "projectDirName" | "instructionsFile">;
 import { stripWrappers } from "./grammar.ts";
-import { flattenSubcommands } from "./shell-structure.ts";
+import { flattenSubcommands, naiveCommandPieces } from "./shell-structure.ts";
 import { tokenizeWords, nonFlagOperands } from "./edit-recognition.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -461,7 +461,7 @@ export function isCriticalRemoval(command: string, ctx: { cwd: string; home: str
   // Unparseable (e.g. an ANSI-C `$'\''` quote the scanners do not model): split NAIVELY at every
   // separator and substitution opener, quotes ignored, so a removal behind the mis-scanned text is
   // still checked -- extra pieces can only add candidates, never hide one.
-  const parts = split !== null && split.length > 0 ? split : split === null ? command.split(/[;&|\n()`]|\$\(/).map((p) => p.trim()).filter((p) => p.length > 0) : [command];
+  const parts = split !== null && split.length > 0 ? split : split === null ? naiveCommandPieces(command) : [command];
 
   for (const part of parts) {
     const stripped = stripWrappers(part, "denyAsk");

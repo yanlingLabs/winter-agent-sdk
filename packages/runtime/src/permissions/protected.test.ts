@@ -227,7 +227,10 @@ describe("claude's DANGEROUS_FILES additions", () => {
 
 describe("isCriticalRemoval: an unparseable command is split naively, so a removal cannot hide behind it", () => {
   const ctx = { cwd: "/work/repo", home: "/Users/tester" };
-  test("an ANSI-C quote the scanner does not model", () => {
+  test("a `case` statement (its bare `)` is not balanced by the scanners)", () => {
+    expect(isCriticalRemoval("case $x in a) rm -rf ~;; esac", ctx).critical).toBe(true);
+  });
+  test("ANSI-C quoting is modelled: the removal after `$'\\''` is seen structurally", () => {
     expect(isCriticalRemoval("echo $'\\'' ; rm -rf ~ ; echo ''", ctx).critical).toBe(true);
   });
   test("an unterminated quote after the removal", () => {

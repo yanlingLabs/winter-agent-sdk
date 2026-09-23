@@ -104,3 +104,27 @@ describe("comments: only an UNESCAPED word-start `#` begins one (bash)", () => {
     expect(flattenSubcommands("echo x ># rm -rf ~")).toEqual(["echo x >"]);
   });
 });
+
+describe("the scanners follow bash's contexts, so no command is dropped or hidden", () => {
+  test("`<<` inside arithmetic is a shift, not a here-document: the next line still runs", () => {
+    expect(flattenSubcommands("echo $((1<<2))\nrm -rf ~")).toContain("rm -rf ~");
+    expect(flattenSubcommands("(( x = 1 << 2 ))\nrm -rf ~")).toContain("rm -rf ~");
+    expect(flattenSubcommands("echo $[1<<2]\nrm -rf ~")).toContain("rm -rf ~");
+    expect(flattenSubcommands("echo ${x:-<<EOF}\nrm -rf ~")).toContain("rm -rf ~");
+  });
+
+  test("a `#` inside a backtick body ends at the closing backtick (bash), not at the end of the line", () => {
+    expect(flattenSubcommands("echo `#` ; rm -rf ~")).toContain("rm -rf ~");
+  });
+
+  test("ANSI-C `$'…'`: `\\'` does not end the quote, so the code after it is code", () => {
+    expect(flattenSubcommands("echo $'\\' #' ; rm -rf ~")).toContain("rm -rf ~");
+    expect(flattenSubcommands("echo $'\\'x' ; rm -rf ~ ; echo 'y'")).toContain("rm -rf ~");
+    expect(flattenSubcommands("echo $'\\'' $(rm -rf ~) ''")).toContain("rm -rf ~");
+    expect(flattenSubcommands("echo $'it\\'s'")).toEqual(["echo $'it\\'s'"]);
+  });
+
+  test("an escaped `$` does not open an ANSI-C quote", () => {
+    expect(flattenSubcommands("echo \\$'a' ; rm -rf ~")).toContain("rm -rf ~");
+  });
+});

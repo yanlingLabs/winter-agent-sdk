@@ -47,7 +47,7 @@
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { stripWrappers, extractRedirectWrites } from "./grammar.ts";
-import { flattenSubcommands, hasProcessSubstitution } from "./shell-structure.ts";
+import { flattenSubcommands, hasProcessSubstitution, naiveCommandPieces } from "./shell-structure.ts";
 
 export type RecognizedEditKind = "edit" | "bashFsOp" | "other";
 
@@ -77,23 +77,30 @@ export function tokenizeWords(s: string): string[] {
   const words: string[] = [];
   let cur = "";
   let inWord = false;
-  let quote: '"' | "'" | null = null;
+  // `$'…'` (ANSI-C) is single-quoted text in which `\'` does not end the quote.
+  let quote: '"' | "'" | "$'" | null = null;
   let i = 0;
   while (i < s.length) {
     const ch = s[i]!;
     if (quote) {
-      if (ch === quote) {
+      if (ch === (quote === '"' ? '"' : "'")) {
         quote = null;
         i++;
         continue;
       }
-      if (quote === '"' && ch === "\\" && i + 1 < s.length) {
+      if ((quote === '"' || quote === "$'") && ch === "\\" && i + 1 < s.length) {
         cur += s[i + 1];
         i += 2;
         continue;
       }
       cur += ch;
       i++;
+      continue;
+    }
+    if (ch === "$" && s[i + 1] === "'") {
+      quote = "$'";
+      inWord = true;
+      i += 2;
       continue;
     }
     if (ch === "'" || ch === '"') {
@@ -253,8 +260,8 @@ function naiveWritePaths(command: string): string[] {
     const target = m[1]!.replace(/^['"]|['"]$/g, "");
     if (!/^(?:[0-9]+|-)$/.test(target)) out.push(target);
   }
-  for (const piece of command.split(/[;&|\n()`]|\$\(/)) {
-    const stripped = stripWrappers(piece.trim(), "denyAsk");
+  for (const piece of naiveCommandPieces(command)) {
+    const stripped = stripWrappers(piece, "denyAsk");
     out.push(...(recognizeBashFsOpPaths(stripped) ?? []), ...teeWritePaths(stripped));
   }
   return out;

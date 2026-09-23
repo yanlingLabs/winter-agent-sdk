@@ -34,7 +34,22 @@ export interface HeredocExtraction {
   liveBodies: string[];
 }
 
-type ScanContext = { kind: "cmd"; closer: ")" | "`" | null } | { kind: "dq" } | { kind: "sq" };
+type ScanContext =
+  // `arith`: inside `((…))`/`$((…))`, where `<<` is a SHIFT and `#` is not a comment.
+  | { kind: "cmd"; closer: ")" | "`" | null; arith: boolean }
+  | { kind: "param" } // `${…}`: a word, not a command -- no here-document, no comment
+  | { kind: "bracket" } // `$[…]`: legacy arithmetic, like `arith`
+  | { kind: "dq" }
+  | { kind: "sq" }
+  | { kind: "ansi" }; // `$'…'`: single-quoted, but `\'` does not end it
+
+/** Is the `'` at `i` the opening of an ANSI-C `$'…'` quote (its `$` unescaped)? */
+function opensAnsiQuote(s: string, i: number): boolean {
+  if (s[i - 1] !== "$") return false;
+  let backslashes = 0;
+  for (let j = i - 2; j >= 0 && s[j] === "\\"; j--) backslashes++;
+  return backslashes % 2 === 0;
+}
 
 /**
  * Removes here-document bodies (and comments) from `command`, returning the remaining text and the
@@ -42,26 +57,75 @@ type ScanContext = { kind: "cmd"; closer: ")" | "`" | null } | { kind: "dq" } | 
  * here-document's body is literal (`\<newline>` is not a continuation there), and joining first could
  * shift its delimiter so that a later line -- `> /etc/passwd` -- was swallowed into the body and never
  * seen (claude's `extractOutputRedirections` documents that exact attack).
+ *
+ * This is the one scanner that DROPS text, so it follows bash's contexts closely enough never to drop
+ * a command bash runs: `<<` is a here-document only in a command context (not inside `((…))`,
+ * `$((…))`, `$[…]` or `${…}`, where it is a shift or a literal), and `#` is a comment only at the start
+ * of a word in a command context -- ending at a backtick body's closing backtick, as bash's does.
  */
 export function extractHeredocs(command: string): HeredocExtraction | null {
-  const stack: ScanContext[] = [{ kind: "cmd", closer: null }];
+  const stack: ScanContext[] = [{ kind: "cmd", closer: null, arith: false }];
   const pending: Array<{ delim: string; quoted: boolean; stripTabs: boolean }> = [];
   const liveBodies: string[] = [];
   let out = "";
   let i = 0;
-  // Does the next character START a word? Only there is `#` a comment (bash). An escaped or quoted
-  // character never ends a word, so `echo x\ #; rm -rf ~` is NOT a comment: the `rm` runs.
+  // Does the next character START a word? An escaped or quoted character never ends a word, so
+  // `echo x\ #; rm -rf ~` is NOT a comment: the `rm` runs.
   let wordStart = true;
+  const push = (ctx: ScanContext, text: string): void => {
+    stack.push(ctx);
+    out += text;
+    i += text.length;
+  };
+  /** `$(`, `${`, `$[`, `$'`, a backtick or a quote opening at `i`, in any context that expands; false if none. */
+  const openExpansion = (inArith: boolean): boolean => {
+    const ch = command[i]!;
+    const next = command[i + 1];
+    if (ch === "$" && next === "(") {
+      out += "$";
+      i++;
+      push({ kind: "cmd", closer: ")", arith: inArith || command[i + 1] === "(" }, "(");
+      wordStart = true;
+      return true;
+    }
+    if (ch === "$" && next === "{") {
+      push({ kind: "param" }, "${");
+      return true;
+    }
+    if (ch === "$" && next === "[") {
+      push({ kind: "bracket" }, "$[");
+      return true;
+    }
+    if (ch === "`") {
+      push({ kind: "cmd", closer: "`", arith: false }, "`");
+      wordStart = true;
+      return true;
+    }
+    if (ch === "'") {
+      push({ kind: opensAnsiQuote(command, i) ? "ansi" : "sq" }, "'");
+      return true;
+    }
+    if (ch === '"') {
+      push({ kind: "dq" }, '"');
+      return true;
+    }
+    return false;
+  };
   while (i < command.length) {
     const ch = command[i]!;
     const top = stack[stack.length - 1]!;
-    if (top.kind === "sq") {
+    if (top.kind === "sq" || top.kind === "ansi") {
+      if (top.kind === "ansi" && ch === "\\" && i + 1 < command.length) {
+        out += ch + command[i + 1];
+        i += 2;
+        continue;
+      }
       out += ch;
+      i++;
       if (ch === "'") {
         stack.pop();
         wordStart = false;
       }
-      i++;
       continue;
     }
     if (ch === "\\" && i + 1 < command.length) {
@@ -71,25 +135,39 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
       continue;
     }
     if (top.kind === "dq") {
-      out += ch;
       if (ch === '"') {
         stack.pop();
-        wordStart = false;
-      } else if (ch === "$" && command[i + 1] === "(") {
-        stack.push({ kind: "cmd", closer: ")" });
-        out += "(";
+        out += ch;
         i++;
-        wordStart = true;
-      } else if (ch === "`") {
-        stack.push({ kind: "cmd", closer: "`" });
-        wordStart = true;
+        wordStart = false;
+        continue;
       }
+      if (ch !== "'" && openExpansion(false)) continue; // a `'` inside double quotes is literal
+      out += ch;
+      i++;
+      continue;
+    }
+    if (top.kind === "param" || top.kind === "bracket") {
+      if (ch === (top.kind === "param" ? "}" : "]")) {
+        stack.pop();
+        out += ch;
+        i++;
+        wordStart = false;
+        continue;
+      }
+      if (top.kind === "bracket" && ch === "[") {
+        push({ kind: "bracket" }, "[");
+        continue;
+      }
+      if (openExpansion(top.kind === "bracket")) continue;
+      out += ch;
       i++;
       continue;
     }
     // A command context.
-    if (ch === "#" && wordStart) {
-      while (i < command.length && command[i] !== "\n") i++; // a comment runs to the end of its line
+    if (ch === "#" && wordStart && !top.arith) {
+      // A comment runs to the end of its line -- or, inside a backtick body, to its closing backtick.
+      while (i < command.length && command[i] !== "\n" && !(top.closer === "`" && command[i] === "`")) i++;
       continue;
     }
     if (ch === "`" && top.closer === "`") {
@@ -99,17 +177,12 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
       wordStart = true;
       continue;
     }
-    if (ch === "'" || ch === '"') {
-      stack.push({ kind: ch === "'" ? "sq" : "dq" });
-      out += ch;
-      i++;
-      wordStart = false;
+    if (openExpansion(top.arith)) {
+      if (ch === "'" || ch === '"') wordStart = false;
       continue;
     }
-    if (ch === "`" || ch === "(") {
-      stack.push({ kind: "cmd", closer: ch === "`" ? "`" : ")" });
-      out += ch;
-      i++;
+    if (ch === "(") {
+      push({ kind: "cmd", closer: ")", arith: top.arith || command[i + 1] === "(" }, "(");
       wordStart = true;
       continue;
     }
@@ -120,7 +193,7 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
       wordStart = true;
       continue;
     }
-    if (ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
+    if (!top.arith && ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
       let j = i + 2;
       let stripTabs = false;
       if (command[j] === "-") {
@@ -184,7 +257,7 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
 /** Index of the `)` closing the `(` at `open`, skipping quoted text and nested substitutions; -1 if none. */
 function matchingParen(s: string, open: number): number {
   let depth = 0;
-  let quote: "'" | '"' | "`" | null = null;
+  let quote: "'" | '"' | "`" | "$'" | null = null;
   for (let i = open; i < s.length; i++) {
     const ch = s[i]!;
     if (quote === "'") {
@@ -193,6 +266,10 @@ function matchingParen(s: string, open: number): number {
     }
     if (ch === "\\") {
       i++;
+      continue;
+    }
+    if (quote === "$'") {
+      if (ch === "'") quote = null;
       continue;
     }
     if (quote === '"') {
@@ -208,7 +285,11 @@ function matchingParen(s: string, open: number): number {
       if (ch === "`") quote = null;
       continue;
     }
-    if (ch === "'" || ch === '"' || ch === "`") {
+    if (ch === "'") {
+      quote = opensAnsiQuote(s, i) ? "$'" : "'";
+      continue;
+    }
+    if (ch === '"' || ch === "`") {
       quote = ch;
       continue;
     }
@@ -226,6 +307,15 @@ function closingBacktick(s: string, open: number): number {
   for (let i = open + 1; i < s.length; i++) {
     if (s[i] === "\\") i++;
     else if (s[i] === "`") return i;
+  }
+  return -1;
+}
+
+/** Index of the `'` closing a single (or, `ansi`, ANSI-C) quote opened at `open`; -1 if none. */
+function closingSingleQuote(s: string, open: number, ansi: boolean): number {
+  for (let i = open + 1; i < s.length; i++) {
+    if (ansi && s[i] === "\\") i++;
+    else if (s[i] === "'") return i;
   }
   return -1;
 }
@@ -248,7 +338,7 @@ export function substitutionBodies(text: string, doubleQuoted = false): string[]
       continue;
     }
     if (!inDouble && ch === "'") {
-      const close = text.indexOf("'", i + 1);
+      const close = closingSingleQuote(text, i, opensAnsiQuote(text, i));
       if (close === -1) return null;
       i = close + 1;
       continue;
@@ -322,7 +412,7 @@ export function flattenSubcommands(command: string): string[] | null {
 
 /** True when `command` contains a process substitution (`<(…)` or `>(…)`) outside quotes. */
 export function hasProcessSubstitution(command: string): boolean {
-  let quote: "'" | '"' | null = null;
+  let quote: "'" | '"' | "$'" | null = null;
   for (let i = 0; i < command.length; i++) {
     const ch = command[i]!;
     if (quote === "'") {
@@ -333,15 +423,31 @@ export function hasProcessSubstitution(command: string): boolean {
       i++;
       continue;
     }
-    if (quote === '"') {
-      if (ch === '"') quote = null;
+    if (quote === "$'" || quote === '"') {
+      if (ch === (quote === '"' ? '"' : "'")) quote = null;
       continue;
     }
-    if (ch === "'" || ch === '"') {
+    if (ch === "'") {
+      quote = opensAnsiQuote(command, i) ? "$'" : "'";
+      continue;
+    }
+    if (ch === '"') {
       quote = ch;
       continue;
     }
     if ((ch === "<" || ch === ">") && command[i + 1] === "(") return true;
   }
   return false;
+}
+
+/**
+ * A command the scanners could NOT parse, split naively -- at every separator and substitution
+ * opener, quotes ignored. Over-approximate by design: only for checks that must see a command
+ * anyway (a deny rule, the critical-removal breaker), where an extra piece can only add a match.
+ */
+export function naiveCommandPieces(command: string): string[] {
+  return command
+    .split(/[;&|\n()`]|\$\(/)
+    .map((piece) => piece.trim())
+    .filter((piece) => piece.length > 0);
 }

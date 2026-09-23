@@ -309,9 +309,9 @@ describe("protected targets match case-insensitively (claude's normalizeCaseForC
 });
 
 describe("an UNPARSEABLE command's protected targets are still seen (read naively)", () => {
-  // `$'…\'…'` is ANSI-C quoting, which the scanners do not model: the command reads as unparseable.
-  // The unparseable ask is not bypass-immune, so without a naive read bypass would write `.git`.
-  for (const command of ["echo $'a\\'b' > .git/config", "echo 'unterminated ; cp x .git/hooks/pre-commit", "echo $'a\\'b' ; echo x >> ~/.zshrc"]) {
+  // A `case` pattern's bare `)` is something the scanners cannot balance, so the command reads as
+  // unparseable. That ask is not bypass-immune, so without a naive read bypass would write `.git`.
+  for (const command of ["case $x in a) echo x > .git/config;; esac", "echo 'unterminated ; cp x .git/hooks/pre-commit", "case $x in a) echo x >> ~/.zshrc;; esac"]) {
     test(`bypass: \`${command}\` is asked`, async () => {
       const { ctx, prompts } = ctxWith("bypassPermissions", []);
       expect((await evaluate(bash(command), ctx)).decision).toBe("deny"); // headless
@@ -319,4 +319,17 @@ describe("an UNPARSEABLE command's protected targets are still seen (read naivel
       expect(prompts[0]!.meta.decisionReason).toContain("protected path write");
     });
   }
+});
+
+describe("a deny rule still binds an unparseable command (naively split)", () => {
+  test("Bash(rm:*) deny + a `case` statement that runs rm: denied, under bypass too", async () => {
+    const { ctx, prompts } = ctxWith("bypassPermissions", [rule("Bash(rm:*)", "deny")]);
+    expect(await evaluate(bash("case $x in a) rm build.log;; esac"), ctx)).toMatchObject({ decision: "deny", mechanism: "rule" });
+    expect(prompts).toHaveLength(0);
+  });
+  test("an allow rule never matches an unparseable command", async () => {
+    const { ctx, prompts } = ctxWith("default", [rule("Bash(echo:*)", "allow")]);
+    await evaluate(bash("echo 'unterminated"), ctx);
+    expect(prompts).toHaveLength(1);
+  });
 });

@@ -245,13 +245,22 @@ interface ScanInfo {
 function scanShellLike(s: string): ScanInfo {
   const topLevel: boolean[] = new Array<boolean>(s.length).fill(false);
   let depth = 0;
-  let quote: '"' | "'" | "`" | null = null;
+  // `$'` is bash's ANSI-C quoting: single-quoted, but `\'` does NOT end it. Treating it as a plain
+  // single quote ended it early, and the rest of the string was read with the wrong quote parity.
+  let quote: '"' | "'" | "`" | "$'" | null = null;
   let ok = true;
+  let dollarAt = -2; // index of the last UNQUOTED, UNESCAPED `$`
 
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]!;
     if (quote) {
       if (quote === "'") {
+        if (ch === "'") quote = null;
+      } else if (quote === "$'") {
+        if (ch === "\\" && i + 1 < s.length) {
+          i++;
+          continue;
+        }
         if (ch === "'") quote = null;
       } else {
         // double-quote or backtick: backslash escapes the next character
@@ -268,9 +277,10 @@ function scanShellLike(s: string): ScanInfo {
       continue;
     }
     if (ch === "'" || ch === '"' || ch === "`") {
-      quote = ch;
+      quote = ch === "'" && dollarAt === i - 1 ? "$'" : ch;
       continue;
     }
+    if (ch === "$") dollarAt = i;
     if (ch === "(") {
       depth++;
       continue;

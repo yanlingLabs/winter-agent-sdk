@@ -51,7 +51,7 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
 // field mapping (see that module's own header for why it lives there, not here).
 import { recognizeEditOperation, fileRulePathField, shellCommandOf, shellWriteConstraint } from "./edit-recognition.ts";
-import { flattenSubcommands } from "./shell-structure.ts";
+import { flattenSubcommands, naiveCommandPieces } from "./shell-structure.ts";
 import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, isMemoryCarveOut, isCarvableOutputsDir, type ProtectedBrand } from "./protected.ts";
 // P7a fix r1 (Important-2): the reading for an evaluation context that carries no brand -- every
 // hand-built one in this package's tests, and a host driving the evaluator directly.
@@ -801,7 +801,12 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
     // allow rule for `echo` must not clear the `rm` it would run (claude asks for any substitution
     // before a prefix allow rule; here the substituted command must itself be allowed).
     const parts = flattenSubcommands(command);
-    if (parts === null) return false; // unparseable/over-limit -> route the WHOLE command to permission handling; never fall back to raw-text matching
+    if (parts === null) {
+      // Unparseable/over-limit: an ALLOW never matches (the whole command goes to permission
+      // handling), but a DENY/ASK rule still binds if any naively-split piece matches -- otherwise a
+      // `case` statement or an unterminated quote was a way past `Bash(rm:*)` under bypass.
+      return direction === "denyAsk" && naiveCommandPieces(command).some((sub) => matchesRule(rule, { toolName: call.toolName, input: { ...call.input, command: sub } }, { direction }));
+    }
     // Fix round 1, item 1 (IMPORTANT, reviewer-caught): splitCompound("") returns `[]`, not null —
     // an empty/all-separator/missing command scans OK, it just has zero non-empty subcommands.
     // `[].every(...)` is vacuously TRUE, which would report this rule as matching ANY configured
