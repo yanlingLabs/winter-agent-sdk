@@ -24,8 +24,8 @@ describe("describeCatalogModel: the session's own provider's row", () => {
     expect(describeCatalogModel(catalog, "deepseek-v4-flash", "alibaba-cn")?.displayName).toBe(row("alibaba-cn/deepseek-v4-flash").displayName);
   });
 
-  test("a provider-local id that is ANOTHER provider's key (novita's `deepseek/deepseek-v4-flash`) names the asking provider's row", () => {
-    expect(describeCatalogModel(loadCatalog(), "deepseek/deepseek-v4-flash", "novita")?.displayName).toBe(row("novita/deepseek/deepseek-v4-flash").displayName);
+  test("a provider-local id that is ANOTHER provider's key (novita's `deepseek/deepseek-v4-pro`) names the asking provider's row", () => {
+    expect(describeCatalogModel(loadCatalog(), "deepseek/deepseek-v4-pro", "novita")?.displayName).toBe(row("novita/deepseek/deepseek-v4-pro").displayName);
   });
 
   test("two passes under a provider: an ALIAS never shadows another row's upstream id", () => {

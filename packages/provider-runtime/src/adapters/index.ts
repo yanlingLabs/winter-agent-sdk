@@ -40,9 +40,7 @@ import { createLocalOpenAIAdapter } from "./openai/local.ts";
  *
  * `providerId` is REQUIRED: there is no provider-less spelling, because a provider-less lookup is the
  * bare-id resolution the qualified-tags ruling forbids (a string can be one provider's provider-local
- * id and, under a DIFFERENT provider, resolve to nothing at all or to an entirely different row --
- * novita's `deepseek/deepseek-v4-flash` names novita's row; the identical string under `deepseek`
- * names nothing, since deepseek's own key is now `deepseek/deepseek-flash`).
+ * id AND another provider's catalog key -- novita's `deepseek/deepseek-v4-pro` is deepseek's key).
  * Every shipped adapter passes `ctx.connection.providerId`. A host's hand-written one-argument lookup
  * is still assignable (TypeScript admits fewer parameters) and simply ignores the provider.
  */

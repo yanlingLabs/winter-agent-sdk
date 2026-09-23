@@ -48,17 +48,17 @@ describe("descriptorLookupForAdapter: keyed by the request's own provider", () =
     expect(lookup("alibaba-cn/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 
-  // Pre-refresh, "deepseek/deepseek-v4-flash" was BOTH strings at once: novita's own provider-local
-  // id (a literal compound upstream id, unrelated to any rename) AND, byte-for-byte, deepseek's own
-  // global catalog key. The 2026-09-19 refresh renamed deepseek's key to "deepseek/deepseek-flash",
-  // so that coincidence no longer holds -- the two assertions below now use each provider's OWN
-  // current spelling, but the point survives unchanged: the lookup is scoped per provider, so a
-  // string that is one provider's provider-local id is never read as another provider's key.
-  test("provider scoping: novita's provider-local `deepseek/deepseek-v4-flash` is novita's row; deepseek's own compound key resolves only under deepseek", () => {
+  // The 2026-09-19 refresh renamed deepseek's FLASH key to "deepseek/deepseek-flash", so the pair
+  // this test used to pin the "one string, two providers" fact on (`deepseek/deepseek-v4-flash`) no
+  // longer collides -- deepseek's PRO row was untouched by the refresh and still makes the same
+  // point: `novita/deepseek/deepseek-v4-pro`'s upstream id is byte-for-byte `deepseek/deepseek-v4-pro`,
+  // deepseek's own real catalog key.
+  test("one string, two providers: novita's provider-local `deepseek/deepseek-v4-pro` is novita's row, and the same string under deepseek is deepseek's KEY", () => {
     const lookup = descriptorLookupForAdapter(loadCatalog(), "winter.openai-chat-completions");
-    expect(lookup("deepseek/deepseek-v4-flash", "novita")?.key).toBe("novita/deepseek/deepseek-v4-flash");
-    expect(lookup("deepseek/deepseek-flash", "deepseek")?.key).toBe("deepseek/deepseek-flash");
-    // The coincidence is gone: novita's provider-local id is no longer any provider's key at all.
+    expect(lookup("deepseek/deepseek-v4-pro", "novita")?.key).toBe("novita/deepseek/deepseek-v4-pro");
+    expect(lookup("deepseek/deepseek-v4-pro", "deepseek")?.key).toBe("deepseek/deepseek-v4-pro");
+    // The FLASH id's own coincidence is gone: novita's provider-local flash id is no longer any
+    // provider's key at all (deepseek's flash key moved to "deepseek/deepseek-flash").
     expect(lookup("deepseek/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 });
