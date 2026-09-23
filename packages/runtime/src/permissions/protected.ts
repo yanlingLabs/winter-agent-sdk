@@ -80,6 +80,12 @@ export const PROTECTED_FILE_BASENAMES: ReadonlySet<string> = new Set([
   // MCP project config: the UPSTREAM literal `.mcp.json` (defense in depth for an upstream-shaped
   // repo); the native `<projectDir>/mcp.json` is already covered by the dot-dir rule below.
   ".mcp.json",
+  // claude's DANGEROUS_FILES (utils/permissions/filesystem.ts) beyond the categories above: git's own
+  // config and submodule map (a pager, a hooks path or a submodule URL runs code), and ripgrep's config
+  // (`--pre` runs a command on every file searched).
+  ".gitconfig",
+  ".gitmodules",
+  ".ripgreprc",
   // P7a (D19): the brand's own root instructions file (WS-01 §2.4: the `CLAUDE.md` convention with
   // the session's token) is added PER CALL from the profile -- see `isProtectedWrite`. Winter's own
   // value is seeded here so every caller that threads no brand keeps exactly today's set.
@@ -239,12 +245,18 @@ function pathSegments(absPath: string): string[] {
   return absPath.split("/").filter((s) => s.length > 0);
 }
 
+// CASE-INSENSITIVE, like claude's (`normalizeCaseForComparison`): the default macOS volume is, so
+// `.GIT/config` and `.Winter/settings.json` ARE the protected files. Stricter on a case-sensitive
+// volume, never looser.
+const PROTECTED_DIRECTORY_NAMES_LC: ReadonlySet<string> = new Set([...PROTECTED_DIRECTORY_NAMES].map((n) => n.toLowerCase()));
+const PROTECTED_FILE_BASENAMES_LC: ReadonlySet<string> = new Set([...PROTECTED_FILE_BASENAMES].map((n) => n.toLowerCase()));
+
 function isInsideProtectedDirectory(absPath: string, brand: ProtectedBrand): boolean {
-  const segments = pathSegments(absPath);
+  const segments = pathSegments(absPath).map((seg) => seg.toLowerCase());
   // Both dot-dirs, because they are independently configurable: `homeDirName` names the winter root
   // and `projectDirName` the per-repository one, and Winter's own profile happens to make them the
   // same string. A reuser who splits them must have BOTH protected.
-  const ownDirs = new Set([brand.projectDirName, brand.homeDirName]);
+  const ownDirs = new Set([brand.projectDirName.toLowerCase(), brand.homeDirName.toLowerCase()]);
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!;
     if (seg === ".config" && segments[i + 1] === "git") return true;
@@ -252,7 +264,7 @@ function isInsideProtectedDirectory(absPath: string, brand: ProtectedBrand): boo
       if (segments[i + 1] === "worktrees") continue; // worktree-area exception -- keep scanning deeper segments normally (a worktree's OWN .git is still protected, see the test corpus)
       return true;
     }
-    if (PROTECTED_DIRECTORY_NAMES.has(seg)) return true;
+    if (PROTECTED_DIRECTORY_NAMES_LC.has(seg)) return true;
   }
   return false;
 }
@@ -289,11 +301,11 @@ export function isProtectedWrite(path: string, ctx: { cwd: string; home: string;
   // `<PREFIX>HOME` pointing anywhere else (`/srv/winter-home`, `~/.winter-dev`) has no such segment,
   // and its `runtimes/`, `run/`, `backups/` and settings were writable by a shell command as ordinary
   // files. Checked AFTER the two carve-outs above, which live inside it by design.
-  if (ctx.winterHome !== undefined && ctx.winterHome.length > 0 && isAncestorOfOrEqual(resolve(ctx.winterHome), absPath)) return true;
-  const basename = basenameOf(absPath);
+  if (ctx.winterHome !== undefined && ctx.winterHome.length > 0 && isAncestorOfOrEqual(resolve(ctx.winterHome).toLowerCase(), absPath.toLowerCase())) return true;
+  const basename = basenameOf(absPath).toLowerCase();
   // The instructions file is brand-derived, so it is matched from the PROFILE as well as from the
   // seeded default set -- a reuser's ACME.md must be as protected as Winter's own file is.
-  return isInsideProtectedDirectory(absPath, brand) || PROTECTED_FILE_BASENAMES.has(basename) || basename === brand.instructionsFile;
+  return isInsideProtectedDirectory(absPath, brand) || PROTECTED_FILE_BASENAMES_LC.has(basename) || basename === brand.instructionsFile.toLowerCase();
 }
 
 // ---------------------------------------------------------------------------------------------

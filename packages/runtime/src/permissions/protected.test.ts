@@ -207,3 +207,20 @@ describe("isCriticalRemoval -- unparseable/non-removal fallbacks", () => {
     expect(isCriticalRemoval("", ctx)).toEqual({ critical: false });
   });
 });
+
+describe("case-insensitive, like claude's checkPathSafetyForAutoEdit (the macOS volume is)", () => {
+  const ctx = { cwd: "/work/repo", home: "/Users/tester" };
+  for (const path of [".GIT/config", ".Git/hooks/pre-commit", ".WINTER/settings.json", ".VSCode/settings.json", "PACKAGE.JSON", ".ZSHRC", "winter.md", "/Users/tester/.Winter/runtimes/bin/winter"]) {
+    test(`${path} is protected`, () => expect(isProtectedWrite(path, ctx)).toBe(true));
+  }
+  test("a custom winter home matches case-insensitively too", () => {
+    expect(isProtectedWrite("/SRV/Winter-Home/runtimes/x", { ...ctx, winterHome: "/srv/winter-home" })).toBe(true);
+  });
+});
+
+describe("claude's DANGEROUS_FILES additions", () => {
+  const ctx = { cwd: "/work/repo", home: "/Users/tester" };
+  for (const path of [".gitconfig", "/Users/tester/.gitconfig", ".gitmodules", "sub/.gitmodules", ".ripgreprc", "/Users/tester/.ripgreprc"]) {
+    test(`${path} is protected`, () => expect(isProtectedWrite(path, ctx)).toBe(true));
+  }
+});

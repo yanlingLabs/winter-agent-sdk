@@ -583,7 +583,7 @@ function shellCommandChangesDirectory(call: PermissionCall): boolean {
  */
 function isProtectedShellTarget(path: string, ctx: EvaluationContext): boolean {
   const absPath = resolve(ctx.cwd, path);
-  return checkSymlinkBothEnds(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1))).denyIfEither;
+  return checkSymlinkBothEnds(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1).toLowerCase())).denyIfEither;
 }
 
 /**

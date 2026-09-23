@@ -297,3 +297,13 @@ describe("a command hidden inside another is still seen", () => {
     expect(prompts).toHaveLength(0);
   });
 });
+
+describe("protected targets match case-insensitively (claude's normalizeCaseForComparison)", () => {
+  for (const command of ["echo x > .GIT/config", "echo '{}' > .Winter/Permissions.Local.json", "echo '{}' > sub/SETTINGS.json", "echo x >> ~/.GITCONFIG"]) {
+    test(`bypass: \`${command}\` is asked`, async () => {
+      const { ctx, prompts } = ctxWith("bypassPermissions", []);
+      expect((await evaluate(bash(command), ctx)).decision).toBe("deny"); // headless
+      expect(prompts).toHaveLength(1);
+    });
+  }
+});
