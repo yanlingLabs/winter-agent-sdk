@@ -67,6 +67,14 @@ describe("context/winter-md.ts -- discovery and the settings-SOURCE gate (P5-A)"
     expect(Buffer.byteLength(block.text)).toBe(40 * 1024);
   });
 
+  test("WS-21 §6.3 item 4: a WINTER.md's own @import is expanded before it becomes a block", () => {
+    write(home, "USER LEVEL @./extra.md end");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "extra.md"), "EXTRA", "utf8");
+    const blocks = discoverWinterMd({ cwd: root, home, settingSources: ["user"] });
+    expect(blocks[0]!.text).toBe("USER LEVEL EXTRA end");
+  });
+
   test("WS-21 §6.3 item 2: unconditional rules render AFTER the instructions files", () => {
     write(home, "USER LEVEL");
     write(root, "PROJECT LEVEL");

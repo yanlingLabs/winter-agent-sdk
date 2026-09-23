@@ -36,6 +36,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { expandImports } from "./imports.ts";
 import { neutralizeReminderTags, readWhole } from "./injection.ts";
 
 /**
@@ -188,9 +189,22 @@ export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
   const basename = (input.brand ?? WINTER_BRAND).instructionsFile;
   const localBasename = localInstructionsBasename(basename);
   const blocks: WinterMdBlock[] = [];
+
+  // WS-21 §6.3 item 4: LAZY, so the hermetic `settingSources: []` mode (and a user-only session)
+  // never shells out to git at all -- `projectInstructionRoot` is a real subprocess spawn, and a
+  // USER-tier file's `@import` never consults it (expandImports ignores `projectRoot` for that
+  // tier), so there is nothing to compute until a project/local file is actually about to be read.
+  let projectRootCache: string | null | undefined;
+  const projectRootFor = (scope: WinterMdBlock["scope"]): string | null => (scope === "user" ? null : (projectRootCache ??= projectInstructionRoot(input.cwd)));
+
   const read = (path: string, scope: WinterMdBlock["scope"]): void => {
     const body = readWhole(path);
-    if (body !== null) blocks.push({ path, scope, text: neutralizeReminderTags(body) });
+    if (body === null) return;
+    // WS-21 §6.3 item 4 (F17): expand this file's OWN `@import` tokens before it becomes a block --
+    // claude does this at load time too, and every downstream reader (renderInstructionsContext,
+    // the assembler) only ever sees the already-expanded text.
+    const { content } = expandImports({ content: body, filePath: path, tier: scope, projectRoot: projectRootFor(scope) });
+    blocks.push({ path, scope, text: neutralizeReminderTags(content) });
   };
 
   if (sources.includes("user")) read(join(input.home, basename), "user");
@@ -209,7 +223,9 @@ export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
 
   for (const rule of input.rules ?? []) {
     const text = rule.content.trim();
-    if (text.length > 0) blocks.push({ path: rule.path, scope: rule.tier, text: neutralizeReminderTags(text) });
+    if (text.length === 0) continue;
+    const { content } = expandImports({ content: text, filePath: rule.path, tier: rule.tier, projectRoot: projectRootFor(rule.tier) });
+    blocks.push({ path: rule.path, scope: rule.tier, text: neutralizeReminderTags(content) });
   }
 
   return blocks;
