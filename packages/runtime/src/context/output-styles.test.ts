@@ -321,3 +321,54 @@ describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () =>
     expect(style).not.toBeNull();
   });
 });
+
+// Fix round 5: `outputStylesPaths` (a manifest `outputStyles` override, resolved by
+// plugins/loader.ts -- this describe block is about the LAZY resolve-time consumption of the
+// already-resolved array, not about resolving the manifest value itself; loader.test.ts covers that).
+describe("context/output-styles.ts -- outputStylesPaths (fix round 5, a manifest outputStyles override)", () => {
+  let overrideDir: string;
+  let defaultDir: string;
+  beforeEach(() => {
+    overrideDir = mkdtempSync(join(tmpdir(), "winter-style-override-"));
+    defaultDir = mkdtempSync(join(tmpdir(), "winter-style-default-"));
+  });
+  afterEach(() => {
+    rmSync(overrideDir, { recursive: true, force: true });
+    rmSync(defaultDir, { recursive: true, force: true });
+  });
+
+  test("outputStylesPaths alone (no outputStylesPath) still resolves a qualified name -- an override-only plugin is not the SAME as 'no plugin'", () => {
+    writeStyle(overrideDir, "concise", "---\ndescription: d\n---\nBe concise.\n");
+    const style = resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPaths: [overrideDir] }] });
+    expect(style?.body).toContain("Be concise.");
+  });
+
+  test("an outputStylesPaths entry may be a BARE FILE, not only a directory -- claude's own Tb call passes requireDirectory:false for output-styles", () => {
+    const file = join(overrideDir, "one-style.md");
+    writeFileSync(file, "---\ndescription: d\n---\nBe terse.\n");
+    const style = resolveOutputStyle("mypkg:one-style", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPaths: [file] }] });
+    expect(style?.body).toContain("Be terse.");
+  });
+
+  test("multiple outputStylesPaths entries are all scanned, directories and files mixed", () => {
+    const dirB = mkdtempSync(join(tmpdir(), "winter-style-override-b-"));
+    writeStyle(overrideDir, "from-dir", "---\ndescription: d\n---\nDIR STYLE\n");
+    writeFileSync(join(dirB, "from-file.md"), "---\ndescription: d\n---\nFILE STYLE\n");
+    const lookup = { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPaths: [overrideDir, join(dirB, "from-file.md")] }] };
+    expect(resolveOutputStyle("mypkg:from-dir", lookup)?.body).toContain("DIR STYLE");
+    expect(resolveOutputStyle("mypkg:from-file", lookup)?.body).toContain("FILE STYLE");
+    rmSync(dirB, { recursive: true, force: true });
+  });
+
+  test("outputStylesPath and outputStylesPaths together are both scanned (defensive -- bundle.ts's own comment says a real PluginBundle never sets both, but this function does not assume it)", () => {
+    writeStyle(defaultDir, "default-style", "---\ndescription: d\n---\nDEFAULT STYLE\n");
+    writeStyle(overrideDir, "override-style", "---\ndescription: d\n---\nOVERRIDE STYLE\n");
+    const lookup = { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: defaultDir, outputStylesPaths: [overrideDir] }] };
+    expect(resolveOutputStyle("mypkg:default-style", lookup)?.body).toContain("DEFAULT STYLE");
+    expect(resolveOutputStyle("mypkg:override-style", lookup)?.body).toContain("OVERRIDE STYLE");
+  });
+
+  test("neither outputStylesPath nor outputStylesPaths resolves to null, never throws", () => {
+    expect(resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg" }] })).toBeNull();
+  });
+});

@@ -735,7 +735,20 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     ) {
       manifestPathWarnings.push(shadowedFolderWarning(name, "commands", "commands"));
     }
-    const outputStylesPath = componentDirIfPresent(root, "output-styles");
+    // Fix round 5: a manifest `outputStyles` override (note the CAMEL-CASE manifest key, unlike the
+    // kebab-case default directory name) -- same shadow-on-presence shape as agents/commands/
+    // workflows. The warning text still says "output-styles" (the folder name), matching the
+    // pre-existing `componentDirIfPresent(root, "output-styles")` spelling everywhere else in this
+    // file.
+    const outputStylesOverridePaths = resolveManifestComponentOverride(root, name, "output-styles", manifest?.outputStyles, false, manifestPathWarnings);
+    const outputStylesPath = outputStylesOverridePaths === undefined ? componentDirIfPresent(root, "output-styles") : undefined;
+    if (
+      outputStylesOverridePaths !== undefined &&
+      componentDirIfPresent(root, "output-styles") !== undefined &&
+      !manifestOverrideIncludesDefaultDir(outputStylesOverridePaths, join(root, "output-styles"))
+    ) {
+      manifestPathWarnings.push(shadowedFolderWarning(name, "output-styles", "outputStyles"));
+    }
     // Fix round 4/5 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
     // directory the moment the key is present, regardless of how many of its entries resolve --
     // `resolveManifestComponentOverride`'s own header has the citation for why this checks
@@ -781,6 +794,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       ...(mcp.configPath !== undefined ? { mcpConfigPath: mcp.configPath } : {}),
       skipMcpDiscovery,
       ...(outputStylesPath !== undefined ? { outputStylesPath } : {}),
+      ...(outputStylesOverridePaths !== undefined && outputStylesOverridePaths.length > 0 ? { outputStylesPaths: outputStylesOverridePaths } : {}),
       ...(workflowsPath !== undefined ? { workflowsPath } : {}),
       ...(workflowsOverride !== undefined && workflowsOverride.length > 0 ? { workflowsPaths: workflowsOverride } : {}),
       ...(binPath !== undefined ? { binPath } : {}),

@@ -60,7 +60,7 @@
 // for why "Task execution" alone is the cut section and "Careful actions" (safety floor: credentials
 // are radioactive, ask before the irreversible, name the exact destructive target) is not.
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { capBytes, neutralizeReminderTags } from "./injection.ts";
 import { parseFrontmatter } from "../subagents/definitions.ts";
@@ -270,10 +270,23 @@ function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName
   };
 }
 
-/** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the two fields output-style resolution needs, so this file never depends on the plugin loader's own shape. */
+/** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the fields output-style resolution needs, so this file never depends on the plugin loader's own shape. */
 export interface PluginOutputStyleSource {
   name: string;
   outputStylesPath?: string;
+  /**
+   * Fix round 5: a manifest `outputStyles` override -- see `PluginBundle.outputStylesPaths`'s own
+   * comment for why a real bundle never sets both this and `outputStylesPath` together (the override
+   * SHADOWS the default directory at load time). Each entry may be a directory (scanned the same way
+   * `outputStylesPath` is) or a single style file, matching claude's own `Tb`
+   * (`requireDirectory:false` for `output-styles`, dump-confirmed).
+   */
+  outputStylesPaths?: readonly string[];
+}
+
+/** Every directory/file `<plugin>:<style>` resolution may scan, default first (harmless even though a real `PluginOutputStyleSource` never sets both -- see that interface's own comment). */
+function pluginOutputStyleSources(plugin: PluginOutputStyleSource): string[] {
+  return [...(plugin.outputStylesPath !== undefined ? [plugin.outputStylesPath] : []), ...(plugin.outputStylesPaths ?? [])];
 }
 
 export interface OutputStyleLookup {
@@ -310,23 +323,40 @@ export function resolveOutputStyle(name: string, lookup: OutputStyleLookup): Res
   if (qualified !== null) {
     const [, pluginName, styleName] = qualified;
     const plugin = lookup.pluginOutputStyles?.find((p) => p.name === pluginName);
-    if (plugin?.outputStylesPath === undefined) return null;
+    const sources = plugin !== undefined ? pluginOutputStyleSources(plugin) : [];
+    if (sources.length === 0) return null;
     // A DIRECTORY SCAN, not a direct `<styleName>.md` join: a plugin style's identity may come from
     // its OWN frontmatter `name:` rather than its filename (parsePluginStyleFile's own header), so
     // the only way to find "the file whose resolved identity is this qualified name" is to check
     // every candidate -- mirroring claude's own "load every style, then match by name" shape without
     // needing a separate list-all API this codebase's "resolve by exact name" design does not have.
-    let entries: string[];
-    try {
-      entries = readdirSync(plugin.outputStylesPath);
-    } catch {
-      return null;
-    }
-    for (const entry of entries.sort()) {
-      if (!entry.toLowerCase().endsWith(".md")) continue;
-      const fallbackBase = entry.slice(0, -3);
-      const found = parsePluginStyleFile(join(plugin.outputStylesPath, entry), pluginName!, fallbackBase);
-      if (found !== null && found.name === name) return found;
+    // Fix round 5: each SOURCE may itself be a directory (the pre-existing shape) or, for a manifest
+    // `outputStyles` override entry, a single FILE naming one style directly.
+    for (const source of sources) {
+      let stat: ReturnType<typeof statSync>;
+      try {
+        stat = statSync(source);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        let entries: string[];
+        try {
+          entries = readdirSync(source);
+        } catch {
+          continue;
+        }
+        for (const entry of entries.sort()) {
+          if (!entry.toLowerCase().endsWith(".md")) continue;
+          const fallbackBase = entry.slice(0, -3);
+          const found = parsePluginStyleFile(join(source, entry), pluginName!, fallbackBase);
+          if (found !== null && found.name === name) return found;
+        }
+      } else {
+        const fallbackBase = basename(source).replace(/\.md$/i, "");
+        const found = parsePluginStyleFile(source, pluginName!, fallbackBase);
+        if (found !== null && found.name === name) return found;
+      }
     }
     return null;
   }

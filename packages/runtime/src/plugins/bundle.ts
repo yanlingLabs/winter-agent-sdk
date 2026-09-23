@@ -63,8 +63,19 @@ export interface PluginBundle {
   // into a consumer of its own -- `output-styles/`/`workflows/` are lane L1a's own subsystems
   // (`context/output-styles.ts`, `workflows/store.ts`), and `bin/` has no consumer yet. Present iff
   // the directory exists; a future consumer resolves its own contents from the path.
-  /** Absolute path of `<plugin>/output-styles/`, when it exists. */
+  /**
+   * Absolute path of `<plugin>/output-styles/`, when it exists AND the manifest declares no
+   * `outputStyles` override (mutually exclusive with `outputStylesPaths` below -- see its own
+   * comment, and `workflowsPath`/`workflowsPaths`' identical pairing).
+   */
   outputStylesPath?: string;
+  /**
+   * WS-21 fix round 5: the manifest's own `outputStyles` key, resolved the same way
+   * `workflowsPaths` is -- present iff the manifest declares the key AND at least one entry
+   * resolved, REPLACING `outputStylesPath` on the key's mere presence regardless of whether
+   * anything resolved. Each entry may be a directory or a single style file.
+   */
+  outputStylesPaths?: string[];
   /**
    * Absolute path of `<plugin>/workflows/`, when it exists AND the manifest declares no `workflows`
    * override (mutually exclusive with `workflowsPaths` below -- see its own comment).

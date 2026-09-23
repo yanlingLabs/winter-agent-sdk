@@ -720,7 +720,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // context/output-styles.ts never depends on plugins/bundle.ts's full shape. Fixed per incarnation,
   // like every other plugin-derived value this file threads (skills/agents/MCP), not re-derived
   // per `assemble()` call.
-  const pluginOutputStyles: PluginOutputStyleSource[] = plugins.bundles.map((b) => ({ name: b.name, ...(b.outputStylesPath !== undefined ? { outputStylesPath: b.outputStylesPath } : {}) }));
+  // Fix round 5: also threads outputStylesPaths (the manifest override) -- see pluginWorkflows'
+  // own identical fix a few lines below for why BOTH fields are carried even though a real
+  // PluginBundle never sets both at once.
+  const pluginOutputStyles: PluginOutputStyleSource[] = plugins.bundles.map((b) => ({
+    name: b.name,
+    ...(b.outputStylesPath !== undefined ? { outputStylesPath: b.outputStylesPath } : {}),
+    ...(b.outputStylesPaths !== undefined ? { outputStylesPaths: b.outputStylesPaths } : {}),
+  }));
   // WS-21 §6.3 item 1 (fix round 2): `PluginBundle.workflowsPath`'s own missing consumer, the
   // sibling gap to `outputStylesPath` above -- same source, same "fixed per incarnation" reasoning.
   // Fix round 4 (minors, M-3's last bullet): also threads `workflowsPaths` (the manifest override),

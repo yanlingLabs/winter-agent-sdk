@@ -734,6 +734,61 @@ describe("loadPlugins: a manifest `skills` override (fix round 5, ADDITIVE not s
   });
 });
 
+// Fix round 5: a manifest `outputStyles` override -- the BUILD side only (resolving
+// PluginBundle.outputStylesPath/outputStylesPaths); context/output-styles.test.ts covers the LAZY
+// resolve-time consumption of the plural field.
+describe("loadPlugins: a manifest `outputStyles` override (fix round 5)", () => {
+  test("a STRING override resolves to outputStylesPaths and SHADOWS the default directory", () => {
+    const parent = mkTemp("winter-plugin-styles-string-");
+    const root = join(parent, "st-plugin");
+    mkdirSync(join(root, "custom-styles"), { recursive: true });
+    mkdirSync(join(root, "output-styles"), { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ outputStyles: "./custom-styles" }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.outputStylesPaths).toEqual([resolve(root, "custom-styles")]);
+    expect(bundle.outputStylesPath).toBeUndefined();
+  });
+
+  test("a RELATIVE traversal entry (../x) is dropped with a warning", () => {
+    const parent = mkTemp("winter-plugin-styles-escape-");
+    const root = join(parent, "st-plugin");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ outputStyles: "../../etc" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.outputStylesPaths).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("folder-shadowed-by-manifest fires (naming the CAMEL-CASE manifest key), and O1t suppresses it when the override names the default directory itself", () => {
+    const parent = mkTemp("winter-plugin-styles-shadow-");
+    const root = join(parent, "st-plugin");
+    mkdirSync(join(root, "output-styles"), { recursive: true });
+    mkdirSync(join(root, "custom-styles"), { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ outputStyles: "./custom-styles" }));
+    const shadowed = loadPlugins([{ type: "local", path: root }]);
+    expect(shadowed.manifestPathWarnings).toHaveLength(1);
+    expect(shadowed.manifestPathWarnings[0]).toContain("output-styles/");
+    expect(shadowed.manifestPathWarnings[0]).toContain(`"outputStyles"`);
+
+    const parent2 = mkTemp("winter-plugin-styles-shadow-self-");
+    const root2 = join(parent2, "st-plugin");
+    mkdirSync(join(root2, "output-styles"), { recursive: true });
+    write(join(root2, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ outputStyles: "./output-styles" }));
+    const selfNamed = loadPlugins([{ type: "local", path: root2 }]);
+    expect(selfNamed.manifestPathWarnings).toEqual([]);
+  });
+
+  test("no `outputStyles` key at all falls back to the default directory exactly as before this feature existed", () => {
+    const parent = mkTemp("winter-plugin-styles-none-");
+    const root = join(parent, "st-plugin");
+    mkdirSync(join(root, "output-styles"), { recursive: true });
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.outputStylesPath).toBe(resolve(root, "output-styles"));
+    expect(bundle.outputStylesPaths).toBeUndefined();
+  });
+});
+
 describe("readPluginManifest", () => {
   test("a missing manifest is neither an error nor a manifest", () => {
     expect(readPluginManifest(mkTemp("winter-nomanifest-"))).toEqual({});

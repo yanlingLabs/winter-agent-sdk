@@ -104,6 +104,17 @@ export interface PluginManifest {
    * `plugins/loader.ts`'s `scanPluginSkillsOverride` is where this is resolved and merged.
    */
   skills?: string | string[];
+  /**
+   * WS-21 fix round 5: the same custom-path-override shape as `agents`/`workflows` (shadow-on-
+   * presence, `requireDirectory:false`) for `output-styles` -- content-search confirmed against the
+   * installed claude CLI binary (2.1.280): `gt=j.outputStyles` (note the CAMEL-CASE manifest key,
+   * unlike the kebab-case default DIRECTORY name `output-styles/`), `Rt=!gt&&He` shadows the default
+   * on presence, and `if(gt){...Tb(...,"output-styles","Output style",...,!1,...);if(qn.length>0)
+   * ve.outputStylesPaths=qn}`. Resolved LAZILY (unlike commands/agents/skills, which are eagerly
+   * scanned at load time): `context/output-styles.ts`'s `PluginOutputStyleSource.outputStylesPaths`
+   * is where a `<plugin>:<style>` lookup actually reads it.
+   */
+  outputStyles?: string | string[];
   [key: string]: unknown;
 }
 
