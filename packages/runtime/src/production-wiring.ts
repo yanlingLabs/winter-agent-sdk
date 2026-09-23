@@ -818,10 +818,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const projectMcp = loadProjectMcpConfig({ cwd: config.cwd, brand, ...(settingSources !== undefined ? { settingSources } : {}) });
   // WS-21 §6.3 item 3 (fix round 1, Critical 2): `.winter.json`'s user (top-level `mcpServers`) and
   // local (`projects[<git root>].mcpServers`) scopes -- `loadGlobalConfigMcp` was implemented in
-  // L1a.5 but never called anywhere. `home` prefers the shared store home (§3.7's rule, matching
-  // every other durable-path consumer this lane already anchors on `storeHome`), and `gitRoot` is
-  // the SAME `projectInstructionRoot` resolution the rules loader above and the environment
-  // section's own `isGitRepo` already use.
+  // L1a.5 but never called anywhere. `home` is `winterHome` (the per-run folder), CORRECTED by the
+  // router's same-view test (SV-2, a SECURITY finding): `.winter.json` is a DISCOVERY read (spec
+  // §3.7's own "WINTER_HOME stays the run folder, for discovery only"), not a durable one -- the
+  // router has already filtered THIS run's own MCP view (removed disabled and reserved-name
+  // servers, folded local/project servers into user scope) into the run folder before the session
+  // starts, and reading `storeHome` instead reaches the shared, UNFILTERED tree, starting a server
+  // the user disabled or one with a reserved name. `gitRoot` is the SAME `projectInstructionRoot`
+  // resolution the rules loader above and the environment section's own `isGitRepo` already use.
   //
   // ORIGIN, and why NOT a literal "local > project > user" total order: both `.local` and `.user`
   // get origin "settings" -- the identical mapping `ORIGIN_BY_SETTING_SOURCE` already gives the
@@ -837,7 +841,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // that array order can express: `.local` is placed BEFORE `.user` in the "settings"-origin list,
   // so a name clash between the two resolves local-wins, matching "local > ... > user" for that pair.
   const globalMcp = loadGlobalConfigMcp({
-    home: storeHome ?? winterHome,
+    home: winterHome,
     cwd: config.cwd,
     gitRoot: projectInstructionRoot(config.cwd),
     brand,
@@ -1372,16 +1376,19 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // sees, never this session's own settings resolution (which would be circular).
   Object.assign(env, settingsEnv);
 
-  // WS-21 §6.3 item 2 (fix round 1, Critical 1): the CONDITIONAL rules' own producer -- built once
-  // per incarnation (unlike the unconditional rules, which `context/assembler.ts`'s `userContext()`
-  // reloads on the instructions-file cadence), because a producer is a closure the engine calls
-  // every turn/tool-round, not a value rebuilt each time. `loadRules` here is the SECOND read of
-  // the same tree assembler.ts reads for the unconditional half -- the two live at genuinely
-  // different lifecycle points (session-context build vs. wiring-time registration), the same
-  // split `discoverWinterMd` (per-turn-ish) and `attachmentProducers` (per-incarnation) already have.
+  // WS-21 §6.3 item 2 (fix round 1, Critical 1), CORRECTED by the router's same-view test (SV-1):
+  // the CONDITIONAL rules' own producer -- built once per incarnation (unlike the unconditional
+  // rules, which `context/assembler.ts`'s `userContext()` reloads on the instructions-file cadence),
+  // because a producer is a closure the engine calls every turn/tool-round, not a value rebuilt
+  // each time. `loadRules` here is the SECOND read of the same tree assembler.ts reads for the
+  // unconditional half -- the two live at genuinely different lifecycle points (session-context
+  // build vs. wiring-time registration), the same split `discoverWinterMd` (per-turn-ish) and
+  // `attachmentProducers` (per-incarnation) already have. `home` is `winterHome` (the per-run
+  // folder), NOT `storeHome` -- rules/ is a DISCOVERY read (spec §3.7's own "WINTER_HOME stays the
+  // run folder, for discovery only"), matching assembler.ts's identical correction.
   const rulesSources = settingSources ?? (["user", "project", "local"] as const);
   const { conditional: conditionalRules } = loadRules({
-    home: storeHome ?? winterHome,
+    home: winterHome,
     cwd: config.cwd,
     projectRoot: projectInstructionRoot(config.cwd),
     sources: rulesSources,

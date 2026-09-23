@@ -614,6 +614,40 @@ describe("WS-21 §6.3 item 2 (fix round 1, Critical 1): the rules/ loader is wir
     const round3 = JSON.stringify(requests[2]!.messages);
     expect(round3.split("SCOPED RULE CONTENT.").length - 1).toBe(1);
   });
+
+  // SV-1 (router same-view test): rules/ is a DISCOVERY read and must root on WINTER_HOME (the
+  // per-run folder the router has already merged the trusted project's items and applied tier rules
+  // into), never WINTER_STORE_HOME -- a fix-round-1/fix-round-2 regression this fixed. A DISTINCT
+  // storeHome, with a rule ONLY under it, must never surface; the run folder's own rule must.
+  test("rules read from WINTER_HOME, never WINTER_STORE_HOME, even when the two differ", async () => {
+    const storeHome = mkdtempSync(join(tmpdir(), "winter-t8-rules-store-"));
+    try {
+      mkdirSync(join(home, "rules"), { recursive: true });
+      writeFileSync(join(home, "rules", "run-folder.md"), "RUN FOLDER RULE CONTENT.");
+      mkdirSync(join(storeHome, "rules"), { recursive: true });
+      writeFileSync(join(storeHome, "rules", "store-home.md"), "STORE HOME RULE CONTENT (must never surface).");
+
+      const { provider, requests } = capturingProvider([{ kind: "text", text: "ok" }]);
+      const proc = inMemoryProcess(
+        ["--run", "--config-json", JSON.stringify({ sessionId: "rules-sv1", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] })],
+        provider,
+        undefined,
+        { WINTER_HOME: home, WINTER_STORE_HOME: storeHome },
+      );
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined }));
+      for await (const _chunk of proc.stdout) {
+        /* drain */
+      }
+      await proc.exited;
+
+      const seen = JSON.stringify(requests[0]!.messages);
+      expect(seen).toContain("RUN FOLDER RULE CONTENT.");
+      expect(seen).not.toContain("STORE HOME RULE CONTENT");
+    } finally {
+      rmSync(storeHome, { recursive: true, force: true });
+    }
+  });
 });
 
 // WS-21 §6.3 item 3, fix round 1 (Critical 2): `loadGlobalConfigMcp` was implemented in L1a.5 but
@@ -672,6 +706,33 @@ describe("WS-21 §6.3 item 3 (fix round 1, Critical 2): .winter.json MCP scopes 
     } finally {
       wiring.dispose();
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  // SV-2 (router same-view test, SECURITY): `.winter.json` is a DISCOVERY read and must root on
+  // WINTER_HOME (the per-run folder the router has already filtered -- removed disabled and
+  // reserved-name servers, folded local/project servers into user scope), never
+  // WINTER_STORE_HOME -- reading the shared, unfiltered store-home tree instead would start a
+  // server the user disabled, or one with a reserved name. A fix-round-1/fix-round-2 regression.
+  test("a .winter.json server under a DIFFERENT storeHome never surfaces -- only the run folder's own is read", async () => {
+    const storeHome = mkdtempSync(join(tmpdir(), "winter-t8-globalmcp-store-"));
+    try {
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, ".winter.json"), JSON.stringify({ mcpServers: { runFolderProbe: { command: "run-folder-srv" } } }));
+      writeFileSync(join(storeHome, ".winter.json"), JSON.stringify({ mcpServers: { storeHomeProbe: { command: "store-home-srv" } } }));
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-globalmcp-sv2", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], storeHome },
+        env: {},
+        winterHome: home,
+      });
+      try {
+        expect(wiring.engineOptions.extraMcpServerSources.some((s) => "runFolderProbe" in s.servers), "the run folder's own server must be present").toBe(true);
+        expect(wiring.engineOptions.extraMcpServerSources.some((s) => "storeHomeProbe" in s.servers), "the store home's server must NEVER surface").toBe(false);
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(storeHome, { recursive: true, force: true });
     }
   });
 });

@@ -324,12 +324,15 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // checked-in before local) and the MEMORY.md index last, as ONE value. `omitProjectContext`
       // (claude's `omitClaudeMd`) drops the whole key.
       if (input.omitProjectContext !== true) {
-        // WS-21 §6.3 item 2 (fix round 1, Critical 1): UNCONDITIONAL rules ride the SAME claudeMd
-        // value the instructions files do, rendered after them (winter-md.ts's own ordering). Rules
-        // are durable content, so `loadRules`'s own `home` param prefers `config.storeHome` --
-        // `<storeHome>/rules/**`, not the per-run folder `home` names once the router links
-        // `buildRunHome` (§3.7's rule, mirrored from every other durable-path consumer this lane
-        // already fixed). The project walk root is the same `projectInstructionRoot` the
+        // WS-21 §6.3 item 2 (fix round 1, Critical 1), CORRECTED by the router's same-view test
+        // (SV-1): UNCONDITIONAL rules ride the SAME claudeMd value the instructions files do,
+        // rendered after them (winter-md.ts's own ordering). `loadRules`'s `home` param is
+        // `WINTER_HOME` (the per-run folder), NOT `config.storeHome` -- rules/ is a DISCOVERY read,
+        // like skills/agents/commands/output-styles/instructions/settings.json/`.winter.json`
+        // (spec §3.7's own "WINTER_HOME stays the run folder, for discovery only"), never a durable
+        // write. The router already merges the trusted project's items and applies tier rules INTO
+        // that run folder before this session starts; reading `storeHome` instead reads the wrong
+        // (unfiltered, shared) tree. The project walk root is the same `projectInstructionRoot` the
         // environment section's own `isGitRepo` already resolves -- SOURCE-gates the walk (exactly
         // like `discoverWinterMd`'s own `project ∈ settingSources` gate); this layer carries no
         // trust decision of its own (winter-md.ts/output-styles.ts's own precedent: trust is
@@ -337,7 +340,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         // second gate re-litigated here).
         const rulesSources = settingSources ?? (["user", "project", "local"] as const);
         const { unconditional } = loadRules({
-          home: input.config.storeHome ?? home,
+          home,
           cwd: input.cwd,
           projectRoot: projectInstructionRoot(input.cwd),
           sources: rulesSources,
