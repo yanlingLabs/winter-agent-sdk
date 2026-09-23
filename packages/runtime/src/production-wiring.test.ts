@@ -12,7 +12,8 @@
 // `~/.norma`, `~/.claude`, the Keychain, or a real user's settings, and no path contains a real
 // username.
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
@@ -478,6 +479,66 @@ describe("WS-21 §6.3 item 2 (fix round 1, Critical 1): the rules/ loader is wir
     // -- the persisted attachment is what stops re-emission, not luck.
     const round3 = JSON.stringify(requests[2]!.messages);
     expect(round3.split("SCOPED RULE CONTENT.").length - 1).toBe(1);
+  });
+});
+
+// WS-21 §6.3 item 3, fix round 1 (Critical 2): `loadGlobalConfigMcp` was implemented in L1a.5 but
+// never called anywhere in production-wiring.ts.
+describe("WS-21 §6.3 item 3 (fix round 1, Critical 2): .winter.json MCP scopes are wired", () => {
+  test("a user server in <home>/.winter.json is present in a session's MCP config under [\"user\"]", async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, ".winter.json"), JSON.stringify({ mcpServers: { probe: { command: "probe-srv" } } }));
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-globalmcp-user", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const found = wiring.engineOptions.extraMcpServerSources.find((s) => "probe" in s.servers);
+      expect(found, "the .winter.json user server must reach extraMcpServerSources").toBeDefined();
+      expect(found!.servers["probe"]).toEqual({ command: "probe-srv" });
+      expect(found!.origin).toBe("settings");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("without \"user\" in settingSources, the .winter.json user server is absent", async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, ".winter.json"), JSON.stringify({ mcpServers: { probe: { command: "probe-srv" } } }));
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-globalmcp-gated", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.extraMcpServerSources.some((s) => "probe" in s.servers)).toBe(false);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a local server (projects[<git root>].mcpServers) is present under [\"local\"], keyed by the canonical git root", async () => {
+    // `projectInstructionRoot` canonicalises via `realpathSync` (winter-md.ts's own documented
+    // reason: a plain `mkdtemp` path is a symlink on macOS, e.g. /tmp -> /private/tmp), so the
+    // `.winter.json` `projects` KEY must be written under the SAME canonical form or the lookup
+    // misses -- exactly the gotcha that file's header calls out.
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "winter-globalmcp-repo-")));
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, ".winter.json"), JSON.stringify({ projects: { [repo]: { mcpServers: { localProbe: { command: "local-srv" } } } } }));
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-globalmcp-local", cwd: repo, model: "winter-test/echo", winterHome: home, settingSources: ["user", "local"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const found = wiring.engineOptions.extraMcpServerSources.find((s) => "localProbe" in s.servers);
+      expect(found, "the .winter.json local server must reach extraMcpServerSources").toBeDefined();
+    } finally {
+      wiring.dispose();
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 

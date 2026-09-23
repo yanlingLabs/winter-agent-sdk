@@ -49,7 +49,7 @@ import { slashCommandNames } from "./commands/builtins-listing.ts";
 import { settingsHookSourceInputs, pluginHookEntries } from "./settings/loaders/hooks.ts";
 import { buildHookEntriesFromSettings } from "./hooks/from-config.ts";
 import type { SourcedHookEntry } from "./hooks/registry.ts";
-import { loadProjectMcpConfig, settingsMcpServerSources } from "./settings/loaders/mcp-config.ts";
+import { loadGlobalConfigMcp, loadProjectMcpConfig, settingsMcpServerSources } from "./settings/loaders/mcp-config.ts";
 import { pluginMcpServerSources } from "./settings/loaders/plugin-mcp.ts";
 import type { McpServerSource } from "./mcp/lifecycle.ts";
 import { createSystemPromptAssembler } from "./context/assembler.ts";
@@ -749,7 +749,34 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // entry is offered before the ambient project `mcp.json`.
   const settingsMcp = settingsMcpServerSources(resolved.perSource);
   const projectMcp = loadProjectMcpConfig({ cwd: config.cwd, brand, ...(settingSources !== undefined ? { settingSources } : {}) });
-  for (const rejection of [...settingsMcp.rejected, ...projectMcp.rejected]) {
+  // WS-21 §6.3 item 3 (fix round 1, Critical 2): `.winter.json`'s user (top-level `mcpServers`) and
+  // local (`projects[<git root>].mcpServers`) scopes -- `loadGlobalConfigMcp` was implemented in
+  // L1a.5 but never called anywhere. `home` prefers the shared store home (§3.7's rule, matching
+  // every other durable-path consumer this lane already anchors on `storeHome`), and `gitRoot` is
+  // the SAME `projectInstructionRoot` resolution the rules loader above and the environment
+  // section's own `isGitRepo` already use.
+  //
+  // ORIGIN, and why NOT a literal "local > project > user" total order: both `.local` and `.user`
+  // get origin "settings" -- the identical mapping `ORIGIN_BY_SETTING_SOURCE` already gives the
+  // settings.json `local`/`user` tiers (this file's own comment there: "local is gitignored and
+  // personal and carries user authority", "user is the user's own file"), which is ungated by
+  // design. `.winter/mcp.json` (`projectMcp`) keeps its OWN "project" origin and its trust gate --
+  // merging it into the ungated bucket to force a literal three-way order would strip that gate,
+  // which is a security regression `resolveMcpServerSources`'s whole "project origin" mechanism
+  // exists to prevent (mcp/lifecycle.ts, outside this lane's ownership, is the only place a new
+  // origin RANK could be added). Origin ordering therefore ranks BOTH `.local` and `.user` above
+  // `project` unconditionally (an existing, disclosed cost of this file's own `ORIGIN_BY_SETTING_
+  // SOURCE` design, not something this fix introduces) -- what this fix DOES implement is the part
+  // that array order can express: `.local` is placed BEFORE `.user` in the "settings"-origin list,
+  // so a name clash between the two resolves local-wins, matching "local > ... > user" for that pair.
+  const globalMcp = loadGlobalConfigMcp({
+    home: storeHome ?? winterHome,
+    cwd: config.cwd,
+    gitRoot: projectInstructionRoot(config.cwd),
+    brand,
+    sources: settingSources ?? (["user", "project", "local"] as const),
+  });
+  for (const rejection of [...settingsMcp.rejected, ...projectMcp.rejected, ...globalMcp.rejected]) {
     // n3 (whole-branch review): a SENTENCE, not `JSON.stringify` of an internal record. This line
     // is the only thing an operator ever sees about a server that did not start, and it reached
     // them as `{"origin":"project","path":"...","reason":"..."}` -- every field they needed, in the
@@ -757,7 +784,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // sites in this file were already prose; this one was the outlier.
     warnings.push(`mcp config from ${rejection.origin}${rejection.path !== undefined ? ` (${rejection.path})` : ""} was rejected: ${rejection.reason}`);
   }
-  const extraMcpServerSources: McpServerSource[] = [...settingsMcp.sources, ...projectMcp.sources, ...pluginMcpServerSources(plugins.bundles)];
+  const globalMcpSources: McpServerSource[] = [
+    ...(Object.keys(globalMcp.local).length > 0 ? [{ origin: "settings" as const, servers: globalMcp.local }] : []),
+    ...(Object.keys(globalMcp.user).length > 0 ? [{ origin: "settings" as const, servers: globalMcp.user }] : []),
+  ];
+  const extraMcpServerSources: McpServerSource[] = [...settingsMcp.sources, ...globalMcpSources, ...projectMcp.sources, ...pluginMcpServerSources(plugins.bundles)];
 
   // (10) THE ASSEMBLER (Lane C). Its `home` is the resolved winter root and its `settings` is the
   // post-OVERLAY_NEVER_KEYS effective getter (rider 24, asserted above).
