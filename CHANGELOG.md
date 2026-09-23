@@ -4,6 +4,13 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.20
+
+0.0.19 was tagged but never published either: its release job stopped at the differential gate,
+whose goldens held `result` token counts that the fixture providers compute from this machine's
+temp-dir paths (Linux runner vs a macOS developer). The gate now masks those counts, keeping the keys.
+0.0.20 is 0.0.19 plus that gate fix; every change under 0.0.18 ships first in 0.0.20.
+
 ## 0.0.19
 
 0.0.18 was tagged but never published: its release job stopped on a test that needs the macOS
