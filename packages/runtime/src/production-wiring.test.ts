@@ -26,6 +26,7 @@ import { providerCredentialRef } from "./provider/credential-api.ts";
 import { loadCatalog, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { recordedProviderSystems, resetRecordedProviderSystems } from "./provider/mock.ts";
+import type { Provider, ProviderRequest, ProviderTurn } from "./engine.ts";
 
 let home: string;
 let cwd: string;
@@ -385,6 +386,98 @@ describe("WS-21: settingsEnv (per-tier env filter) and config.storeHome/pluginCa
     } finally {
       wiring.dispose();
     }
+  });
+});
+
+// WS-21 §6.3 item 2, fix round 1 (Critical 1): the `rules/` loader was implemented in L1a.3 but
+// never WIRED -- neither `assembler.ts` nor `production-wiring.ts` called it. These tests drive the
+// REAL engine (through `buildProductionWiring`'s own `inMemoryProcess` consumer, the SAME pattern
+// `runOne` above uses) end to end, so a wiring gap like the one this fix closes cannot hide behind a
+// unit test of `rules.ts` alone answering the right question in isolation.
+describe("WS-21 §6.3 item 2 (fix round 1, Critical 1): the rules/ loader is wired end to end", () => {
+  /** Captures every ProviderRequest a turn generates, in call order -- one entry per provider round. */
+  function capturingProvider(turns: readonly ProviderTurn[]): { provider: Provider; requests: ProviderRequest[] } {
+    const requests: ProviderRequest[] = [];
+    let i = 0;
+    return {
+      requests,
+      provider: {
+        async generate(input: ProviderRequest): Promise<ProviderTurn> {
+          requests.push(input);
+          return turns[Math.min(i++, turns.length - 1)]!;
+        },
+      },
+    };
+  }
+
+  async function runWithProvider(config: RuntimeConfig, provider: Provider, text = "go"): Promise<void> {
+    const proc = inMemoryProcess(["--run", "--config-json", JSON.stringify(config)], provider, undefined, { WINTER_HOME: home });
+    proc.stdin.write(encodeFrame({ type: "user", text }));
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined }));
+    for await (const _chunk of proc.stdout) {
+      /* drain -- this test reads the CAPTURED requests, not the frame stream */
+    }
+    await proc.exited;
+  }
+
+  test("a user rules/x.md shows in the instructions context (the claudeMd index-0 message), gated on the user source", async () => {
+    mkdirSync(join(home, "rules"), { recursive: true });
+    writeFileSync(join(home, "rules", "x.md"), "ALWAYS FOLLOW THE HOUSE STYLE.");
+
+    // `recordedProviderSystems` only records `input.system`, and the rule rides `claudeMd` (the
+    // index-0 userContext message), not `system` -- so this test captures `input.messages` itself,
+    // through the SAME `inMemoryProcess` door `runOne` uses.
+    const { provider, requests } = capturingProvider([{ kind: "text", text: "ok" }]);
+    await runWithProvider({ sessionId: "rules-uncond-1", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] }, provider);
+    expect(JSON.stringify(requests[0]!.messages)).toContain("ALWAYS FOLLOW THE HOUSE STYLE.");
+
+    // The discriminating half: `settingSources: []` reads nothing, including rules -- the same
+    // source gate `discoverWinterMd`'s own instructions files already have.
+    const { provider: gatedProvider, requests: gatedRequests } = capturingProvider([{ kind: "text", text: "ok" }]);
+    await runWithProvider({ sessionId: "rules-uncond-2", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] }, gatedProvider);
+    expect(JSON.stringify(gatedRequests[0]!.messages)).not.toContain("ALWAYS FOLLOW THE HOUSE STYLE.");
+  });
+
+  test("a conditional rule attaches ONCE on the first matching Read, under the engine's real per-turn cadence", async () => {
+    mkdirSync(join(home, "rules"), { recursive: true });
+    writeFileSync(join(home, "rules", "scoped.md"), "---\npaths: [src/**]\n---\nSCOPED RULE CONTENT.");
+    mkdirSync(join(cwd, "src"), { recursive: true });
+    const target = join(cwd, "src", "a.ts");
+    writeFileSync(target, "// hi\n");
+
+    // Three provider rounds within ONE turn: Read the matching file, Read it again (proving no
+    // re-emission within the SAME turn's later rounds), then answer with text to end the turn.
+    const { provider, requests } = capturingProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: "Read", input: { file_path: target } }] },
+      { kind: "tool_use", calls: [{ id: "c2", name: "Read", input: { file_path: target } }] },
+      { kind: "text", text: "done" },
+    ]);
+    await runWithProvider(
+      {
+        sessionId: "rules-cond-1",
+        cwd,
+        model: "winter-test/echo",
+        winterHome: home,
+        settingSources: ["user"],
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        sandbox: { enabled: false },
+      },
+      provider,
+      "read the file",
+    );
+
+    expect(requests.length).toBe(3);
+    // Round 1 (before any Read has happened): nothing yet.
+    expect(JSON.stringify(requests[0]!.messages)).not.toContain("SCOPED RULE CONTENT.");
+    // Round 2 (after round 1's Read + the engine's own tool-round attachment scan): announced once.
+    const round2 = JSON.stringify(requests[1]!.messages);
+    expect(round2).toContain("SCOPED RULE CONTENT.");
+    expect(round2.split("SCOPED RULE CONTENT.").length - 1).toBe(1);
+    // Round 3 (after round 2's SECOND Read of the same matching file): still exactly one occurrence
+    // -- the persisted attachment is what stops re-emission, not luck.
+    const round3 = JSON.stringify(requests[2]!.messages);
+    expect(round3.split("SCOPED RULE CONTENT.").length - 1).toBe(1);
   });
 });
 

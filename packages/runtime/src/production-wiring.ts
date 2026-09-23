@@ -53,6 +53,8 @@ import { loadProjectMcpConfig, settingsMcpServerSources } from "./settings/loade
 import { pluginMcpServerSources } from "./settings/loaders/plugin-mcp.ts";
 import type { McpServerSource } from "./mcp/lifecycle.ts";
 import { createSystemPromptAssembler } from "./context/assembler.ts";
+import { loadRules, conditionalRuleAttachmentProducer } from "./context/rules.ts";
+import { projectInstructionRoot } from "./context/winter-md.ts";
 import type { SkillListing, SystemPromptAssembler } from "./context/seam.ts";
 import { createCompactionController } from "./compaction/controller.ts";
 import type { CompactionController } from "./compaction/seam.ts";
@@ -90,7 +92,7 @@ import { rowsForCanonicalId, type WinterCatalog } from "@yanlinglabs/winter-prov
  * something to ask for.
  */
 const LISTING_PROBE_SLOT_NAME = "probe";
-import type { EngineOptions, PricedUsage, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "./engine.ts";
+import type { AttachmentProducer, EngineOptions, PricedUsage, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -429,6 +431,15 @@ export interface ProductionWiring {
     structuredOutput: StructuredOutputSeam;
     fileCheckpointSink?: FileCheckpointSink;
     extraHookEntries: readonly SourcedHookEntry[];
+    /**
+     * WS-21 §6.3 item 2 (fix round 1, Critical 1): the conditional-rule on-touch attachment
+     * producer (`context/rules.ts`'s `conditionalRuleAttachmentProducer`), when this session has
+     * any conditional rules to announce. `EngineOptions.attachmentProducers` has no other producer
+     * in production today, so this is always either absent or a one-element array -- declared as
+     * the full array type anyway, matching `EngineOptions`'s own shape, so a second producer some
+     * later lane adds is a one-line change here, not a second field.
+     */
+    attachmentProducers?: readonly AttachmentProducer[];
     extraMcpServerSources: readonly McpServerSource[];
     initSlashCommands: readonly string[];
     initSkills: readonly string[];
@@ -1242,6 +1253,24 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     }
   }
 
+  // WS-21 §6.3 item 2 (fix round 1, Critical 1): the CONDITIONAL rules' own producer -- built once
+  // per incarnation (unlike the unconditional rules, which `context/assembler.ts`'s `userContext()`
+  // reloads on the instructions-file cadence), because a producer is a closure the engine calls
+  // every turn/tool-round, not a value rebuilt each time. `loadRules` here is the SECOND read of
+  // the same tree assembler.ts reads for the unconditional half -- the two live at genuinely
+  // different lifecycle points (session-context build vs. wiring-time registration), the same
+  // split `discoverWinterMd` (per-turn-ish) and `attachmentProducers` (per-incarnation) already have.
+  const rulesSources = settingSources ?? (["user", "project", "local"] as const);
+  const { conditional: conditionalRules } = loadRules({
+    home: storeHome ?? winterHome,
+    cwd: config.cwd,
+    projectRoot: projectInstructionRoot(config.cwd),
+    sources: rulesSources,
+    brand,
+  });
+  const attachmentProducers: AttachmentProducer[] | undefined =
+    conditionalRules.length > 0 ? [conditionalRuleAttachmentProducer(conditionalRules, { originalCwd: config.cwd })] : undefined;
+
   // The provider-derived config defaults, PLUS the resolved store-home/plugin-cache-dir (§3.7/item
   // 11) -- every one of them a DEFAULT: an explicit host value on `config` always wins (already
   // true above, since `storeHome`/`pluginCacheDir` are `config.storeHome ?? env[...]`; this just
@@ -1363,6 +1392,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       structuredOutput,
       ...(fileCheckpointSink !== undefined ? { fileCheckpointSink } : {}),
       extraHookEntries,
+      ...(attachmentProducers !== undefined ? { attachmentProducers } : {}),
       extraMcpServerSources,
       initSlashCommands,
       initSkills,

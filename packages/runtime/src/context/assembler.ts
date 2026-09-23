@@ -41,6 +41,7 @@ import { renderEnvironmentContextValue, renderEnvironmentSection, renderStaticEn
 import { MINIMAL_PROMPT, MINIMAL_PROMPT_VERSION } from "./minimal-prompt.ts";
 import { resolvePresetSystemPrompt, WINTER_CODE_PRESET_VERSION } from "./winter-code-preset.ts";
 import { discoverWinterMd, projectInstructionRoot, renderInstructionsContext, type InstructionsContextFile } from "./winter-md.ts";
+import { loadRules } from "./rules.ts";
 import { autoMemoryEnabled, loadMemoryIndex, MEMORY_INDEX_BASENAME, renderAutoMemoryContextValue, renderAutoMemorySection } from "./memory.ts";
 import { neutralizeReminderTags } from "./injection.ts";
 import { gitInstructionsEnabled } from "./git-status.ts";
@@ -311,7 +312,32 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // checked-in before local) and the MEMORY.md index last, as ONE value. `omitProjectContext`
       // (claude's `omitClaudeMd`) drops the whole key.
       if (input.omitProjectContext !== true) {
-        const files: InstructionsContextFile[] = discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) }).map((b) => ({
+        // WS-21 §6.3 item 2 (fix round 1, Critical 1): UNCONDITIONAL rules ride the SAME claudeMd
+        // value the instructions files do, rendered after them (winter-md.ts's own ordering). Rules
+        // are durable content, so `loadRules`'s own `home` param prefers `config.storeHome` --
+        // `<storeHome>/rules/**`, not the per-run folder `home` names once the router links
+        // `buildRunHome` (§3.7's rule, mirrored from every other durable-path consumer this lane
+        // already fixed). The project walk root is the same `projectInstructionRoot` the
+        // environment section's own `isGitRepo` already resolves -- SOURCE-gates the walk (exactly
+        // like `discoverWinterMd`'s own `project ∈ settingSources` gate); this layer carries no
+        // trust decision of its own (winter-md.ts/output-styles.ts's own precedent: trust is
+        // either the daemon's settingSources choice upstream, or a narrower in-file rule, never a
+        // second gate re-litigated here).
+        const rulesSources = settingSources ?? (["user", "project", "local"] as const);
+        const { unconditional } = loadRules({
+          home: input.config.storeHome ?? home,
+          cwd: input.cwd,
+          projectRoot: projectInstructionRoot(input.cwd),
+          sources: rulesSources,
+          brand,
+        });
+        const files: InstructionsContextFile[] = discoverWinterMd({
+          cwd: input.cwd,
+          home,
+          brand,
+          ...(settingSources !== undefined ? { settingSources } : {}),
+          ...(unconditional.length > 0 ? { rules: unconditional.map((r) => ({ path: r.path, tier: r.tier, content: r.content })) } : {}),
+        }).map((b) => ({
           path: b.path,
           kind: b.scope,
           content: b.text,
