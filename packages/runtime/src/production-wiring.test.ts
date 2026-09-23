@@ -390,6 +390,85 @@ describe("WS-21: settingsEnv (per-tier env filter) and config.storeHome/pluginCa
   });
 });
 
+// WS-21 §6.3 item 5, fix round 1: `settingsEnv` was computed and exposed on `ProductionWiring` (the
+// describe block above) but never APPLIED anywhere, and `applyHostManagedSettingsFilter` was
+// implemented in L1a.6 but never called against `resolved.effective` -- so a host-managed session's
+// child still saw `apiKeyHelper` untouched. These tests drive `buildProductionWiring` itself (not
+// the engine) since both fixes are wiring-boundary facts: whether the passed-in `env` object was
+// mutated, and whether the settings view the session runs on actually had `apiKeyHelper` filtered.
+describe("WS-21 §6.3 item 5 (fix round 1): settingsEnv reaches the child env, and host-managed filters apiKeyHelper", () => {
+  test("settingsEnv is applied to the SAME env object the caller passed in, like claude's own Object.assign(process.env, filtered)", async () => {
+    writeSettings(home, { env: { OPENAI_BASE_URL: "http://mirror.example", FOO: "bar" } });
+    const env: Record<string, string | undefined> = {};
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-env-apply", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env,
+      winterHome: home,
+    });
+    try {
+      // Not just `wiring.settingsEnv` (already covered above) -- the CALLER's own `env` object,
+      // proving the `Object.assign(env, settingsEnv)` line actually ran against the reference a
+      // real tool spawn reads (in production `env === process.env`; see the inline comment at the
+      // call site).
+      expect(env.OPENAI_BASE_URL).toBe("http://mirror.example");
+      expect(env.FOO).toBe("bar");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a settings-file env block cannot flip host-managed mode for its OWN run: hostManaged is read before the assign", async () => {
+    // `WINTER_PROVIDER_MANAGED_BY_HOST` is itself in `ALL_TIER_REFUSED_ENV` (env-filter.ts) --
+    // dropped from every tier UNCONDITIONALLY, which is what makes it impossible for a settings
+    // file to set in the first place. `ANTHROPIC_BASE_URL` is the actual proof of ordering: it is
+    // only a HOST_MANAGED-conditional drop, so its survival here shows filtering ran as
+    // NOT-host-managed (the real env passed to `buildProductionWiring` had no sentinel when
+    // `hostManaged` was computed, before this tier's `env` block -- which cannot set that sentinel
+    // anyway -- was ever read).
+    writeSettings(home, { env: { WINTER_PROVIDER_MANAGED_BY_HOST: "1", ANTHROPIC_BASE_URL: "https://evil.example", KEPT: "1" } });
+    const env: Record<string, string | undefined> = {};
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-env-no-self-flip", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env,
+      winterHome: home,
+    });
+    try {
+      expect(wiring.settingsEnv).toEqual({ ANTHROPIC_BASE_URL: "https://evil.example", KEPT: "1" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("host-managed disables apiKeyHelper on the settings view the session actually runs on", async () => {
+    writeSettings(home, { apiKeyHelper: "/usr/local/bin/my-helper", outputStyle: "explanatory" });
+    const withoutHostManaged = await buildProductionWiring({
+      config: { sessionId: "s-apikeyhelper-plain", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(withoutHostManaged.settings()?.apiKeyHelper).toBe("/usr/local/bin/my-helper");
+      // The filter is surgical: an unrelated key survives untouched in the SAME run.
+      expect(withoutHostManaged.settings()?.outputStyle).toBe("explanatory");
+    } finally {
+      withoutHostManaged.dispose();
+    }
+
+    const hostManaged = await buildProductionWiring({
+      config: { sessionId: "s-apikeyhelper-hostmanaged", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: { WINTER_PROVIDER_MANAGED_BY_HOST: "1" },
+      winterHome: home,
+    });
+    try {
+      expect(hostManaged.settings()?.apiKeyHelper).toBeUndefined();
+      // Still only `apiKeyHelper` dropped -- host-managed mode is not a wholesale settings wipe.
+      expect(hostManaged.settings()?.outputStyle).toBe("explanatory");
+    } finally {
+      hostManaged.dispose();
+    }
+  });
+});
+
 // WS-21 §6.3 item 2, fix round 1 (Critical 1): the `rules/` loader was implemented in L1a.3 but
 // never WIRED -- neither `assembler.ts` nor `production-wiring.ts` called it. These tests drive the
 // REAL engine (through `buildProductionWiring`'s own `inMemoryProcess` consumer, the SAME pattern

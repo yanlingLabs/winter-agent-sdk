@@ -23,7 +23,7 @@
 // invisibly.
 import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
-import { filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
+import { applyHostManagedSettingsFilter, filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
 // P7a (D19): the two process-level brand surfaces this module installs per session -- see (10b).
 import { rebrandStandingServerTools } from "./tools/registry.ts";
 import { canonicalAliases, WINTER_CANONICAL_ALIASES } from "./toolsearch/aliases.ts";
@@ -503,6 +503,16 @@ export interface ProductionWiring {
    */
   settingsEnv: Record<string, string>;
   /**
+   * WS-21 §6.3 item 5 (fix round 1): the SAME live getter `systemPromptAssembler`/`providerEnabled`/
+   * `advisorModelSetting` read internally (`settingsGetter`, defined once at the top of this
+   * function), surfaced so a caller -- and this file's own tests -- can observe the settings view
+   * this wiring actually resolved, host-managed filtering (`applyHostManagedSettingsFilter`)
+   * included, without a second, divergent resolution. `Settings.apiKeyHelper` has no production
+   * reader anywhere in `packages/runtime/src` today (grepped as part of this fix round), so this is
+   * also the only way to prove that filter's wiring end to end until a consumer exists.
+   */
+  settings: () => Settings | undefined;
+  /**
    * The config the ENGINE should run, which differs from the input config in the provider-derived
    * defaults only (`contextWindowTokens` from the descriptor when the host stated none).
    *
@@ -608,8 +618,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // engine.ts) reads exactly this field, so the two cannot disagree.
     ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
   });
-  const effective = resolved.effective;
-  assertEffectiveSettings(effective, resolved);
+  assertEffectiveSettings(resolved.effective, resolved);
+  // WS-21 §6.3 item 6 / F20, fix round 1 (item 5): `applyHostManagedSettingsFilter` was implemented
+  // in L1a.6 but never called -- `apiKeyHelper` survived host-managed mode untouched.
+  // `assertEffectiveSettings` runs against the RAW `resolved.effective` above, unaffected by this:
+  // its own invariant is about OVERLAY_NEVER_KEYS-style tier leakage (autoMemoryDirectory,
+  // outputStyle, ...), nothing to do with `apiKeyHelper`, so filtering afterward cannot mask a
+  // regression that guard exists to catch.
+  const effective = applyHostManagedSettingsFilter(resolved.effective, hostManaged) as Settings;
 
   // NEW-1 (residual round): THE TIER `error` CHANNEL HAD NO PRODUCTION CONSUMER.
   //
@@ -1283,6 +1299,18 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       if (!(key in settingsEnv)) settingsEnv[key] = value;
     }
   }
+  // WS-21 §6.3 item 6, fix round 1 (item 5): claude applies each enabled tier's FILTERED env to
+  // its own process env at startup (`Object.assign(process.env, filtered)`) -- `settingsEnv` was
+  // computed and exposed on `ProductionWiring` but never actually APPLIED anywhere, so a tool
+  // spawn (Bash) never saw it. Applied to `env` here, not to the global `process.env` directly:
+  // in PRODUCTION `env` IS `process.env` (`main.ts` calls `buildProductionWiring({..., env:
+  // process.env, ...})`), so this reaches the real child process env exactly as claude's own rule
+  // does; every TEST passes its OWN isolated env object (never the real `process.env` -- the
+  // Global Constraints this whole workstream runs under), so the identical line can never leak a
+  // test's settings env into the shared test-runner process. Applied AFTER every settings-
+  // resolution read above has already happened, so it can only affect what a SUBSEQUENT tool spawn
+  // sees, never this session's own settings resolution (which would be circular).
+  Object.assign(env, settingsEnv);
 
   // WS-21 §6.3 item 2 (fix round 1, Critical 1): the CONDITIONAL rules' own producer -- built once
   // per incarnation (unlike the unconditional rules, which `context/assembler.ts`'s `userContext()`
@@ -1316,6 +1344,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   return {
     providerWiring,
     settingsEnv,
+    settings: settingsGetter,
     config: resolvedConfig,
     engineOptions: {
       winterHome,
