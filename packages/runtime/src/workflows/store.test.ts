@@ -9,7 +9,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveWorkflowByName, listBuiltinWorkflows, persistWorkflowScript, workflowTranscriptDir, workflowRunsDir } from "./store.ts";
+import { resolveWorkflowByName, listBuiltinWorkflows, listWorkflowsForListing, persistWorkflowScript, workflowTranscriptDir, workflowRunsDir } from "./store.ts";
 import { isWorkflowScriptCarveOut, isProtectedWrite } from "../permissions/protected.ts";
 
 function project(): string {
@@ -166,6 +166,170 @@ describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1, batch-2
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
     expect(resolved.source_kind).toBe("project");
+  });
+});
+
+// SV-5 fix round 3 (M-3 + I-4 + the user-tier bullet): dump-confirmed against claude's own
+// `h()`/`D()`/`M()`/`b()`/`k()` workflow-discovery functions (claude CLI 2.1.250 / agent-sdk 0.3.250).
+describe("resolveWorkflowByName -- fix round 3: case sensitivity, size cap, duplicate override, user tier, settingSources (M-3 / I-4)", () => {
+  function scriptNamed(name: string, description = "d"): string {
+    return `export const meta = { name: "${name}", description: "${description}" };\nreturn 1;`;
+  }
+
+  test("`.js` is matched CASE-SENSITIVELY -- a `.JS` file is never discovered, matching claude's un-lower-cased `endsWith(\".js\")`", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "Weird.JS"), scriptNamed("shouty"));
+    const resolved = resolveWorkflowByName("shouty", { cwd, trustedWorkspace: true });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("a script over the pinned 524288-byte cap is silently skipped, like an unreadable file", () => {
+    const cwd = project();
+    const oversize = `${scriptNamed("huge")}\n// ${"x".repeat(600_000)}`;
+    writeFileSync(join(cwd, ".winter", "workflows", "huge.js"), oversize);
+    const resolved = resolveWorkflowByName("huge", { cwd, trustedWorkspace: true });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("a script at or under the cap still resolves", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "ok.js"), scriptNamed("fine"));
+    const resolved = resolveWorkflowByName("fine", { cwd, trustedWorkspace: true });
+    expect(resolved.ok).toBe(true);
+  });
+
+  test("a duplicate meta.name within one directory: the LATER file in sorted order overrides the earlier one (claude's own `k`/`S`)", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "a-first.js"), `export const meta = { name: "dup", description: "first" };\nreturn "first";`);
+    writeFileSync(join(cwd, ".winter", "workflows", "z-last.js"), `export const meta = { name: "dup", description: "last" };\nreturn "last";`);
+    const resolved = resolveWorkflowByName("dup", { cwd, trustedWorkspace: true });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.path).toBe(join(cwd, ".winter", "workflows", "z-last.js"));
+    expect(resolved.source).toContain('"last"');
+  });
+
+  function userHome(): string {
+    return mkdtempSync(join(tmpdir(), "winter-wf-userhome-"));
+  }
+
+  test("a user-tier workflow resolves from `<winterHome>/workflows`, UNGATED by trustedWorkspace", () => {
+    const winterHome = userHome();
+    mkdirSync(join(winterHome, "workflows"), { recursive: true });
+    writeFileSync(join(winterHome, "workflows", "mine.js"), scriptNamed("personal"));
+    const resolved = resolveWorkflowByName("personal", { cwd: "/nonexistent", trustedWorkspace: false, winterHome });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.source_kind).toBe("user");
+  });
+
+  test("with no winterHome given, the user tier is simply absent -- no throw, the pre-existing project-only error", () => {
+    const cwd = project();
+    const resolved = resolveWorkflowByName("personal", { cwd, trustedWorkspace: true });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("a PROJECT workflow overrides a USER workflow of the same meta.name (claude's own project-after-user insertion order)", () => {
+    const cwd = project();
+    const winterHome = userHome();
+    mkdirSync(join(winterHome, "workflows"), { recursive: true });
+    writeFileSync(join(winterHome, "workflows", "shared.js"), `export const meta = { name: "shared", description: "d" };\nreturn "user";`);
+    writeFileSync(join(cwd, ".winter", "workflows", "shared.js"), `export const meta = { name: "shared", description: "d" };\nreturn "project";`);
+    const resolved = resolveWorkflowByName("shared", { cwd, trustedWorkspace: true, winterHome });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.source_kind).toBe("project");
+    expect(resolved.source).toContain('"project"');
+  });
+
+  test("I-4: settingSources excluding \"project\" refuses the project tier even in a TRUSTED workspace", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "build.js"), SCRIPT);
+    const resolved = resolveWorkflowByName("build", { cwd, trustedWorkspace: true, settingSources: ["user"] });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("I-4: settingSources excluding \"user\" refuses the user tier even when winterHome is given", () => {
+    const winterHome = userHome();
+    mkdirSync(join(winterHome, "workflows"), { recursive: true });
+    writeFileSync(join(winterHome, "workflows", "mine.js"), scriptNamed("personal"));
+    const resolved = resolveWorkflowByName("personal", { cwd: "/nonexistent", trustedWorkspace: false, winterHome, settingSources: ["project"] });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("settingSources undefined allows every tier, matching claude's own default", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "build.js"), SCRIPT);
+    const resolved = resolveWorkflowByName("build", { cwd, trustedWorkspace: true, settingSources: undefined });
+    expect(resolved.ok).toBe(true);
+  });
+});
+
+describe("listWorkflowsForListing -- SV-5's three listing surfaces feed off this (fix round 3)", () => {
+  function scriptNamed(name: string, description: string): string {
+    return `export const meta = { name: "${name}", description: "${description}" };\nreturn 1;`;
+  }
+
+  test("lists project, user and plugin workflows together, plugin entries qualified as <plugin>:<meta.name>", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "build.js"), SCRIPT);
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-wf-listing-home-"));
+    mkdirSync(join(winterHome, "workflows"), { recursive: true });
+    writeFileSync(join(winterHome, "workflows", "mine.js"), scriptNamed("personal", "Mine"));
+    const pluginDir = mkdtempSync(join(tmpdir(), "winter-wf-listing-plugin-"));
+    mkdirSync(join(pluginDir, "workflows"), { recursive: true });
+    writeFileSync(join(pluginDir, "workflows", "flow-file.js"), scriptNamed("sv-flow", "Runs the flow"));
+
+    const listing = listWorkflowsForListing({
+      cwd,
+      trustedWorkspace: true,
+      winterHome,
+      pluginWorkflows: [{ name: "sv-plugin", workflowsPath: join(pluginDir, "workflows") }],
+    });
+
+    expect(listing).toContainEqual({ name: "build", description: "Builds", source: "project" });
+    expect(listing).toContainEqual({ name: "personal", description: "Mine", source: "user" });
+    expect(listing).toContainEqual({ name: "sv-plugin:sv-flow", description: "Runs the flow", source: "plugin" });
+  });
+
+  test("an untrusted workspace excludes the project entry but keeps user and plugin", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "build.js"), SCRIPT);
+    const listing = listWorkflowsForListing({ cwd, trustedWorkspace: false });
+    expect(listing.find((w) => w.name === "build")).toBeUndefined();
+  });
+
+  test("I-4: settingSources gates the listing exactly like resolution", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "build.js"), SCRIPT);
+    const listing = listWorkflowsForListing({ cwd, trustedWorkspace: true, settingSources: ["user"] });
+    expect(listing.find((w) => w.name === "build")).toBeUndefined();
+  });
+
+  test("a project entry overrides a same-named user entry -- one listing row, tagged \"project\"", () => {
+    const cwd = project();
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-wf-listing-collision-"));
+    mkdirSync(join(winterHome, "workflows"), { recursive: true });
+    writeFileSync(join(winterHome, "workflows", "shared.js"), scriptNamed("shared", "from user"));
+    writeFileSync(join(cwd, ".winter", "workflows", "shared.js"), scriptNamed("shared", "from project"));
+    const listing = listWorkflowsForListing({ cwd, trustedWorkspace: true, winterHome });
+    const rows = listing.filter((w) => w.name === "shared");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({ name: "shared", description: "from project", source: "project" });
+  });
+
+  test("entries are sorted by name within the user/project group", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "zeta.js"), scriptNamed("zeta", "z"));
+    writeFileSync(join(cwd, ".winter", "workflows", "alpha.js"), scriptNamed("alpha", "a"));
+    const listing = listWorkflowsForListing({ cwd, trustedWorkspace: true });
+    const names = listing.map((w) => w.name);
+    expect(names.indexOf("alpha")).toBeLessThan(names.indexOf("zeta"));
+  });
+
+  test("no plugins, no winterHome, no project dir contents -- an empty listing, never a throw", () => {
+    const cwd = project();
+    expect(listWorkflowsForListing({ cwd, trustedWorkspace: true })).toEqual([]);
   });
 });
 

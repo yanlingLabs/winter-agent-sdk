@@ -8,13 +8,20 @@
 // performs is the per-invocation persistence below, which is keyed by runId and is not a name store
 // at all.
 //
-// NO USER-LEVEL STORE. Norma resolved `<normaHome>/workflows/<name>.js` as a second, lower-priority
-// root. WS-11 §11 OQ2 records that whether the pinned runtime has a user-level store is UNCAPTURED,
-// and WS-01 forbids inventing names -- so this resolves the project convention only. Adding the user
-// root later is additive; shipping it now and finding the pin disagrees would not be.
+// USER-LEVEL STORE (SV-5, fix round 3, M-3's last bullet -- WS-11 §11 OQ2 CLOSED): the pinned
+// binary's own workflow-discovery module (claude CLI 2.1.250 / agent-sdk 0.3.250) reads a THIRD tier
+// through its storage backend at `{namespace:"userConfigDir", dir:"workflows"}`, tagged
+// `source:"userSettings"` and merged with the project tier before plugin/builtin. For the Winter leg
+// this is `<winterHome>/workflows` -- the SAME root `skills/store.ts`'s own user tier already reads
+// (`join(opts.winterHome, "skills")`), i.e. the RUN folder per SV-1/SV-2's rule, not
+// `WINTER_STORE_HOME` -- never the OS home directory Norma's old `<normaHome>/workflows` convention
+// named (WS-01 still forbids inventing a name; this one is dump-confirmed, not invented). Gated by
+// `settingSources` ("user" ∈ settingSources), NOT by `trustedWorkspace` -- claude's own `yo`
+// ("userSettings") check carries no trust condition, matching skills' "source gating, not trust
+// gating" rule (skills/store.ts's own header) rather than the project tier's R4-7 trust gate.
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { parseWorkflowMeta } from "./meta.ts";
 
 /**
@@ -35,7 +42,7 @@ export function projectWorkflowsDir(brand?: Pick<BrandProfile, "projectDirName">
 export const PROJECT_WORKFLOWS_DIR = projectWorkflowsDir();
 
 export type ResolvedWorkflowSource =
-  | { ok: true; source: string; path: string | undefined; source_kind: "project" | "builtin" | "plugin" }
+  | { ok: true; source: string; path: string | undefined; source_kind: "project" | "user" | "builtin" | "plugin" }
   | { ok: false; error: string };
 
 /** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the two fields workflow resolution needs. */
@@ -44,7 +51,11 @@ export interface PluginWorkflowSource {
   workflowsPath?: string;
 }
 
-export interface ResolveWorkflowByNameOptions {
+/**
+ * Shared by `resolveWorkflowByName` and `listWorkflowsForListing` -- resolution and listing read the
+ * SAME tiers under the SAME gates, so they can never disagree about what exists.
+ */
+export interface WorkflowDiscoveryOptions {
   cwd: string;
   /**
    * TRUST-GATED, deliberately, and this is a disclosed judgment call (see the lane report).
@@ -60,11 +71,10 @@ export interface ResolveWorkflowByNameOptions {
    * other plugin-contributed resource in this codebase (skills, agents, commands, output styles,
    * MCP servers) is not: a plugin is loaded because the HOST or the USER already decided to, outside
    * the repository, so gating it on workspace trust would make plugin behaviour depend on which
-   * directory the session happens to be in.
+   * directory the session happens to be in. The USER tier (below) is not gated on this bit either,
+   * for the same reason skills' user tier is not (skills/store.ts's header).
    */
   trustedWorkspace: boolean;
-  /** Injectable for the test that proves built-ins are consulted first; production passes nothing. */
-  builtins?: Record<string, string>;
   /** P7a (D19): the session's brand -- the project dot-dir workflows live under. Omitted = `WINTER_BRAND`. */
   brand?: Pick<BrandProfile, "projectDirName">;
   /**
@@ -73,6 +83,26 @@ export interface ResolveWorkflowByNameOptions {
    * through to "unknown workflow", exactly as it did before this field existed.
    */
   pluginWorkflows?: readonly PluginWorkflowSource[];
+  /**
+   * SV-5 fix round 3: the RESOLVED winter root (`SkillIndexOptions.winterHome`'s identical
+   * convention and identical naming rationale) -- `<winterHome>/workflows` is the user tier.
+   * Omitted means no user tier is read (every pre-fix-round-3 caller), not an error.
+   */
+  winterHome?: string | undefined;
+  /**
+   * Fix round 3 (I-4): source gating, mirroring `skills/store.ts`'s `sourcesAllow` exactly.
+   * Omitted = all tiers allowed (claude's own `settingSources` default). A caller that wants the
+   * project workflows directory (`projectWorkflowsDir`) un-read when the run's `settingSources`
+   * excludes `"project"` -- e.g. a `settingSources:["user"]` run that is ALSO
+   * `trustedWorkspace:true` -- must pass it; nothing derives it from `trustedWorkspace`, which is a
+   * different, narrower gate (R4-7) than this one.
+   */
+  settingSources?: SettingSource[] | undefined;
+}
+
+export interface ResolveWorkflowByNameOptions extends WorkflowDiscoveryOptions {
+  /** Injectable for the test that proves built-ins are consulted first; production passes nothing. */
+  builtins?: Record<string, string>;
 }
 
 /**
@@ -86,7 +116,20 @@ export function listBuiltinWorkflows(): string[] {
   return Object.keys(BUILTIN_WORKFLOWS);
 }
 
-/** Built-ins first, then a plugin (WS-21 §6.3 item 1) or the trusted project directory. Never throws. */
+/**
+ * Fix round 3 (M-3): the pinned binary's own oversize skip -- `var xh=524288` in the same chunk as
+ * the plugin workflow loader (dump-confirmed by content search; `"Plugin workflow ${o}: not a
+ * regular file or exceeds ${xh} bytes — skipping"` / `"Workflow ${l} exceeds ${xh} bytes —
+ * skipping"`). A file over this size is treated exactly like an unreadable one: silently skipped,
+ * never a hard error for the whole directory scan.
+ */
+const WORKFLOW_SCRIPT_MAX_BYTES = 524288;
+
+function sourcesAllow(settingSources: SettingSource[] | undefined, tier: SettingSource): boolean {
+  return settingSources === undefined || settingSources.includes(tier);
+}
+
+/** Built-ins first, then a plugin (WS-21 §6.3 item 1), the trusted project directory, or the user directory. Never throws. */
 export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameOptions): ResolvedWorkflowSource {
   // WS-21 §6.3 item 1, CORRECTED in the batch-2 fix round: a `<plugin>:<name>` qualified name -- the
   // SAME grammar every other plugin-namespaced identity in this codebase uses (skills, commands,
@@ -105,33 +148,11 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
     if (plugin?.workflowsPath === undefined) {
       return { ok: false, error: `unknown workflow "${name}": no plugin named "${pluginName}" is enabled with a workflows/ directory` };
     }
-    // A DIRECTORY SCAN, not a direct `<name>.js` join: identity is the SCRIPT's own declared
-    // `meta.name` (parsed via `parseWorkflowMeta`, never executed), not its filename -- the only
-    // way to find "the file whose declared identity is this qualified name" is to check every
-    // candidate, mirroring `parsePluginStyleFile`'s identical shape for output styles. A file whose
-    // meta fails to parse is silently skipped (claude's own "has invalid meta ... skipping"), not a
-    // hard error for the whole directory.
-    let entries: string[];
-    try {
-      entries = readdirSync(plugin.workflowsPath);
-    } catch {
-      return { ok: false, error: `unknown workflow "${name}": plugin "${pluginName}"'s workflows/ directory could not be read` };
+    const found = discoverWorkflowsInDir(plugin.workflowsPath).get(metaName!);
+    if (found === undefined) {
+      return { ok: false, error: `unknown workflow "${name}": no workflow with meta.name "${metaName}" in plugin "${pluginName}"'s workflows/ directory` };
     }
-    for (const entry of entries.sort()) {
-      if (!entry.toLowerCase().endsWith(".js")) continue;
-      const path = join(plugin.workflowsPath, entry);
-      let source: string;
-      try {
-        if (!statSync(path).isFile()) continue;
-        source = readFileSync(path, "utf8");
-      } catch {
-        continue;
-      }
-      const parsed = parseWorkflowMeta(source);
-      if (!parsed.ok || parsed.meta.name !== metaName) continue;
-      return { ok: true, source, path, source_kind: "plugin" };
-    }
-    return { ok: false, error: `unknown workflow "${name}": no workflow with meta.name "${metaName}" in plugin "${pluginName}"'s workflows/ directory` };
+    return { ok: true, source: found.source, path: found.path, source_kind: "plugin" };
   }
 
   if (!WORKFLOW_NAME_RE.test(name)) {
@@ -140,20 +161,128 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
   const builtin = (opts.builtins ?? BUILTIN_WORKFLOWS)[name];
   if (typeof builtin === "string") return { ok: true, source: builtin, path: undefined, source_kind: "builtin" };
 
+  // SV-5 (batch-2, second round -- the router same-view test): CORRECTED from a direct `<name>.js`
+  // join to the SAME directory-scan-by-meta.name resolution the plugin branch above uses. Measured
+  // on the pinned binary's own project-tier workflow discovery (a filesystem walk feeding the exact
+  // same `name: p.meta.name` shape the plugin loader's `v()` produces): identity is ALWAYS the
+  // script's own declared `meta.name`, never its filename, for every tier, not only plugins.
   const workflowsDir = projectWorkflowsDir(opts.brand);
-  if (!opts.trustedWorkspace) {
+  const projectEligible = opts.trustedWorkspace && sourcesAllow(opts.settingSources, "project");
+  if (projectEligible) {
+    const found = discoverWorkflowsInDir(join(opts.cwd, workflowsDir)).get(name);
+    if (found !== undefined) return { ok: true, source: found.source, path: found.path, source_kind: "project" };
+  }
+  // Fix round 3 (M-3's last bullet): the user tier, source-gated like skills' own user tier, never
+  // trust-gated (this file's header). Bare-name PRECEDENCE matches claude's own `b()`/`k()` merge: a
+  // project workflow overrides a user one of the same `meta.name` -- checked here BEFORE the user
+  // tier, so on a collision the project copy above already returned and this is never reached.
+  const userEligible = sourcesAllow(opts.settingSources, "user") && opts.winterHome !== undefined;
+  if (userEligible) {
+    const found = discoverWorkflowsInDir(join(opts.winterHome!, "workflows")).get(name);
+    if (found !== undefined) return { ok: true, source: found.source, path: found.path, source_kind: "user" };
+  }
+  if (!opts.trustedWorkspace && sourcesAllow(opts.settingSources, "project")) {
     return {
       ok: false,
       error: `workflow "${name}" was not resolved: ${workflowsDir}/ is only read in a TRUSTED workspace (a project workflow is executable code, like a project agent definition -- R4-7). Pass the script inline with \`script\`, or trust the workspace.`,
     };
   }
-  const path = join(opts.cwd, workflowsDir, `${name}.js`);
+  return {
+    ok: false,
+    error: `unknown workflow "${name}": no workflow with meta.name "${name}" in ${workflowsDir}/${userEligible ? ` or ${opts.winterHome}/workflows/` : ""}, and no built-in by that name`,
+  };
+}
+
+// --- Shared directory-scan-by-meta.name primitive (SV-5, batch-2 + fix round 3) --------------------
+//
+// A DIRECTORY SCAN, not a direct `<name>.js` join: identity is the SCRIPT's own declared `meta.name`
+// (parsed via `parseWorkflowMeta`, never executed), not its filename -- the only way to find "the
+// file whose declared identity is this name" is to check every candidate, mirroring
+// `parsePluginStyleFile`'s identical shape for output styles. A file whose meta fails to parse, is
+// not a regular file, or exceeds `WORKFLOW_SCRIPT_MAX_BYTES` is silently skipped (the pinned
+// binary's own "has invalid meta ... skipping" / "exceeds ... bytes ... skipping"), never a hard
+// error for the whole directory. Shared by resolution above and `listWorkflowsForListing` below, so
+// they can never disagree about which file answers to which name.
+//
+// M-3: matched CASE-SENSITIVELY (`.endsWith(".js")`, not lower-cased -- claude's own `h()`/`D()`
+// check `l.name.endsWith(".js")`/`r.name.endsWith(".js")` with no case-folding). On a duplicate
+// `meta.name` within one directory, the LATER file in sorted order overrides the earlier one
+// (claude's own `k`/`S`: `"Workflow ... would override ... but does not parse — keeping the ...
+// copy"`), returned as a `Map` so a later `.set()` for the same key replaces the value -- a
+// SIMPLIFICATION of claude's own rule, disclosed in the lane report: claude additionally gates the
+// override on a full-script-validity check (`bLn`) before letting the later file win, keeping the
+// earlier one when the later fails; Winter's meta parser deliberately never executes or fully
+// validates a script BODY (security rationale, meta.ts's own header), so there is no equivalent
+// validity oracle to gate on here -- the later file always wins.
+function discoverWorkflowsInDir(dir: string): Map<string, { name: string; description: string; path: string; source: string }> {
+  const out = new Map<string, { name: string; description: string; path: string; source: string }>();
+  let entries: string[];
   try {
-    if (!statSync(path).isFile()) throw new Error("not a regular file");
-    return { ok: true, source: readFileSync(path, "utf8"), path, source_kind: "project" };
+    entries = readdirSync(dir);
   } catch {
-    return { ok: false, error: `unknown workflow "${name}": no ${workflowsDir}/${name}.js in this project, and no built-in by that name` };
+    return out;
   }
+  for (const entry of entries.sort()) {
+    if (!entry.endsWith(".js")) continue;
+    const path = join(dir, entry);
+    let source: string;
+    try {
+      const stat = statSync(path);
+      if (!stat.isFile() || stat.size > WORKFLOW_SCRIPT_MAX_BYTES) continue;
+      source = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    const parsed = parseWorkflowMeta(source);
+    if (!parsed.ok) continue;
+    out.set(parsed.meta.name, { name: parsed.meta.name, description: parsed.meta.description, path, source });
+  }
+  return out;
+}
+
+export interface WorkflowListingEntry {
+  name: string;
+  description: string;
+  source: "project" | "user" | "plugin";
+}
+
+/**
+ * SV-5 (batch-2, second round, extended in fix round 3) -- the router same-view test: the pinned
+ * binary lists EVERY discovered workflow (user + project + plugin; built-in excluded, the pinned
+ * binary's own `d()`/`Ru()` gate that separately and Winter ships none -- see `BUILTIN_WORKFLOWS`)
+ * in the init `skills`/`slash_commands` fields and the model-facing Skill listing, named
+ * `<plugin>:<meta.name>` for a plugin workflow or bare `<meta.name>` for a user/project one --
+ * `getWorkflowCommands` in the pinned binary's own workflow-discovery module maps its FULL discovery
+ * result through a `{type:"prompt", name: o.name, description: o.description, ...}` projection,
+ * `o.name` already being the qualified/bare identity discovery assigned. `production-wiring.ts` is
+ * the one caller, folding this into all three listing surfaces.
+ *
+ * ORDER matches claude's own final merge in `j()`/`QX()`: plugin entries first (builtins would lead,
+ * but Winter has none to list), then user+project merged and name-sorted -- a project entry
+ * overriding a user entry of the same name the same way resolution above does, so listing and
+ * resolution can never disagree about which tier's copy is "the" workflow of that name.
+ */
+export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): WorkflowListingEntry[] {
+  const out: WorkflowListingEntry[] = [];
+  for (const plugin of opts.pluginWorkflows ?? []) {
+    if (plugin.workflowsPath === undefined) continue;
+    for (const w of [...discoverWorkflowsInDir(plugin.workflowsPath).values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      out.push({ name: `${plugin.name}:${w.name}`, description: w.description, source: "plugin" });
+    }
+  }
+  const merged = new Map<string, { name: string; description: string; source: "project" | "user" }>();
+  if (sourcesAllow(opts.settingSources, "user") && opts.winterHome !== undefined) {
+    for (const w of discoverWorkflowsInDir(join(opts.winterHome, "workflows")).values()) {
+      merged.set(w.name, { name: w.name, description: w.description, source: "user" });
+    }
+  }
+  if (opts.trustedWorkspace && sourcesAllow(opts.settingSources, "project")) {
+    for (const w of discoverWorkflowsInDir(join(opts.cwd, projectWorkflowsDir(opts.brand))).values()) {
+      merged.set(w.name, { name: w.name, description: w.description, source: "project" });
+    }
+  }
+  for (const w of [...merged.values()].sort((a, b) => a.name.localeCompare(b.name))) out.push(w);
+  return out;
 }
 
 // --- Persistence (WS-11 §1.3 + capture (3)) -------------------------------------------------------
