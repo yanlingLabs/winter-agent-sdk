@@ -2784,6 +2784,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // I1: the resolved root, so the P5-B carve-out and its stage-2 deny skip name the SAME
       // directory `workflows/store.ts` persists to.
       ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+      // The session outputs directory ($OUTDIR): a sandbox-writable place the protected floor's
+      // winter-home part does not cover (permissions/protected.ts's outputs carve-out).
+      ...(config.outputsDir !== undefined ? { outputsDir: config.outputsDir } : {}),
       // P7a (D19): the protected-path floor's own dot-dir and instructions file.
       brand: sessionBrand,
       // B-H1(a) / WS-12 §1: "will this exact Bash call run under the OS sandbox, with

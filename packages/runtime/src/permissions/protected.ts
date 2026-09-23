@@ -274,13 +274,69 @@ function basenameOf(absPath: string): string {
   return idx === -1 ? absPath : absPath.slice(idx + 1);
 }
 
+// --- The session OUTPUTS directory ($OUTDIR, `RuntimeConfig.outputsDir`) ---------------------------
+//
+// A host may give the session a directory for its deliverables and export it as `$OUTDIR` (the Bash
+// tool adds it to the sandbox's writable roots). Winter's own daemon places it INSIDE the winter home
+// (`<home>/outputs/<sessionId>`), which the protected floor covers wholesale -- so every write the
+// product told the model to make there was asked, under bypass as well. Same contract as the two
+// carve-outs above: it removes the WINTER-HOME floor from that subtree and grants nothing (the
+// directory is not a working directory for acceptEdits, and no mode allow changes).
+//
+// Narrower than them in two ways, because its path comes from configuration rather than a fixed shape:
+//   - it applies only to an outputs directory strictly INSIDE a winter home, below none of the
+//     daemon's own state (`run`, `runtimes`, `backups`, `projects`) and below no other protected
+//     directory -- a host that named the home itself, or `/repo/.git/out`, lifts nothing;
+//   - below it, the ordinary floors still hold: `$OUTDIR/.git/config` or `$OUTDIR/package.json` is as
+//     protected as it would be in any project.
+const WINTER_HOME_STATE_DIRS: ReadonlySet<string> = new Set(["run", "runtimes", "backups", "projects"]);
+
+/**
+ * The winter-home roots an outputs directory may sit inside: the resolved home and the brand's default
+ * `<home>/<homeDirName>`.
+ */
+function winterHomeRoots(home: string, resolvedWinterHome: string | undefined, brand: ProtectedBrand): string[] {
+  return [...new Set([...(resolvedWinterHome !== undefined && resolvedWinterHome.length > 0 ? [resolve(resolvedWinterHome)] : []), resolve(home, brand.homeDirName)])];
+}
+
+/** Is `outputsDir` (absolute) a directory the outputs carve-out may apply to? See the block above. */
+export function isCarvableOutputsDir(outputsDir: string, home: string, resolvedWinterHome: string | undefined, brand?: ProtectedBrand): boolean {
+  const b = brand ?? WINTER_BRAND;
+  const dir = resolve(outputsDir);
+  for (const root of winterHomeRoots(home, resolvedWinterHome, b)) {
+    if (dir === root || !dir.startsWith(root === "/" ? "/" : `${root}/`)) continue;
+    const below = pathSegments(dir.slice(root.length));
+    if (WINTER_HOME_STATE_DIRS.has(below[0]!.toLowerCase())) return false;
+    return !isInsideProtectedDirectory(`/${below.join("/")}`, b);
+  }
+  return false;
+}
+
+/**
+ * True when `absPath` is strictly inside one of `outputsDirs` (the caller's already-validated forms of
+ * one outputs directory -- its lexical path and its real path) and nothing BELOW that directory is
+ * itself protected.
+ */
+export function isOutputsCarveOut(absPath: string, outputsDirs: readonly string[], brand?: ProtectedBrand): boolean {
+  const b = brand ?? WINTER_BRAND;
+  for (const dir of outputsDirs) {
+    const root = resolve(dir);
+    if (!absPath.startsWith(`${root}/`)) continue;
+    const below = `/${pathSegments(absPath.slice(root.length)).join("/")}`;
+    if (below === "/") continue;
+    const basename = basenameOf(below).toLowerCase();
+    return !(isInsideProtectedDirectory(below, b) || PROTECTED_FILE_BASENAMES_LC.has(basename) || basename === b.instructionsFile.toLowerCase());
+  }
+  return false;
+}
+
 // WS-07 §6.7 protects WRITES specifically ("Writes to repository/runtime configuration are not
 // auto-approved") -- this primitive has no opinion on WHICH operation kind `path` came from; that
 // is the evaluator.ts seam's job (it only ever calls this for a call already known to be
 // write-shaped -- an Edit/Write's own file_path, or a path recognizeEditOperation extracted from a
 // Bash call). A plain Read of a protected path is correctly UNAFFECTED by this primitive because
 // the seam never calls it for a Read at all, not because of anything checked in here.
-export function isProtectedWrite(path: string, ctx: { cwd: string; home: string; winterHome?: string; brand?: ProtectedBrand }): boolean {
+export function isProtectedWrite(path: string, ctx: { cwd: string; home: string; winterHome?: string; brand?: ProtectedBrand; outputsDirs?: readonly string[] }): boolean {
   const brand = ctx.brand ?? WINTER_BRAND;
   const absPath = resolve(ctx.cwd, path);
   // RULING P5-B: checked FIRST, because the carve-out lives INSIDE the brand's own dot-dir, which
@@ -296,6 +352,9 @@ export function isProtectedWrite(path: string, ctx: { cwd: string; home: string;
   // freely. (Under `bypassPermissions` §6.7 already returns `allow`, so that mode was blocked by the
   // stage-2 managed deny alone -- the OTHER half, in evaluator.ts.)
   if (isMemoryCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
+  // The session outputs directory -- see `isOutputsCarveOut`. `outputsDirs` arrives already
+  // validated (`isCarvableOutputsDir`) by the evaluator, which also supplies its real path.
+  if (ctx.outputsDirs !== undefined && isOutputsCarveOut(absPath, ctx.outputsDirs, brand)) return false;
   // THE RESOLVED WINTER HOME, WHOLESALE (dist-session fixes, lane C C3). `isInsideProtectedDirectory`
   // protects it by its dot-dir SEGMENT, which is all a default home needs (`<home>/.winter/...`); a
   // `<PREFIX>HOME` pointing anywhere else (`/srv/winter-home`, `~/.winter-dev`) has no such segment,

@@ -60,3 +60,15 @@ test("autoAllowBashIfSandboxed does not clear an allowed excludedCommands entry 
   const excluded = await drive({ sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: true, excludedCommands: [command] } } as Partial<RuntimeConfig>, { command }, { behavior: "deny", message: "no" });
   expect(excluded.permissionRequests).toHaveLength(1);
 });
+
+// `RuntimeConfig.outputsDir` reaches the permission layer: under bypass a shell write to the literal
+// outputs path inside the winter home runs with no request; without it, the protected floor asks.
+test("config.outputsDir reaches the evaluator: bypass writes to the literal outputs path without a request", async () => {
+  const home = "/tmp/winter-outputs-engine-home";
+  const out = `${home}/outputs/s1`;
+  const base = { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, winterHome: home } as Partial<RuntimeConfig>;
+  const withOut = await drive({ ...base, outputsDir: out } as Partial<RuntimeConfig>, { command: `echo x > ${out}/report.txt` }, { behavior: "deny", message: "unused" });
+  expect(withOut.permissionRequests).toHaveLength(0);
+  const without = await drive(base, { command: `echo x > ${out}/report.txt` }, { behavior: "deny", message: "no" });
+  expect(without.permissionRequests).toHaveLength(1);
+});

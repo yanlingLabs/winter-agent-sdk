@@ -341,8 +341,14 @@ export interface Options {
   sandbox?: SandboxSettingsConfig;
   // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §5.3): a Winter product extension (the
   // `$OUTDIR` export + extra writable root), not a CC-pinned field. Pure passthrough; this package
-  // never creates or validates the directory. Absent means no OUTDIR export and no extra writable
-  // root, exactly as before this field existed.
+  // never creates or validates the directory -- the host creates it. Absent means no OUTDIR export
+  // and no extra writable root, exactly as before this field existed.
+  //
+  // Permissions: a shell write there counts as inside the session's writable directories, and when
+  // the directory sits inside the winter home (e.g. `<home>/outputs/<sessionId>`) the protected
+  // floor's winter-home part does not cover it -- the ordinary floors below it (`.git`, lockfiles,
+  // control-plane files) still do. It is not a working directory: no mode allow changes. A
+  // subagent gets none: no `$OUTDIR`, and a child's writable set stays narrower than its parent's.
   outputsDir?: string;
 
   // Part B item 1 (fix wave, P3 close-out): registry.ts's own `buildAdvertisedSet` (WS-06 §1.5) has

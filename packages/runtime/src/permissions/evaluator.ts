@@ -52,7 +52,7 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // field mapping (see that module's own header for why it lives there, not here).
 import { recognizeEditOperation, fileRulePathField, shellCommandOf, shellWriteConstraint } from "./edit-recognition.ts";
 import { flattenSubcommands } from "./shell-structure.ts";
-import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, isMemoryCarveOut, type ProtectedBrand } from "./protected.ts";
+import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, isMemoryCarveOut, isCarvableOutputsDir, type ProtectedBrand } from "./protected.ts";
 // P7a fix r1 (Important-2): the reading for an evaluation context that carries no brand -- every
 // hand-built one in this package's tests, and a host driving the evaluator directly.
 import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
@@ -348,6 +348,15 @@ export interface EvaluationContext {
    */
   winterHome?: string;
   /**
+   * The session's outputs directory (`RuntimeConfig.outputsDir`, exported to the shell as `$OUTDIR`).
+   * Two effects, both mirroring what the Bash tool already does with it (a sandbox-writable root):
+   * a shell write there is inside the session's writable directories (claude's sandbox-write-allowlist
+   * step), and, when it sits inside the winter home, the protected floor's winter-home part does not
+   * cover it (protected.ts's outputs carve-out). It is NOT a working directory: acceptEdits and the
+   * mode allows are unchanged. Absent = no outputs directory.
+   */
+  outputsDir?: string;
+  /**
    * P7a (D19): the session's brand -- the protected-path floor's own dot-dir and instructions file.
    *
    * Optional, `WINTER_BRAND` when absent, so every hand-built evaluation context in this package's
@@ -594,6 +603,24 @@ function isProtectedShellTarget(path: string, ctx: EvaluationContext): boolean {
  * rule-pattern `isWithinBounds` is the wrong tool here: it requires the link AND the target text to
  * match the unresolved root, which a `/var` -> `/private/var` cwd never satisfies.)
  */
+/**
+ * The outputs directory's forms the protected floor's carve-out may use -- its path and its real path
+ * (so a `/var` -> `/private/var` home matches at both symlink ends) -- or undefined when there is none,
+ * or when it is not a carvable place (protected.ts's `isCarvableOutputsDir`).
+ */
+function outputsCarveOutDirs(ctx: EvaluationContext): string[] | undefined {
+  if (ctx.outputsDir === undefined || ctx.outputsDir.length === 0) return undefined;
+  const lexical = resolve(ctx.cwd, ctx.outputsDir);
+  if (!isCarvableOutputsDir(lexical, ctx.home, ctx.winterHome, ctx.brand)) return undefined;
+  let real: string;
+  try {
+    real = resolveRealTarget(lexical);
+  } catch {
+    return [lexical];
+  }
+  return real === lexical ? [lexical] : [lexical, real];
+}
+
 function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boolean {
   let real: string;
   try {
@@ -601,7 +628,10 @@ function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boole
   } catch {
     return false; // unresolvable (EACCES mid-walk): never assume it is inside
   }
-  return boundedRoots(ctx).some((root) => {
+  // The outputs directory is sandbox-writable (the Bash tool's writable roots), which claude counts as
+  // an allowed write location for a shell target (its step 3.7) -- not a working directory otherwise.
+  const roots = [...boundedRoots(ctx), ...(ctx.outputsDir !== undefined && ctx.outputsDir.length > 0 ? [resolve(ctx.cwd, ctx.outputsDir)] : [])];
+  return roots.some((root) => {
     let realRoot: string;
     try {
       realRoot = resolveRealTarget(resolve(root));
@@ -658,9 +688,10 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
     // EITHER end classifies protected" mirrors rider 2's own deny-direction semantics — protected
     // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
     // deny/ask elsewhere in this phase.
+    const outputsDirs = outputsCarveOutDirs(ctx);
     const protectedPath = extractCandidateWritePaths(call, ctx).some((p) => {
       const absPath = resolve(ctx.cwd, p);
-      return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home, ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}), ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) })).denyIfEither;
+      return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home, ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}), ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}), ...(outputsDirs !== undefined ? { outputsDirs } : {}) })).denyIfEither;
     });
     if (protectedPath) return true;
     // A SHELL write also may not name a control-plane file anywhere (see isProtectedShellTarget).

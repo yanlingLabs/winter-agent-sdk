@@ -297,6 +297,21 @@ describe("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).toContain("[sandbox: sandboxed, override-requested]");
   });
 
+  t("$OUTDIR inside a winter home is sandbox-WRITABLE: the Bash tool adds outDir to the write fence", async () => {
+    const out = join(proj(), ".winter", "outputs", "s1");
+    mkdirSync(out, { recursive: true });
+    const res = await bash()({ command: 'echo hi > "$OUTDIR/report.txt"' }, fakeCtx({ outDir: out }));
+    expect(res.output).toContain("[exit 0]");
+    expect(readFileSync(join(out, "report.txt"), "utf8")).toBe("hi\n");
+  });
+
+  t("control: without outDir the same directory is outside the write fence", async () => {
+    const out = join(proj(), ".winter", "outputs", "s1");
+    mkdirSync(out, { recursive: true });
+    await bash()({ command: `echo hi > ${out}/report.txt` }, fakeCtx());
+    expect(existsSync(join(out, "report.txt"))).toBe(false);
+  });
+
   // T8 fix round 1 (coordinator-required, brief item 7): runForeground wraps the model's raw
   // command in a pwd-capture script before spawning (buildPwdCaptureScript) but passes
   // matchCommand: input.command through to runCommand -- excludedCommands must match what the

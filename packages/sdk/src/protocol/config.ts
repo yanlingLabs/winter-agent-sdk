@@ -394,7 +394,8 @@ export interface RuntimeConfig {
   // CC-pinned field -- the session's own configured "outputs" directory. Pure passthrough (like
   // `additionalDirectories`): this package creates nothing and validates nothing about the path; the
   // caller is responsible for it existing. Absent means "no OUTDIR export, no extra writable root,"
-  // byte-identical to every session before this field existed.
+  // byte-identical to every session before this field existed. Inside the winter home it is also
+  // outside the protected floor's winter-home part (see `Options.outputsDir`).
   outputsDir?: string;
   // Part B item 1 (fix wave, P3 close-out): Options.capabilities/toolSearchEnabled/insideSubagent/
   // familyMetadata's own wire mirrors -- see options.ts's own comment for the full rationale
