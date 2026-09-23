@@ -204,6 +204,104 @@ describe("matchFileRule -- glob semantics (WS-07 §3.1: `*` stays within one seg
   });
 });
 
+// SV-6 (the router same-view test, real claude 2.1.250): claude's file-rule matcher is the bundled
+// `ignore` npm package (dump-confirmed: its own `Ignore` class, `ignorecase` defaulting TRUE),
+// gitignore-style -- not Winter's pre-fix-round-3 "every character but `*` is literal" grammar. The
+// grammar change is UNIFORM across every anchor kind (bare/cwd-relative, `~/`, `//`, `/`+sourceDir --
+// they all funnel through this ONE segment compiler); anchor RESOLUTION itself (which base directory
+// each spelling resolves against) is untouched, so a `//`-anchored fixture here is representative
+// of every other anchor too. See paths.ts's own globSegmentToRegexBody header for the exact,
+// dump-decoded semantics each fixture below pins.
+describe("matchFileRule -- SV-6: claude's gitignore-style grammar ([...], ?, escapes, case-insensitivity)", () => {
+  test("`[abc]` is a character class -- matches any ONE of the listed characters", () => {
+    expect(matchFileRule("//etc/service[abc].conf", opts({ path: "/etc/servicea.conf", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/service[abc].conf", opts({ path: "/etc/serviceb.conf", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/service[abc].conf", opts({ path: "/etc/servicec.conf", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/service[abc].conf", opts({ path: "/etc/serviced.conf", direction: "allow" }))).toBe(false);
+  });
+
+  test("`[abc]` deny case: a deny rule with a character class denies exactly the class, not everything", () => {
+    expect(matchFileRule("//repo/[abc]/**", opts({ path: "/repo/a/secret.txt", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//repo/[abc]/**", opts({ path: "/repo/b/secret.txt", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//repo/[abc]/**", opts({ path: "/repo/z/secret.txt", direction: "denyAsk" }))).toBe(false);
+  });
+
+  test("a range inside a character class works (`[a-c]`)", () => {
+    expect(matchFileRule("//etc/service[a-c].conf", opts({ path: "/etc/serviceb.conf", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/service[a-c].conf", opts({ path: "/etc/servicez.conf", direction: "allow" }))).toBe(false);
+  });
+
+  test("`?` matches EXACTLY one character, never `/`", () => {
+    expect(matchFileRule("//etc/fo?.conf", opts({ path: "/etc/foo.conf", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/fo?.conf", opts({ path: "/etc/fo.conf", direction: "allow" }))).toBe(false); // zero chars -- ? is not *
+    expect(matchFileRule("//etc/fo?.conf", opts({ path: "/etc/fooo.conf", direction: "allow" }))).toBe(false); // two chars
+    expect(matchFileRule("//etc/fo?.conf", opts({ path: "/etc/fo/.conf", direction: "allow" }))).toBe(false); // ? never crosses a separator
+  });
+
+  test("`?` deny case", () => {
+    expect(matchFileRule("//repo/secret?.txt", opts({ path: "/repo/secret1.txt", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//repo/secret?.txt", opts({ path: "/repo/secret12.txt", direction: "denyAsk" }))).toBe(false);
+  });
+
+  test('`\\[wip\\]` escapes to a LITERAL "[wip]" -- not a character class', () => {
+    expect(matchFileRule("//notes/\\[wip\\]-plan.md", opts({ path: "/notes/[wip]-plan.md", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//notes/\\[wip\\]-plan.md", opts({ path: "/notes/w-plan.md", direction: "allow" }))).toBe(false); // proves it is NOT a class matching w/i/p
+  });
+
+  test("`\\*` escapes to a literal `*`", () => {
+    expect(matchFileRule("//notes/note\\*.md", opts({ path: "/notes/note*.md", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//notes/note\\*.md", opts({ path: "/notes/noteX.md", direction: "allow" }))).toBe(false); // proves it is NOT a wildcard
+  });
+
+  test("claude quirk, ported exactly: an escaped `\\?` never matches a real path (the backslash survives as a literal-backslash requirement)", () => {
+    expect(matchFileRule("//notes/note\\?.md", opts({ path: "/notes/note?.md", direction: "allow" }))).toBe(false);
+    expect(matchFileRule("//notes/note\\?.md", opts({ path: "/notes/noteX.md", direction: "allow" }))).toBe(false);
+    // Deny direction too -- a rule author who wrote `\?` expecting a literal-? deny gets NO
+    // protection, exactly like claude, not a Winter-invented safety net.
+    expect(matchFileRule("//notes/note\\?.md", opts({ path: "/notes/note?.md", direction: "denyAsk" }))).toBe(false);
+  });
+
+  test("`{}`, `!`, `(`, `)` and a literal space all match themselves literally", () => {
+    expect(matchFileRule("//notes/{draft}.md", opts({ path: "/notes/{draft}.md", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//notes/important!.md", opts({ path: "/notes/important!.md", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//notes/(final).md", opts({ path: "/notes/(final).md", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//notes/my notes.md", opts({ path: "/notes/my notes.md", direction: "allow" }))).toBe(true);
+  });
+
+  test("`{}`/`!` deny case", () => {
+    expect(matchFileRule("//repo/{secrets}/**", opts({ path: "/repo/{secrets}/key.pem", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//repo/{secrets}/**", opts({ path: "/repo/secrets/key.pem", direction: "denyAsk" }))).toBe(false); // the braces are LITERAL, not grouping/expansion
+  });
+
+  test("matching is CASE-INSENSITIVE, matching claude's own ignorecase:true default", () => {
+    expect(matchFileRule("//etc/Secret.conf", opts({ path: "/etc/secret.conf", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/secret.conf", opts({ path: "/ETC/SECRET.CONF", direction: "allow" }))).toBe(true);
+  });
+
+  test("case-insensitivity deny case", () => {
+    expect(matchFileRule("//repo/Secrets/**", opts({ path: "/repo/secrets/key.pem", direction: "denyAsk" }))).toBe(true);
+  });
+
+  test("the grammar change is uniform across anchors -- a bare, cwd-relative pattern gets it too", () => {
+    expect(matchFileRule("src/config[12].json", opts({ path: "/synthetic/proj/src/config1.json", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("~/notes/fo?.md", opts({ path: "/synthetic/home/notes/foo.md", direction: "allow" }))).toBe(true);
+  });
+
+  test("`[abc]`/`?` are recognised as wildcards by the single-segment bare-name special case too -- a bare `Read([abc])` is glob-compiled, not treated as an exact literal name", () => {
+    // Before this fix, isSingleSegmentDirectoryPattern only recognised `*` as "already a wildcard",
+    // so `[abc]`/`fo?` with no `/` and no `*` fell through to an EXACT STRING comparison against the
+    // literal text "[abc]"/"fo?" -- never matching a real single-character-class/wildcard target.
+    expect(matchFileRule("//etc/[abc]", opts({ path: "/etc/a", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc/fo?", opts({ path: "/etc/fox", direction: "allow" }))).toBe(true);
+  });
+
+  test("a malformed/unterminated character class never matches, never throws", () => {
+    expect(() => matchFileRule("//etc/service[abc.conf", opts({ path: "/etc/service[abc.conf", direction: "allow" }))).not.toThrow();
+    expect(matchFileRule("//etc/service[abc.conf", opts({ path: "/etc/servicea.conf", direction: "allow" }))).toBe(false);
+    expect(matchFileRule("//etc/service[abc.conf", opts({ path: "/etc/service[abc.conf", direction: "denyAsk" }))).toBe(false);
+  });
+});
+
 // P2 fix-wave item 3: the same-segment multiple-`*` cap (residual gap this module's own header
 // used to name as "deliberately deferred" alongside MAX_DOUBLE_STARS -- now closed). UNLIKE
 // MAX_DOUBLE_STARS (uniformly inert on both directions, mitigated entirely by add-time rejection),

@@ -130,10 +130,30 @@ function joinBaseAndRest(base: string, rest: string): string {
 // four spellings WS-07 §3.1 or the task's own ruling names, but the identical shape structurally,
 // and treating it identically is the more defensible single rule rather than four hand-picked
 // string literals (capture-noted, like every other anchor-edge judgment call in this file).
+// SV-6 (the router same-view test, real claude 2.1.250): the "author already said how far the rule
+// reaches" test must recognise EVERY glob metacharacter claude's own grammar has, not only `*` --
+// `Read(fo?)` or `Read([abc])` are just as much an explicit wildcard as `Read(fo*)`, so they must
+// compile through the general glob path below rather than being treated as an exact bare name.
+// Escape-aware: `\*`, `\?`, `\[` are literal characters to the AUTHOR (whatever the compiled regex
+// ultimately does with them -- see globSegmentToRegexBody's own header for `\?`'s claude-side
+// quirk), so a pattern that is ENTIRELY escaped metacharacters (e.g. `Read(\*)`, matching a literal
+// filename "*") is still a bare single-segment name, not a wildcard.
+function hasUnescapedWildcard(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i++; // skip the escaped character -- it is literal, not a wildcard, regardless of which one it is
+      continue;
+    }
+    if (ch === "*" || ch === "?" || ch === "[") return true;
+  }
+  return false;
+}
+
 function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
   const trimmed = stripTrailingSlash(anchor.rest);
   if (trimmed.length === 0) return true;
-  return !trimmed.includes("/") && !trimmed.includes("*");
+  return !trimmed.includes("/") && !hasUnescapedWildcard(trimmed);
 }
 
 function resolveTargetPath(path: string, cwd: string): string {
@@ -158,16 +178,120 @@ function escapeRegexChar(ch: string): string {
   return REGEXP_SPECIAL.test(ch) ? "\\" + ch : ch;
 }
 
-// One path SEGMENT's glob body: every `*` becomes `[^/]*` (WS-07 §3.1: "`*` stays within one path
-// segment" -- and, mirroring grammar.ts's own Bash-glob convention, a `*` also matches zero
-// characters, so "build*" matches literal "build" too); every other character is regex-escaped.
+// SV-6 (the router same-view test, real claude 2.1.250): the ABSOLUTE-PATH-PATTERN grammar, ported
+// to match claude's own file-rule matcher exactly -- the bundled `ignore` npm package (dump-
+// confirmed, claude CLI 2.1.250 / agent-sdk 0.3.250: the package's own `Ignore` class,
+// `constructor({ignorecase:t=!0,ignoreCase:e=t,...})`, `ignorecase` defaulting TRUE), not Winter's
+// own pre-fix-round-3 "every character but `*` is literal" grammar. Exact semantics implemented
+// (measured/decoded against the bundled package's own REPLACERS pipeline, dump-confirmed):
+//
+//   - `*` matches zero or more characters WITHIN one path segment (unchanged from before this fix --
+//     WS-07 §3.1's own "`*` stays within one path segment", and "build*" matching bare "build" too).
+//   - `?` matches EXACTLY ONE character, never `/` (the `ignore` package's own
+//     `[/(?!\\)\?/g, () => "[^/]"]` replacer).
+//   - `[...]` is a CHARACTER CLASS, passed through to the compiled regex near-verbatim (the
+//     package's own bracket-expression replacer keeps the class body largely as authored; a
+//     malformed class -- unterminated, or one whose *compiled* regex construction throws for any
+//     reason -- degrades to an impossible class (`[]`, matches nothing), the SAME never-match
+//     posture the package's own replacer falls back to for its equivalent malformed cases, rather
+//     than a thrown SyntaxError propagating out of a rule-matching call).
+//   - `\[` (and its natural pair `\]`) escapes to a literal `[`/`]` -- the escape the package's own
+//     grammar meaningfully recognises (its bracket replacer's `e===g` branch: an escaped `[` is
+//     re-escaped as a literal match and never opens a class; a `]` is not a metacharacter outside
+//     an open class to begin with, so escaping it is a courtesy pairing, not a distinct mechanism).
+//   - `\*` escapes to a literal `*` -- recognised the same deliberate way (the package's own
+//     star-wildcard replacer only ever converts a run of UNESCAPED stars).
+//   - `\?` is a CLAUDE-SIDE QUIRK, not a Winter simplification, and is ported exactly rather than
+//     "fixed": the package's grammar has no dedicated `\?`-escape rule the way it does for `[`/`*`,
+//     so the backslash is not consumed as an escape at all -- it survives into the compiled pattern
+//     as a LITERAL BACKSLASH CHARACTER requirement immediately before the (still-wildcarded) `?`
+//     slot. No real path segment contains a literal backslash, so an author-written `\?` compiles
+//     to something that can never match a real target -- "an escaped `\?` never matches" is
+//     therefore an accurate description of the OBSERVABLE behaviour, not a bug Winter is expected to
+//     paper over.
+//   - `{`, `}`, `(`, `)`, `!`, `#` and a literal space all match themselves LITERALLY, exactly as
+//     written -- none of them carry glob meaning inside a pattern body (`!`/`#` are gitignore
+//     LINE-level directives -- negation / comment -- which do not apply here: a `Read`/`Edit`
+//     specifier is one rule's pattern text, never a multi-line ignore-file body).
+//   - Every other character is an ordinary literal, regex-escaped only when it is itself a regex
+//     metacharacter (unchanged from before this fix).
+//
+// Case-insensitivity is applied by the CALLER (compileFsGlobToRegex, the `i` flag) rather than
+// here, since it is a whole-regex construction concern, not a per-segment one.
+//
 // Never called with an actual "**" segment -- compileFsGlobToRegex intercepts that case first.
 function globSegmentToRegexBody(segment: string): string {
   let out = "";
-  for (const ch of segment) {
-    out += ch === "*" ? "[^/]*" : escapeRegexChar(ch);
+  for (let i = 0; i < segment.length; i++) {
+    const ch = segment[i]!;
+    if (ch === "\\") {
+      const next = segment[i + 1];
+      if (next === "[") {
+        out += "\\[";
+        i++;
+        continue;
+      }
+      if (next === "]") {
+        // The closing half of `\[wip\]`'s own escape: the `ignore` package's bracket replacer finds
+        // a class body only up to the first UNESCAPED `]`, then trims a lone escaping backslash
+        // before it to nothing -- the bare `]` that remains is not a metacharacter outside an open
+        // `[` in the first place, so it already matches literally on its own. Handled explicitly
+        // here (rather than relying on that fact alone) so `\]` reads as one deliberate escape pair
+        // with `\[`, not as "an unrecognised escape whose backslash survives literally" the way
+        // `\?` and everything else below does.
+        out += "\\]";
+        i++;
+        continue;
+      }
+      if (next === "*") {
+        out += "\\*";
+        i++;
+        continue;
+      }
+      if (next === "?") {
+        // The "\? never matches" quirk, ported exactly -- see this function's own header. The
+        // literal backslash requirement is what makes it unmatchable against a real path.
+        out += "\\\\[^/]";
+        i++;
+        continue;
+      }
+      // No other escape is meaningfully recognised by claude's own grammar either -- the backslash
+      // itself is just another literal character to match, like every other unescaped one.
+      out += "\\\\";
+      continue;
+    }
+    if (ch === "*") {
+      out += "[^/]*";
+      continue;
+    }
+    if (ch === "?") {
+      out += "[^/]";
+      continue;
+    }
+    if (ch === "[") {
+      const close = segment.indexOf("]", i + 1);
+      if (close === -1) {
+        out += "[]"; // unterminated -- never-matches, mirroring the ignore package's own fallback
+        break;
+      }
+      const body = segment.slice(i + 1, close);
+      out += `[${sanitizeCharClassBody(body)}]`;
+      i = close;
+      continue;
+    }
+    out += escapeRegexChar(ch);
   }
   return out;
+}
+
+// The interior of a `[...]` character class, made SAFE for a real JS regex character class while
+// keeping it near-verbatim: a literal backslash inside the class is re-escaped (so it can never be
+// misread as an unintended JS regex class escape, e.g. `\d`, that the pattern's author did not
+// write with regex-metacharacter intent) -- everything else, including `^` (negation) and `-`
+// (ranges), passes through exactly as authored, matching the `ignore` package's own
+// near-verbatim-passthrough posture for a class body.
+function sanitizeCharClassBody(body: string): string {
+  return body.replace(/\\/g, "\\\\");
 }
 
 // Compiles a full ABSOLUTE pattern (anchor base + rest, still containing `*`/`**` tokens) into a
@@ -275,12 +399,22 @@ export function exceedsStarsPerSegmentCap(pattern: string): boolean {
 // rule rather than three positional variants, since WS-07 §3.1 pins "`**` crosses directories" as
 // one general fact, not gitignore's own fuller grammar. Flagged in the report; a one-line change
 // (require 1+ reps only when the "**" is the LAST segment) if a differential capture disagrees.
+// SV-6: `i` (case-insensitive), matching claude's own matcher exactly -- the bundled `ignore`
+// package's `ignorecase` option defaults TRUE (dump-confirmed, this function's own sibling comment
+// on globSegmentToRegexBody). A character class whose body is malformed enough to make the FINAL
+// regex construction itself throw (a real, if rare, possibility despite sanitizeCharClassBody's own
+// escaping) degrades to never-matching rather than propagating a SyntaxError out of a rule-matching
+// call -- the same never-match posture this compiler already gives an unterminated `[...]`.
 function compileFsGlobToRegex(segments: string[]): RegExp {
   let out = "";
   for (const seg of segments) {
     out += seg === "**" ? "(?:/[^/]+)*" : "/" + globSegmentToRegexBody(seg);
   }
-  return new RegExp(`^${out}$`);
+  try {
+    return new RegExp(`^${out}$`, "i");
+  } catch {
+    return /(?!)/; // never matches anything -- fails closed for a malformed class, not a throw
+  }
 }
 
 // Task 5 (Ruling P2-E): rule-add-time probe for the SAME cap compileFsGlobToRegex's own caller
