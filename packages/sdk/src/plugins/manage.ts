@@ -281,7 +281,13 @@ async function readKnownMarketplacesFile(o: PluginManagerOptions): Promise<Known
 }
 
 async function writeKnownMarketplacesFile(path: string, file: KnownMarketplacesFile): Promise<void> {
-  await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  // Under the lock, writers are already serialized against each other -- but a READER never takes
+  // the lock (claude's own startup read doesn't either), and `readKnownMarketplacesFile` rethrows
+  // anything that isn't ENOENT from `JSON.parse`. A plain in-place write would let a concurrent
+  // reader observe a torn/partial file mid-write and throw a `SyntaxError`. Temp-then-rename (the
+  // same helper `installed_plugins.json` uses) keeps every reader seeing either the old complete
+  // content or the new complete content, never a partial one, regardless of who holds the lock.
+  await writeJsonAtomicNoLock(path, file);
 }
 
 // --- directory marketplace manifests (read in place, F15/§5.2) -----------------------------------
