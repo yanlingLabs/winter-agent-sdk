@@ -776,7 +776,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // get origin "settings" -- the identical mapping `ORIGIN_BY_SETTING_SOURCE` already gives the
   // settings.json `local`/`user` tiers (this file's own comment there: "local is gitignored and
   // personal and carries user authority", "user is the user's own file"), which is ungated by
-  // design. `.winter/mcp.json` (`projectMcp`) keeps its OWN "project" origin and its trust gate --
+  // design. The project-tier `mcp.json` (`projectMcp`) keeps its OWN "project" origin and its trust gate --
   // merging it into the ungated bucket to force a literal three-way order would strip that gate,
   // which is a security regression `resolveMcpServerSources`'s whole "project origin" mechanism
   // exists to prevent (mcp/lifecycle.ts, outside this lane's ownership, is the only place a new

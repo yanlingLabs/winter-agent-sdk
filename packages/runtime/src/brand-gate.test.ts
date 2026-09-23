@@ -842,6 +842,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/context/memory.ts:82": "renderAutoMemoryContextValue's `instructionsFile` DEFAULT; the assembler passes `brand.instructionsFile` (M-1's fix)",
   "packages/runtime/src/context/winter-md.ts:48": "WINTER_MD_BASENAME -- Winter's own value; a session's comes from `brand.instructionsFile`",
   "packages/runtime/src/settings/env-filter.ts:64": "ALL_TIER_REFUSED_ENV's WINTER_HOME entry -- a module-scope CONSTANT list (envName(WINTER_BRAND, \"HOME\")), the identical pattern WINTER_MD_BASENAME above already uses; a settings-env filter has no per-call brand to thread, only the router's own env-name derivation, which is always WINTER_BRAND's for this SDK's own runtime",
+  "packages/runtime/src/settings/env-filter.ts:102": "HOST_MANAGED_REFUSED_ENV_PATTERNS' Winter-brand-twin entry (fix round 1, item 3) -- the SAME module-scope CONSTANT list as line 64 above, for the identical reason: no per-call brand to thread",
   "packages/runtime/src/plugins/manifest.ts:23": "WINTER_PLUGIN_MANIFEST_DIR -- Winter's own value; `pluginManifestDirs(brand)` derives a session's",
   "packages/runtime/src/provider/classifier/prompt.ts:265": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix)",
   "packages/runtime/src/permissions/protected.ts:92": "the SEED of the protected set; `isProtectedWrite` adds the session brand's own file per call",
@@ -853,7 +854,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/provider-runtime/src/adapters/openai/codex-config.ts:62": "CODEX_ORIGINATOR -- the same default, exported for the fixtures that assert it",
   "packages/provider-runtime/src/adapters/openai/xai-oauth.ts:63": "DOCUMENTATION ONLY (that row's own comment): nothing reads it; all three wire sites read `activeWinterIdentity().product`",
   // --- (b) the `from` side of a rename, or a comparison against the default ------------------------
-  "packages/runtime/src/tools/registry.ts:788": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name",
+  "packages/runtime/src/tools/registry.ts:797": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name (line shifted by WS-21 §6.3 item 4's storeHome field, fix round 1)",
   "packages/runtime/src/mcp/winter-server.ts:38": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side",
   "packages/runtime/src/context/winter-code-preset.ts:48": "WINTER_CODE_PRESET_VERSION -- an ATTRIBUTION of who authored the preset, not a name a reuser renames",
   // --- scripts: this repository's own harness ------------------------------------------------------
