@@ -249,11 +249,23 @@ interface RootGroup<TEntry> {
   ig: ReturnType<typeof ignoreFactory>;
 }
 
+// Fix round 5, N-1 (the re-review of 57e7fef..20b623e, Important): the pre-fix version below
+// rejected every relative path starting with the literal two characters ".." -- a substring-prefix
+// test, not a path-segment test -- which silently skipped an entire rule group for a real,
+// non-escaping name like "..x/evil.sh" or "..cache/.env". Ported exactly from the real package's own
+// `isPathValid` (index.js, `ignore@7.0.5`): `checkPath.isNotRelative` tests
+// `REGEX_TEST_INVALID_PATH = /^\.{0,2}\/|^\.{1,2}$/` -- a LEADING `/`, `./` or `../` segment, or the
+// bare strings "." / ".." exactly, never a name that merely starts with ".." without a following
+// separator. `relative()` already normalizes `.`/`..` internally, so a target genuinely outside
+// `root` shows up here as a string starting with `../` (or being exactly `..`), which this regex
+// still catches -- N-1 narrows the check, it does not remove the traversal guard.
+const INVALID_RELATIVE_PATH = /^\.{0,2}\/|^\.{1,2}$/;
+
 function isPathValidRelative(rel: string): boolean {
-  // `ignore#isPathValid`'s own job for a RELATIVE path candidate: never absolute, never escaping
-  // the root via a leading `..` segment. `relative()` already normalizes `.`/`..` internally, so a
-  // target outside `root` shows up here as a string starting with `..`.
-  return rel !== "" && !rel.startsWith("..") && rel !== ".";
+  // The real package's own `checkPath` rejects an EMPTY path as a separate, prior case (`ignore#test`
+  // throws on it rather than falling through to `isPathValid`'s regex, which does not itself match
+  // "") -- kept as an explicit guard here for the same reason.
+  return rel !== "" && !INVALID_RELATIVE_PATH.test(rel);
 }
 
 /**

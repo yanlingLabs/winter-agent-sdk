@@ -36,6 +36,33 @@ describe("C-1: claude's file-rule pipeline, dump-confirmed probe rows (reviewer 
   });
 });
 
+// Fix round 5, N-1 (the re-review of 57e7fef..20b623e, Important): `isPathValidRelative` rejected
+// every relative path starting with the LITERAL TWO CHARACTERS "..", including a valid name like
+// "..x/evil.sh" -- a substring-prefix check, not a path-segment check. Claude's own `Ma` uses the
+// real package's own `isPathValid` (`REGEX_TEST_INVALID_PATH = /^\.{0,2}\/|^\.{1,2}$/`, this
+// module's own 7.0.5 fingerprint #2 from the C-1 commit), which rejects only a LEADING `/`, `./` or
+// `../` segment, or the bare strings "." / ".." -- never a name that merely starts with the two
+// characters ".." without being followed by a path separator. Probe rows verbatim from the re-review.
+describe("N-1: a directory/file name starting with '..' as a literal prefix is NOT a traversal escape", () => {
+  test("deny *.sh matches /w/proj/..x/evil.sh", () => {
+    expect(matchOne("*.sh", "/w/proj/..x/evil.sh", "denyAsk")).toBe(true);
+  });
+
+  test("deny .env matches /w/proj/..cache/.env", () => {
+    expect(matchOne(".env", "/w/proj/..cache/.env", "denyAsk")).toBe(true);
+  });
+
+  test("deny secrets matches /w/proj/..a/secrets/k (a bare no-inner-slash pattern matches at any depth)", () => {
+    expect(matchOne("secrets", "/w/proj/..a/secrets/k", "denyAsk")).toBe(true);
+  });
+
+  test("a genuine parent-directory escape (../x) is still rejected -- N-1 narrows the check, it does not remove it", () => {
+    // relative(cwd, path) itself never produces a literal ".." segment for an absolute path already
+    // under cwd, so this is exercised at the primitive directly: the real package's own guard.
+    expect(matchOne("*.sh", "/w/other/evil.sh", "denyAsk")).toBe(false); // /w/other is outside /w/proj entirely -- relative() yields "../other/evil.sh"
+  });
+});
+
 describe("Ruling: Winter's allow-exact-only asymmetry is RETIRED", () => {
   test("allow foo matches /w/proj/a/foo, not only /w/proj/foo -- claude's own behaviour", () => {
     expect(matchOne("foo", "/w/proj/a/foo", "allow")).toBe(true);
