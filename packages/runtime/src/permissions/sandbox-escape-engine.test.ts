@@ -53,7 +53,8 @@ test("allowUnsandboxedCommands: false -- the flag removes no sandbox, so a read-
 // `autoAllowBashIfSandboxed` pays for containment, so it may only clear a command the Bash tool will
 // actually run sandboxed. An allowed `excludedCommands` entry runs UNSANDBOXED (`resolveExecutionPath`
 // row 3), and the predicate used to re-spell the table without that row.
-test("autoAllowBashIfSandboxed does not clear an allowed excludedCommands entry (it runs unsandboxed)", async () => {
+// The control half needs a REAL sandbox (seatbelt), so this runs on darwin only, like its siblings.
+test.skipIf(process.platform !== "darwin")("autoAllowBashIfSandboxed does not clear an allowed excludedCommands entry (it runs unsandboxed)", async () => {
   const command = "touch /tmp/winter-excluded-marker";
   const sandboxed = await drive({ sandbox: { enabled: true, autoAllowBashIfSandboxed: true } } as Partial<RuntimeConfig>, { command }, { behavior: "deny", message: "unused" });
   expect(sandboxed.permissionRequests).toHaveLength(0); // control: a sandboxed run is auto-allowed
