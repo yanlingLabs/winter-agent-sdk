@@ -1951,6 +1951,38 @@ describe("SV-5: plugin/project/user workflows are listed in all three init surfa
     }
   });
 
+  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): the args value
+  // must be ESCAPED the way claude's own S(e) does it -- end to end, through the REAL command
+  // resolver, with a literal " and \ in the typed args (the ruling's own named test case).
+  test("fix round 6: a workflow invoked with a quote and a backslash in its args escapes them, not breaking the invoke line's own quoting", async () => {
+    const pluginDir = join(home, "plugin-src", "sv-plugin-escape");
+    writeSvPluginWorkflow(pluginDir);
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "sv-plugin-escape@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "sv-plugin-escape@m": true } });
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv6-escape", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const result = await wiring.engineOptions.commandResolver!.resolve(String.raw`/sv-plugin-escape:sv-flow he said "hi" then C:\path`, cwd);
+      expect(result.kind).toBe("expand");
+      if (result.kind !== "expand") return;
+      const args = String.raw`he said "hi" then C:\path`;
+      expect(result.text).toContain(`args: ${JSON.stringify(args)}`);
+      // The escaped text is valid JSON on its own -- round-tripping it recovers the ORIGINAL,
+      // unescaped args exactly, proving this is not merely "looks escaped" but genuinely is.
+      const embedded = result.text.match(/args: (".*")\s*\}\)/)?.[1];
+      expect(embedded).toBeDefined();
+      expect(JSON.parse(embedded!)).toBe(args);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   // Fix round 4 (I-E, the router same-view test): the coordinator's own required test -- proves the
   // FULL chain through the real production wiring, not just the listing: Skill("sv-plugin:sv-flow")
   // resolves through the REAL Skill tool executor and its body instructs the model to invoke the

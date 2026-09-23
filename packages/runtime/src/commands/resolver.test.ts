@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillIndex, PROJECT_PLUGIN_NAME } from "../skills/store.ts";
-import { FilesystemCommandResolver } from "./resolver.ts";
+import { FilesystemCommandResolver, substituteArguments } from "./resolver.ts";
 import { BUILTIN_SLASH_COMMANDS, buildSlashCommandListing, slashCommandNames } from "./builtins-listing.ts";
 
 const tempDirs: string[] = [];
@@ -441,5 +441,41 @@ describe("m2: a command file may not claim a qualified `<plugin>:<name>` identit
     writeCommand(repo, "Fix_Bug", "FIX IT");
     const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome: mkTemp("winter-cmd-m2-ok-home-") });
     expect(await resolver.resolve("/Fix_Bug", repo)).toMatchObject({ kind: "expand", text: "FIX IT" });
+  });
+});
+
+// Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): `$ARGUMENTS_JSON`,
+// alongside the pre-existing raw `$ARGUMENTS` -- substitutes with `JSON.stringify(args)`, matching
+// claude's own `S(e)` escaping (dump-confirmed at `createWorkflowCommand`'s `getPromptForCommand`,
+// inferred to be JSON-string-quoting from its call-site shape -- applied to a plain, always-defined
+// string, used with no additional quotes around it in the template).
+describe("substituteArguments -- fix round 6, $ARGUMENTS_JSON (JSON.stringify-escaped args)", () => {
+  test("a plain args value is quoted, same visible result as the raw token for a string with nothing to escape", () => {
+    expect(substituteArguments("args: $ARGUMENTS_JSON", "some args here")).toBe('args: "some args here"');
+  });
+
+  test("no arguments substitutes an empty JSON string, not an empty raw string", () => {
+    expect(substituteArguments("args: $ARGUMENTS_JSON", "")).toBe('args: ""');
+  });
+
+  test("a DOUBLE QUOTE in the args is escaped, not left to break the surrounding literal", () => {
+    expect(substituteArguments('args: $ARGUMENTS_JSON', 'he said "hi"')).toBe('args: "he said \\"hi\\""');
+  });
+
+  test("a BACKSLASH in the args is escaped", () => {
+    expect(substituteArguments("args: $ARGUMENTS_JSON", "a\\b")).toBe('args: "a\\\\b"');
+  });
+
+  test("both a backslash and a quote together are escaped correctly, in combination", () => {
+    const args = 'C:\\path\\"quoted"';
+    expect(substituteArguments("args: $ARGUMENTS_JSON", args)).toBe(`args: ${JSON.stringify(args)}`);
+  });
+
+  test("$ARGUMENTS_JSON is substituted BEFORE the plain $ARGUMENTS token, so the longer token's own text is never mangled by the shorter one's replace", () => {
+    expect(substituteArguments("$ARGUMENTS_JSON then $ARGUMENTS", "x")).toBe('"x" then x');
+  });
+
+  test("the plain $ARGUMENTS token is UNCHANGED -- raw, unescaped, exactly as R5-14 pinned it", () => {
+    expect(substituteArguments("args: $ARGUMENTS", 'he said "hi"')).toBe('args: he said "hi"');
   });
 });

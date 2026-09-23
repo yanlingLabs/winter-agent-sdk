@@ -386,15 +386,25 @@ export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): Workflo
  * Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): `/plugin:name some args` must
  * carry `some args` into the invoke line as `Workflow({ name, args })`, matching claude. This
  * body is a SINGLE static string shared by BOTH the `Skill` tool door and the `/name args`
- * slash-command door -- and only the LATTER substitutes `$ARGUMENTS` (`commands/resolver.ts`'s own
- * "DISCLOSED ASYMMETRY" header: the Skill tool hands a body over verbatim, never substituting).
- * Baking `args: "$ARGUMENTS"` into the ONE unconditional invoke line would leave a literal,
- * unsubstituted `"$ARGUMENTS"` token in what the model sees through the Skill-tool door, which is
+ * slash-command door -- and only the LATTER substitutes `$ARGUMENTS`/`$ARGUMENTS_JSON`
+ * (`commands/resolver.ts`'s own "DISCLOSED ASYMMETRY" header: the Skill tool hands a body over
+ * verbatim, never substituting). Baking an args token into the ONE unconditional invoke line would
+ * leave it literal, unsubstituted, in what the model sees through the Skill-tool door, which is
  * worse than dropping args entirely. So the args-carrying line is a SECOND, explicitly CONDITIONAL
- * sentence: it still contains the literal `$ARGUMENTS` token (nothing else can make the
- * slash-command door's substitution reach it), but is worded so a model reading it unsubstituted
- * (the Skill-tool door, or a bare `/name` with nothing after it, where `$ARGUMENTS` substitutes to
- * `""`) recognises it does not apply and falls back to the first, unconditional line instead.
+ * sentence: it still contains the literal token (nothing else can make the slash-command door's
+ * substitution reach it), but is worded so a model reading it unsubstituted (the Skill-tool door, or
+ * a bare `/name` with nothing after it, where the tokens substitute to `""`/`'""'`) recognises it
+ * does not apply and falls back to the first, unconditional line instead.
+ *
+ * Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): the args value must
+ * be ESCAPED the way claude's own `S(e)` does, matching `createWorkflowCommand`'s
+ * `getPromptForCommand` (dump-confirmed: `a=e?\`{ name: ${i}, args: ${S(e)} }\`:...\`, i=S(o.name)`
+ * -- inferred to be JSON-string-quoting from the call-site shape: applied to a plain, always-defined
+ * string, used with no additional quotes around it). Using the RAW `$ARGUMENTS` token inside
+ * hand-written quotes (round 5's own shape) would let a literal `"` or `\` in the typed args break
+ * out of the quoted literal. `$ARGUMENTS_JSON` (`commands/resolver.ts`'s new second token) substitutes
+ * with `JSON.stringify(args)` instead -- already quoted and escaped -- so this line writes NO quotes
+ * of its own around it.
  */
 export function buildWorkflowSkillPrompt(entry: WorkflowListingEntry): string {
   const lines: string[] = [`This skill runs the "${entry.name}" workflow.`, "", entry.description];
@@ -409,7 +419,7 @@ export function buildWorkflowSkillPrompt(entry: WorkflowListingEntry): string {
   }
   lines.push("", `To run it, call the Workflow tool with this exact name: Workflow({ name: ${JSON.stringify(entry.name)} })`);
   lines.push(
-    `If this was invoked as a slash command with text after the name, pass that text through as args instead: Workflow({ name: ${JSON.stringify(entry.name)}, args: "$ARGUMENTS" })`,
+    `If this was invoked as a slash command with text after the name, pass that text through as args instead: Workflow({ name: ${JSON.stringify(entry.name)}, args: $ARGUMENTS_JSON })`,
   );
   return lines.join("\n");
 }

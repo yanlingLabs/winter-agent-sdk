@@ -212,9 +212,23 @@ function splitCommand(prompt: string): { name: string; args: string } {
   return { name, args };
 }
 
-/** R5-14's substitution, in one place. Every occurrence; no arguments substitutes the empty string. */
+/**
+ * R5-14's substitution, in one place. Every occurrence; no arguments substitutes the empty string.
+ *
+ * Fix round 6 (a promoted minor): also recognises `$ARGUMENTS_JSON`, substituted with
+ * `JSON.stringify(args)` -- a FULLY QUOTED, escaped string literal, for a body that embeds the raw
+ * args value INSIDE its own hand-written quotes (workflows/store.ts's `buildWorkflowSkillPrompt` is
+ * the one caller today: its invoke line's `args: $ARGUMENTS_JSON` needs the substituted value to
+ * already carry safe `"`/`\` escaping, matching claude's own `S(e)` -- dump-confirmed at
+ * `createWorkflowCommand`'s own `getPromptForCommand`, `a=e?\`{ name: ${i}, args: ${S(e)} }\`:...\`
+ * -- inferred to be JSON-string-quoting from its call-site shape: applied to a plain, always-defined
+ * string and used with NO additional quotes around it in the template, exactly what
+ * `JSON.stringify` produces). `$ARGUMENTS` (the plain, unescaped token) is substituted SECOND,
+ * deliberately: `"$ARGUMENTS_JSON"` contains `"$ARGUMENTS"` as a literal prefix, so substituting the
+ * shorter token first would mangle the longer one's own text before it is ever recognised.
+ */
 export function substituteArguments(body: string, args: string): string {
-  return body.split("$ARGUMENTS").join(args);
+  return body.split("$ARGUMENTS_JSON").join(JSON.stringify(args)).split("$ARGUMENTS").join(args);
 }
 
 /**

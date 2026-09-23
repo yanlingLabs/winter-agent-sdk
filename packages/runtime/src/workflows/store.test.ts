@@ -515,10 +515,16 @@ describe("buildWorkflowSkillPrompt -- I-E: the Winter-authored synthetic skill p
   // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): the args-carrying line, at the
   // PRIMITIVE level -- store.test.ts's own end-to-end coverage (via the real command resolver) is in
   // production-wiring.test.ts, since building a real FilesystemCommandResolver is that file's job.
-  test("fix round 5: an unconditional no-args invoke line AND a second, args-carrying line using the $ARGUMENTS token both appear", () => {
+  //
+  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): the token is
+  // `$ARGUMENTS_JSON` (substitutes with `JSON.stringify(args)`, already quoted), not the raw
+  // `$ARGUMENTS` inside hand-written quotes round 5 shipped -- superseding this test's own round-5
+  // string, disclosed as such.
+  test("fix round 6: an unconditional no-args invoke line AND a second, args-carrying line using the $ARGUMENTS_JSON token both appear", () => {
     const prompt = buildWorkflowSkillPrompt({ name: "sv-plugin:sv-flow", description: "d", source: "plugin", path: "/x/flow.js" });
     expect(prompt).toContain('Workflow({ name: "sv-plugin:sv-flow" })');
-    expect(prompt).toContain('Workflow({ name: "sv-plugin:sv-flow", args: "$ARGUMENTS" })');
+    expect(prompt).toContain("Workflow({ name: \"sv-plugin:sv-flow\", args: $ARGUMENTS_JSON })");
+    expect(prompt).not.toContain('args: "$ARGUMENTS"'); // the round-5 shape, superseded
   });
 
   test("the prompt text is WINTER-AUTHORED -- it does not reproduce claude's own dump wording", () => {
