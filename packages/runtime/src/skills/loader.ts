@@ -222,7 +222,9 @@ export function readSkillMetadata(path: string, fallbackName: string, opts: { ma
   if (truncated) {
     return { ok: false, reason: `its frontmatter is not closed within the first ${opts.maxBytes} bytes of the file, which is the index-time read bound (SKILL_METADATA_PREFIX_BYTES)` };
   }
-  return { ok: false, reason: "no usable frontmatter: a SKILL.md needs a `---` fence at the very top of the file with at least a `description:` inside it" };
+  // WS-21 §6.3 item 10: a missing `description:` no longer disqualifies a SKILL.md, so the only
+  // remaining unparseable shape is a missing or unterminated frontmatter fence.
+  return { ok: false, reason: "no usable frontmatter: a SKILL.md needs a `---` fence at the very top of the file, closed by another `---` line" };
 }
 
 /** Reads at most `maxBytes` from the head of `path`. `truncated` means the file is longer than that. */

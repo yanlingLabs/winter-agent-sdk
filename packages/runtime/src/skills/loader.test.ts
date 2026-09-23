@@ -41,3 +41,22 @@ describe("scanSkillRoot: symlinked entries (WS-21 §6.3 item 1)", () => {
     expect(scanSkillRoot(root, "user")).toEqual({ skills: [], errors: [] });
   });
 });
+
+describe("scanSkillRoot: skill identity is the directory name (WS-21 §6.3 item 9)", () => {
+  test("dir `alpha` with a declared `name: beta` is discovered as `alpha`, not `beta`", () => {
+    const root = mkTemp("skills-");
+    mkdirSync(join(root, "alpha"));
+    writeFileSync(join(root, "alpha", "SKILL.md"), "---\nname: beta\ndescription: d\n---\nbody");
+    const found = scanSkillRoot(root, "user").skills;
+    expect(found.map((s) => s.name)).toEqual(["alpha"]);
+  });
+
+  test("a skill with no description is kept, with description === \"\"", () => {
+    const root = mkTemp("skills-");
+    mkdirSync(join(root, "gamma"));
+    writeFileSync(join(root, "gamma", "SKILL.md"), "---\nname: gamma\n---\nbody");
+    const result = scanSkillRoot(root, "user");
+    expect(result.errors).toEqual([]);
+    expect(result.skills).toEqual([{ name: "gamma", description: "", source: "user", path: join(root, "gamma", "SKILL.md") }]);
+  });
+});

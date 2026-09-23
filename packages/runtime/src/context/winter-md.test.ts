@@ -3,8 +3,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverWinterMd, localInstructionsBasename, projectInstructionRoot, renderInstructionsContext, INSTRUCTIONS_CONTEXT_HEADER, WINTER_MD_BASENAME, WINTER_MD_MAX_BYTES, _clearProjectRootCacheForTests } from "./winter-md.ts";
-import { TRUNCATION_MARKER } from "./injection.ts";
+import { discoverWinterMd, localInstructionsBasename, projectInstructionRoot, renderInstructionsContext, INSTRUCTIONS_CONTEXT_HEADER, WINTER_MD_BASENAME, _clearProjectRootCacheForTests } from "./winter-md.ts";
 import { makeGitFixture, type GitFixture } from "./git-fixture.ts";
 
 function write(dir: string, text: string): void {
@@ -60,11 +59,12 @@ describe("context/winter-md.ts -- discovery and the settings-SOURCE gate (P5-A)"
     expect(discoverWinterMd({ cwd: root, home })).toEqual([]);
   });
 
-  test("a WINTER.md is capped and marked truncated, so a huge file cannot ride every turn unbounded", () => {
-    write(root, "y".repeat(WINTER_MD_MAX_BYTES + 500));
+  test("a WINTER.md is returned in full, uncapped (WS-21 §6.3 item 10: claude does not truncate CLAUDE.md)", () => {
+    const big = "y".repeat(40 * 1024);
+    write(root, big);
     const block = discoverWinterMd({ cwd: root, home })[0]!;
-    expect(block.text).toContain(TRUNCATION_MARKER);
-    expect(Buffer.byteLength(block.text)).toBeLessThan(WINTER_MD_MAX_BYTES + 400);
+    expect(block.text).toBe(big);
+    expect(Buffer.byteLength(block.text)).toBe(40 * 1024);
   });
 
   test("a literal </system-reminder> inside WINTER.md is neutralised, so it cannot close the index-0 wrapper", () => {

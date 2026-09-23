@@ -34,14 +34,16 @@ function writeSkill(root: string, dir: string, front: Record<string, string>, bo
 }
 
 describe("frontmatter (ported from Norma skills.ts, WS-11 §2.5)", () => {
-  test("name + description are read from the leading fence and the body follows it", () => {
+  test("description is read from the leading fence and the body follows it; identity is ALWAYS the directory name (WS-21 §6.3 item 9)", () => {
+    // A declared `name:` is not even read any more -- claude's `getSkillCommandName` never reads one
+    // either. `fallback` here stands in for the directory scanSkillRoot discovered the file under.
     const parsed = parseSkillFile("---\nname: review\ndescription: reviews code\n---\n\nDo the review.", "fallback");
-    expect(parsed).toEqual({ name: "review", description: "reviews code", body: "Do the review." });
+    expect(parsed).toEqual({ name: "fallback", description: "reviews code", body: "Do the review." });
   });
 
-  test("a missing `name` falls back to the DIRECTORY name; a missing `description` invalidates the whole file", () => {
+  test("identity is the directory name whether or not a `name:` is declared; a missing `description` is `\"\"`, kept (WS-21 §6.3 items 9-10)", () => {
     expect(parseSkillFile("---\ndescription: d\n---\nbody", "from-dir")?.name).toBe("from-dir");
-    expect(parseSkillFile("---\nname: n\n---\nbody", "from-dir")).toBeNull();
+    expect(parseSkillFile("---\nname: n\n---\nbody", "from-dir")).toEqual({ name: "from-dir", description: "", body: "body" });
   });
 
   test("no leading fence, and an unterminated fence, are both `null` -- never a nameless index entry", () => {
@@ -50,8 +52,10 @@ describe("frontmatter (ported from Norma skills.ts, WS-11 §2.5)", () => {
   });
 
   test("quoted scalars have their quotes stripped, and a `---` deeper in the file is BODY, not frontmatter", () => {
+    // A `name:` line inside the fence is no longer even read (WS-21 §6.3 item 9), so `d` (the
+    // directory fallback) is the identity regardless of what the file declares.
     const parsed = parseSkillFile('---\nname: "quoted"\ndescription: \'also quoted\'\n---\n\nintro\n---\nname: spoof\ndescription: spoof\n---\n', "d");
-    expect(parsed?.name).toBe("quoted");
+    expect(parsed?.name).toBe("d");
     expect(parsed?.description).toBe("also quoted");
     expect(parsed?.body).toContain("name: spoof");
   });
@@ -188,11 +192,11 @@ describe("A-11: the index reads a BOUNDED PREFIX, and an over-bound skill is an 
     expect(index.errors()[0]!.source).toBe("project");
   });
 
-  test("a skill whose RESOLVED NAME fails the slug jail is an indexed error too, not a silent drop", () => {
+  test("a skill whose RESOLVED NAME (the directory, WS-21 §6.3 item 9) fails the slug jail is an indexed error too, not a silent drop", () => {
     const repo = mkTemp("winter-jail-err-");
     mkdirSync(join(repo, ".git"), { recursive: true });
     const root = join(repo, ".winter", "skills");
-    writeSkill(root, "sneaky", { name: "../escape", description: "d" }, "b");
+    writeSkill(root, "UPPER", { description: "d" }, "b");
     const index = SkillIndex.build({ cwd: repo, winterHome: mkTemp("winter-jail-err-home-") });
     expect(index.names()).toEqual([]);
     expect(index.errors()[0]!.reason).toContain("invalid skill name");
@@ -313,23 +317,22 @@ describe("SkillIndex: tiers, precedence and source gating (WS-11 §2.1, P5 amend
 
 // --- Fix round 1, Minor 2: the two index jails, each previously invisible to the suite ----------
 describe("SkillIndex: the name jails (security-shaped, fixtured so a revert is loud)", () => {
-  test("a FRONTMATTER-declared `name:` that escapes the slug jail keeps the skill out of the index", () => {
-    // The directory name is legal; the DECLARED name is not. `parseSkillFile` prefers the declared
-    // one, so without the jail on the RESOLVED name the index advertises a name
-    // `isLegalSkillIdentity` then refuses -- the advertise-then-refuse split the executor's own jail
-    // exists to prevent. `option.test.ts` sweeps plugin-qualified names only; this is the other route.
+  test("a DIRECTORY name that escapes the slug jail keeps the skill out of the index (WS-21 §6.3 item 9: identity is the directory)", () => {
+    // WS-21 §6.3 item 9 stopped `parseSkillFile` from reading a frontmatter `name:` at all -- a
+    // skill's identity is always the directory `scanSkillRoot` found it under, exactly as claude's
+    // `getSkillCommandName` works. So the only way a resolved name can now escape the jail is an
+    // illegal DIRECTORY name itself (a real filesystem still permits uppercase, spaces, a leading
+    // dot and an over-length name as directory names, even though the jail forbids all four as skill
+    // identities). `a declared name:` no longer has any bearing on identity, so this test plants the
+    // illegal names directly on disk. A literal `/` or `..` cannot be a directory ENTRY name at all
+    // (a slash is always a path separator), so those two shapes of the old attack no longer apply --
+    // `option.test.ts` still sweeps the plugin-qualified route.
     const repo = mkTemp("winter-jail-fm-repo-");
     const winterHome = mkTemp("winter-jail-fm-home-");
-    for (const [dir, declared] of [
-      ["escape", "../../escape"],
-      ["upper", "UPPER"],
-      ["spaced", "has space"],
-      ["nested", "a/b"],
-      ["dotted", ".hidden"],
-    ]) {
-      writeSkill(join(repo, ".winter", "skills"), dir!, { name: declared!, description: "d" }, "BODY");
+    for (const dir of ["UPPER", "has space", ".hidden", "a_b", "a".repeat(65)]) {
+      writeSkill(join(repo, ".winter", "skills"), dir, { description: "d" }, "BODY");
     }
-    writeSkill(join(repo, ".winter", "skills"), "fine", { name: "fine", description: "d" }, "BODY");
+    writeSkill(join(repo, ".winter", "skills"), "fine", { description: "d" }, "BODY");
     expect(SkillIndex.build({ cwd: repo, winterHome }).names()).toEqual(["fine"]);
   });
 

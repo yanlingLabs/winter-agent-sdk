@@ -36,7 +36,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { neutralizeReminderTags, readCapped } from "./injection.ts";
+import { neutralizeReminderTags, readWhole } from "./injection.ts";
 
 /**
  * Winter's OWN instructions basename, derived from the default profile rather than spelled.
@@ -47,11 +47,12 @@ import { neutralizeReminderTags, readCapped } from "./injection.ts";
 export const WINTER_MD_BASENAME = WINTER_BRAND.instructionsFile;
 
 /**
- * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): content that
- * rides every request of a session needs a ceiling or one large checked-in file costs the session
- * its window on every request. 32 KB is Norma's shipped instructions cap, carried over.
+ * WS-21 §6.3 item 10 (F7): there is NO per-file byte ceiling here any more. Winter used to cap an
+ * instructions file at 32 KB (Norma's shipped cap); claude does not truncate `CLAUDE.md`, and the
+ * whole point of this workstream is that the two runtimes read the identical file the identical way.
+ * Removed rather than widened, so nothing downstream can quietly reintroduce a cap by reading this
+ * constant.
  */
-export const WINTER_MD_MAX_BYTES = 32 * 1024;
 
 export interface WinterMdBlock {
   /** Absolute path of the file this block came from. */
@@ -178,7 +179,7 @@ export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
   const localBasename = localInstructionsBasename(basename);
   const blocks: WinterMdBlock[] = [];
   const read = (path: string, scope: WinterMdBlock["scope"]): void => {
-    const body = readCapped(path, WINTER_MD_MAX_BYTES);
+    const body = readWhole(path);
     if (body !== null) blocks.push({ path, scope, text: neutralizeReminderTags(body) });
   };
 

@@ -81,6 +81,24 @@ export function readCapped(path: string, maxBytes: number): string | null {
 }
 
 /**
+ * Read a UTF-8 file WHOLE, no byte ceiling. WS-21 §6.3 item 10 (F7): claude does not truncate an
+ * instructions file, and winter-md.ts stopped capping `WINTER.md`/`CLAUDE.md` to match. This is a
+ * DELIBERATE exception to this module's own rule (1) above -- the instructions file is re-sent every
+ * request just like a capped block is, but parity with claude wins here, the same way it already won
+ * for the skill description cap. Same "nothing to inject" contract as `readCapped`: missing,
+ * unreadable, not-a-regular-file or empty all yield `null`, never a thrown error.
+ */
+export function readWhole(path: string): string | null {
+  try {
+    if (!statSync(path).isFile()) return null;
+    const raw = readFileSync(path, "utf8");
+    return raw.length === 0 ? null : raw;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read a UTF-8 file capped at `maxLines` AND `maxBytes`, WHICHEVER HITS FIRST (WS-05 §11's
  * memory-index rule; lines are counted before bytes so a 25 KB budget cannot smuggle in a
  * 10 000-line file). `null` on the same four "nothing to inject" cases as `readCapped`.
