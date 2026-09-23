@@ -152,6 +152,32 @@ describe("input schema -- the seven fields and their three doc-asserted rules (i
     expect(result.output).toContain("ghost");
   });
 
+  // SV-5 (the router same-view test's own explicit ask: "check that Winter's Workflow tool resolves
+  // sv-plugin:sv-flow"). End to end THROUGH THE TOOL EXECUTOR, not just `resolveWorkflowByName`
+  // directly (store.test.ts's own coverage) -- proves `ctx.pluginWorkflows` actually reaches this
+  // call site.
+  test("SV-5: a qualified <plugin>:<meta.name> workflow resolves end to end through the tool executor", async () => {
+    const pluginDir = mkdtempSync(join(tmpdir(), "winter-wf-tool-plugin-"));
+    mkdirSync(join(pluginDir, "workflows"), { recursive: true });
+    // The filename ("flow-file.js") deliberately differs from the declared meta.name ("sv-flow"),
+    // matching the coordinator's own fixture exactly.
+    writeFileSync(join(pluginDir, "workflows", "flow-file.js"), `export const meta = { name: "sv-flow", description: "Runs the SV-5 flow" };\nreturn "from-sv-flow";`);
+    const out = await output({ name: "sv-plugin:sv-flow" }, makeCtx({ pluginWorkflows: [{ name: "sv-plugin", workflowsPath: join(pluginDir, "workflows") }] }));
+    expect(out.error).toBeUndefined();
+    expect(out.workflowName).toBe("sv-flow");
+    expect(readFileSync(out.scriptPath!, "utf8")).toContain("from-sv-flow");
+  });
+
+  // Fix round 3 (M-3's last bullet, WS-11 §11 OQ2 closed): the user tier, end to end through the
+  // tool executor via `ctx.winterHome` -- the same field skills/agents/commands already read.
+  test("a user-tier workflow (<ctx.winterHome>/workflows) resolves end to end through the tool executor", async () => {
+    mkdirSync(join(winterHome, "workflows"), { recursive: true });
+    writeFileSync(join(winterHome, "workflows", "mine.js"), `export const meta = { name: "user-flow", description: "d" };\nreturn "from-user-tier";`);
+    const out = await output({ name: "user-flow" }, makeCtx({ winterHome }));
+    expect(out.error).toBeUndefined();
+    expect(readFileSync(out.scriptPath!, "utf8")).toContain("from-user-tier");
+  });
+
   test("`args` reach the script VERBATIM", async () => {
     const out = await output({ script: META + `return args;`, args: { list: [1, 2], deep: { yes: true } } });
     expect(out.status).toBe("async_launched");
