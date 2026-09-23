@@ -12,8 +12,8 @@
 // P4, when only process spawning looked dangerous). So the only thing a loader can get wrong about
 // trust is which ORIGIN it tags a source with -- and that is exactly the judgment call below.
 import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { WINTER_BRAND, type BrandProfile, type ResolvedSettingSource, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { join, normalize, resolve } from "node:path";
+import { globalConfigFileName, WINTER_BRAND, type BrandProfile, type McpServerConfig, type ResolvedSettingSource, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import type { McpConfigSourceOrigin, McpServerSource } from "../../mcp/lifecycle.ts";
 
 /**
@@ -147,4 +147,92 @@ export function settingsMcpServerSources(perSource: readonly SettingsMcpSourceIn
     sources.push({ origin, servers: block });
   }
   return { sources, rejected };
+}
+
+// --- WS-21 §6.3 item 3 (F9): the shared home's global config file, `.winter.json` -------------------
+//
+// claude's `.claude.json` shape carries TWO of its several MCP-bearing keys: a top-level
+// `mcpServers` (the `user` scope -- every project sees these) and, per project,
+// `projects[<key>].mcpServers` (the `local` scope -- WS-01 §2.4/WS-09 §1.2's `local` tier, gitignored
+// and personal, keyed to ONE checkout). `local` is loaded only `WHEN localSettings` in claude's own
+// terms, i.e. only when the caller's `sources` includes `"local"` -- exactly the gate this file's
+// other loaders already apply per WS-01 §2.4.
+//
+// THE PROJECT KEY (measured against the pinned reference, `claude-code-reference/src/utils/
+// config.ts`'s `getProjectPathForConfig`): the CANONICAL GIT ROOT when the cwd is inside a
+// repository, else the resolved cwd -- never the raw, unresolved cwd string. `input.gitRoot` is the
+// caller's already-resolved answer to that (this loader does no git work of its own, matching every
+// other loader in this file); a caller with no repository passes `null` and this file falls back to
+// `resolve(input.cwd)`. Normalised with `normalize()` (claude's own `normalizePathForConfigKey`
+// backslash-to-forward-slash step is a no-op on POSIX, where this loader always runs).
+export interface GlobalConfigMcpInput {
+  /** The shared runtime home (`sdkHomeOf(WINTER_HOME)`), where `.winter.json` lives. */
+  home: string;
+  cwd: string;
+  /** The canonical git root, or `null` outside a repository -- the caller's own resolution (see header). */
+  gitRoot: string | null;
+  brand: Pick<BrandProfile, "homeDirName">;
+  sources: readonly SettingSource[];
+}
+
+export interface GlobalConfigMcpResult {
+  user: Record<string, McpServerConfig>;
+  /** This checkout's `projects[<key>].mcpServers` only -- never another project's entry in the same file. */
+  local: Record<string, McpServerConfig>;
+  /**
+   * NOT in the plan brief's sketch interface, added here for the same reason every other loader in
+   * this file carries one: "a malformed file produces a scan error, not a throw" (the brief's own
+   * L1a.5 test list) needs somewhere to put that scan error. `RejectedMcpConfig` already exists for
+   * exactly this shape, so this is the minimal extension rather than a second, parallel error
+   * channel.
+   */
+  rejected: RejectedMcpConfig[];
+}
+
+function normalizeConfigKey(path: string): string {
+  return normalize(path).replace(/\\/g, "/");
+}
+
+const EMPTY_GLOBAL_CONFIG_MCP: GlobalConfigMcpResult = { user: {}, local: {}, rejected: [] };
+
+export function loadGlobalConfigMcp(input: GlobalConfigMcpInput): GlobalConfigMcpResult {
+  const path = join(input.home, globalConfigFileName(input.brand));
+  let raw: string;
+  try {
+    if (!statSync(path).isFile()) return EMPTY_GLOBAL_CONFIG_MCP;
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return EMPTY_GLOBAL_CONFIG_MCP; // absent -- not a rejection, exactly like every sibling loader here
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { user: {}, local: {}, rejected: [{ origin: "settings", path, reason: `${path} is not valid JSON: ${err instanceof Error ? err.message : String(err)}` }] };
+  }
+  if (!isPlainObject(parsed)) {
+    return { user: {}, local: {}, rejected: [{ origin: "settings", path, reason: `${path} must contain a JSON object (claude's .claude.json shape)` }] };
+  }
+
+  const user: Record<string, McpServerConfig> = {};
+  if (input.sources.includes("user")) {
+    const block = parsed["mcpServers"];
+    if (isPlainObject(block)) Object.assign(user, block as Record<string, McpServerConfig>);
+  }
+
+  const local: Record<string, McpServerConfig> = {};
+  if (input.sources.includes("local")) {
+    const projects = parsed["projects"];
+    if (isPlainObject(projects)) {
+      const key = normalizeConfigKey(input.gitRoot ?? resolve(input.cwd));
+      const entry = projects[key];
+      if (isPlainObject(entry)) {
+        const block = entry["mcpServers"];
+        if (isPlainObject(block)) Object.assign(local, block as Record<string, McpServerConfig>);
+      }
+    }
+  }
+
+  return { user, local, rejected: [] };
 }

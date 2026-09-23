@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { resolveMcpServerSources } from "../../mcp/lifecycle.ts";
 import { loadPlugins } from "../../plugins/loader.ts";
 import type { PluginBundle } from "../../plugins/bundle.ts";
-import { loadProjectMcpConfig, settingsMcpServerSources, PROJECT_MCP_CONFIG_RELATIVE } from "./mcp-config.ts";
+import { globalConfigFileName, WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { loadGlobalConfigMcp, loadProjectMcpConfig, settingsMcpServerSources, PROJECT_MCP_CONFIG_RELATIVE } from "./mcp-config.ts";
 import { pluginMcpServerSources } from "./plugin-mcp.ts";
 
 const tempDirs: string[] = [];
@@ -24,6 +25,13 @@ afterEach(() => {
 function writeMcpJson(repo: string, content: string): string {
   const path = join(repo, PROJECT_MCP_CONFIG_RELATIVE);
   mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, content, "utf8");
+  return path;
+}
+
+function writeGlobalConfig(home: string, content: string): string {
+  mkdirSync(home, { recursive: true });
+  const path = join(home, globalConfigFileName(WINTER_BRAND));
   writeFileSync(path, content, "utf8");
   return path;
 }
@@ -193,5 +201,80 @@ describe("the three loaders compose into Lane A's precedence, unchanged", () => 
     writeMcpJson(repo, JSON.stringify({ mcpServers: { local: { command: "srv" } } }));
     const resolved = resolveMcpServerSources(loadProjectMcpConfig({ cwd: repo }).sources, { trustedWorkspace: true, strictMcpConfig: true });
     expect(resolved.resolved).toEqual([]);
+  });
+});
+
+// WS-21 §6.3 item 3 (F9): the shared home's global config file, `.winter.json` -- claude's
+// `.claude.json` shape, `mcpServers` for `user` and `projects[<key>].mcpServers` for `local`.
+describe("loadGlobalConfigMcp: `.winter.json` user and local MCP scopes", () => {
+  test("user servers are loaded under [\"user\"]", () => {
+    const home = mkTemp("winter-global-home-");
+    const cwd = mkTemp("winter-global-cwd-");
+    writeGlobalConfig(home, JSON.stringify({ mcpServers: { shared: { command: "user-srv" } } }));
+    const result = loadGlobalConfigMcp({ home, cwd, gitRoot: null, brand: WINTER_BRAND, sources: ["user"] });
+    expect(result.user).toEqual({ shared: { command: "user-srv" } });
+    expect(result.local).toEqual({});
+    expect(result.rejected).toEqual([]);
+  });
+
+  test("local servers are NOT loaded under [\"user\"] alone, but ARE loaded with `local`", () => {
+    const home = mkTemp("winter-global-home-");
+    const repo = mkTemp("winter-global-repo-");
+    writeGlobalConfig(home, JSON.stringify({ projects: { [repo]: { mcpServers: { proj: { command: "local-srv" } } } } }));
+    const withoutLocal = loadGlobalConfigMcp({ home, cwd: repo, gitRoot: null, brand: WINTER_BRAND, sources: ["user"] });
+    expect(withoutLocal.local).toEqual({});
+    const withLocal = loadGlobalConfigMcp({ home, cwd: repo, gitRoot: null, brand: WINTER_BRAND, sources: ["user", "local"] });
+    expect(withLocal.local).toEqual({ proj: { command: "local-srv" } });
+  });
+
+  test("the local scope is keyed by the CANONICAL GIT ROOT when one is given, not the raw cwd (claude's getProjectPathForConfig)", () => {
+    const home = mkTemp("winter-global-home-");
+    const gitRoot = mkTemp("winter-global-gitroot-");
+    const cwd = join(gitRoot, "sub", "dir");
+    mkdirSync(cwd, { recursive: true });
+    writeGlobalConfig(home, JSON.stringify({ projects: { [gitRoot]: { mcpServers: { proj: { command: "root-srv" } } } } }));
+    // Keyed by the cwd itself, NOT the git root: this must find nothing.
+    const keyedByCwd = loadGlobalConfigMcp({ home, cwd, gitRoot: null, brand: WINTER_BRAND, sources: ["local"] });
+    expect(keyedByCwd.local).toEqual({});
+    // Keyed by the git root (the caller's own resolution, threaded through `gitRoot`): this finds it.
+    const keyedByGitRoot = loadGlobalConfigMcp({ home, cwd, gitRoot, brand: WINTER_BRAND, sources: ["local"] });
+    expect(keyedByGitRoot.local).toEqual({ proj: { command: "root-srv" } });
+  });
+
+  test("local wins a name clash (the two scopes are returned separately; a caller merging `{...user, ...local}` gets local)", () => {
+    const home = mkTemp("winter-global-home-");
+    const repo = mkTemp("winter-global-clash-repo-");
+    writeGlobalConfig(
+      home,
+      JSON.stringify({
+        mcpServers: { contested: { command: "from-user" } },
+        projects: { [repo]: { mcpServers: { contested: { command: "from-local" } } } },
+      }),
+    );
+    const result = loadGlobalConfigMcp({ home, cwd: repo, gitRoot: null, brand: WINTER_BRAND, sources: ["user", "local"] });
+    expect(result.user).toEqual({ contested: { command: "from-user" } });
+    expect(result.local).toEqual({ contested: { command: "from-local" } });
+    expect({ ...result.user, ...result.local }).toEqual({ contested: { command: "from-local" } });
+  });
+
+  test("a malformed file produces a scan error, not a throw", () => {
+    const home = mkTemp("winter-global-home-");
+    const cwd = mkTemp("winter-global-cwd-");
+    writeGlobalConfig(home, "{ not valid json");
+    let result: ReturnType<typeof loadGlobalConfigMcp> | undefined;
+    expect(() => {
+      result = loadGlobalConfigMcp({ home, cwd, gitRoot: null, brand: WINTER_BRAND, sources: ["user", "local"] });
+    }).not.toThrow();
+    expect(result!.user).toEqual({});
+    expect(result!.local).toEqual({});
+    expect(result!.rejected).toHaveLength(1);
+    expect(result!.rejected[0]!.reason).toContain("not valid JSON");
+  });
+
+  test("an absent file is not a rejection", () => {
+    const home = mkTemp("winter-global-home-");
+    const cwd = mkTemp("winter-global-cwd-");
+    const result = loadGlobalConfigMcp({ home, cwd, gitRoot: null, brand: WINTER_BRAND, sources: ["user", "local"] });
+    expect(result).toEqual({ user: {}, local: {}, rejected: [] });
   });
 });

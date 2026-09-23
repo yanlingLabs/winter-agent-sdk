@@ -179,6 +179,8 @@ export { resolveWinterHome, resolveKeychainServiceForProfile, isUnset } from "./
 export { transcriptProjectKey, TRANSCRIPT_PROJECT_KEY_MAX_LENGTH, isVendorCompliantProjectKey } from "./paths/project-key.ts";
 export { compatibilityKeys } from "./paths/keys.ts";
 export type { CompatibilityKeys } from "./paths/keys.ts";
+// WS-21 §6.3 item 3 / Contract B: the shared runtime home's global config file name (`.winter.json`).
+export { globalConfigFileName } from "./paths/global-config.ts";
 
 // The filesystem SessionStore (Task 7, moved here Task 10 -- WS-05 §6: the store is
 // public-adjacent, published-package code, not engine logic -- WS-14 needs it from this package
