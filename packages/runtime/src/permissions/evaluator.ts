@@ -2268,7 +2268,11 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     // is the ONLY way this branch is reached (evaluateModeStage's own auto arm never returns
     // "mustPrompt" for anything else) — route to the classifier instead of the generic canUseTool
     // path below.
-    if (policy.mode === "auto") {
+    //
+    // Never for an ESCAPE: a call that also turns the sandbox off is put to the hook and the host
+    // (below), in auto and plan alike -- no classifier verdict clears a protected write or a critical
+    // removal that will run unsandboxed.
+    if (policy.mode === "auto" && !sandboxEscape) {
       return await resolveAutoDecision(effectiveCall, ctx, policyVersion, carriedTransform);
     }
 
@@ -2281,7 +2285,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     // bypass-unavailable gate for critical removal; it is a no-op (already vacuously true) for
     // protected-write's own mustPrompt case, since resolveProtectedWrite already returned "allow"
     // directly, above this branch, whenever plan + session bypass was already true.
-    if (policy.mode === "plan" && modeResult.origin !== "planWrite" && ctx.sessionBypassEnabled !== true && isAutoModeDuringPlanEnabled(ctx)) {
+    if (policy.mode === "plan" && modeResult.origin !== "planWrite" && ctx.sessionBypassEnabled !== true && !sandboxEscape && isAutoModeDuringPlanEnabled(ctx)) {
       const verdict = await ctx.autoEngine.classify(effectiveCall, ctx);
       if (verdict.verdict === "allow") {
         return { decision: "allow", mechanism: "autoEngine", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };

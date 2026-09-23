@@ -163,3 +163,35 @@ describe("a flag that removes no sandbox is not an escape", () => {
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 });
+
+describe("a standing exception that also escapes goes to the host -- never the classifier (auto, plan borrow)", () => {
+  // A protected write / critical removal under `auto` (and plan's classifier borrow) normally goes to
+  // the classifier. With the sandbox off as well, an allowing classifier would have cleared
+  // `rm -rf /` to run unsandboxed; the host decides instead.
+  const cases: Array<[string, string]> = [
+    ["a critical removal", "rm -rf /"],
+    ["a protected write", "echo x > .git/config"],
+  ];
+  for (const [label, command] of cases) {
+    test(`auto: ${label} + escape -> one prompt, classifier untouched`, async () => {
+      const h = harness("auto", [], { answer: null });
+      const record = await evaluate(escape(command), h.ctx);
+      expect(h.classified).toHaveLength(0);
+      expect(h.prompts).toHaveLength(1);
+      expect(record.decision).toBe("deny"); // headless -> fail closed
+    });
+    test(`plan with the classifier borrow on: ${label} + escape -> one prompt, classifier untouched`, async () => {
+      const h = harness("plan", [], { answer: null });
+      h.ctx.policy = { ...h.ctx.policy, autoConfig: { ...(h.ctx.policy.autoConfig ?? {}), useAutoModeDuringPlan: true } } as EvaluationContext["policy"];
+      const record = await evaluate(escape(command), h.ctx);
+      expect(h.classified).toHaveLength(0);
+      expect(h.prompts).toHaveLength(1);
+      expect(record.decision).toBe("deny");
+    });
+    test(`auto: ${label} WITHOUT the escape still goes to the classifier (unchanged)`, async () => {
+      const h = harness("auto", []);
+      await evaluate({ toolName: "Bash", input: { command }, toolUseId: "t2" }, h.ctx);
+      expect(h.classified).toHaveLength(1);
+    });
+  }
+});
