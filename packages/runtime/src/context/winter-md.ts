@@ -162,16 +162,26 @@ export interface WinterMdInput {
   settingSources?: readonly SettingSource[];
   /** P7a (D19): the session's brand. Omitted = `WINTER_BRAND`, i.e. today's `WINTER_MD_BASENAME`. */
   brand?: Pick<BrandProfile, "instructionsFile">;
+  /**
+   * WS-21 §6.3 item 2: UNCONDITIONAL rules (`context/rules.ts`'s `loadRules(...).unconditional`),
+   * rendered as additional blocks AFTER every instructions file -- rules are standing context of
+   * the identical kind an instructions file is, just organised one file per rule instead of one
+   * `WINTER.md`. A CONDITIONAL rule never belongs here: it rides the on-touch attachment
+   * (`conditionalRuleAttachmentProducer`) instead, appearing only once a matching file is touched.
+   */
+  rules?: readonly { path: string; tier: "user" | "project"; content: string }[];
 }
 
 /**
  * The instructions blocks for a session, in the PINNED ORDER: the user-level file first, then every
- * project file from the repository root down to the cwd.
+ * project file from the repository root down to the cwd, then every unconditional rule.
  *
  * User-first is deliberate. The user's own file under the winter home is standing preference; a
  * project's file is specific to the work in front of the model. Reading the specific thing last
  * matches the outermost-first rule the project walk already follows, so one rule covers the whole
- * ordering rather than two that could drift.
+ * ordering rather than two that could drift. Rules come last because they are the most granular
+ * tier -- narrower in scope than either instructions file, the same reason a project file already
+ * reads after the user's.
  */
 export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
   const sources = input.settingSources ?? (["user", "project", "local"] as const);
@@ -195,6 +205,11 @@ export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
       if (includeProject) read(join(dir, basename), "project");
       if (includeLocal) read(join(dir, localBasename), "local");
     }
+  }
+
+  for (const rule of input.rules ?? []) {
+    const text = rule.content.trim();
+    if (text.length > 0) blocks.push({ path: rule.path, scope: rule.tier, text: neutralizeReminderTags(text) });
   }
 
   return blocks;
