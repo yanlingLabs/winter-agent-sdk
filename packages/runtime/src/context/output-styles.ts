@@ -33,6 +33,17 @@
 //      DISCLOSED as a Lane C decision, raised for the controller in the task-6 report: neither
 //      WS-11 §6.5 nor P5-A speaks to the replace power specifically, and the alternative readings
 //      (trust-gate project styles entirely, or honour the replacement) are both defensible.
+//
+// FIX ROUND 3 (M-4), A DISCLOSED BEHAVIOUR CHANGE: `keep-coding-instructions` ABSENT now means
+// REPLACE, not keep -- the pinned binary's own consumer (`M===null||M.keepCodingInstructions===!0`,
+// dump-confirmed) keeps the base prompt only when NO style is selected at all OR the style's own
+// key is strictly `true`; every other value, including absent, means "replace". This is the inverse
+// of this module's own pre-fix-round-3 default (`true` unless explicitly `false`). Ported exactly
+// per the coordinator's instruction, and it widens bullet 2's downgrade above in the SAME direction
+// it already existed: an untrusted project-tier style that simply never mentions the key now ALSO
+// downgrades to an append (with the `replacementDowngraded` warning), not only one that explicitly
+// wrote `false` -- worth naming here because it changes how often that warning fires, not just what
+// triggers it.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -95,6 +106,38 @@ export const BUILTIN_OUTPUT_STYLE_NAMES: readonly string[] = BUILTIN_OUTPUT_STYL
  */
 const STYLE_NAME = /^[A-Za-z0-9_-]+$/;
 
+// Fix round 3 (M-4): the pinned binary's own `s4` -- a real boolean passes through unchanged; a
+// string/number is lower-cased and checked against TWO explicit vocabularies (its own `De`/`To`,
+// dump-confirmed at adjacent offsets): `["1","true","yes","on"]` -> true, `["0","false","no","off"]`
+// -> false; anything else (including `undefined`/`null`/an object/array) is UNRESOLVED, never
+// coerced to a default here -- the caller decides what "unresolved" means (see `keepBasePrompt`'s
+// own callers below, where it means `false`, not `true`).
+function claudeBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const normalized = String(value).toLowerCase().trim();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+/**
+ * Fix round 3 (I-3): the pinned binary's own `jJ` -- when a style declares no `description:`, claude
+ * excerpts the BODY instead of inventing a fixed label: the first non-blank line, a leading markdown
+ * heading marker (`#`/`##`/...) stripped if present, capped at 100 chars with a `...` suffix. `def`
+ * is what an entirely blank body falls back to (dump-confirmed: `jJ(e,t="Custom item")`).
+ */
+function bodyExcerpt(body: string, def: string): string {
+  for (const rawLine of body.split("\n")) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    const heading = /^#+\s+(.+)$/.exec(line);
+    const text = heading?.[1] ?? line;
+    return text.length > 100 ? `${text.slice(0, 97)}...` : text;
+  }
+  return def;
+}
+
 /**
  * Parse `<name>.md`: a `---` frontmatter fence, then the body. Identity is ALWAYS `fallbackName`
  * (the filename stem); a `name:` key is parsed and ignored so a file cannot claim to be a style it
@@ -113,7 +156,12 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
   if (end === -1) return null;
 
   let description = "";
-  let keepBasePrompt = true;
+  // Fix round 3 (M-4): pinned `s4`'s own vocabulary, defaulting to FALSE when unresolved (absent,
+  // or a string outside the two recognized sets) -- dump-confirmed at the consumer site
+  // (`M===null||M.keepCodingInstructions===!0`): a style is expected to REPLACE unless it explicitly
+  // asks to be layered on top, the inverse of this module's pre-fix-round-3 default. See this
+  // module's header for the disclosed behaviour-change note.
+  let keepBasePrompt = false;
   for (const rawLine of raw.slice(3, end).split(/\r?\n/)) {
     // A CRLF file's LAST frontmatter line keeps its own `\r`: `end` lands on the `\n` of the
     // closing fence's `\r\n`, so nothing is left for the split to consume. Strip it, or the
@@ -125,7 +173,7 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
     const value = m[2]!.trim();
     if (key === "description") description = value;
     // The frontmatter key keeps Norma's shipped spelling so a style file ports across unchanged.
-    else if (key === "keep-coding-instructions") keepBasePrompt = value !== "false";
+    else if (key === "keep-coding-instructions") keepBasePrompt = claudeBoolean(value) === true;
   }
 
   const body = raw.slice(end + 4).replace(/^\r?\n/, "");
@@ -156,26 +204,33 @@ function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName
     return null;
   }
   const { attrs, body: parsedBody } = parseFrontmatter(raw);
-  // No frontmatter fence at all (or one with zero keys -- functionally identical for every field
-  // below, all of which are optional) is not a style, matching `parseStyleFile`'s own "no fence ->
-  // not a style" gate one function up.
-  if (Object.keys(attrs).length === 0) return null;
+  // Fix round 3 (I-3): claude's own `RXe` NEVER rejects on frontmatter shape -- an empty
+  // (`---\n---\nbody`) or unparseable (a loose colon a CRLF file's retry still can't fix) frontmatter
+  // block still produces a style, identity falling back to the filename stem exactly as if the
+  // block had been empty on purpose. The pre-fix-round-3 `Object.keys(attrs).length === 0` reject
+  // here silently dropped exactly that case.
 
+  // Fix round 3 (I-3): `(p.name!=null?String(p.name):void 0)||basename` -- a NON-STRING declared
+  // name (a YAML number/boolean) is coerced, not discarded, matching claude's own `String(p.name)`
+  // rather than requiring it already be a string.
   const declaredNameRaw = attrs["name"];
-  const declaredName = typeof declaredNameRaw === "string" && declaredNameRaw.length > 0 ? declaredNameRaw : undefined;
-  const baseName = declaredName ?? fallbackBaseName;
+  const declaredName = declaredNameRaw !== null && declaredNameRaw !== undefined ? String(declaredNameRaw) : undefined;
+  const baseName = declaredName !== undefined && declaredName.length > 0 ? declaredName : fallbackBaseName;
   if (!STYLE_NAME.test(baseName)) return null; // a declared name still cannot escape the same slug jail every OTHER identity in this file is held to
 
+  // Fix round 3 (I-3): claude's own `CN(p.description,R)??jJ(g,\`Output style from ${t} plugin\`)`
+  // -- a valid (non-empty, trimmed) string description wins; otherwise an EXCERPT of the body
+  // (`bodyExcerpt`, claude's own `jJ`) stands in, falling back to the fixed label only when the body
+  // itself has no non-blank line either. Ported now that I-3 asks for parity here explicitly --
+  // this module's earlier note that "Winter has no such extractor" is what this closes.
   const descriptionRaw = attrs["description"];
-  // claude falls back to an excerpt of the markdown body; Winter has no such extractor anywhere yet
-  // (disclosed rather than silently guessed), so an absent description falls back to a plain,
-  // honest label instead of inventing markdown-excerpt logic this fix round did not ask for.
-  const description = typeof descriptionRaw === "string" && descriptionRaw.length > 0 ? descriptionRaw : `Output style from the ${pluginName} plugin`;
+  const validatedDescription = typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0 ? descriptionRaw.trim() : undefined;
+  const description = validatedDescription ?? bodyExcerpt(parsedBody, `Output style from the ${pluginName} plugin`);
 
-  // The frontmatter key keeps Norma's shipped spelling (matching `parseStyleFile` above); a real
-  // YAML boolean OR its quoted string form both mean "false" -- everything else, including absent, keeps the base prompt.
-  const keepRaw = attrs["keep-coding-instructions"];
-  const keepBasePrompt = !(keepRaw === false || keepRaw === "false");
+  // Fix round 3 (M-4): pinned `s4`'s own vocabulary via `claudeBoolean`, and the SAME default flip
+  // as `parseStyleFile` above -- unresolved (absent, or an unrecognized string) means FALSE, not
+  // TRUE. See this module's header for the disclosed behaviour-change note.
+  const keepBasePrompt = claudeBoolean(attrs["keep-coding-instructions"]) === true;
 
   return {
     name: `${pluginName}:${baseName}`,

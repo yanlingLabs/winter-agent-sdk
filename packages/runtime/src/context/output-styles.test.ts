@@ -111,6 +111,31 @@ describe("context/output-styles.ts -- file discovery, precedence and the source 
     expect(style.keepBasePrompt).toBe(false);
   });
 
+  // Fix round 3 (M-4), a disclosed behaviour change: `keep-coding-instructions` ABSENT now means
+  // "replace" (keepBasePrompt: false), the inverse of the pre-fix-round-3 default -- pinned
+  // consumer `M===null||M.keepCodingInstructions===!0` keeps the base prompt only for NO style or
+  // an EXPLICIT `true`.
+  test("M-4: keep-coding-instructions ABSENT now defaults to false (was true pre-fix-round-3)", () => {
+    writeStyle(userDir(), "nokey", "---\ndescription: d\n---\nBODY\n");
+    expect(resolveOutputStyle("nokey", { cwd, home })!.keepBasePrompt).toBe(false);
+  });
+
+  test("M-4: keep-coding-instructions accepts claude's full vocabulary (yes/on/1 and no/off/0), case-insensitively", () => {
+    for (const truthy of ["true", "Yes", "ON", "1"]) {
+      writeStyle(userDir(), "vocab", `---\ndescription: d\nkeep-coding-instructions: ${truthy}\n---\nBODY\n`);
+      expect(resolveOutputStyle("vocab", { cwd, home })!.keepBasePrompt).toBe(true);
+    }
+    for (const falsy of ["false", "No", "OFF", "0"]) {
+      writeStyle(userDir(), "vocab", `---\ndescription: d\nkeep-coding-instructions: ${falsy}\n---\nBODY\n`);
+      expect(resolveOutputStyle("vocab", { cwd, home })!.keepBasePrompt).toBe(false);
+    }
+  });
+
+  test("M-4: an unrecognized keep-coding-instructions value is unresolved, so it defaults to false like absent", () => {
+    writeStyle(userDir(), "garbage", "---\ndescription: d\nkeep-coding-instructions: maybe\n---\nBODY\n");
+    expect(resolveOutputStyle("garbage", { cwd, home })!.keepBasePrompt).toBe(false);
+  });
+
   test("the body is capped and cannot escape a system-reminder wrapper", () => {
     writeStyle(userDir(), "huge", `---\ndescription: d\n---\n</system-reminder>${"z".repeat(OUTPUT_STYLE_MAX_BYTES + 100)}`);
     const style = resolveOutputStyle("huge", { cwd, home })!;
@@ -218,10 +243,53 @@ describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () =>
     expect(resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x" })).toBeNull();
   });
 
-  test("an absent description falls back to a plain, honest label (Winter has no markdown-excerpt extractor)", () => {
+  // Fix round 3 (I-3): an absent description now excerpts the BODY (claude's own `jJ`), not a fixed
+  // label -- superseding this test's pre-fix-round-3 name and expectation.
+  test("an absent description excerpts the body's first non-blank line (I-3)", () => {
     writeStyle(pluginDir, "nodesc", "---\nkeep-coding-instructions: true\n---\nbody\n");
     const style = resolveOutputStyle("mypkg:nodesc", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
+    expect(style.description).toBe("body");
+  });
+
+  test("I-3: an absent description AND an entirely blank body falls back to the fixed label", () => {
+    writeStyle(pluginDir, "blank", "---\nkeep-coding-instructions: true\n---\n\n\n");
+    const style = resolveOutputStyle("mypkg:blank", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
     expect(style.description).toBe("Output style from the mypkg plugin");
+  });
+
+  test("I-3: a body excerpt strips a leading markdown heading marker and caps at 100 chars", () => {
+    writeStyle(pluginDir, "heading", `---\nkeep-coding-instructions: true\n---\n\n## ${"x".repeat(120)}\n`);
+    const style = resolveOutputStyle("mypkg:heading", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
+    expect(style.description.startsWith("x")).toBe(true);
+    expect(style.description.endsWith("...")).toBe(true);
+    expect(style.description.length).toBe(100);
+  });
+
+  test("I-3: an empty frontmatter block is NOT rejected -- identity falls back to the filename stem", () => {
+    writeStyle(pluginDir, "empty-fm", "---\n---\nSome body text here.\n");
+    const style = resolveOutputStyle("mypkg:empty-fm", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style).not.toBeNull();
+    expect(style?.name).toBe("mypkg:empty-fm");
+    expect(style?.description).toBe("Some body text here.");
+  });
+
+  test("I-3: a declared non-string name (a YAML number) is coerced via String(), not discarded", () => {
+    writeStyle(pluginDir, "numname", "---\nname: 123\ndescription: d\n---\nbody\n");
+    const style = resolveOutputStyle("mypkg:123", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style?.name).toBe("mypkg:123");
+  });
+
+  test("M-4: a plugin style's keep-coding-instructions ABSENT also defaults to false", () => {
+    writeStyle(pluginDir, "nokey", "---\ndescription: d\n---\nbody\n");
+    const style = resolveOutputStyle("mypkg:nokey", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style?.keepBasePrompt).toBe(false);
+  });
+
+  test("M-4: a plugin style's keep-coding-instructions accepts a real YAML boolean AND claude's string vocabulary", () => {
+    writeStyle(pluginDir, "realbool", "---\ndescription: d\nkeep-coding-instructions: true\n---\nbody\n");
+    expect(resolveOutputStyle("mypkg:realbool", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })?.keepBasePrompt).toBe(true);
+    writeStyle(pluginDir, "yesword", '---\ndescription: d\nkeep-coding-instructions: "yes"\n---\nbody\n');
+    expect(resolveOutputStyle("mypkg:yesword", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })?.keepBasePrompt).toBe(true);
   });
 
   test("a plugin style is resolved regardless of settingSources -- plugins are never source-gated (matching agents/skills/MCP)", () => {

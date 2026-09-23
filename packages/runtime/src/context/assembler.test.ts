@@ -646,8 +646,23 @@ describe("rider 22 / P5-G: a project-tier style may APPEND but not DELETE, and s
     expect(out.replacementDowngraded).toBeUndefined();
   });
 
-  test("a style that never asked to replace reports NOTHING -- absence is the honest 'no downgrade happened'", () => {
+  // Fix round 3 (M-4), a disclosed behaviour change superseding this test's pre-fix-round-3 name and
+  // premise: `keep-coding-instructions` ABSENT now means "replace" (output-styles.ts's own header),
+  // so an "ordinary" style that never mentions the key is now ALSO downgraded in an untrusted
+  // workspace -- it is no longer distinguishable, at this layer, from one that explicitly wrote
+  // `keep-coding-instructions: false`. The only way to avoid the downgrade note is now an EXPLICIT
+  // `keep-coding-instructions: true`.
+  test("M-4: a style that never mentions keep-coding-instructions is ALSO downgraded when untrusted (absent now means replace)", () => {
     projectStyle("---\ndescription: an ordinary style\n---\nBe concise.");
+    const asm = createSystemPromptAssembler({ home, settings: () => ({}) });
+    const out = asm.assemble(
+      inputFor({ cwd, config: { sessionId: "s", cwd, model: "m", outputStyle: "takeover", settingSources: ["project"], trustedWorkspace: false } }),
+    );
+    expect(out.replacementDowngraded).toBe(true);
+  });
+
+  test("M-4: a style that EXPLICITLY keeps the base prompt reports no downgrade, even when untrusted", () => {
+    projectStyle("---\ndescription: an ordinary style\nkeep-coding-instructions: true\n---\nBe concise.");
     const asm = createSystemPromptAssembler({ home, settings: () => ({}) });
     const out = asm.assemble(
       inputFor({ cwd, config: { sessionId: "s", cwd, model: "m", outputStyle: "takeover", settingSources: ["project"], trustedWorkspace: false } }),
