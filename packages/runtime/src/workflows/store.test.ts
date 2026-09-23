@@ -512,6 +512,15 @@ describe("buildWorkflowSkillPrompt -- I-E: the Winter-authored synthetic skill p
     expect(prompt).toContain('Workflow({ name: "bare" })');
   });
 
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): the args-carrying line, at the
+  // PRIMITIVE level -- store.test.ts's own end-to-end coverage (via the real command resolver) is in
+  // production-wiring.test.ts, since building a real FilesystemCommandResolver is that file's job.
+  test("fix round 5: an unconditional no-args invoke line AND a second, args-carrying line using the $ARGUMENTS token both appear", () => {
+    const prompt = buildWorkflowSkillPrompt({ name: "sv-plugin:sv-flow", description: "d", source: "plugin", path: "/x/flow.js" });
+    expect(prompt).toContain('Workflow({ name: "sv-plugin:sv-flow" })');
+    expect(prompt).toContain('Workflow({ name: "sv-plugin:sv-flow", args: "$ARGUMENTS" })');
+  });
+
   test("the prompt text is WINTER-AUTHORED -- it does not reproduce claude's own dump wording", () => {
     const prompt = buildWorkflowSkillPrompt({ name: "x", description: "d", source: "project", path: "/x/x.js" });
     // A loose sanity check: the pinned binary's own progressMessage string ("running dynamic

@@ -1912,6 +1912,45 @@ describe("SV-5: plugin/project/user workflows are listed in all three init surfa
     }
   });
 
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): "/sv-plugin:sv-flow some args"
+  // must carry "some args" into the invoke line as Workflow({ name, args }), as claude does -- Winter
+  // was dropping them. End to end through the REAL FilesystemCommandResolver (not just
+  // buildWorkflowSkillPrompt's own unit coverage in workflows/store.test.ts), since $ARGUMENTS
+  // substitution is that resolver's own job (commands/resolver.ts's own header), not the Skill tool's.
+  test("fix round 5: a workflow invoked as /plugin:name some args carries the args into Workflow({ name, args }) via the real command resolver", async () => {
+    const pluginDir = join(home, "plugin-src", "sv-plugin-args");
+    writeSvPluginWorkflow(pluginDir);
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "sv-plugin-args@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "sv-plugin-args@m": true } });
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv5-args", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const withArgs = await wiring.engineOptions.commandResolver!.resolve("/sv-plugin-args:sv-flow some args here", cwd);
+      expect(withArgs.kind).toBe("expand");
+      if (withArgs.kind !== "expand") return;
+      expect(withArgs.text).toContain('Workflow({ name: "sv-plugin-args:sv-flow", args: "some args here" })');
+      // The unconditional (no-args) line is STILL present and correct -- unaffected by the args line's
+      // own $ARGUMENTS substitution, since it names the workflow with no args field at all.
+      expect(withArgs.text).toContain('Workflow({ name: "sv-plugin-args:sv-flow" })');
+
+      const bare = await wiring.engineOptions.commandResolver!.resolve("/sv-plugin-args:sv-flow", cwd);
+      expect(bare.kind).toBe("expand");
+      if (bare.kind !== "expand") return;
+      // No trailing text -- $ARGUMENTS substitutes to "", matching every OTHER skill/command body's
+      // own no-args behaviour (substituteArguments's own doc: "no arguments substitutes the empty
+      // string"), not a Winter-specific carve-out for workflows.
+      expect(bare.text).toContain('Workflow({ name: "sv-plugin-args:sv-flow", args: "" })');
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   // Fix round 4 (I-E, the router same-view test): the coordinator's own required test -- proves the
   // FULL chain through the real production wiring, not just the listing: Skill("sv-plugin:sv-flow")
   // resolves through the REAL Skill tool executor and its body instructs the model to invoke the
