@@ -527,10 +527,17 @@ export function boundedRoots(ctx: EvaluationContext): string[] {
 // containing `[`, `]`, `*` or `\` (a cwd literally named e.g. `[wip] app`) made the OLD `"**"`-glob
 // composition ask for every write inside it once SV-6/C-1 made those characters glob-special;
 // `isPathWithinRoot` is a plain path-prefix test and needs no escaping for either operand at all.
+// Fix round 5, N-2 (the re-review of 57e7fef..20b623e, Important): claude's own working-directory
+// check (`f_`, dump ~272633) calls `sm(d,p,{caseFold:false,uncShapeParity:true})` -- it does NOT
+// fold case, unlike this function's pre-fix reliance on `isPathWithinRoot`'s default
+// (`caseFold:true`), which silently treated a path differing from a root only in case as in-bounds
+// on a case-sensitive volume. `uncShapeParity` has no Winter equivalent to match -- it is a
+// Windows-only UNC-path-shape concern (`\\?\`-prefixed paths), and this codebase targets macOS only
+// (CLAUDE.md's own latest-OS-floors rule); disclosed rather than silently ignored.
 function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
   const absPath = resolve(ctx.cwd, path);
   const target = resolveRealTarget(absPath);
-  return boundedRoots(ctx).some((root) => isPathWithinRoot(absPath, root) && isPathWithinRoot(target, root));
+  return boundedRoots(ctx).some((root) => isPathWithinRoot(absPath, root, { caseFold: false }) && isPathWithinRoot(target, root, { caseFold: false }));
 }
 
 // The whole-call path extraction the SpecialChecks seam contract asks T7 to own (see that

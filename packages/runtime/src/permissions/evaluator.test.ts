@@ -1218,6 +1218,27 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
+  // Fix round 5, N-2 (the re-review of 57e7fef..20b623e, Important): claude's own working-directory
+  // check (`f_`, dump ~272633) calls `sm(d,p,{caseFold:false,...})` -- it does NOT fold case, unlike
+  // isWithinBounds's pre-fix use of isPathWithinRoot's default (`caseFold:true`). On a case-sensitive
+  // volume, a path differing from cwd only in case was silently treated as in-bounds and
+  // auto-approved under acceptEdits, where claude still asks.
+  test("N-2: a path differing from cwd ONLY in case is NOT auto-approved under acceptEdits -- claude's own boundary check does not fold case", async () => {
+    const ctx = baseCtx({ cwd: "/work/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/WORK/PROJ/src/a.ts" }), ctx);
+    // "mode" is also the mechanism a fail-closed DENY carries when nothing upstream resolved the
+    // call (WS-07 §6.1's "never implicitly allowed") -- the discriminating assertion is `decision`,
+    // not `mechanism` (which the SV-8 test above's own `toMatchObject({decision, mechanism})` pairing
+    // already establishes as the right shape for "was this silently allowed").
+    expect(record.decision).not.toBe("allow");
+  });
+
+  test("N-2 control: an exact-case path under cwd is still auto-approved", async () => {
+    const ctx = baseCtx({ cwd: "/work/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/work/proj/src/a.ts" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
   test("a recognized Bash fs-op, in-bounds (the brief's own fixture: in-root `sed -i` approved in acceptEdits)", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Bash", { command: "sed -i 's/x/y/' ./notes.txt" }), ctx);
