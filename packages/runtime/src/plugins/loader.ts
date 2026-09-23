@@ -333,14 +333,23 @@ function readPluginHooksJson(root: string, pluginName: string, warnings: string[
  * unless hooks.json was absent).
  */
 function mergeHookSources(fromHooksJson: unknown, manifestHooks: unknown): Record<string, unknown> | undefined {
-  const merged: Record<string, unknown[]> = {};
+  // DELIBERATELY UNVALIDATED at the per-event level: whether an event's value is really an ARRAY
+  // of matcher-shaped entries is `settings/loaders/hooks.ts`'s own `pluginHookEntries` job (it
+  // REPORTS a malformed block against the plugin's path, never throws -- hooks.test.ts's own fixture
+  // pins this). Folding a validation/rejection here would swallow that malformed shape before
+  // `pluginHookEntries` ever sees it, turning a REPORTED rejection into a silent no-op. So a
+  // non-array value for an event is preserved as-is when nothing else claims that event; only two
+  // genuinely ARRAY values for the same event concatenate (the actual "additive" case I-1 -- sorry,
+  // M-5 -- asks for), and a later source's value wins outright over an earlier malformed one for the
+  // same event (there is no sane way to "concatenate" onto something that was never a list).
+  const merged: Record<string, unknown> = {};
   let sawAny = false;
   const foldObject = (obj: unknown): void => {
     if (!isPlainObject(obj)) return;
     for (const [event, entries] of Object.entries(obj)) {
-      if (!Array.isArray(entries)) continue;
       sawAny = true;
-      (merged[event] ??= []).push(...entries);
+      const existing = merged[event];
+      merged[event] = Array.isArray(existing) && Array.isArray(entries) ? [...existing, ...entries] : entries;
     }
   };
   foldObject(fromHooksJson);

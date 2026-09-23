@@ -234,6 +234,19 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(real);
   });
 
+  // M-5's merge must not swallow a MALFORMED per-event value before settings/loaders/hooks.ts's own
+  // `pluginHookEntries` gets a chance to validate and REPORT it (hooks.test.ts's own fixture pins
+  // "reported, never thrown") -- a regression the first cut of mergeHookSources introduced by
+  // requiring Array.isArray at fold time, silently dropping the whole malformed event instead of
+  // preserving it for downstream validation.
+  test("M-5: a malformed (non-array) per-event value is PRESERVED through the merge, not silently dropped", () => {
+    const parent = mkTemp("winter-plugin-hooks-malformed-event-");
+    const root = join(parent, "hooked-malformed-event");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: { PreToolUse: "not an array" } }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({ PreToolUse: "not an array" });
+  });
+
   test("a manifest with no hooks.json on disk still loads its own embedded `hooks` block", () => {
     const parent = mkTemp("winter-plugin-hooks-manifest-only-");
     const root = join(parent, "hooked-manifest-only");
