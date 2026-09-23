@@ -4139,6 +4139,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       brand: sessionBrand,
       cwd: at.cwd ?? config.cwd,
       trustedWorkspace: at.trustedWorkspace ?? trustedWorkspace,
+      // Fix round 3 (I-4): the project agent tier also requires "project" in settingSources.
+      ...(settingSources !== undefined ? { settingSources } : {}),
       env: engineEnv ?? process.env,
       forkSubagentEnabled,
       onReject: reportAgentDefinitionRejection,

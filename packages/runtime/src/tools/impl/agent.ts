@@ -402,6 +402,8 @@ export const agentExecutor: ToolExecutor = {
       brand: agentsBrand,
       ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
       trustedWorkspace,
+      // Fix round 3 (I-4): the project agent tier also requires "project" in settingSources.
+      ...(ctx.settingSources !== undefined ? { settingSources: ctx.settingSources } : {}),
       env,
       forkSubagentEnabled: forkEnabled,
       // Review r2 finding 2: wires `loadAgentDefinitions`' own `onReject` to the session's ONE

@@ -16,7 +16,7 @@
 // pre-parsed from the wire.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { WINTER_BRAND, type AgentInfo, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type AgentInfo, type BrandProfile, type RuntimeAgentDefinition, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { resolveBuiltinAgents, resolveBuiltinAgentGates, type BuiltinAgentGates } from "./builtin-agents.ts";
 
 export type AgentDefinitionSource = "programmatic" | "project" | "user" | "plugin" | "builtin";
@@ -93,6 +93,25 @@ function quoteProblematicValues(frontmatterText: string): string {
     if (match) {
       const key = match[1]!;
       const value = match[2]!;
+      // Fix round 3 (I-2): the pinned binary's own `M` checks this BEFORE the quoted-string
+      // passthrough (dump-confirmed): `if(s.startsWith("[")&&s.endsWith("]"))try{if(Array.isArray(
+      // EO(s))){r.push(i);continue}}catch{}`. `[` is itself one of `YAML_SPECIAL_CHARS`, so an
+      // ALREADY-VALID inline array value (`tools: ["Bash(git add, commit)", Read]`) would otherwise
+      // be wrongly quoted into a single STRING on any retry triggered by a DIFFERENT line's problem
+      // -- turning a real array into text `splitList`'s bracket-strip-then-comma-split then tears
+      // apart on every embedded comma, not just the array's own separators (`"Bash(git add,
+      // commit)"` becomes two entries). Left untouched (the original line, unmodified) when it
+      // already parses as a real array.
+      if (value.startsWith("[") && value.endsWith("]")) {
+        try {
+          if (Array.isArray(Bun.YAML.parse(value))) {
+            result.push(line);
+            continue;
+          }
+        } catch {
+          // not valid YAML on its own -- fall through to the ordinary checks below
+        }
+      }
       if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
         result.push(line);
         continue;
@@ -120,7 +139,11 @@ function quoteAndDetab(frontmatterText: string): string {
 export function parseFrontmatter(raw: string): FrontmatterResult {
   const stripped = stripLeadingBom(raw);
   const match = FRONTMATTER_REGEX.exec(stripped);
-  if (!match) return { attrs: {}, body: stripped };
+  // Fix round 3 (M-1): the pinned binary's own `$o` returns the ORIGINAL, un-BOM-stripped text as
+  // the body when there is no fence at all -- the BOM strip exists only to let the fence's `^`
+  // anchor see past a leading BOM when frontmatter IS present; a file with no frontmatter is never
+  // parsed at all, so nothing should have touched its bytes.
+  if (!match) return { attrs: {}, body: raw };
   const frontmatterText = match[1] ?? "";
   const body = stripped.slice(match[0].length);
   let attrs: Record<string, unknown> = {};
@@ -372,6 +395,18 @@ export interface LoadAgentDefinitionsOptions {
   // project-local path).
   trustedWorkspace: boolean;
   /**
+   * Fix round 3 (I-4, security): a project `agents/*.md` load ALSO requires `"project"` in
+   * `settingSources` -- claude's own `yZt`: `N=yo("projectSettings")&&!D` (dump-confirmed,
+   * `!D` being its own disabled-flag, not a Winter concept). Without this, a run started with
+   * `settingSources:["user"]` but ALSO `trustedWorkspace:true` read `<cwd>/.winter/agents`
+   * unfiltered -- skipping the router's own F19c `permissionMode` strip for that source tier, and
+   * `computeChildPolicy` would honour a checked-in `bypassPermissions` the run never meant to trust.
+   * Omitted = every tier allowed (claude's own `settingSources` default), byte-identical to every
+   * pre-fix-round-3 caller (nothing sets `trustedWorkspace` without also wanting the project tier
+   * today, so this is a live gate with no behaviour change until a caller passes both fields).
+   */
+  settingSources?: readonly SettingSource[];
+  /**
    * Phase 5 Task 2 (the P4 carry behind R4-7): definitions contributed by loaded plugins, keyed by
    * `subagent_type`, each carrying its contributing plugin's name.
    *
@@ -445,7 +480,8 @@ export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<str
   // whichever one its caller happened to be reading.
   const user = loadAgentDirectory(opts.winterHome !== undefined ? join(opts.winterHome, "agents") : join(opts.home, brand.homeDirName, "agents"), "user", opts.onReject);
   for (const [name, def] of Object.entries(user)) out.set(name, { ...def, _source: "user" });
-  if (opts.trustedWorkspace) {
+  // Fix round 3 (I-4): `"project"` must ALSO be in settingSources -- see this field's own comment.
+  if (opts.trustedWorkspace && (opts.settingSources === undefined || opts.settingSources.includes("project"))) {
     const project = loadAgentDirectory(join(opts.cwd, brand.projectDirName, "agents"), "project", opts.onReject);
     for (const [name, def] of Object.entries(project)) out.set(name, { ...def, _source: "project" });
   }

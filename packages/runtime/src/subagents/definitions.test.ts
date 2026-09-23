@@ -116,13 +116,15 @@ describe("parseFrontmatter", () => {
     expect(result.body).toBe("body");
   });
 
-  test("a double leading BOM strips only ONE -- the residual BOM still defeats the fence, matching claude", () => {
+  test("a double leading BOM strips only ONE for the FENCE CHECK -- the residual BOM still defeats it, so no frontmatter is found", () => {
     const doubleBom = "﻿﻿---\nname: x\n---\nbody";
     const result = parseFrontmatter(doubleBom);
     expect(result.attrs).toEqual({});
-    // One BOM was stripped by gE; the SECOND is what remains in `body`, since gE runs once, up
-    // front, and everything downstream (including the no-match fallback) reads its result.
-    expect(result.body).toBe(doubleBom.slice(1));
+    // Fix round 3 (M-1): the BOM-strip exists ONLY to let the fence's `^` anchor see past a leading
+    // BOM -- a file with no frontmatter at all (this one: the residual second BOM still defeats the
+    // fence) is never parsed, so nothing should have touched its bytes. `body` is the ORIGINAL `raw`
+    // text, BOTH BOMs still in front, exactly as claude's own `$o` returns it.
+    expect(result.body).toBe(doubleBom);
   });
 
   // WS-21 §6.3 item 2 (batch-2 fix round): the pinned binary's retry, `kdn(e)`, is
@@ -163,6 +165,16 @@ function claudeReference(raw: string): { attrs: Record<string, unknown>; body: s
         if (!m) return line;
         const key = m[1]!;
         const value = m[2]!;
+        // Fix round 3 (I-2): pinned `M`'s own array-passthrough clause, checked BEFORE the quoted-
+        // string check -- see definitions.ts's identical comment for the exact dump citation. This
+        // reference was missing it too, so the differential below compared Winter to itself.
+        if (value.startsWith("[") && value.endsWith("]")) {
+          try {
+            if (Array.isArray(Bun.YAML.parse(value))) return line;
+          } catch {
+            /* not valid YAML on its own -- fall through */
+          }
+        }
         if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return line;
         if (YAML_SPECIAL_CHARS.test(value)) return `${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
         return line;
@@ -173,7 +185,9 @@ function claudeReference(raw: string): { attrs: Record<string, unknown>; body: s
   // Pinned binary's gE(e): strips exactly one leading U+FEFF before the fence is ever matched.
   const stripped = raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
   const match = FRONTMATTER_REGEX.exec(stripped);
-  if (!match) return { attrs: {}, body: stripped };
+  // Fix round 3 (M-1): pinned `$o` returns the ORIGINAL text as the body when there is no fence --
+  // see definitions.ts's identical comment.
+  if (!match) return { attrs: {}, body: raw };
   const frontmatterText = match[1] ?? "";
   const body = stripped.slice(match[0].length);
   let attrs: Record<string, unknown> = {};
@@ -209,6 +223,13 @@ describe("parseFrontmatter vs. the pinned binary's own frontmatter module (diffe
     { label: "single BOM", raw: "﻿---\nname: x\n---\nbody" },
     { label: "double BOM", raw: "﻿﻿---\nname: x\n---\nbody" },
     { label: "tab-indented continuation (recovered by the retry's detab)", raw: "---\ndescription: hello\n\tworld\n---\nbody" },
+    // Fix round 3 (I-2): a mid-value colon forces the retry (first-pass Bun.YAML.parse fails on
+    // `description: Use when: foo`), and the retry's per-line quoting must not also mangle the
+    // UNRELATED already-valid inline array on `tools` -- `[` is itself a YAML_SPECIAL_CHARS member.
+    { label: "retry-triggering mid-value colon alongside an inline array with an embedded comma", raw: '---\nname: x\ndescription: Use when: foo\ntools: ["Bash(git add, commit)", Read]\n---\nbody' },
+    // Fix round 3 (M-1): no fence at all -- the body must be the ORIGINAL text, BOM included, never
+    // the BOM-stripped intermediate (which exists only to let the fence regex see past a BOM).
+    { label: "leading BOM with no frontmatter fence at all", raw: "﻿just a prompt, no fence" },
   ];
   for (const { label, raw } of shapes) {
     test(`${label}: same keys as claude`, () => {
@@ -219,6 +240,19 @@ describe("parseFrontmatter vs. the pinned binary's own frontmatter module (diffe
       expect(winter.body).toBe(claude.body);
     });
   }
+
+  test("I-2: an inline array survives the retry as a REAL array, not a string torn apart on its own embedded comma", () => {
+    const raw = '---\nname: x\ndescription: Use when: foo\ntools: ["Bash(git add, commit)", Read]\n---\nbody';
+    const winter = parseFrontmatter(raw);
+    expect(winter.attrs["tools"]).toEqual(["Bash(git add, commit)", "Read"]);
+  });
+
+  test("M-1: with no fence, the body is the ORIGINAL text byte-for-byte -- the BOM is never stripped from it", () => {
+    const raw = "﻿just a prompt, no fence";
+    const winter = parseFrontmatter(raw);
+    expect(winter.body).toBe(raw);
+    expect(winter.body.charCodeAt(0)).toBe(65279);
+  });
 });
 
 describe("parseAgentDefinitionFile (spawn-surface parity: name+description required, research §A1)", () => {
@@ -396,6 +430,21 @@ describe("loadAgentDefinitions (RULING R4-7 trust gate + merge precedence, built
     mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
     writeFileSync(join(cwd, ".winter", "agents", "proj.md"), "---\nname: proj\ndescription: a project agent\n---\nDo project things.");
     expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: false, ...NO_BUILTINS }).has("proj")).toBe(false);
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, ...NO_BUILTINS }).has("proj")).toBe(true);
+  });
+
+  // Fix round 3 (I-4, security): a project agent must ALSO be excluded when settingSources omits
+  // "project", even in a TRUSTED workspace -- otherwise a run started with settingSources:["user"]
+  // but trustedWorkspace:true read <cwd>/.winter/agents unfiltered, skipping the router's own
+  // settings-tier gating for that source.
+  test("I-4: project-level is ALSO invisible when settingSources excludes \"project\", even trusted", () => {
+    const home = mkTemp("winter-defs-home-");
+    const cwd = mkTemp("winter-defs-cwd-");
+    mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "agents", "proj.md"), "---\nname: proj\ndescription: a project agent\n---\nDo project things.");
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, settingSources: ["user"], ...NO_BUILTINS }).has("proj")).toBe(false);
+    expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, settingSources: ["user", "project"], ...NO_BUILTINS }).has("proj")).toBe(true);
+    // Omitted settingSources allows every tier, matching claude's own default.
     expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, ...NO_BUILTINS }).has("proj")).toBe(true);
   });
 
