@@ -12,10 +12,10 @@
 // PATHS SEMANTICS (F17, pinned): for a USER rule, `paths:` globs resolve relative to the ORIGINAL
 // cwd (the session's cwd at spawn, never a later EnterWorktree relocation -- ruleMatches takes it as
 // an explicit parameter for exactly that reason). For a PROJECT rule, they resolve relative to the
-// PARENT of the project dir (`.winter`) the rule file was discovered under -- which directory that
-// is depends on WHERE ALONG THE ROOT-TO-CWD WALK the file lives, so it is fixed at LOAD time
-// (`LoadedRule.projectBase`) rather than recomputed at match time. A relative glob starting with
-// `..` never matches, for either tier.
+// PARENT of the project dot-dir (brand.projectDirName) the rule file was discovered under -- which
+// directory that is depends on WHERE ALONG THE ROOT-TO-CWD WALK the file lives, so it is fixed at
+// LOAD time (`LoadedRule.projectBase`) rather than recomputed at match time. A relative glob
+// starting with `..` never matches, for either tier.
 //
 // FRONTMATTER. No YAML dependency exists anywhere in this workspace (subagents/definitions.ts's own
 // header states this and is the parser reused here): `paths:` is a flat scalar, either a bracketed
@@ -41,9 +41,10 @@ export interface LoadedRule {
   /** Present (and non-empty) iff this is a CONDITIONAL rule. Raw glob strings, as authored. */
   paths?: string[];
   /**
-   * PROJECT tier only: the parent of the `.winter` directory this rule file was discovered under,
-   * fixed at load time (F17's "relative to the parent of `.winter`"). Absent for a user-tier rule,
-   * which resolves against whatever `originalCwd` `ruleMatches` is called with instead.
+   * PROJECT tier only: the parent of the project dot-dir (brand.projectDirName) this rule file was
+   * discovered under, fixed at load time (F17's "relative to the parent of the project dot-dir").
+   * Absent for a user-tier rule, which resolves against whatever `originalCwd` `ruleMatches` is
+   * called with instead.
    */
   projectBase?: string;
 }

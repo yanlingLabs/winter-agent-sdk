@@ -39,6 +39,20 @@ describe("context/memory-key.ts -- the memory project key", () => {
     }
   });
 
+  // WS-21 §3.7/§6.3 item 11: auto-memory is a DURABLE path, so it prefers `storeHome` -- a directory
+  // now DISTINCT from `home` (the per-run folder) once the router links `buildRunHome`.
+  test("with storeHome supplied, the resolved directory is <storeHome>/projects/<key>/memory, not <home>/projects/...", () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-memkey-"));
+    try {
+      const key = memoryProjectKeyFor(dir, {});
+      expect(memoryDirFor({ cwd: dir, home: "/tmp/run", storeHome: "/tmp/sdk", env: {} })).toBe(join("/tmp/sdk", "projects", key, "memory"));
+      // Absent storeHome: byte-identical to pre-WS-21 behaviour.
+      expect(memoryDirFor({ cwd: dir, home: "/tmp/run", env: {} })).toBe(join("/tmp/run", "projects", key, "memory"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("an override REPLACES the computed path entirely, with ~ expanded and no further per-project nesting", () => {
     const dir = mkdtempSync(join(tmpdir(), "winter-memkey-"));
     try {

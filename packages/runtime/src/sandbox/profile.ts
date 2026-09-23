@@ -272,6 +272,17 @@ export interface SeatbeltProfileInput {
    */
   winterHome?: string;
   /**
+   * WS-21 §3.7/§6.3 item 11: the shared runtime home's durable-paths root (`config.storeHome`),
+   * preferred over `winterHome` for the two DURABLE denies below -- the checkpoint (backups) write
+   * deny and the provider-state read deny, both of which protect `projects/`-rooted content that
+   * lives under the store home once the router links `buildRunHome`, a directory now DISTINCT from
+   * the per-run folder `winterHome` names. The run-dir read deny is left anchored on `winterHome`
+   * unchanged: it protects the daemon's own `run/` (sockets, pidfiles), which is neither the
+   * per-run folder nor the store home in the WS-21 layout, so this module has no better anchor for
+   * it than it already had -- a disclosed, unchanged limitation, not a regression.
+   */
+  storeHome?: string;
+  /**
    * P7a (D19): the brand whose dot-dir and project dot-dir this profile fences.
    *
    * Every winter-owned path segment below is `brand.homeDirName` (the root under the OS home) or
@@ -306,6 +317,10 @@ export interface SeatbeltProfileInput {
  */
 export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const brand = input.brand ?? WINTER_BRAND;
+  // WS-21 §3.7: the two DURABLE denies (backups/checkpoint write, provider-state read) prefer the
+  // shared store home -- see `SeatbeltProfileInput.storeHome`'s own header. The run-dir read deny
+  // stays on `input.winterHome`, unchanged.
+  const durableRoot = input.storeHome ?? input.winterHome;
   const roots = [input.cwd, ...(input.writableRoots ?? [])].map(canon);
   const writeRules = roots.map((r) => `  (subpath "${sbplString(r)}")`).join("\n");
 
@@ -376,8 +391,9 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // stub contract that M13's own read-side scoping decision exists to preserve.
   const denyProviderStateReadRule = [
     input.home ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(join(input.home, brand.homeDirName))))}"))` : "",
-    // The RESOLVED root's own projects directory, when it is not `<home>/<homeDirName>` (Phase 5 fix wave I1).
-    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(input.winterHome)))}"))` : "",
+    // The RESOLVED root's own projects directory, when it is not `<home>/<homeDirName>` (Phase 5 fix
+    // wave I1). WS-21 §3.7: `durableRoot` prefers `storeHome` -- see this function's own header.
+    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(durableRoot)))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");
@@ -385,8 +401,9 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const denyBackupsDirRule = [
     input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "backups")))}"))` : "",
     // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
-    // RESOLVED root's `backups/`, which is what `checkpoint/sink.ts` has always used.
-    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-write* (subpath "${sbplString(canon(join(input.winterHome, "backups")))}"))` : "",
+    // RESOLVED root's `backups/`, which is what `checkpoint/sink.ts` has always used. WS-21 §3.7:
+    // `durableRoot` prefers `storeHome`.
+    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-write* (subpath "${sbplString(canon(join(durableRoot, "backups")))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");

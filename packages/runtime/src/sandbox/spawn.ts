@@ -191,6 +191,8 @@ export interface RunCommandOptions {
   home?: string;
   /** Phase 5 fix wave, I1: the resolved winter root -- see `SeatbeltProfileInput.winterHome`. */
   winterHome?: string;
+  /** WS-21 §3.7: the shared runtime home's durable-paths root -- see `SeatbeltProfileInput.storeHome`. */
+  storeHome?: string;
   /** P7a (D19): the session's brand -- the dot-dir names the profile fences. Omitted = `WINTER_BRAND`. */
   brand?: SandboxBrand;
 }
@@ -246,6 +248,8 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       // Phase 5 fix wave, I1: the RESOLVED winter root, so the run/backups denies land where a
       // session's own storage actually is under a custom `<PREFIX>HOME`.
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
+      // WS-21 §3.7: the shared store home, when the router supplied one -- see `SeatbeltProfileInput.storeHome`.
+      ...(opts.storeHome !== undefined ? { storeHome: opts.storeHome } : {}),
       ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
     });
     spawnFile = REAL_SANDBOX_EXEC_PATH;

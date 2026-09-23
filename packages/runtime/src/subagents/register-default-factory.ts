@@ -52,6 +52,8 @@ export interface DefaultChildEngineFactoryOptions {
   // degrades that to a relative key.
   store?: SessionStore;
   winterHome?: string;
+  /** WS-21 §3.7: `config.storeHome`, preferred over `winterHome` wherever `ChildEngineFactoryDeps` resolves a durable absolute path. See that field's own header. */
+  storeHome?: string;
   env: Record<string, string | undefined>;
   // --- Phase 5 Task 8 --------------------------------------------------------------------------
   //
@@ -128,6 +130,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       env: opts.env,
       ...(opts.store !== undefined ? { store: opts.store } : {}),
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
+      ...(opts.storeHome !== undefined ? { storeHome: opts.storeHome } : {}),
       // WS-07 §6.4: a managed veto on bypass must bind on every descendant, not just this session.
       //
       // NEW-4 (residual round): `|| settingsRules?.disableBypassPermissionsMode`. The veto is

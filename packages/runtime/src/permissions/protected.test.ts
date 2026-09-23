@@ -57,6 +57,33 @@ describe("isProtectedWrite -- §6.7 protected directories", () => {
   });
 });
 
+// WS-21 §3.7/§6.3 item 11: `projects/` (and the two carve-outs that live inside it) moves from the
+// per-run folder (`winterHome`) to the shared, durable STORE home once one is supplied -- the two
+// are now DISTINCT directories, not two spellings of the same one.
+describe("isProtectedWrite -- WS-21 storeHome (§3.7): the durable projects/ tree follows storeHome, not winterHome", () => {
+  const winterHome = "/tmp/run";
+  const storeHome = "/tmp/sdk";
+
+  test("isProtectedWrite(/tmp/sdk/projects/<key>/x.jsonl) is true -- wholesale, anchored on storeHome", () => {
+    expect(isProtectedWrite(`${storeHome}/projects/some-key/x.jsonl`, { ...ctx, winterHome, storeHome })).toBe(true);
+    // The run folder alone does not cover it: the anchor genuinely moved.
+    expect(isProtectedWrite(`${storeHome}/projects/some-key/x.jsonl`, { ...ctx, winterHome })).toBe(false);
+  });
+
+  test("the memory carve-out allows /tmp/sdk/projects/<key>/memory/a.md", () => {
+    expect(isProtectedWrite(`${storeHome}/projects/some-key/memory/a.md`, { ...ctx, winterHome, storeHome })).toBe(false);
+  });
+
+  test("the workflow-script carve-out allows /tmp/sdk/projects/<key>/<uuid>/workflows/scripts/wf.js", () => {
+    expect(isProtectedWrite(`${storeHome}/projects/some-key/some-uuid/workflows/scripts/wf.js`, { ...ctx, winterHome, storeHome })).toBe(false);
+  });
+
+  test("with no storeHome, behaviour is byte-identical to pre-WS-21 (winterHome alone)", () => {
+    expect(isProtectedWrite(`${winterHome}/projects/some-key/x.jsonl`, { ...ctx, winterHome })).toBe(true);
+    expect(isProtectedWrite(`${winterHome}/projects/some-key/memory/a.md`, { ...ctx, winterHome })).toBe(false);
+  });
+});
+
 describe("isProtectedWrite -- §6.7 protected files (curated, capture-noted categories)", () => {
   test("shell startup files are protected at the resolved path's basename", () => {
     expect(isProtectedWrite(`${HOME}/.bashrc`, ctx)).toBe(true);

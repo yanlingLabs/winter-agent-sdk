@@ -322,6 +322,10 @@ try {
     // above for why the floors now depend on it.
     ...(childStore !== undefined ? { store: childStore } : {}),
     ...(childWinterHome !== undefined ? { winterHome: childWinterHome } : {}),
+    // WS-21 §3.7: `wiring.config.storeHome` is the RESOLVED value (production-wiring.ts folds
+    // `env[storeHomeEnvName(brand)]`/`config.storeHome` into the config it returns) -- available by
+    // this point since `wiring` is built above, before this call.
+    ...(wiring.config.storeHome !== undefined ? { storeHome: wiring.config.storeHome } : {}),
     // Phase 5 Task 8: a CHILD gets the same assembler and skill index its parent has.
     ...wiring.childFactoryOptions,
   });

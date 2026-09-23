@@ -1597,7 +1597,7 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
 // `source: "managed"` is what makes these bind under `bypassPermissions` too: stage 2's deny lookup
 // runs before stage 4's bypass auto-allow, and `allowManagedPermissionRulesOnly` narrows the pool to
 // exactly this source rather than dropping it.
-export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick<BrandProfile, "homeDirName">): SourcedRuleEntry[] {
+export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick<BrandProfile, "homeDirName">, resolvedStoreHome?: string): SourcedRuleEntry[] {
   // --- Phase 5 fix wave, I1: the floors follow the RESOLVED winter home --------------------------
   //
   // Every entry below is written under Winter's own dot-dir, and `~` resolves through `permissionHome =
@@ -1612,7 +1612,8 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
   // swap would unprotect all of them to protect one. A resolved root that IS the default emits no
   // duplicate (the two anchors coincide and the dedupe below drops the second).
   const absolute: SourcedRuleEntry[] = [];
-  if (resolvedWinterHome !== undefined && resolve(resolvedWinterHome) !== resolve(join(homedir(), (brand ?? WINTER_BRAND).homeDirName))) {
+  const defaultHome = resolve(join(homedir(), (brand ?? WINTER_BRAND).homeDirName));
+  if (resolvedWinterHome !== undefined && resolve(resolvedWinterHome) !== defaultHome) {
     // `//`-ANCHORED, not a bare absolute path. WS-07 §3.1's own grammar (permissions/paths.ts's
     // `resolveAnchor`) reads a SINGLE leading `/` as "relative to the rule's own settings-file
     // directory", which is `undefined` for an engine-seeded rule and therefore makes the whole rule
@@ -1625,17 +1626,25 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
         absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}/**` }, "deny", "managed"));
       }
     }
+  }
+  // WS-21 §3.7: `projects`/`backups` (soon `file-history`, L1b) are DURABLE -- they live under the
+  // shared STORE home once the router links `buildRunHome`, a directory now DISTINCT from
+  // `resolvedWinterHome` (the per-run folder). `durableRoot` is what this floor anchors on; absent
+  // a `resolvedStoreHome`, it degrades to `resolvedWinterHome`, byte-identical to pre-WS-21.
+  const durableRoot = resolvedStoreHome ?? resolvedWinterHome;
+  if (durableRoot !== undefined && resolve(durableRoot) !== defaultHome) {
+    const durableRootAnchor = `/${resolve(durableRoot)}`;
     for (const dir of ["projects", "backups"]) {
       for (const tool of ["Write", "Edit", "NotebookEdit"]) {
-        absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}` }, "deny", "managed"));
-        absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}/**` }, "deny", "managed"));
+        absolute.push(sourceRule({ toolName: tool, ruleContent: `${durableRootAnchor}/${dir}` }, "deny", "managed"));
+        absolute.push(sourceRule({ toolName: tool, ruleContent: `${durableRootAnchor}/${dir}/**` }, "deny", "managed"));
       }
     }
     // Phase 6 Task 3 (R6-7's P4-M MUST): the resolved-root twin of the provider-state read deny
     // below. Same reason every absolute rule in this block exists -- the floors follow the RESOLVED
-    // winter root, or they protect a directory that does not exist while the real one stays open.
+    // durable root, or they protect a directory that does not exist while the real one stays open.
     for (const tool of PROVIDER_STATE_DENY_TOOLS) {
-      for (const pattern of providerStateDenyPatterns(`${root}/projects`)) {
+      for (const pattern of providerStateDenyPatterns(`${durableRootAnchor}/projects`)) {
         absolute.push(sourceRule({ toolName: tool, ruleContent: pattern }, "deny", "managed"));
       }
     }
@@ -2018,7 +2027,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // RuntimeConfig field wins in either direction, the env var is the fallback, and absent-and-unset
   // keeps the 0.0.16 default (background).
   const backgroundByDefault = config.backgroundByDefault ?? resolveBackgroundByDefaultEnabled(engineEnv ?? process.env, sessionBrand);
-  const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand);
+  // WS-21 §3.7: the durable projects/backups floor anchors on `config.storeHome` when the router
+  // supplied one -- see `buildBaselineDenyRules`'s own header for why `run` stays on `resolvedWinterHome`.
+  const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand, config.storeHome);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
   // called "not wired into the engine by this task (that is a later task's job)". Runs the SAME
@@ -2784,6 +2795,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // I1: the resolved root, so the P5-B carve-out and its stage-2 deny skip name the SAME
       // directory `workflows/store.ts` persists to.
       ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+      // WS-21 §3.7: `config.storeHome`, preferred over `winterHome` by the SAME two consumers --
+      // see `EvaluationContext.storeHome`'s own header.
+      ...(config.storeHome !== undefined ? { storeHome: config.storeHome } : {}),
       // The session outputs directory ($OUTDIR): a sandbox-writable place the protected floor's
       // winter-home part does not cover (permissions/protected.ts's outputs carve-out).
       ...(config.outputsDir !== undefined ? { outputsDir: config.outputsDir } : {}),

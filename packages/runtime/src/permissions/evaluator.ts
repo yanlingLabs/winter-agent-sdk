@@ -348,6 +348,14 @@ export interface EvaluationContext {
    */
   winterHome?: string;
   /**
+   * WS-21 §3.7: the shared runtime home's durable-paths root (`config.storeHome`), preferred over
+   * `winterHome` by the SAME two consumers `winterHome`'s own header names -- `projects/` (what the
+   * P5-B workflow-script carve-out and `isProtectedWrite`'s own wholesale-protect check both
+   * address) lives under the store home once the router links `buildRunHome`, not under the per-run
+   * folder `winterHome` names. Absent falls back to `winterHome`, byte-identical to pre-WS-21.
+   */
+  storeHome?: string;
+  /**
    * The session's outputs directory (`RuntimeConfig.outputsDir`, exported to the shell as `$OUTDIR`).
    * Two effects, both mirroring what the Bash tool already does with it (a sandbox-writable root):
    * a shell write there is inside the session's writable directories (claude's sandbox-write-allowlist
@@ -691,7 +699,16 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
     const outputsDirs = outputsCarveOutDirs(ctx);
     const protectedPath = extractCandidateWritePaths(call, ctx).some((p) => {
       const absPath = resolve(ctx.cwd, p);
-      return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home, ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}), ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}), ...(outputsDirs !== undefined ? { outputsDirs } : {}) })).denyIfEither;
+      return checkSymlinkBothEnds(absPath, (candidate) =>
+        isProtectedPath(candidate, {
+          cwd: ctx.cwd,
+          home: ctx.home,
+          ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+          ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
+          ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
+          ...(outputsDirs !== undefined ? { outputsDirs } : {}),
+        }),
+      ).denyIfEither;
     });
     if (protectedPath) return true;
     // A SHELL write also may not name a control-plane file anywhere (see isProtectedShellTarget).
@@ -1019,19 +1036,23 @@ function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext)
   const homeAnchor = `~/${(ctx.brand ?? WINTER_BRAND).homeDirName}/projects`;
   if (content === homeAnchor || content.startsWith(`${homeAnchor}/`)) return true;
   // Phase 5 fix wave, I1: the RESOLVED-root twin of the same baseline deny. `buildBaselineDenyRules`
-  // now emits `//<winterHome>/projects/**` alongside the home-anchored form, and the P5-B carve-out
+  // now emits `//<durableRoot>/projects/**` alongside the home-anchored form, and the P5-B carve-out
   // has to skip BOTH or the new floor closes the one subtree WS-11 §1.3 requires to stay
   // model-writable -- the documented edit-then-rerun loop, broken as collateral damage.
   // `//`-anchored (paths.ts's filesystem-root form), which is why the literal below carries it.
-  if (ctx.winterHome === undefined) return false;
-  const rootPrefix = `/${resolve(ctx.winterHome)}/projects`;
+  // WS-21 §3.7: `ctx.storeHome` is the SAME `durableRoot` preference `buildBaselineDenyRules` itself
+  // applies (engine.ts) -- the floor and this skip predicate must agree on which root emitted it.
+  const durableRoot = ctx.storeHome ?? ctx.winterHome;
+  if (durableRoot === undefined) return false;
+  const rootPrefix = `/${resolve(durableRoot)}/projects`;
   return content === rootPrefix || content.startsWith(`${rootPrefix}/`);
 }
 
 function callIsEntirelyWorkflowScriptWrite(call: PermissionCall, ctx: EvaluationContext): boolean {
   const paths = extractCandidateWritePaths(call, ctx);
   if (paths.length === 0) return false;
-  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home, ctx.winterHome, ctx.brand));
+  const durableRoot = ctx.storeHome ?? ctx.winterHome;
+  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home, durableRoot, ctx.brand));
 }
 
 /** The `skip` predicate the stage-2 deny lookup passes, or `undefined` when this call earns no carve-out at all. */
@@ -1076,7 +1097,8 @@ function callIsEntirelyMemoryWrite(call: PermissionCall, ctx: EvaluationContext)
   if (!MEMORY_CARVE_OUT_TOOLS.has(call.toolName)) return false;
   const paths = extractCandidateWritePaths(call, ctx);
   if (paths.length === 0) return false;
-  return paths.every((p) => isMemoryCarveOut(resolve(ctx.cwd, p), ctx.home, ctx.winterHome, ctx.brand));
+  const durableRoot = ctx.storeHome ?? ctx.winterHome;
+  return paths.every((p) => isMemoryCarveOut(resolve(ctx.cwd, p), ctx.home, durableRoot, ctx.brand));
 }
 
 /** The auto-memory `skip` predicate, or `undefined` when this call earns no carve-out at all. */

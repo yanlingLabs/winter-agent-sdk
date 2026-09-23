@@ -166,8 +166,8 @@ export interface WinterMdInput {
   /**
    * WS-21 §6.3 item 2: UNCONDITIONAL rules (`context/rules.ts`'s `loadRules(...).unconditional`),
    * rendered as additional blocks AFTER every instructions file -- rules are standing context of
-   * the identical kind an instructions file is, just organised one file per rule instead of one
-   * `WINTER.md`. A CONDITIONAL rule never belongs here: it rides the on-touch attachment
+   * the identical kind an instructions file is, just organised one file per rule instead of a
+   * single instructions basename. A CONDITIONAL rule never belongs here: it rides the on-touch attachment
    * (`conditionalRuleAttachmentProducer`) instead, appearing only once a matching file is touched.
    */
   rules?: readonly { path: string; tier: "user" | "project"; content: string }[];

@@ -1269,6 +1269,39 @@ describe("child-engine.ts: fix round 1 (controller review) -- M1: record.transcr
     }
   });
 
+  // WS-21 §3.7/§6.3 item 11: the shared STORE home, when the router supplied one, is preferred over
+  // `winterHome` (the per-run folder) for this SAME absolute path -- the two are now DISTINCT
+  // directories, and the durable subagent record must follow the store home.
+  test("with storeHome ALSO supplied, record.transcript is anchored on storeHome, not winterHome", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-lane-c-m1-run-"));
+    const storeHome = mkdtempSync(join(tmpdir(), "winter-lane-c-m1-store-"));
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: storeHome });
+      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, store, winterHome, storeHome }));
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "hi", runInBackground: false };
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+      const parentConfig = baseConfig();
+      const done = runEngine({ config: parentConfig, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const drainPromise = drain(host.input);
+      await waitUntil(() => liveHandles.size === 1);
+      const handle = [...liveHandles.values()][0]!;
+      expect(handle.record.transcript.startsWith(storeHome)).toBe(true);
+      expect(handle.record.transcript.startsWith(winterHome)).toBe(false);
+      expect(handle.record.transcript).toContain("/projects/");
+      await waitUntil(() => handle.status() === "completed");
+      await drainPromise;
+      await done;
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(storeHome, { recursive: true, force: true });
+    }
+  });
+
   test("with no store configured, record.transcript is an honest sentinel, never a path that will never exist", async () => {
     registerSpawnAndRegister();
     cleanupToolNames.push(SPAWN_AND_REGISTER);

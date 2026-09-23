@@ -81,8 +81,9 @@ export function readCapped(path: string, maxBytes: number): string | null {
 }
 
 /**
- * Read a UTF-8 file WHOLE, no byte ceiling. WS-21 §6.3 item 10 (F7): claude does not truncate an
- * instructions file, and winter-md.ts stopped capping `WINTER.md`/`CLAUDE.md` to match. This is a
+ * Read a UTF-8 file WHOLE, no byte ceiling. WS-21 §6.3 item 10 (F7): claude does not truncate its
+ * own instructions file, and winter-md.ts stopped capping the brand's own instructions basename to
+ * match. This is a
  * DELIBERATE exception to this module's own rule (1) above -- the instructions file is re-sent every
  * request just like a capped block is, but parity with claude wins here, the same way it already won
  * for the skill description cap. Same "nothing to inject" contract as `readCapped`: missing,

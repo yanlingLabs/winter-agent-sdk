@@ -188,7 +188,17 @@ function resolveContext(deps: SystemPromptAssemblerDeps, input: SystemPromptInpu
   const memoryOn = hostMemory?.enabled ?? autoMemoryEnabled(settings);
   const hostDirectory = hostMemory?.directory !== undefined && hostMemory.directory.trim().length > 0 ? hostMemory.directory : undefined;
   const directoryOverride = hostDirectory ?? settings?.autoMemoryDirectory;
-  const memoryDir = memoryOn ? (input.memoryDir ?? memoryDirFor({ cwd: input.cwd, home, env: input.env, ...(directoryOverride !== undefined ? { override: directoryOverride } : {}) })) : undefined;
+  const memoryDir = memoryOn
+    ? (input.memoryDir ??
+      memoryDirFor({
+        cwd: input.cwd,
+        home,
+        env: input.env,
+        // WS-21 §3.7: durable, so it prefers the shared store home over the per-run folder.
+        ...(config.storeHome !== undefined ? { storeHome: config.storeHome } : {}),
+        ...(directoryOverride !== undefined ? { override: directoryOverride } : {}),
+      }))
+    : undefined;
 
   const environment: EnvironmentInput = {
     cwd: input.cwd,
