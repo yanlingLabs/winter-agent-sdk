@@ -103,27 +103,55 @@ describe("parseFrontmatter", () => {
     expect(parseFrontmatter(raw).attrs["tools"]).toEqual(["Read", "Grep"]);
   });
 
-  // WS-21 §6.3 item 2 (fix-round-2): a BOM survives whatever the read gave `parseFrontmatter` --
-  // nothing in this function strips one, single or double, matching claude's own reference (which
-  // has no BOM-strip step in its agent-loading path either: `^---` anchors to the TRUE string start,
-  // so ANY leading BOM defeats the fence, exactly as any other leading character would). Measured
-  // empirically through `readFileSync(path, "utf8")` before writing this test: neither Bun nor Node
-  // strips a BOM on a plain utf8 read, so single- and double-BOM behave identically here -- there is
-  // no leniency to add, and none to remove.
-  test("a leading BOM (single or double) defeats the frontmatter fence -- no frontmatter is found, matching claude", () => {
+  // WS-21 §6.3 item 2 (batch-2 fix round): the PINNED BINARY (claude CLI 2.1.250 inside agent-sdk
+  // 0.3.250 -- the authority for claude behaviour; claude-code-reference @ 6f6f12b is an OLDER,
+  // unobfuscated snapshot and is NOT what ships) strips exactly ONE leading U+FEFF before matching
+  // the fence (its own `gE(e) = e.charCodeAt(0)===65279 ? e.slice(1) : e`, called before `fR`). A
+  // SINGLE leading BOM therefore parses fine; a DOUBLE BOM has one stripped and one left, which
+  // still defeats `^---` -- so double BOM still reads as no frontmatter, single BOM does not.
+  test("a single leading BOM is stripped and the frontmatter still parses, matching claude", () => {
     const singleBom = "﻿---\nname: x\n---\nbody";
+    const result = parseFrontmatter(singleBom);
+    expect(result.attrs).toEqual({ name: "x" });
+    expect(result.body).toBe("body");
+  });
+
+  test("a double leading BOM strips only ONE -- the residual BOM still defeats the fence, matching claude", () => {
     const doubleBom = "﻿﻿---\nname: x\n---\nbody";
-    expect(parseFrontmatter(singleBom)).toEqual({ attrs: {}, body: singleBom });
-    expect(parseFrontmatter(doubleBom)).toEqual({ attrs: {}, body: doubleBom });
+    const result = parseFrontmatter(doubleBom);
+    expect(result.attrs).toEqual({});
+    // One BOM was stripped by gE; the SECOND is what remains in `body`, since gE runs once, up
+    // front, and everything downstream (including the no-match fallback) reads its result.
+    expect(result.body).toBe(doubleBom.slice(1));
+  });
+
+  // WS-21 §6.3 item 2 (batch-2 fix round): the pinned binary's retry, `kdn(e)`, is
+  // `M(e).replace(/^\t+/gm, r => "  ".repeat(r.length))` -- quote-loose-values (M, Winter's own
+  // `quoteProblematicValues`) FIRST, THEN a per-line leading-tab detab (2 spaces per tab) on the
+  // QUOTED result, before the reparse attempt. YAML forbids tab indentation, so a hand-authored file
+  // edited with tabs would otherwise lose its whole frontmatter block to the first parse failure.
+  test("tab-indented frontmatter (invalid YAML) is recovered by the retry's detab step", () => {
+    // A folded PLAIN scalar continuation line, indented with a tab -- YAML rejects tab indentation
+    // outright on the first pass. Deliberately NOT a `|`/`>` block scalar: both indicator characters
+    // are themselves in YAML_SPECIAL_CHARS, so quoteProblematicValues would quote the bare `|`/`>`
+    // token first and break the block scalar a different way -- a genuine, pinned-binary-accurate
+    // quirk (confirmed present verbatim in the strings dump too), not something this test is about.
+    const raw = "---\ndescription: hello\n\tworld\n---\nbody";
+    const result = parseFrontmatter(raw);
+    expect(result.attrs["description"]).toBe("hello world");
   });
 });
 
-// WS-21 §6.3 item 2 (fix-round-2): a differential harness against claude's own reference parser,
-// ported into this test file rather than trusted from memory -- `claudeReference` below is
-// FRONTMATTER_REGEX + Bun.YAML.parse + quoteProblematicValues, verbatim from
-// claude-code-reference @ 6f6f12b's src/utils/frontmatterParser.ts (the pin this repo's other
-// pinned-reference citations use, e.g. context/imports.ts's own header). For every shape, Winter's
-// `parseFrontmatter` must find the SAME keys claude would -- the coordinator's own stated bar.
+// WS-21 §6.3 item 2 (batch-2 fix round): a differential harness against the PINNED BINARY's own
+// frontmatter module (claude CLI 2.1.250 / agent-sdk 0.3.250 -- searched by substring in its own
+// strings dump, not trusted from claude-code-reference @ 6f6f12b, an older unobfuscated snapshot
+// that is NOT what ships). `claudeReference` below is FRONTMATTER_REGEX + the BOM strip (`gE`) +
+// Bun.YAML.parse + the retry's quote-then-detab (`kdn`) -- every regex/behaviour here was confirmed
+// present, verbatim, in the pinned binary's strings (`^---\s*\n([\s\S]*?)---\s*\n?`,
+// `[{}[\]*&#!|>%@\`]|: `, `^([a-zA-Z_-]+):\s+(.+)$` all appear as literal string constants in the
+// dump; the BOM/tab operations are numeric/regex-literal facts a strings-only extraction cannot
+// itself display -- see this fix round's report for how those two were confirmed). For every shape,
+// Winter's `parseFrontmatter` must find the SAME keys claude would -- the coordinator's own stated bar.
 function claudeReference(raw: string): { attrs: Record<string, unknown>; body: string } {
   const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)---\s*\n?/;
   const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
@@ -140,26 +168,30 @@ function claudeReference(raw: string): { attrs: Record<string, unknown>; body: s
         return line;
       })
       .join("\n");
-  const match = FRONTMATTER_REGEX.exec(raw);
-  if (!match) return { attrs: {}, body: raw };
+  // Pinned binary's kdn(e) = M(e).replace(/^\t+/gm, r => "  ".repeat(r.length)) -- quote first, detab second.
+  const quoteAndDetab = (text: string): string => quoteProblematicValues(text).replace(/^\t+/gm, (m) => "  ".repeat(m.length));
+  // Pinned binary's gE(e): strips exactly one leading U+FEFF before the fence is ever matched.
+  const stripped = raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
+  const match = FRONTMATTER_REGEX.exec(stripped);
+  if (!match) return { attrs: {}, body: stripped };
   const frontmatterText = match[1] ?? "";
-  const body = raw.slice(match[0].length);
+  const body = stripped.slice(match[0].length);
   let attrs: Record<string, unknown> = {};
   try {
     const parsed = Bun.YAML.parse(frontmatterText) as unknown;
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
   } catch {
     try {
-      const parsed = Bun.YAML.parse(quoteProblematicValues(frontmatterText)) as unknown;
+      const parsed = Bun.YAML.parse(quoteAndDetab(frontmatterText)) as unknown;
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
     } catch {
-      /* both attempts failed -- attrs stays {}, matching the reference's own silent degrade */
+      /* both attempts failed -- attrs stays {}, matching the pinned binary's own silent degrade */
     }
   }
   return { attrs, body };
 }
 
-describe("parseFrontmatter vs. claude's own reference parser (differential, WS-21 §6.3 item 2)", () => {
+describe("parseFrontmatter vs. the pinned binary's own frontmatter module (differential, WS-21 §6.3 item 2)", () => {
   const shapes: { label: string; raw: string }[] = [
     { label: "plain", raw: ["---", "name: x", "description: d", "---", "body"].join("\n") },
     { label: "CRLF", raw: "---\r\nname: x\r\ndescription: d\r\n---\r\nbody" },
@@ -174,6 +206,9 @@ describe("parseFrontmatter vs. claude's own reference parser (differential, WS-2
     { label: "mid-value colon", raw: "---\nname: x\ndescription: Use when: foo\n---\nbody" },
     { label: "inline list", raw: "---\nname: x\ntools: [Read, Grep]\n---\nbody" },
     { label: "malformed block", raw: "---\nname: x\nnot valid !!\n---\nbody" },
+    { label: "single BOM", raw: "﻿---\nname: x\n---\nbody" },
+    { label: "double BOM", raw: "﻿﻿---\nname: x\n---\nbody" },
+    { label: "tab-indented continuation (recovered by the retry's detab)", raw: "---\ndescription: hello\n\tworld\n---\nbody" },
   ];
   for (const { label, raw } of shapes) {
     test(`${label}: same keys as claude`, () => {
@@ -184,15 +219,6 @@ describe("parseFrontmatter vs. claude's own reference parser (differential, WS-2
       expect(winter.body).toBe(claude.body);
     });
   }
-
-  test("single and double BOM: same keys as claude (both empty -- neither strips a BOM)", () => {
-    for (const raw of ["﻿---\nname: x\n---\nbody", "﻿﻿---\nname: x\n---\nbody"]) {
-      const winter = parseFrontmatter(raw);
-      const claude = claudeReference(raw);
-      expect(Object.keys(winter.attrs)).toEqual(Object.keys(claude.attrs));
-      expect(winter.body).toBe(claude.body);
-    }
-  });
 });
 
 describe("parseAgentDefinitionFile (spawn-surface parity: name+description required, research §A1)", () => {

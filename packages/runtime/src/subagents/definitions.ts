@@ -37,14 +37,21 @@ export type PluginAgentDefinition = RuntimeAgentDefinition & { plugin: string };
 
 // --- Filesystem loading: frontmatter parsing, matching claude's own pinned split -------------------
 //
-// WS-21 §6.3 item 2 (fix round 2): `Bun.YAML` is a Bun BUILT-IN (no package.json entry), not an npm
-// package -- the earlier "no YAML dependency exists in this workspace" rationale for a hand-rolled
-// `key: value` scanner was itself about R4-10's "new dependency" rule, which a runtime built-in never
-// trips. `FRONTMATTER_REGEX`, `YAML_SPECIAL_CHARS` and `quoteProblematicValues` below are ported
-// VERBATIM from the pinned reference (claude-code-reference @ 6f6f12b, src/utils/frontmatterParser.ts
-// -- the same clone context/imports.ts's own header cites), not reinvented: a hand-rolled line
-// scanner's own "a line it doesn't recognize is skipped" leniency let a frontmatter block Winter
-// half-parsed disagree, silently, with what claude either fully parses or fully drops.
+// WS-21 §6.3 item 2 (fix round 2, corrected in the batch-2 fix round): `Bun.YAML` is a Bun BUILT-IN
+// (no package.json entry), not an npm package -- the earlier "no YAML dependency exists in this
+// workspace" rationale for a hand-rolled `key: value` scanner was itself about R4-10's "new
+// dependency" rule, which a runtime built-in never trips.
+//
+// THE AUTHORITY FOR CLAUDE BEHAVIOUR IS THE PINNED BINARY (claude CLI 2.1.250 inside agent-sdk
+// 0.3.250), NOT `claude-code-reference @ 6f6f12b` -- that clone is an OLDER, unobfuscated snapshot
+// and is not what ships. `FRONTMATTER_REGEX`, `YAML_SPECIAL_CHARS` and the base of
+// `quoteProblematicValues` below were CONFIRMED present, verbatim, as literal string constants in
+// the pinned binary's own strings dump (searched by substring: `^---\s*\n([\s\S]*?)---\s*\n?`,
+// `[{}[\]*&#!|>%@\`]|: `, `^([a-zA-Z_-]+):\s+(.+)$` all appear). The BOM-strip and the retry's
+// tab-detab step below are NOT visible in that dump (a numeric comparison and a regex applied
+// programmatically leave no independently-checkable string trace) and were confirmed from the
+// pinned binary's own disassembled `gE`/`kdn` functions directly, per the batch-2 fix round's
+// instruction -- see this fix round's report for the exact citations.
 //
 // `attrs` is `Record<string, unknown>` now, not `Record<string, string>`: real YAML returns a typed
 // value (`effort: 5` is the number 5, `background: true` is the boolean true, `model:` with nothing
@@ -56,21 +63,26 @@ export interface FrontmatterResult {
   body: string;
 }
 
-// Ported verbatim (claude's own `FRONTMATTER_REGEX`). LAZY (`[\s\S]*?`): the closing fence need not
-// be alone on its own line and needs no trailing newline, unlike the old line-based scanner's
-// `/^---\s*$/`-per-line requirement -- `"---\nname: x\n---body"` finds frontmatter under this regex
-// (claude does too) where the old scanner called it unterminated.
-//
-// `^` anchors to the TRUE start of the string, which is what makes a leading BOM (single OR double --
-// nothing in this function or its caller strips one, matching claude's own agent-loading path, which
-// has no BOM-strip step either) defeat the fence exactly like any other leading character would:
-// there is no leniency to add here, and none to remove.
+// LAZY (`[\s\S]*?`): the closing fence need not be alone on its own line and needs no trailing
+// newline, unlike the old line-based scanner's `/^---\s*$/`-per-line requirement --
+// `"---\nname: x\n---body"` finds frontmatter under this regex (claude does too) where the old
+// scanner called it unterminated.
 const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)---\s*\n?/;
 
-// Ported verbatim (claude's own `YAML_SPECIAL_CHARS` / `quoteProblematicValues`). A value with a bare
-// `: ` mid-string (`description: Use when: foo`) is invalid YAML on the first pass (a nested mapping)
-// -- this is the retry that quotes it and tries again, rather than losing the whole file to one
-// common, unquoted author mistake.
+// Pinned binary's `gE(e)`: `e.charCodeAt(0)===65279 ? e.slice(1) : e`. Strips exactly ONE leading
+// U+FEFF (byte-order mark), applied ONCE, before `FRONTMATTER_REGEX` ever runs -- so a single-BOM
+// file parses exactly as if the BOM were never there, while a double-BOM file still has one
+// residual BOM in front of `---`, which still defeats the `^` anchor (no frontmatter, matching
+// claude). Neither Bun's nor Node's plain `readFileSync(path, "utf8")` strips a BOM on its own
+// (measured empirically, definitions.test.ts's own header records it), so this step is load-bearing
+// for every real agent file read from disk, not merely a hypothetical.
+function stripLeadingBom(raw: string): string {
+  return raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
+}
+
+// A value with a bare `: ` mid-string (`description: Use when: foo`) is invalid YAML on the first
+// pass (a nested mapping) -- this is the retry that quotes it and tries again, rather than losing
+// the whole file to one common, unquoted author mistake.
 const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
 
 function quoteProblematicValues(frontmatterText: string): string {
@@ -96,26 +108,37 @@ function quoteProblematicValues(frontmatterText: string): string {
   return result.join("\n");
 }
 
+// Pinned binary's `kdn(e)`: `M(e).replace(/^\t+/gm, r => "  ".repeat(r.length))` -- quote-loose-
+// values FIRST (`M`, `quoteProblematicValues` above), THEN a per-line leading-tab detab (2 spaces
+// per tab) on the QUOTED result. YAML forbids tab indentation, so a hand-authored file edited with
+// tabs would otherwise lose its whole frontmatter block on the first parse failure and AGAIN on the
+// retry, since quoting loose values alone does nothing about indentation.
+function quoteAndDetab(frontmatterText: string): string {
+  return quoteProblematicValues(frontmatterText).replace(/^\t+/gm, (m) => "  ".repeat(m.length));
+}
+
 export function parseFrontmatter(raw: string): FrontmatterResult {
-  const match = FRONTMATTER_REGEX.exec(raw);
-  if (!match) return { attrs: {}, body: raw };
+  const stripped = stripLeadingBom(raw);
+  const match = FRONTMATTER_REGEX.exec(stripped);
+  if (!match) return { attrs: {}, body: stripped };
   const frontmatterText = match[1] ?? "";
-  const body = raw.slice(match[0].length);
+  const body = stripped.slice(match[0].length);
   let attrs: Record<string, unknown> = {};
   try {
     const parsed = Bun.YAML.parse(frontmatterText) as unknown;
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
   } catch {
-    // YAML parsing failed -- retry once after quoting problematic values (claude's own two-attempt
-    // structure), rather than losing the whole file to one fixable shape.
+    // YAML parsing failed -- retry once after quoting loose values and detabbing (claude's own
+    // two-attempt structure), rather than losing the whole file to one fixable shape.
     try {
-      const parsed = Bun.YAML.parse(quoteProblematicValues(frontmatterText)) as unknown;
+      const parsed = Bun.YAML.parse(quoteAndDetab(frontmatterText)) as unknown;
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
     } catch {
-      // Both attempts failed -- attrs stays {}, matching the reference's own silent degrade (it logs
-      // for debugging there; here, a required field simply being absent from `{}` is what surfaces
-      // as `parseAgentDefinitionFile`'s own typed rejection a few lines below, so the failure is
-      // still disclosed to a caller, just at the field-validation layer rather than this one).
+      // Both attempts failed -- attrs stays {}, matching the pinned binary's own silent degrade (it
+      // logs for debugging there; here, a required field simply being absent from `{}` is what
+      // surfaces as `parseAgentDefinitionFile`'s own typed rejection a few lines below, so the
+      // failure is still disclosed to a caller, just at the field-validation layer rather than
+      // this one).
     }
   }
   return { attrs, body };
