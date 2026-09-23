@@ -80,6 +80,16 @@ export interface PluginManifest {
    * `scanPluginAgentsOverride`.
    */
   agents?: string | string[];
+  /**
+   * WS-21 fix round 5: the same custom-path-override shape as `workflows`/`agents`, for `commands`
+   * -- PLUS an inline `{<name>: {source?: string; content?: string}}` object-map form claude's own
+   * `eqt` also accepts (content-search confirmed against the installed claude CLI binary, 2.1.280),
+   * letting a manifest embed a command's text directly instead of pointing at a file. Winter does
+   * NOT port the inline form this round (`plugins/loader.ts`'s `resolveCommandsManifestOverride` has
+   * the full disclosed-scope note); it is typed here only so a manifest using it is not silently
+   * miscast, and so the shadow-on-presence check still fires for it.
+   */
+  commands?: string | string[] | Record<string, { source?: string; content?: string }>;
   [key: string]: unknown;
 }
 

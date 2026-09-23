@@ -565,6 +565,93 @@ describe("loadPlugins: a manifest `agents` override (fix round 5)", () => {
   });
 });
 
+// Fix round 5: a manifest `commands` override -- the same plain-paths shape as `agents`/`workflows`,
+// PLUS the inline {name:{source|content}} object-map form, which is disclosed as unsupported (a
+// loud warning) rather than silently ignored -- resolveCommandsManifestOverride's own header has
+// the full scope note.
+describe("loadPlugins: a manifest `commands` override (fix round 5)", () => {
+  function commandFile(description = "d"): string {
+    return `---\ndescription: ${description}\n---\n\nDo it $ARGUMENTS`;
+  }
+
+  test("a STRING override SHADOWS the default commands/ directory -- only the override's own command is loaded", () => {
+    const parent = mkTemp("winter-plugin-commands-string-");
+    const root = join(parent, "cmd-plugin");
+    write(join(root, "commands", "default-cmd.md"), commandFile());
+    write(join(root, "custom-commands", "custom-cmd.md"), commandFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ commands: "./custom-commands" }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.commands.map((c) => c.name)).toEqual(["custom-cmd"]);
+  });
+
+  test("an ARRAY override mixes a directory entry and a single-file entry", () => {
+    const parent = mkTemp("winter-plugin-commands-array-");
+    const root = join(parent, "cmd-plugin");
+    write(join(root, "commands-dir", "one.md"), commandFile());
+    write(join(root, "solo-command.md"), commandFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ commands: ["./commands-dir", "./solo-command.md"] }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.commands.map((c) => c.name).sort()).toEqual(["one", "solo-command"]);
+  });
+
+  test("an ABSOLUTE override entry pointing outside the plugin root is refused", () => {
+    const parent = mkTemp("winter-plugin-commands-absolute-escape-");
+    const root = join(parent, "cmd-plugin");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ commands: "/etc" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.commands).toEqual([]);
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("folder-shadowed-by-manifest fires when the override drops an existing default directory, and O1t suppresses it when the override names the default directory itself", () => {
+    const parent = mkTemp("winter-plugin-commands-shadow-");
+    const root = join(parent, "cmd-plugin");
+    write(join(root, "commands", "default-cmd.md"), commandFile());
+    write(join(root, "custom-commands", "custom-cmd.md"), commandFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ commands: "./custom-commands" }));
+    const shadowed = loadPlugins([{ type: "local", path: root }]);
+    expect(shadowed.manifestPathWarnings).toHaveLength(1);
+    expect(shadowed.manifestPathWarnings[0]).toContain("commands/");
+
+    const parent2 = mkTemp("winter-plugin-commands-shadow-self-");
+    const root2 = join(parent2, "cmd-plugin");
+    write(join(root2, "commands", "default-cmd.md"), commandFile());
+    write(join(root2, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ commands: "./commands" }));
+    const selfNamed = loadPlugins([{ type: "local", path: root2 }]);
+    expect(selfNamed.manifestPathWarnings).toEqual([]);
+    expect(selfNamed.bundles[0]!.commands.map((c) => c.name)).toEqual(["default-cmd"]);
+  });
+
+  // The advisor's own catch: an inline {name:{source|content}} manifest value still SHADOWS the
+  // default directory (claude's own `j.commands` truthy check does not distinguish the two shapes),
+  // but Winter does not load it -- disclosed with a loud warning rather than silently disagreeing
+  // with claude about whether the plugin's commands loaded at all.
+  test("an INLINE {name: {source|content}} manifest value shadows the default directory but loads nothing, with a disclosed warning", () => {
+    const parent = mkTemp("winter-plugin-commands-inline-");
+    const root = join(parent, "cmd-plugin");
+    write(join(root, "commands", "default-cmd.md"), commandFile());
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ commands: { greet: { content: "Say hello" } } }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.commands).toEqual([]); // shadowed -- the default directory's command is NOT loaded
+    // TWO warnings fire, and both are correct: the inline-form-unsupported notice, AND the ordinary
+    // folder-shadowed-by-manifest notice (the resolved override set is empty, so O1t's own
+    // suppression does not apply -- nothing in it names the default directory).
+    expect(result.manifestPathWarnings).toHaveLength(2);
+    const inlineWarning = result.manifestPathWarnings.find((w) => w.includes("inline"));
+    expect(inlineWarning).toBeDefined();
+    expect(inlineWarning).toContain("does not support");
+    expect(result.manifestPathWarnings.some((w) => w.includes("folder exists but is not auto-loaded"))).toBe(true);
+  });
+
+  test("no `commands` key at all falls back to the default directory exactly as before this feature existed", () => {
+    const root = plugin({ manifestDir: WINTER_PLUGIN_MANIFEST_DIR, manifest: {} });
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.commands.map((c) => c.name)).toEqual(["deploy"]); // plugin()'s own default fixture command
+  });
+});
+
 describe("readPluginManifest", () => {
   test("a missing manifest is neither an error nor a manifest", () => {
     expect(readPluginManifest(mkTemp("winter-nomanifest-"))).toEqual({});

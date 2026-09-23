@@ -183,12 +183,30 @@ function scanPluginSkills(root: string, pluginName: string): PluginSkillEntry[] 
  * readers of one file, deliberately: this one must not retain bodies (the same lazy discipline the
  * skill index follows), and the resolver must see the file as it is when the command actually runs.
  */
-function scanPluginCommands(root: string, pluginName: string): PluginCommandEntry[] {
-  const commandsRoot = join(root, "commands");
+/** ONE command file, parsed. Shared by the default-directory scan and a manifest override's own per-entry file case (fix round 5). `undefined` for an unreadable file, matching the default scan's own silent-skip posture. */
+function scanPluginCommandFile(path: string, pluginName: string): PluginCommandEntry | undefined {
+  const name = basename(path, ".md");
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  const attrs = frontmatterAttrs(raw);
+  return {
+    name,
+    qualifiedName: `${pluginName}:${name}`,
+    path,
+    ...(attrs["description"] !== undefined ? { description: attrs["description"] } : {}),
+    ...(attrs["argument-hint"] !== undefined ? { argumentHint: attrs["argument-hint"] } : {}),
+  };
+}
+
+function scanPluginCommandsDir(dir: string, pluginName: string): PluginCommandEntry[] {
   let files: string[];
   try {
-    files = readdirSync(commandsRoot, { withFileTypes: true })
-      .filter((e) => isFileEntry(commandsRoot, e) && e.name.endsWith(".md"))
+    files = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => isFileEntry(dir, e) && e.name.endsWith(".md"))
       .map((e) => e.name)
       .sort();
   } catch {
@@ -196,24 +214,75 @@ function scanPluginCommands(root: string, pluginName: string): PluginCommandEntr
   }
   const out: PluginCommandEntry[] = [];
   for (const file of files) {
-    const path = join(commandsRoot, file);
-    const name = basename(file, ".md");
-    let raw: string;
+    const entry = scanPluginCommandFile(join(dir, file), pluginName);
+    if (entry !== undefined) out.push(entry);
+  }
+  return out;
+}
+
+function scanPluginCommands(root: string, pluginName: string): PluginCommandEntry[] {
+  return scanPluginCommandsDir(join(root, "commands"), pluginName);
+}
+
+/**
+ * Fix round 5: a manifest `commands` override's own array of paths (the PLAIN string/string[] shape
+ * `commands` shares with `workflows`/`agents`/`output-styles` -- NOT the inline `{name:{source|
+ * content}}` object-map form, which `resolveCommandsManifestOverride` below intercepts before this
+ * is ever reached). Each entry a directory (scanned like the default) or a single file (one
+ * command), matching the confirmed consumer shape (content search against the installed claude CLI
+ * binary): `w.commandsPaths.map(async(j)=>{let stat=await fs.stat(j);if(stat.isDirectory()){...scan
+ * the dir...}else if(stat.isFile()){...one file...}})`. A later entry's SAME command name overrides
+ * an earlier one (deduped by name, mirroring `scanPluginAgentsOverride`'s own convention).
+ */
+function scanPluginCommandsOverride(paths: readonly string[], pluginName: string): PluginCommandEntry[] {
+  const byName = new Map<string, PluginCommandEntry>();
+  for (const path of paths) {
+    let isDir: boolean;
     try {
-      raw = readFileSync(path, "utf8");
+      isDir = statSync(path).isDirectory();
     } catch {
       continue;
     }
-    const attrs = frontmatterAttrs(raw);
-    out.push({
-      name,
-      qualifiedName: `${pluginName}:${name}`,
-      path,
-      ...(attrs["description"] !== undefined ? { description: attrs["description"] } : {}),
-      ...(attrs["argument-hint"] !== undefined ? { argumentHint: attrs["argument-hint"] } : {}),
-    });
+    if (isDir) {
+      for (const entry of scanPluginCommandsDir(path, pluginName)) byName.set(entry.name, entry);
+    } else {
+      const entry = scanPluginCommandFile(path, pluginName);
+      if (entry !== undefined) byName.set(entry.name, entry);
+    }
   }
-  return out;
+  return [...byName.values()];
+}
+
+/**
+ * Fix round 5, the disclosed scope decision for commands' own richer manifest shape: claude's `eqt`
+ * ALSO accepts an inline `{<name>: {source?, content?}}` object map (dump-confirmed, content search:
+ * `typeof n==="object"&&!Array.isArray(n)&&Ee&&typeof Ee==="object"&&(("source"in Ee)||("content"in
+ * Ee))`), letting a manifest embed a command's TEXT directly rather than pointing at a file on disk.
+ * This is a materially separate, larger mechanism than the plain path-array override every other
+ * component shares (a per-entry metadata map, an inline-content registration path, its own merge
+ * mode) -- not ported this round; the ruling's own `nk(...)`-style citation is the plain-paths shape.
+ * SHADOW still fires (claude's own `j.commands` truthy check does not distinguish the two shapes),
+ * with a LOUD warning naming the gap, so a plugin author sees why their default commands/ directory
+ * stopped loading rather than the two runtimes silently disagreeing about it ("behave as one" per
+ * this round's own ruling).
+ */
+function resolveCommandsManifestOverride(
+  root: string,
+  pluginName: string,
+  declared: PluginManifest["commands"],
+  warnings: string[],
+): string[] | undefined {
+  if (declared === undefined) return undefined;
+  if (!Array.isArray(declared) && typeof declared === "object" && declared !== null) {
+    const firstValue = Object.values(declared)[0];
+    if (firstValue !== null && typeof firstValue === "object" && ("source" in (firstValue as object) || "content" in (firstValue as object))) {
+      warnings.push(
+        `plugin "${pluginName}"'s manifest "commands" uses the inline {name: {source|content}} form, which Winter does not support yet -- no commands were loaded from it (the default commands/ directory is still shadowed, matching claude's own behaviour whenever the key is present)`,
+      );
+      return [];
+    }
+  }
+  return resolveManifestComponentOverride(root, pluginName, "commands", declared as string | string[], false, warnings);
 }
 
 /** Minimal frontmatter attribute read; the resolver owns the authoritative parse of the same shape. */
@@ -616,6 +685,18 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     ) {
       manifestPathWarnings.push(shadowedFolderWarning(name, "agents", "agents"));
     }
+    // Fix round 5: a manifest `commands` override, same shadow-on-presence shape -- the inline
+    // {name:{source|content}} form is intercepted inside resolveCommandsManifestOverride (its own
+    // header has the disclosed-scope note); everything else behaves exactly like `agents` above.
+    const commandsOverridePaths = resolveCommandsManifestOverride(root, name, manifest?.commands, manifestPathWarnings);
+    const scannedCommands = commandsOverridePaths === undefined ? scanPluginCommands(root, name) : scanPluginCommandsOverride(commandsOverridePaths, name);
+    if (
+      commandsOverridePaths !== undefined &&
+      componentDirIfPresent(root, "commands") !== undefined &&
+      !manifestOverrideIncludesDefaultDir(commandsOverridePaths, join(root, "commands"))
+    ) {
+      manifestPathWarnings.push(shadowedFolderWarning(name, "commands", "commands"));
+    }
     const outputStylesPath = componentDirIfPresent(root, "output-styles");
     // Fix round 4/5 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
     // directory the moment the key is present, regardless of how many of its entries resolve --
@@ -655,7 +736,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       ...(manifestResult.path !== undefined ? { manifestPath: manifestResult.path } : {}),
       metadata: metadataOf(manifest),
       skills: scanPluginSkills(root, name),
-      commands: scanPluginCommands(root, name),
+      commands: scannedCommands,
       agents: scannedAgents.agents,
       ...(hooks !== undefined ? { hooks } : {}),
       mcpServers: mcp.servers,
