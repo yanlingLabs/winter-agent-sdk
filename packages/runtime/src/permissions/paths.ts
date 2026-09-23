@@ -193,11 +193,22 @@ function escapeRegexChar(ch: string): string {
 //   - `?` matches EXACTLY ONE character, never `/` (the `ignore` package's own
 //     `[/(?!\\)\?/g, () => "[^/]"]` replacer).
 //   - `[...]` is a CHARACTER CLASS, passed through to the compiled regex near-verbatim (the
-//     package's own bracket-expression replacer keeps the class body largely as authored; a
+//     package's own bracket-expression replacer keeps the class body largely as authored); a
 //     malformed class -- unterminated, or one whose *compiled* regex construction throws for any
-//     reason -- degrades to an impossible class (`[]`, matches nothing), the SAME never-match
-//     posture the package's own replacer falls back to for its equivalent malformed cases, rather
-//     than a thrown SyntaxError propagating out of a rule-matching call).
+//     reason -- degrades HERE to an impossible class (`[]`, matches nothing) rather than a thrown
+//     SyntaxError propagating out of a rule-matching call.
+//     WS-21 fix round 4 (minors, review-L1a-fix3-findings.md): the line this replaces claimed that
+//     was "the SAME never-match posture the package's own replacer falls back to" -- WRONG, and
+//     corrected here rather than silently left. A REVERSED RANGE such as `[z-a]` is exactly the
+//     case that shows the gap: the real `ignore` package (confirmed against the pinned 7.0.5 source,
+//     `file-rules.ts`'s own citation) drops only the offending range and keeps matching on the rest
+//     of the class, where this function's `new RegExp(...)` construction throws on the WHOLE
+//     pattern and this catch degrades the WHOLE class to never-match -- a real behavioural
+//     divergence from claude, not a "same posture" restated. It is left AS BEHAVIOUR here
+//     deliberately: this module is no longer the claude-parity engine for `Read`/`Edit` file rules
+//     (`file-rules.ts`, built on the real package, is -- see this module's own header), and its one
+//     remaining production caller (`context/rules.ts`'s `paths:` conditional-attachment glob, F17)
+//     was never asked to replicate claude's file-rule grammar bullet-for-bullet.
 //   - `\[` (and its natural pair `\]`) escapes to a literal `[`/`]` -- the escape the package's own
 //     grammar meaningfully recognises (its bracket replacer's `e===g` branch: an escaped `[` is
 //     re-escaped as a literal match and never opens a class; a `]` is not a metacharacter outside
@@ -212,10 +223,17 @@ function escapeRegexChar(ch: string): string {
 //     to something that can never match a real target -- "an escaped `\?` never matches" is
 //     therefore an accurate description of the OBSERVABLE behaviour, not a bug Winter is expected to
 //     paper over.
-//   - `{`, `}`, `(`, `)`, `!`, `#` and a literal space all match themselves LITERALLY, exactly as
-//     written -- none of them carry glob meaning inside a pattern body (`!`/`#` are gitignore
-//     LINE-level directives -- negation / comment -- which do not apply here: a `Read`/`Edit`
-//     specifier is one rule's pattern text, never a multi-line ignore-file body).
+//   - `{`, `}`, `(`, `)`, `!`, `#` and a literal space all match themselves LITERALLY in THIS
+//     function -- none of them carry glob meaning inside a pattern body here.
+//     WS-21 fix round 4 (minors, review-L1a-fix3-findings.md): the line this replaces claimed `!`/
+//     `#` "do not apply here" for a `Read`/`Edit` specifier because it is "one rule's pattern text,
+//     never a multi-line ignore-file body" -- WRONG. Claude's own pipeline feeds a Read/Edit
+//     specifier's pattern through the identical `ignore()` machinery a `.gitignore` LINE goes
+//     through, one line at a time, so a leading `!` (negation) or `#` (comment) DOES carry its
+//     gitignore meaning there, "one rule, not a multi-line file" notwithstanding -- confirmed by the
+//     real `ignore` package's own replacers, which `file-rules.ts` now runs unmodified for every
+//     Read/Edit rule. Left as BEHAVIOUR here deliberately, same reasoning as the character-class
+//     note above: this function is no longer the claude-parity engine for those rules.
 //   - Every other character is an ordinary literal, regex-escaped only when it is itself a regex
 //     metacharacter (unchanged from before this fix).
 //
