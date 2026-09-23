@@ -41,6 +41,14 @@ export interface WorkflowSessionRuntime {
   winterHome: string;
   /** P7a (D19): the session's brand -- the project dot-dir a `workflow(name)` resolves under, and the worker seatbelt's fences. */
   brand?: BrandProfile;
+  /**
+   * WS-21 §6.3 item 1 (batch-2 fix round): the session's ENABLED plugins that ship a `workflows/`
+   * directory -- threaded to `defaultNestedResolver` (workflows/runtime.ts) so a nested
+   * `workflow("plugin:name")` call resolves a plugin workflow exactly like the top-level Workflow
+   * tool does (tools/impl/workflow.ts). Absent means a qualified name never resolves here either,
+   * matching every pre-fix caller.
+   */
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
   /** `compatibilityKeys(cwd).transcriptProjectKey`, after `resolveProjectDirName` -- the SAME key the transcript store uses, never a second derivation. */
   projectKey: string;
   /** The session's own temp directory (paths/temp.ts) -- where per-run journals live (store.ts's `workflowRunsDir`). */

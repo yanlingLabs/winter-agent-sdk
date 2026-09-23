@@ -4185,6 +4185,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       sessionId: config.sessionId,
       winterHome: workflowWinterHome,
       brand: sessionBrand,
+      // WS-21 §6.3 item 1 (batch-2 fix round): so a nested `workflow("plugin:name")` call resolves
+      // a plugin workflow, matching the top-level Workflow tool.
+      ...(pluginWorkflows !== undefined ? { pluginWorkflows } : {}),
       projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env, sessionBrand),
       sessionTempDir: resolveSessionTempPaths().root,
       structured: structuredOutput,

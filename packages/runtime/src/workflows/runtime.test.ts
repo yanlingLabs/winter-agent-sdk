@@ -8,7 +8,7 @@
 // is what covers that. The gain is that every rule below is exercised end-to-end in milliseconds
 // instead of behind a 60MB compile.
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowRuntime, type WorkflowRuntimeDeps } from "./runtime.ts";
@@ -78,6 +78,7 @@ function rig(opts: {
   resolveNested?: WorkflowRuntimeDeps["resolveNestedWorkflow"];
   resolveAgentType?: NonNullable<WorkflowRuntimeDeps["session"]["resolveAgentType"]>;
   spentTokens?: () => number;
+  pluginWorkflows?: WorkflowRuntimeDeps["session"]["pluginWorkflows"];
 } = {}): Rig {
   const winterHome = mkdtempSync(join(tmpdir(), "winter-wf-rt-home-"));
   const sessionTempDir = mkdtempSync(join(tmpdir(), "winter-wf-rt-temp-"));
@@ -102,6 +103,7 @@ function rig(opts: {
       ...(opts.budgetTotal !== undefined ? { budgetTotal: opts.budgetTotal } : {}),
       ...(opts.resolveAgentType !== undefined ? { resolveAgentType: opts.resolveAgentType } : {}),
       ...(opts.spentTokens !== undefined ? { spentTokens: opts.spentTokens } : {}),
+      ...(opts.pluginWorkflows !== undefined ? { pluginWorkflows: opts.pluginWorkflows } : {}),
     },
     spawnWorker: inProcessWorkerSpawner(),
     ...(opts.caps !== undefined ? { caps: opts.caps } : {}),
@@ -627,6 +629,20 @@ describe("nested workflow() -- the parent resolves the source (WS-11 §1.6)", ()
     const r = rig({ resolveNested: async () => ({ ok: false, error: `unknown workflow "ghost"` }) });
     const launched = launch(r, META + `return await workflow("ghost");`);
     expect((await r.runtime.await(launched.runId)).error).toContain("ghost");
+  });
+
+  // WS-21 §6.3 item 1 (batch-2 fix round): the REAL default resolver (no `resolveNested` override),
+  // proving `session.pluginWorkflows` actually reaches `defaultNestedResolver` -- a nested
+  // `workflow("plugin:name")` call must resolve a plugin workflow exactly like the top-level
+  // Workflow tool does (workflows/store.test.ts's own coverage of resolveWorkflowByName itself).
+  test("a nested workflow(\"plugin:name\") resolves through the REAL default resolver via session.pluginWorkflows", async () => {
+    const pluginDir = mkdtempSync(join(tmpdir(), "winter-wf-rt-plugin-"));
+    const child = `export const meta = { name: "child-wf", description: "d" };\nreturn "nested-plugin-ok";`;
+    writeFileSync(join(pluginDir, "child.js"), child);
+    const r = rig({ pluginWorkflows: [{ name: "mypkg", workflowsPath: pluginDir }] });
+    const launched = launch(r, META + `return await workflow("mypkg:child-wf");`);
+    expect((await r.runtime.await(launched.runId)).result).toBe("nested-plugin-ok");
+    rmSync(pluginDir, { recursive: true, force: true });
   });
 });
 

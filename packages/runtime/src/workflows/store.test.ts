@@ -81,21 +81,30 @@ describe("resolveWorkflowByName -- `.winter/workflows/<name>.js` (WS-11 §1.3)",
   });
 });
 
-// WS-21 §6.3 item 1 (fix round 2): `PluginBundle.workflowsPath` was resolved by L1b's loader but had
-// no consumer -- `<plugin>:<name>` resolves against that plugin's own `workflows/` directory,
+// WS-21 §6.3 item 1, corrected in the batch-2 fix round: `PluginBundle.workflowsPath` was resolved
+// by L1b's loader but had no consumer. Naming/loading now matches the PINNED BINARY exactly (claude
+// CLI 2.1.250 / agent-sdk 0.3.250 -- confirmed via its own disassembled workflow-discovery module,
+// not claude-code-reference, which has no "workflows" concept at all): a plugin workflow's identity
+// is `${pluginName}:${meta.name}`, where `meta.name` is the SCRIPT'S OWN parsed meta block (via
+// `parseWorkflowMeta`, this file's own `SCRIPT` fixture declares `meta.name: "build"`) -- NEVER the
+// filename, the same way claude's `v()` builds `` `${plugin}:${r.meta.name}` `` after a lightweight,
+// non-executing meta parse (`Kp(e, {validateBody: false})`), not a filename join. A file whose meta
+// fails to parse is silently skipped (claude's own "has invalid meta ... skipping"), not an error.
 // DELIBERATELY UNGATED by `trustedWorkspace` (a plugin is loaded because the host/user already
 // decided to, matching every other plugin resource in this codebase).
-describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1)", () => {
+describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1, batch-2 fix round: meta.name identity)", () => {
   function pluginDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "winter-wf-plugin-"));
     mkdirSync(join(dir, "workflows"), { recursive: true });
     return dir;
   }
 
-  test("a plugin workflow resolves by <plugin>:<filename-stem>, never gated by trustedWorkspace", () => {
+  test("a plugin workflow resolves by <plugin>:<meta.name> -- the SCRIPT's own declared name, not its filename", () => {
     const dir = pluginDir();
+    // The filename ("ship.js") deliberately differs from the script's own meta.name ("build",
+    // SCRIPT's fixture value) -- proving resolution reads the file's CONTENT, not its path.
     writeFileSync(join(dir, "workflows", "ship.js"), SCRIPT);
-    const resolved = resolveWorkflowByName("mypkg:ship", {
+    const resolved = resolveWorkflowByName("mypkg:build", {
       cwd: "/nonexistent",
       trustedWorkspace: false,
       pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }],
@@ -107,25 +116,43 @@ describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1)", () =>
     expect(resolved.source_kind).toBe("plugin");
   });
 
+  test("the plugin workflow's own FILENAME does not resolve it -- identity is meta.name only", () => {
+    const dir = pluginDir();
+    writeFileSync(join(dir, "workflows", "ship.js"), SCRIPT); // meta.name is "build", not "ship"
+    const resolved = resolveWorkflowByName("mypkg:ship", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }] });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("a plugin workflow file with an INVALID meta block is silently skipped, matching claude's own 'has invalid meta -- skipping'", () => {
+    const dir = pluginDir();
+    writeFileSync(join(dir, "workflows", "broken.js"), "export const meta = { name: someIdentifier };\nreturn 1;"); // not a pure literal
+    writeFileSync(join(dir, "workflows", "ship.js"), SCRIPT); // meta.name "build", still resolvable
+    const broken = resolveWorkflowByName("mypkg:someIdentifier", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }] });
+    expect(broken.ok).toBe(false);
+    const stillWorks = resolveWorkflowByName("mypkg:build", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }] });
+    expect(stillWorks.ok).toBe(true);
+  });
+
   test("an unknown plugin name is a typed failure, never a throw", () => {
-    const resolved = resolveWorkflowByName("nosuch:ship", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: "/whatever" }] });
+    const resolved = resolveWorkflowByName("nosuch:build", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: "/whatever" }] });
     expect(resolved.ok).toBe(false);
     if (resolved.ok) return;
     expect(resolved.error).toContain("nosuch");
   });
 
   test("a plugin present but with no workflowsPath is a typed failure, never a throw", () => {
-    const resolved = resolveWorkflowByName("mypkg:ship", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg" }] });
+    const resolved = resolveWorkflowByName("mypkg:build", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg" }] });
     expect(resolved.ok).toBe(false);
   });
 
   test("with no pluginWorkflows given at all, a qualified name is a typed failure (pre-fix-round-2 callers unaffected)", () => {
-    const resolved = resolveWorkflowByName("mypkg:ship", { cwd: "/x", trustedWorkspace: true });
+    const resolved = resolveWorkflowByName("mypkg:build", { cwd: "/x", trustedWorkspace: true });
     expect(resolved.ok).toBe(false);
   });
 
-  test("an unknown script within a known plugin is a typed failure naming the plugin", () => {
+  test("an unknown meta.name within a known plugin is a typed failure naming the plugin", () => {
     const dir = pluginDir();
+    writeFileSync(join(dir, "workflows", "ship.js"), SCRIPT);
     const resolved = resolveWorkflowByName("mypkg:nope", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }] });
     expect(resolved.ok).toBe(false);
     if (resolved.ok) return;

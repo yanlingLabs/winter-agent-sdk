@@ -12,9 +12,10 @@
 // root. WS-11 §11 OQ2 records that whether the pinned runtime has a user-level store is UNCAPTURED,
 // and WS-01 forbids inventing names -- so this resolves the project convention only. Adding the user
 // root later is additive; shipping it now and finding the pin disagrees would not be.
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import { parseWorkflowMeta } from "./meta.ts";
 
 /**
  * The path-traversal guard, applied BEFORE any filesystem call ever sees the name -- `name` arrives
@@ -87,26 +88,50 @@ export function listBuiltinWorkflows(): string[] {
 
 /** Built-ins first, then a plugin (WS-21 §6.3 item 1) or the trusted project directory. Never throws. */
 export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameOptions): ResolvedWorkflowSource {
-  // WS-21 §6.3 item 1 (fix round 2): a `<plugin>:<name>` qualified name -- the SAME grammar every
-  // other plugin-namespaced identity in this codebase uses (skills, commands, output styles).
-  // Checked BEFORE `WORKFLOW_NAME_RE` (which has no `:` in its own alphabet, so a qualified name
-  // would otherwise be refused outright as "invalid").
+  // WS-21 §6.3 item 1, CORRECTED in the batch-2 fix round: a `<plugin>:<name>` qualified name -- the
+  // SAME grammar every other plugin-namespaced identity in this codebase uses (skills, commands,
+  // output styles), and CONFIRMED as claude's own real convention via the pinned binary's own
+  // disassembled workflow-discovery module (claude CLI 2.1.250 / agent-sdk 0.3.250; NOT
+  // claude-code-reference, which has no "workflows" concept at all): a plugin workflow's `v()`
+  // loader builds `` `${pluginName}:${r.meta.name}` `` after a lightweight, non-executing meta parse
+  // (`Kp(e, {validateBody: false})` -- Winter's own `parseWorkflowMeta`'s identical job), and the
+  // resolver (`aUe(name, ...)`) does a flat `.find(d => d.name === name)` against that baked-in
+  // string. Checked BEFORE `WORKFLOW_NAME_RE` (which has no `:` in its own alphabet, so a qualified
+  // name would otherwise be refused outright as "invalid").
   const qualified = /^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(name);
   if (qualified !== null) {
-    const [, pluginName, workflowName] = qualified;
+    const [, pluginName, metaName] = qualified;
     const plugin = opts.pluginWorkflows?.find((p) => p.name === pluginName);
     if (plugin?.workflowsPath === undefined) {
       return { ok: false, error: `unknown workflow "${name}": no plugin named "${pluginName}" is enabled with a workflows/ directory` };
     }
-    // A `.js` file has no frontmatter -- unlike a plugin output style, its identity is always its
-    // OWN filename stem, never overridable, so a direct join (not a directory scan) is exact.
-    const path = join(plugin.workflowsPath, `${workflowName}.js`);
+    // A DIRECTORY SCAN, not a direct `<name>.js` join: identity is the SCRIPT's own declared
+    // `meta.name` (parsed via `parseWorkflowMeta`, never executed), not its filename -- the only
+    // way to find "the file whose declared identity is this qualified name" is to check every
+    // candidate, mirroring `parsePluginStyleFile`'s identical shape for output styles. A file whose
+    // meta fails to parse is silently skipped (claude's own "has invalid meta ... skipping"), not a
+    // hard error for the whole directory.
+    let entries: string[];
     try {
-      if (!statSync(path).isFile()) throw new Error("not a regular file");
-      return { ok: true, source: readFileSync(path, "utf8"), path, source_kind: "plugin" };
+      entries = readdirSync(plugin.workflowsPath);
     } catch {
-      return { ok: false, error: `unknown workflow "${name}": no ${workflowName}.js in plugin "${pluginName}"'s workflows/ directory` };
+      return { ok: false, error: `unknown workflow "${name}": plugin "${pluginName}"'s workflows/ directory could not be read` };
     }
+    for (const entry of entries.sort()) {
+      if (!entry.toLowerCase().endsWith(".js")) continue;
+      const path = join(plugin.workflowsPath, entry);
+      let source: string;
+      try {
+        if (!statSync(path).isFile()) continue;
+        source = readFileSync(path, "utf8");
+      } catch {
+        continue;
+      }
+      const parsed = parseWorkflowMeta(source);
+      if (!parsed.ok || parsed.meta.name !== metaName) continue;
+      return { ok: true, source, path, source_kind: "plugin" };
+    }
+    return { ok: false, error: `unknown workflow "${name}": no workflow with meta.name "${metaName}" in plugin "${pluginName}"'s workflows/ directory` };
   }
 
   if (!WORKFLOW_NAME_RE.test(name)) {

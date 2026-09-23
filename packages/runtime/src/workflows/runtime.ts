@@ -121,7 +121,10 @@ export interface WorkflowRuntimeDeps {
   /** Test seam over the worker COMMAND (pre-sandbox). Defaults to the compiled-vs-dev split. */
   workerCommand?: () => WorkerCommand;
   /** Overridable resolver for a nested `workflow(nameOrRef)`. Defaults to store.ts's project resolution. */
-  resolveNestedWorkflow?: (ref: WorkflowRef, ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile }) => Promise<{ ok: true; source: string } | { ok: false; error: string }>;
+  resolveNestedWorkflow?: (
+    ref: WorkflowRef,
+    ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile; pluginWorkflows?: readonly { name: string; workflowsPath?: string }[] },
+  ) => Promise<{ ok: true; source: string } | { ok: false; error: string }>;
   /** Skips the `sandbox-exec` availability refusal. Only a non-default spawner has any business setting this. */
   requireSandbox?: boolean;
 }
@@ -700,7 +703,13 @@ export class WorkflowRuntime {
     const resolver = this.deps.resolveNestedWorkflow ?? defaultNestedResolver;
     let resolved: { ok: true; source: string } | { ok: false; error: string };
     try {
-      resolved = await resolver(message.ref, { cwd: run.cwd, trustedWorkspace: run.trustedWorkspace, ...(this.deps.session.brand !== undefined ? { brand: this.deps.session.brand } : {}) });
+      resolved = await resolver(message.ref, {
+        cwd: run.cwd,
+        trustedWorkspace: run.trustedWorkspace,
+        ...(this.deps.session.brand !== undefined ? { brand: this.deps.session.brand } : {}),
+        // WS-21 §6.3 item 1 (batch-2 fix round): a nested `workflow("plugin:name")` call.
+        ...(this.deps.session.pluginWorkflows !== undefined ? { pluginWorkflows: this.deps.session.pluginWorkflows } : {}),
+      });
     } catch (err) {
       resolved = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -800,9 +809,18 @@ export class WorkflowRuntime {
 
 }
 
-async function defaultNestedResolver(ref: WorkflowRef, ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile }): Promise<{ ok: true; source: string } | { ok: false; error: string }> {
+async function defaultNestedResolver(
+  ref: WorkflowRef,
+  ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile; pluginWorkflows?: readonly { name: string; workflowsPath?: string }[] },
+): Promise<{ ok: true; source: string } | { ok: false; error: string }> {
   if ("name" in ref) {
-    const resolved = resolveWorkflowByName(ref.name, { cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
+    const resolved = resolveWorkflowByName(ref.name, {
+      cwd: ctx.cwd,
+      trustedWorkspace: ctx.trustedWorkspace,
+      ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
+      // WS-21 §6.3 item 1 (batch-2 fix round): a nested `workflow("plugin:name")` call.
+      ...(ctx.pluginWorkflows !== undefined ? { pluginWorkflows: ctx.pluginWorkflows } : {}),
+    });
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }
   try {
