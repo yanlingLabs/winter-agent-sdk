@@ -36,7 +36,7 @@
 //     was ALSO already deny-on-null (T7) — also unchanged by this ruling.
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
-import { FILE_RULE_TOOLS, matchesRule, splitCompound, isRecognizedReadOnly, leadingWord, stripWrappers, type ParsedRule } from "./grammar.ts";
+import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, stripWrappers, type ParsedRule } from "./grammar.ts";
 import { matchFileRuleAtBothEnds, checkSymlinkBothEnds, resolveRealTarget } from "./paths.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
@@ -50,7 +50,8 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // import -- both this module's `extractCandidateWritePaths` and `matchesRuleForCall` consume it so
 // neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
 // field mapping (see that module's own header for why it lives there, not here).
-import { recognizeEditOperation, fileRulePathField, shellCommandOf } from "./edit-recognition.ts";
+import { recognizeEditOperation, fileRulePathField, shellCommandOf, shellWriteConstraint } from "./edit-recognition.ts";
+import { flattenSubcommands } from "./shell-structure.ts";
 import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut, isMemoryCarveOut, type ProtectedBrand } from "./protected.ts";
 // P7a fix r1 (Important-2): the reading for an evaluation context that carries no brand -- every
 // hand-built one in this package's tests, and a host driving the evaluator directly.
@@ -533,7 +534,7 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 // findReadDenyBlockingEdit/auto/envelope.ts's resolveCandidatePaths), so this is a pure widening,
 // never a new requirement on a caller that didn't already have one.
 export function extractCandidateWritePaths(call: PermissionCall, ctx: EvaluationContext): string[] {
-  const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
+  const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, home: ctx.home, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
   return recognized ? recognized.paths : [];
 }
 
@@ -568,7 +569,7 @@ function shellWriteTargets(call: PermissionCall, ctx: EvaluationContext): string
 function shellCommandChangesDirectory(call: PermissionCall): boolean {
   const raw = call.input["command"];
   if (typeof raw !== "string") return false;
-  const parts = splitCompound(raw);
+  const parts = flattenSubcommands(raw); // a `cd` inside a subshell moves THAT subshell's writes
   if (parts === null) return true; // unparseable: never assume the base is the cwd
   return parts.some((sub) => {
     const word = leadingWord(stripWrappers(sub, "denyAsk")).word;
@@ -626,6 +627,22 @@ function shellWriteNeedsApproval(call: PermissionCall, ctx: EvaluationContext): 
   const outside = targets.find((p) => !isShellTargetInWorkingDirs(p, ctx));
   if (outside === undefined) return undefined;
   return { reason: `Writing to '${resolve(ctx.cwd, outside)}' requires approval: it is outside the allowed working directories for this session (${boundedRoots(ctx).join(", ")})` };
+}
+
+/**
+ * claude's checkPathConstraints for a shell call, write side: why nothing but a person (or bypass) may
+ * clear this command -- a write target the layer cannot resolve (an expansion, a `~user` form, a
+ * glob), a process substitution, an unparseable command, `cp`/`mv` with a flag, then a write after a
+ * `cd` or outside the working directories. claude runs it BEFORE its allow rules and its mode allows;
+ * so does Winter (evaluateModeStage and stage 5). Not bypass-immune: the protected floor is the part
+ * of claude's check that is.
+ */
+function shellPathConstraint(call: PermissionCall, ctx: EvaluationContext): { reason: string } | undefined {
+  const command = shellCommandOf(call);
+  if (command === undefined) return undefined;
+  const structural = shellWriteConstraint(command);
+  if (structural !== undefined) return { reason: structural };
+  return shellWriteNeedsApproval(call, ctx);
 }
 
 // The real SpecialChecks seam fill (T6's stub, NO_SPECIAL_CHECKS above, was "always no opinion").
@@ -748,7 +765,11 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
   if (rule.toolName === "Bash" && call.toolName === "Bash" && rule.specifier?.kind === "pattern") {
     const raw = call.input["command"];
     const command = typeof raw === "string" ? raw : "";
-    const parts = splitCompound(command);
+    // EVERY command the string runs -- the ones inside a subshell, a `$(…)`/backtick/process
+    // substitution or an `if`/`for` body too: a deny rule for `rm` must see `ls $(rm -rf x)`, and an
+    // allow rule for `echo` must not clear the `rm` it would run (claude asks for any substitution
+    // before a prefix allow rule; here the substituted command must itself be allowed).
+    const parts = flattenSubcommands(command);
     if (parts === null) return false; // unparseable/over-limit -> route the WHOLE command to permission handling; never fall back to raw-text matching
     // Fix round 1, item 1 (IMPORTANT, reviewer-caught): splitCompound("") returns `[]`, not null —
     // an empty/all-separator/missing command scans OK, it just has zero non-empty subcommands.
@@ -1234,7 +1255,8 @@ function isBashCallReadOnly(call: PermissionCall): boolean {
   if (call.toolName !== "Bash") return false;
   const raw = call.input["command"];
   if (typeof raw !== "string") return false;
-  const parts = splitCompound(raw);
+  // EVERY command it runs, substitutions included: `ls $(rm -rf ~)` is not a read.
+  const parts = flattenSubcommands(raw);
   if (parts === null) return false; // unparseable -> WS-07 §3's own fallback: never recognized as safe
   return parts.length > 0 && parts.every((sub) => isRecognizedReadOnly(sub));
 }
@@ -1476,11 +1498,16 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     return { kind: "allow" };
   }
 
+  // claude's path constraints run before its mode allows (a read-only command, acceptEdits'/auto's
+  // bounded fs-ops) as well as before its allow rules -- but after its sandbox auto-allow, whose
+  // containment is what makes an unresolvable write target harmless there.
+  const shellGate = shellPathConstraint(call, ctx);
+
   if (mode === "dontAsk" || mode === "default") {
     // default / dontAsk share the IDENTICAL baseline (WS-07 §6.1/§6.3: both "still permit
     // built-in/read-only operations") — their divergence is the post-allow-stage fallback in
     // evaluate() below, not this baseline check.
-    if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    if (shellGate === undefined && isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
     // RULING P3-K (fix wave, controller ruling, P3 close-out): WS-06 §1.4's Manual-mode evidence
     // column marks the task/mode class "No" (ordinarily no prompt) -- these fall to stage 6 today
     // and get denied ("no canUseTool handler answered this unmatched action"), silently diverging
@@ -1498,7 +1525,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // (already excluded above) + Read/Edit deny rules — the latter is enforced generally at STAGE 2
     // now (T6-review obligation), so by the time this arm runs, a Read-deny-blocked path has
     // ALREADY been denied upstream; this arm doesn't need to re-check it.
-    if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    if (shellGate === undefined && isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
     // RULING P3-K-2 (fix wave round 2): the task/mode-class silent-allow set now applies here too --
     // "acceptEdits must never be stricter than default for a no-prompt class." Durable CronCreate
     // returns false from this check (it's the class's own named exception, not a member), so it
@@ -1515,12 +1542,12 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // "Monitor"` gates the ALLOW outcome only -- recognizeEditOperation itself still runs on Monitor
     // (feeding protected/critical/plan-write detection above and in isPlanWriteShaped, which IS what
     // I2 asked for); only the acceptEdits/auto-mode SILENT ALLOW stays Bash-only.
-    const recognized = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
+    const recognized = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, home: ctx.home, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
     if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
       // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
       // — it falls through to "unresolved" below, same as an unrecognized command.
       // A `cd` first moves the base the paths were resolved against (claude asks for this compound).
-      if (recognized.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) return { kind: "allow" };
+      if (shellGate === undefined && recognized.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) return { kind: "allow" };
     }
     // Out-of-root, unrecognized, or "other"-kind: WS-07 §2 stage 5's standing-exceptions list does
     // NOT name "acceptEdits out-of-root" — an explicit allow rule may still rescue it at stage 5,
@@ -1540,7 +1567,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // and "writes execute" must survive T8's own future flip of the generic bottom-of-pipeline
     // fallback (an `unresolved` result here would traverse stage 5/6 and could start prompting, or
     // even denying, the moment that fallback changes, silently breaking this relaxation).
-    if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    if (shellGate === undefined && isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
     // RULING P3-K-2 (fix wave round 2): the task/mode-class silent-allow set applies under plan too
     // -- none of these thirteen tools is a write, so plan's own write-withholding (below) never had
     // any claim on them; leaving them to fall to "unresolved" (stage 6) was exactly the same
@@ -1574,7 +1601,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   // is "unresolved" here — stage 5's own auto-aware allow-rule lookup (suspension-filtered, see
   // evaluate()'s own stage-5 comment) and then the real classifier (ctx.autoEngine, via
   // evaluate()'s resolveAutoDecision) get a chance next, never a silent allow.
-  if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+  if (shellGate === undefined && isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
   // RULING P3-K-2 (fix wave round 2): the task/mode-class silent-allow set applies under auto too --
   // "skips the classifier entirely, exactly like built-in read-only" (the ruling's own words).
   // Without this, an unresolved task-class call falls through to stage 5 (no rule) and then this
@@ -1588,8 +1615,8 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
   // I2 (fix wave, P3 close-out): Monitor excluded from THIS arm's auto-approve outcome too -- see
   // the acceptEdits arm's own identical comment, above, for the full rationale.
-  const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
-  if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) {
+  const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, home: ctx.home, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) }) : null;
+  if (shellGate === undefined && recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) {
     return { kind: "allow" };
   }
   return { kind: "unresolved" };
@@ -2234,6 +2261,9 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // An ESCAPE (see `resolveSandboxEscape`): a MODE allow does not clear it -- except bypass's -- and an
   // allow RULE (stage 5) does.
   const sandboxEscape = isSandboxEscape(effectiveCall, ctx);
+  // claude's path constraints for a shell call (see shellPathConstraint): no mode allow (evaluateModeStage)
+  // and no allow rule (stage 5) clears one; the reason is what the person is shown.
+  const shellGate = shellPathConstraint(effectiveCall, ctx);
 
   // --- Stage 4: permission mode ------------------------------------------------------------------
   const modeResult = evaluateModeStage(effectiveCall, ctx, policy.mode);
@@ -2339,7 +2369,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // An allow RULE clears a SHELL write only inside the working directories and only when no `cd`
   // moves the base first -- claude's checkPathConstraints runs before its allow rules and asks for
   // both (dist-session fixes, lane C C3). The ask then takes this mode's ordinary route below.
-  const ruleBlockedShellWrite = allowEntry !== undefined ? shellWriteNeedsApproval(effectiveCall, ctx) : undefined;
+  const ruleBlockedShellWrite = allowEntry !== undefined ? shellGate : undefined;
   if (allowEntry && ruleBlockedShellWrite === undefined) {
     return {
       decision: "allow",
@@ -2354,7 +2384,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // An escape no allow rule sanctioned: asked, through the hook and the host's canUseTool, in every
   // mode but dontAsk (denied) -- never the classifier (auto/plan) and never the generic stage 6.
   if (sandboxEscape) {
-    return await resolveSandboxEscape(effectiveCall, ctx, policyVersion, carriedTransform, ruleBlockedShellWrite?.reason ?? SANDBOX_ESCAPE_REASON);
+    return await resolveSandboxEscape(effectiveCall, ctx, policyVersion, carriedTransform, shellGate?.reason ?? SANDBOX_ESCAPE_REASON);
   }
 
   // --- Post-allow-stage fallback (mode-specific) --------------------------------------------------
@@ -2404,7 +2434,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
 
   // --- Stage 6: canUseTool -------------------------------------------------------------------
   const stage6Meta: PromptStageMeta = {
-    decisionReason: ruleBlockedShellWrite?.reason ?? "unmatched action reached the prompt stage",
+    decisionReason: shellGate?.reason ?? "unmatched action reached the prompt stage",
     ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
     ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
   };

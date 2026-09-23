@@ -9,9 +9,10 @@
 //   - `Edit`/`Write`/`NotebookEdit` tool calls are direct: one call, one path field (`fileRulePathField`
 //     below -- `file_path` for Edit/Write, `notebook_path` for NotebookEdit, RULING P3-E), one
 //     recognized path.
-//   - A `Bash` call is decomposed via T3's `splitCompound` (never treating raw, unsplit compound
-//     text as one command -- the exact "lens item 1" trap T6's own tests pin) and EVERY subcommand
-//     is independently classified. A subcommand is "blessed" (part of WS-07 §6.2's exact seven-verb
+//   - A `Bash` call is decomposed via `flattenSubcommands` (shell-structure.ts: the top-level
+//     subcommands AND the ones inside subshells, brace groups, substitutions and compound-statement
+//     heads -- never raw, unsplit compound text, the "lens item 1" trap T6's own tests pin) and EVERY
+//     subcommand is independently classified. A subcommand is "blessed" (part of WS-07 §6.2's exact seven-verb
 //     list: mkdir/touch/rm/rmdir/mv/cp/sed) only if it has NO redirect target of its own -- a
 //     redirect is a separate file write WS-07 §3 says a command's own authorization never covers
 //     (T3's `extractRedirectTargets` module comment), so it must not silently ride along inside
@@ -45,7 +46,8 @@
 // operators, only whitespace-delimited operands within an ALREADY-split-and-stripped subcommand).
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
-import { splitCompound, stripWrappers, extractRedirectTargets } from "./grammar.ts";
+import { stripWrappers, extractRedirectWrites } from "./grammar.ts";
+import { flattenSubcommands, hasProcessSubstitution } from "./shell-structure.ts";
 
 export type RecognizedEditKind = "edit" | "bashFsOp" | "other";
 
@@ -205,6 +207,20 @@ function sedOperandPaths(rest: string[]): string[] | null {
   return paths.length > 0 ? paths : null;
 }
 
+// `cp`/`mv`'s target-directory option names a write destination that is not an operand:
+// `cp payload --target-directory=.git/hooks`, `mv -t <dir> x`.
+function targetDirectoryValues(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    if (tok === "--") break;
+    if (tok.startsWith("--target-directory=")) out.push(tok.slice("--target-directory=".length));
+    else if ((tok === "--target-directory" || tok === "-t") && tokens[i + 1] !== undefined) out.push(tokens[i + 1]!);
+    else if (/^-[A-Za-z]*t.+/.test(tok) && !tok.startsWith("--")) out.push(tok.slice(tok.indexOf("t") + 1)); // -tDIR, -ftDIR
+  }
+  return out;
+}
+
 // Classifies ONE already-stripped subcommand string. Returns `null` when the leading word isn't
 // one of the blessed seven verbs (including when there's no leading word at all -- an empty string).
 function recognizeBashFsOpPaths(stripped: string): string[] | null {
@@ -213,8 +229,25 @@ function recognizeBashFsOpPaths(stripped: string): string[] | null {
   const [cmd, ...rest] = tokens;
   if (cmd === undefined || !RECOGNIZED_BASH_FS_OPS.has(cmd)) return null;
   if (cmd === "sed") return sedOperandPaths(rest);
-  const operands = nonFlagOperands(truncateAtFirstRedirectOperator(rest));
+  const truncated = truncateAtFirstRedirectOperator(rest);
+  const operands = [...nonFlagOperands(truncated), ...(cmd === "cp" || cmd === "mv" ? targetDirectoryValues(truncated) : [])];
   return operands.length > 0 ? operands : null;
+}
+
+// `tee` WRITES every file operand. It is not one of §6.2's blessed verbs (so it never makes a call
+// acceptEdits-eligible); its operands only ever ADD write paths for the protected/deny floors.
+function teeWritePaths(stripped: string): string[] {
+  const tokens = tokenizeWords(stripped);
+  if (tokens[0] !== "tee") return [];
+  return nonFlagOperands(truncateAtFirstRedirectOperator(tokens.slice(1)));
+}
+
+/** A path as the shell will see it: an unquoted leading `~` / `~/` is the home directory. */
+function expandHomeTilde(path: string, home: string | undefined): string {
+  if (home === undefined) return path;
+  if (path === "~") return home;
+  if (path.startsWith("~/")) return home + path.slice(1);
+  return path;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -263,7 +296,7 @@ export function shellCommandOf(call: { toolName: string; input: Record<string, u
 
 export function recognizeEditOperation(
   call: { toolName: string; input: Record<string, unknown> },
-  opts?: { sessionRoot?: string; brand?: Pick<BrandProfile, "projectDirName"> },
+  opts?: { sessionRoot?: string; brand?: Pick<BrandProfile, "projectDirName">; home?: string },
 ): RecognizedEditOperation | null {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const path = call.input[fileRulePathField(call.toolName)];
@@ -285,10 +318,11 @@ export function recognizeEditOperation(
 
   const command = shellCommandOf(call);
   if (command === undefined) return null;
-  const parts = splitCompound(command);
-  // Coordinator note (T6 review, "vacuous match" class): splitCompound("") returns `[]`, not
-  // `null` -- an empty/all-separator/missing command must never vacuously recognize as an fs-op
-  // over zero parts. Treated identically to the unparseable (`null`) case: no opinion.
+  const parts = flattenSubcommands(command);
+  // Coordinator note (T6 review, "vacuous match" class): an empty/all-separator/missing command
+  // must never vacuously recognize as an fs-op over zero parts. An UNPARSEABLE command gets no paths
+  // here either -- `shellWriteConstraint` is what asks for it, since a scan that could not finish
+  // proves nothing about what it writes.
   if (parts === null || parts.length === 0) return null;
 
   const allPaths: string[] = [];
@@ -302,8 +336,9 @@ export function recognizeEditOperation(
     // narrow "safe" stripping just because this is the acceptEdits arm -- seeing further through the
     // wrapper only ever ADDS a subcommand to bounds-check, it never grants anything by itself.
     const stripped = stripWrappers(part, "denyAsk");
-    const redirects = extractRedirectTargets(stripped);
+    const redirects = extractRedirectWrites(stripped).map((w) => w.target);
     const fsOpPaths = recognizeBashFsOpPaths(stripped);
+    const teePaths = teeWritePaths(stripped);
     if (fsOpPaths !== null && redirects.length === 0) {
       allPaths.push(...fsOpPaths);
     } else {
@@ -312,9 +347,63 @@ export function recognizeEditOperation(
       // auto-approve set" even when riding along on an otherwise-recognized command.
       allBlessed = false;
       if (fsOpPaths !== null) allPaths.push(...fsOpPaths);
-      allPaths.push(...redirects);
+      allPaths.push(...redirects, ...teePaths);
     }
   }
   if (allPaths.length === 0) return null; // nothing write-shaped found at all -- no opinion
-  return { kind: allBlessed ? "bashFsOp" : "other", paths: allPaths };
+  // The SAME normalised targets reach every consumer (the protected floor, the deny rules, the
+  // working-directory and acceptEdits bounds): `~/x` is the home directory's `x`, not `<cwd>/~/x`.
+  return { kind: allBlessed ? "bashFsOp" : "other", paths: allPaths.map((p) => expandHomeTilde(p, opts?.home)) };
+}
+
+// ---------------------------------------------------------------------------------------------
+// shellWriteConstraint -- claude's checkPathConstraints / validatePath, write side
+// ---------------------------------------------------------------------------------------------
+//
+// claude runs these checks on a Bash command BEFORE any allow rule and before its permission-mode
+// allows (tools/BashTool/pathValidation.ts, bashPermissions.ts); an ask from one of them is not
+// bypass-immune (only its path SAFETY check is -- here, the protected floor). Each is a write target
+// the permission layer cannot resolve to one file, so nothing may clear it without a person.
+
+const SHELL_EXPANSION_REASON = "Shell expansion syntax in paths requires manual approval";
+const GLOB_REASON = "Glob patterns are not allowed in write operations. Please specify an exact file path.";
+const TILDE_REASON = "Tilde expansion variants (~user, ~+, ~-) in paths require manual approval";
+const PROCESS_SUBSTITUTION_REASON = "Process substitution (>(...) or <(...)) can execute arbitrary commands and requires manual approval";
+const UNPARSEABLE_REASON = "This command could not be parsed, so the files it writes cannot be checked; it requires manual approval";
+
+/** claude's validatePath pre-checks for one WRITE target (surrounding quotes already removed). */
+function writeTargetReason(path: string): string | undefined {
+  if (path.length === 0) return SHELL_EXPANSION_REASON;
+  if (path.startsWith("~") && path !== "~" && !path.startsWith("~/")) return TILDE_REASON;
+  if (path.includes("$") || path.includes("%") || path.includes("`") || path.startsWith("=")) return SHELL_EXPANSION_REASON;
+  if (/[*?[\]{}]/.test(path)) return GLOB_REASON;
+  return undefined;
+}
+
+/**
+ * Why a shell command's WRITES cannot be auto-approved, or `undefined`: a process substitution, a
+ * command that cannot be parsed, a write target that is a variable/command expansion, a `~user` form
+ * or a glob, and `cp`/`mv` with ANY flag (`--target-directory=PATH` hides the destination). The
+ * working-directory and `cd` checks that follow claude's are evaluator.ts's (they need the session).
+ */
+export function shellWriteConstraint(command: string): string | undefined {
+  if (hasProcessSubstitution(command)) return PROCESS_SUBSTITUTION_REASON;
+  const parts = flattenSubcommands(command);
+  if (parts === null) return command.trim().length > 0 ? UNPARSEABLE_REASON : undefined;
+  for (const part of parts) {
+    const stripped = stripWrappers(part, "denyAsk");
+    for (const { target } of extractRedirectWrites(stripped)) {
+      if (target === "/dev/null") continue;
+      const reason = writeTargetReason(target);
+      if (reason !== undefined) return reason;
+    }
+    const tokens = tokenizeWords(stripped);
+    const verb = tokens[0];
+    if ((verb === "cp" || verb === "mv") && tokens.slice(1).some((t) => t.startsWith("-"))) return `${verb} command with flags requires manual approval`;
+    for (const path of [...(recognizeBashFsOpPaths(stripped) ?? []), ...teeWritePaths(stripped)]) {
+      const reason = writeTargetReason(path);
+      if (reason !== undefined) return reason;
+    }
+  }
+  return undefined;
 }

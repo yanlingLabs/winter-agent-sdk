@@ -331,10 +331,30 @@ export function leadingWord(s: string): { word: string | undefined; afterWord: s
 }
 
 // ---------------------------------------------------------------------------------------------
+// Line continuations
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Joins backslash-newline continuations the way bash does before it parses: an ODD run of
+ * backslashes before a newline ends in a continuation (the last backslash and the newline vanish);
+ * an even run is escaped backslashes followed by a real newline. Without this, `echo x >
+ * \<newline>.git/config` read its target as `\<newline>.git/config` -- a name with no `.git`
+ * segment -- while bash wrote `.git/config` (claude joins them before its own redirect scan).
+ */
+export function joinLineContinuations(command: string): string {
+  if (!command.includes("\\\n")) return command;
+  return command.replace(/\\+\n/g, (run) => {
+    const backslashes = run.length - 1;
+    return backslashes % 2 === 1 ? "\\".repeat(backslashes - 1) : run;
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // splitCompound
 // ---------------------------------------------------------------------------------------------
 
-export function splitCompound(command: string): string[] | null {
+export function splitCompound(rawCommand: string): string[] | null {
+  const command = joinLineContinuations(rawCommand);
   const info = scanIfParseable(command);
   if (!info) return null;
   const { topLevel } = info;
@@ -344,6 +364,12 @@ export function splitCompound(command: string): string[] | null {
   let i = 0;
   while (i < command.length) {
     if (!topLevel[i]) {
+      i++;
+      continue;
+    }
+    // `>|` is the noclobber-overriding REDIRECT, not a pipe: `echo x >| .git/config` is one command
+    // writing `.git/config`, never `echo x >` piped into a command named `.git/config`.
+    if (command[i] === "|" && i > 0 && topLevel[i - 1] && command[i - 1] === ">") {
       i++;
       continue;
     }
@@ -428,7 +454,8 @@ function stripLeadingAssignmentsAt(s: string, info: ScanInfo, start: number, dir
   return pos;
 }
 
-export function stripWrappers(cmd: string, direction: "allow" | "denyAsk"): string {
+export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): string {
+  const cmd = joinLineContinuations(rawCmd);
   // P2 fix-wave item 2: ONE scan for this whole call, threaded through every helper below via a
   // plain integer offset into this SAME, unchanging `cmd` string -- never a re-scan of a
   // progressively-sliced substring (see leadingWordAt/stripLeadingAssignmentsAt's own headers for
@@ -476,58 +503,97 @@ function stripQuotes(word: string): string {
   return word;
 }
 
-export function extractRedirectTargets(command: string): string[] {
-  const info = scanShellLike(command);
-  const { topLevel, ok } = info;
-  if (!ok) return [];
+/** One file-writing redirection: the target word as written (`raw`) and with its quotes removed. */
+export interface RedirectWrite {
+  raw: string;
+  target: string;
+}
 
-  const targets: string[] = [];
+const REDIRECT_WORD_STOP = /[\s;&|<>()]/;
+
+/** The word starting at `start` (after blanks), ended by top-level whitespace or an operator char. */
+function redirectWordAt(s: string, info: ScanInfo, start: number): { word: string | undefined; end: number } {
+  let i = start;
+  while (i < s.length && info.topLevel[i] === true && (s[i] === " " || s[i] === "\t")) i++;
+  const wordStart = i;
+  while (i < s.length && !(info.topLevel[i] === true && REDIRECT_WORD_STOP.test(s[i]!))) i++;
+  return { word: i > wordStart ? s.slice(wordStart, i) : undefined, end: i };
+}
+
+/**
+ * Every FILE-writing redirection at the top level of one (sub)command -- the operators bash writes a
+ * file through: `>`, `>>`, `>|` (noclobber override), `&>`, `&>>`, `<>` (read-write open), any of them
+ * fd-prefixed (`2>`), and `>&word` / `N>&word` whose word is NOT a descriptor (`>&file` is the old
+ * spelling of `&>file`; `2>&1`, `>&2`, `>&-` stay descriptor copies). `<<`/`<<<` feed input and
+ * `>(`/`<(` are process substitutions -- neither is a file target (the permission layer asks for a
+ * process substitution separately). Bash runs without history expansion here, so a target that
+ * begins with `!` is ALSO read with the `!` removed (zsh's `>!` clobber), which only adds a path.
+ *
+ * An unparseable command yields `[]` here; every security caller asks for such a command on its own
+ * (`shellWriteConstraint`), because a scan it could not complete proves nothing about its writes.
+ */
+export function extractRedirectWrites(rawCommand: string): RedirectWrite[] {
+  const command = joinLineContinuations(rawCommand);
+  const info = scanShellLike(command);
+  if (!info.ok) return [];
+  const { topLevel } = info;
+
+  const writes: RedirectWrite[] = [];
+  const push = (raw: string): void => {
+    writes.push({ raw, target: stripQuotes(raw) });
+    if (raw.length > 1 && raw.startsWith("!")) writes.push({ raw: raw.slice(1), target: stripQuotes(raw.slice(1)) });
+  };
   let i = 0;
   while (i < command.length) {
     if (!topLevel[i]) {
       i++;
       continue;
     }
-    if (command.slice(i, i + 2) === "<<") {
-      // here-doc operator -- WS-07 §3: excluded from redirect-target extraction. The body itself
-      // is not specially skipped (see the module-header limitations note).
-      i += 2;
+    if (command.startsWith("<<", i)) {
+      // here-doc / here-string -- input, never a file write (WS-07 §3).
+      i += command[i + 2] === "<" ? 3 : 2;
       continue;
     }
-    const ch = command[i]!;
-    let opLen = 0;
-    if (ch === ">") {
-      if (command[i + 1] === ">") opLen = 2; // >>
-      else if (command[i + 1] === "&") {
-        i += 2; // >&N dup, not a file write
-        continue;
-      } else opLen = 1; // >
-    } else if (ch === "&" && command[i + 1] === ">") {
-      opLen = 2; // &>
-    } else if (/[0-9]/.test(ch) && command[i + 1] === ">") {
-      if (command[i + 2] === "&") {
-        i += 3; // N>&M dup (e.g. 2>&1), not a file write
+    // An fd prefix (`2>`, `10>>`) is a digit run directly before the operator.
+    let k = i;
+    while (k < command.length && topLevel[k] && /[0-9]/.test(command[k]!)) k++;
+    let opEnd = -1;
+    let descriptorCopy = false;
+    if (command[i] === "&" && command[i + 1] === ">") {
+      opEnd = command[i + 2] === ">" ? i + 3 : i + 2; // &>> / &>
+    } else if (command[k] === "<" && command[k + 1] === ">") {
+      opEnd = k + 2; // <> opens for writing
+    } else if (command[k] === ">") {
+      const next = command[k + 1];
+      if (next === "(") {
+        i = k + 1; // `>(`: a process substitution, not a file
         continue;
       }
-      opLen = command[i + 2] === ">" ? 3 : 2; // N>> or N>
+      if (next === ">") opEnd = k + 2;
+      else if (next === "|") opEnd = k + 2;
+      else if (next === "&") {
+        opEnd = k + 2;
+        descriptorCopy = true;
+      } else opEnd = k + 1;
     } else {
-      i++;
+      i = k > i ? k : i + 1;
       continue;
     }
 
-    // P2 fix-wave item 2: leadingWordAt reads directly off the ONE scan (`info`) computed at this
-    // function's own top, at the absolute index right past this operator -- never a fresh
-    // scanShellLike over a freshly-sliced tail substring (the pre-fix O(n^2) shape: many redirect
-    // operators, each re-scanning the remaining command from scratch).
-    const lw = leadingWordAt(command, info, i + opLen);
-    if (lw.word !== undefined) {
-      targets.push(stripQuotes(lw.word));
-      i = lw.end;
-    } else {
-      i += opLen;
+    const { word, end } = redirectWordAt(command, info, opEnd);
+    if (word === undefined) {
+      i = opEnd;
+      continue;
     }
+    if (!(descriptorCopy && /^(?:[0-9]+|-)$/.test(stripQuotes(word)))) push(word);
+    i = end;
   }
-  return targets;
+  return writes;
+}
+
+/** `extractRedirectWrites`, target paths only (quotes removed). */
+export function extractRedirectTargets(command: string): string[] {
+  return extractRedirectWrites(command).map((w) => w.target);
 }
 
 // ---------------------------------------------------------------------------------------------
