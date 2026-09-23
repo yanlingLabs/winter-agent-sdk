@@ -233,6 +233,15 @@ export interface ToolExecutionContext {
    */
   winterHome?: string;
   /**
+   * WS-21 §3.7/§6.3 item 11 (fix round 1, item 4): the shared runtime home's durable-paths root
+   * (`config.storeHome`), preferred over `winterHome` for the SAME two consumers `winterHome`'s own
+   * header names when a real seatbelt profile needs to fence durable content -- `bash.ts`'s own
+   * `buildRunCommandOptions` is the one production reader (`sandbox/spawn.ts`'s
+   * `buildSeatbeltProfile`, in turn). Absent falls back to `winterHome`, byte-identical to
+   * pre-WS-21 behaviour.
+   */
+  storeHome?: string;
+  /**
    * P7a (D19): the session's RESOLVED brand profile, threaded from `RuntimeConfig.brand`.
    *
    * Every tool that names a Winter-owned surface from inside its own executor -- the project
@@ -1481,6 +1490,8 @@ export interface RegistryToolExecutorDeps {
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root -- see `ToolExecutionContext.winterHome`. */
   winterHome?: string;
+  /** WS-21 fix round 1, item 4: the shared store home -- see `ToolExecutionContext.storeHome`. */
+  storeHome?: string;
   /** P7a (D19): the session's resolved brand -- see `ToolExecutionContext.brand`. */
   brand?: BrandProfile;
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
@@ -1579,6 +1590,9 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         home: deps.home,
         // I1: forwarded so a tool naming Winter's own storage uses the RESOLVED root, not the OS home.
         ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
+        // WS-21 fix round 1, item 4: forwarded so a tool fencing DURABLE content (the seatbelt's
+        // checkpoint/provider-state denies) anchors on the shared store home.
+        ...(deps.storeHome !== undefined ? { storeHome: deps.storeHome } : {}),
         ...(deps.brand !== undefined ? { brand: deps.brand } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,

@@ -11,6 +11,7 @@ import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../
 import { resetBackgroundTaskRuntimeForTest, getTask, stopSessionShellTasks, resolveBackgroundOutcome } from "./background-task-runtime.ts";
 import { taskStopExecutor } from "./task-stop.ts";
 import { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, buildRunCommandOptions } from "./bash.ts";
+import { buildSeatbeltProfile, canonicalizePath } from "../../sandbox/profile.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 
 function proj(): string {
@@ -156,6 +157,67 @@ describe("buildRunCommandOptions (C1 -- filesystem deny/allow layers actually re
     if ("error" in parsed) throw new Error("unreachable");
     const options = buildRunCommandOptions(parsed, ctx);
     expect(options.dangerouslyDisableSandbox).toBe(true);
+  });
+
+  // WS-21 fix round 1, item 4: ctx.storeHome must reach buildRunCommandOptions, or the seatbelt
+  // profile built from it can never fence durable content anchored on the store home.
+  test("ctx.storeHome is read through, distinct from ctx.winterHome", () => {
+    const ctx = fakeCtx({ winterHome: "/tmp/run", storeHome: "/tmp/sdk" });
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    expect(options.winterHome).toBe("/tmp/run");
+    expect(options.storeHome).toBe("/tmp/sdk");
+  });
+
+  test("absent ctx.storeHome -> no storeHome key at all (byte-identical to before this fix)", () => {
+    const ctx = fakeCtx();
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    expect("storeHome" in buildRunCommandOptions(parsed, ctx)).toBe(false);
+  });
+});
+
+// WS-21 §3.7/§6.3 item 11 (fix round 1, item 4): the seatbelt profile a Bash call ACTUALLY GETS
+// built from must fence the shared store home, not just the per-run folder. This composes
+// `buildRunCommandOptions` and `buildSeatbeltProfile` exactly the way `sandbox/spawn.ts`'s real
+// `runCommand` does internally -- the profile itself never leaves `runForeground`/`runBackground`
+// (this file's own header, above), so reproducing the same composition is how a test can observe it.
+describe("WS-21 fix round 1, item 4: the seatbelt profile a Bash call gets fences the store home", () => {
+  test("the profile generated for a real Bash call denies reading the store home's provider-state sidecar and writing its checkpoint dir", () => {
+    const winterHome = "/tmp/winter-run-anchor";
+    const storeHome = "/tmp/winter-sdk-anchor";
+    const ctx = fakeCtx({ home: "/Users/tester", winterHome, storeHome });
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    // The exact field mapping `sandbox/spawn.ts`'s own `runCommand` uses when it builds the real
+    // profile for this same call (posture === "sandboxed" branch).
+    const profile = buildSeatbeltProfile({
+      cwd: options.cwd,
+      writableRoots: options.writableRoots,
+      ...(options.denyWritePaths !== undefined ? { denyWritePaths: options.denyWritePaths } : {}),
+      ...(options.denyReadPaths !== undefined ? { denyReadPaths: options.denyReadPaths } : {}),
+      allowNetwork: false,
+      ...(options.home !== undefined ? { home: options.home } : {}),
+      ...(options.winterHome !== undefined ? { winterHome: options.winterHome } : {}),
+      ...(options.storeHome !== undefined ? { storeHome: options.storeHome } : {}),
+      ...(options.brand !== undefined ? { brand: options.brand } : {}),
+    });
+    // `buildSeatbeltProfile` canonicalises every root it fences (macOS /tmp -> /private/tmp), so
+    // the expected literals must go through the SAME canonicalisation this file's own tests always
+    // use (`realpathSync` on the fixture roots elsewhere) -- `canonicalizePath` is the exported
+    // form of that exact function.
+    const canonStoreHome = canonicalizePath(storeHome);
+    const canonWinterHome = canonicalizePath(winterHome);
+    expect(profile).toContain(`(deny file-write* (subpath "${canonStoreHome}/backups"))`);
+    expect(profile).toContain(`${canonStoreHome}/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]`); // the provider-state read deny's own case-folded regex, anchored on storeHome
+    // The run-dir deny is UNCHANGED -- still anchored on winterHome (this lane's own disclosed
+    // "run/ is neither the per-run folder nor the store home" limitation, L1a.7's report).
+    expect(profile).toContain(`(deny file-read* (subpath "${canonWinterHome}/run"))`);
+    // And it must NOT be anchored on winterHome for the durable half -- proving the anchor
+    // genuinely moved, not that winterHome happened to also satisfy the assertion.
+    expect(profile).not.toContain(`(deny file-write* (subpath "${canonWinterHome}/backups"))`);
   });
 });
 

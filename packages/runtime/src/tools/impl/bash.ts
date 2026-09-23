@@ -175,6 +175,8 @@ function buildRunCommandOptions(
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;
+  /** WS-21 fix round 1, item 4: the shared store home -- see `ToolExecutionContext.storeHome`. */
+  storeHome?: string;
   /** P7a (D19): the session's brand -- the dot-dir names the seatbelt fences. */
   brand?: SandboxBrand;
   dangerouslyDisableSandbox?: boolean;
@@ -202,6 +204,7 @@ function buildRunCommandOptions(
     ...computeDenyPaths(ctx),
     home: ctx.home,
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+    ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
     ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),

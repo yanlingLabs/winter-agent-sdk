@@ -3454,6 +3454,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // skills index and the command resolver already look, and any tool naming Winter's own storage
       // uses one address.
       ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+      // WS-21 fix round 1, item 4: the shared store home, so `tools/impl/bash.ts`'s seatbelt profile
+      // fences DURABLE content (checkpoint/provider-state) where it actually lives, not the per-run
+      // folder `resolvedWinterHome` names once the router links `buildRunHome`.
+      ...(config.storeHome !== undefined ? { storeHome: config.storeHome } : {}),
       getCwd: () => currentCwd,
       probeReadAccess: (filePath: string) => probeReadAccess(filePath, makeEvalCtx()),
       // Task 2 (P3, WS-06 §3.5) completes this seam's engine plumbing. registry.ts's own
