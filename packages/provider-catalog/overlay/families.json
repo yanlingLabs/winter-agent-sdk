@@ -68,7 +68,7 @@
       "matchers": [
         {
           "pattern": "^deepseek",
-          "note": "unanchored tail on purpose: the lineup ships as `deepseek-v4-pro` and as `deepseek-reasoner`-style ids alike"
+          "note": "unanchored tail on purpose: the lineup ships as `deepseek-v4-pro` and `deepseek-flash`; legacy aliases remain provider-local rather than becoming separate canonical models"
         }
       ],
       "slots": [
@@ -83,7 +83,7 @@
         },
         {
           "name": "flash",
-          "canonicalModelId": "deepseek-v4-flash",
+          "canonicalModelId": "deepseek-flash",
           "description": "the fast, cheap implementer of the same lineup.",
           "reason": "Second: cost and speed.",
           "basis": "winter-curated",
@@ -93,6 +93,52 @@
       ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "ernie",
+      "displayName": "ERNIE",
+      "vendor": "Baidu",
+      "vendorProviders": [
+        "baidu",
+        "qianfan"
+      ],
+      "matchers": [
+        {
+          "pattern": "^ernie-",
+          "note": "Baidu's ERNIE ids retain the same vendor prefix across Baidu AI Cloud and Qianfan"
+        }
+      ],
+      "slots": [
+        {
+          "name": "5.1",
+          "canonicalModelId": "ernie-5.1",
+          "description": "the current ERNIE general model.",
+          "reason": "First: current flagship generation.",
+          "basis": "winter-curated",
+          "citation": "Baidu Qianfan model and pricing documentation, retrieved 2026-09-19",
+          "status": "candidate"
+        },
+        {
+          "name": "5.0",
+          "canonicalModelId": "ernie-5.0",
+          "description": "the ERNIE 5.0 general model.",
+          "reason": "Second: previous current generation.",
+          "basis": "winter-curated",
+          "citation": "Baidu Qianfan model and pricing documentation, retrieved 2026-09-19",
+          "status": "candidate"
+        },
+        {
+          "name": "x1.1",
+          "canonicalModelId": "ernie-x1.1",
+          "description": "the ERNIE deep-thinking model line.",
+          "reason": "Third: reasoning-oriented alternative.",
+          "basis": "winter-curated",
+          "citation": "Baidu Qianfan model and pricing documentation, retrieved 2026-09-19",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — Baidu's current Qianfan pricing table (retrieved 2026-09-19)"
     },
     {
       "id": "gemini",
@@ -391,8 +437,8 @@
       ],
       "matchers": [
         {
-          "pattern": "^llama-",
-          "note": "after the normaliser strips the `meta-llama/` namespace"
+          "pattern": "^llama-(?!.*nemotron)",
+          "note": "after the normaliser strips the `meta-llama/` namespace; NVIDIA's Llama-Nemotron derivatives belong to the dedicated Nemotron family"
         }
       ],
       "slots": [
@@ -465,6 +511,42 @@
       "citation": "spec:WS-13c §9"
     },
     {
+      "id": "nemotron",
+      "displayName": "Nemotron",
+      "vendor": "NVIDIA",
+      "vendorProviders": [
+        "nvidia"
+      ],
+      "matchers": [
+        {
+          "pattern": "^(?:nvidia-)?nemotron-|^llama-.*nemotron|^mistral-.*nemotron",
+          "note": "covers NVIDIA's named Nemotron line, including Llama- and Mistral-derived Nemotron releases after provider namespaces are stripped"
+        }
+      ],
+      "slots": [
+        {
+          "name": "ultra",
+          "canonicalModelId": "nemotron-3-ultra-550b-a55b",
+          "description": "the largest current Nemotron model in the catalog.",
+          "reason": "First: capability tier.",
+          "basis": "winter-curated",
+          "citation": "NVIDIA NIM model catalog, retrieved 2026-09-19",
+          "status": "candidate"
+        },
+        {
+          "name": "super",
+          "canonicalModelId": "nemotron-3-super-120b-a12b",
+          "description": "the smaller current Nemotron general model.",
+          "reason": "Second: lower-cost general alternative.",
+          "basis": "winter-curated",
+          "citation": "NVIDIA NIM model catalog, retrieved 2026-09-19",
+          "status": "candidate"
+        }
+      ],
+      "status": "candidate",
+      "citation": "https://build.nvidia.com/models — NVIDIA's hosted model catalog (retrieved 2026-09-19)"
+    },
+    {
       "id": "mistral",
       "displayName": "Mistral",
       "vendor": "Mistral AI",
@@ -473,8 +555,8 @@
       ],
       "matchers": [
         {
-          "pattern": "^mistral-|^codestral|^devstral|^magistral|^ministral|^pixtral",
-          "note": "the vendor ships one lineup under several `-stral` names; all of them are Mistral models"
+          "pattern": "^mistral-(?!.*nemotron)|^codestral|^devstral|^magistral|^ministral|^pixtral",
+          "note": "the vendor ships one lineup under several `-stral` names; NVIDIA's Mistral-Nemotron derivative is assigned to the dedicated Nemotron family"
         }
       ],
       "slots": [
@@ -557,7 +639,9 @@
       "vendor": "Alibaba",
       "vendorProviders": [
         "qwen-cloud",
-        "alibaba"
+        "qwen-cloud-token-plan",
+        "alibaba",
+        "alibaba-cn"
       ],
       "matchers": [
         {

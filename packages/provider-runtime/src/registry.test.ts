@@ -413,7 +413,9 @@ describe("estimateCostUsd (R6-H)", () => {
       if (model.pricing?.source === "official-doc") {
         pricedRows++;
         expect([model.key, result.costBasis]).toEqual([model.key, "list"]);
-        expect(result.costUsd).toBeGreaterThan(0);
+        // An official list price can be zero (for example a vendor's explicitly free Flash
+        // model). That remains a known list price, unlike `pricing` being absent.
+        expect(result.costUsd).toBeGreaterThanOrEqual(0);
         continue;
       }
       expect([model.key, result]).toEqual([model.key, { costUsd: 0, costBasis: "unknown" }]);

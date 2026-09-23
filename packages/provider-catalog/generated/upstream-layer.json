@@ -2637,7 +2637,7 @@
         ]
       },
       "scope": "llm",
-      "pricingBasis": "token",
+      "pricingBasis": "free",
       "admission": {
         "basis": "api-key",
         "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
@@ -3981,7 +3981,7 @@
     },
     {
       "id": "zai-anthropic",
-      "displayName": "Z.AI GLM Coding (Anthropic dialect)",
+      "displayName": "Z.AI API (Anthropic dialect)",
       "protocols": [
         "anthropic-messages"
       ],
@@ -13147,80 +13147,6 @@
           "none",
           "low",
           "medium",
-          "high",
-          "max"
-        ],
-        "continuation": "none"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "deepseek/deepseek-v4-flash",
-      "providerId": "deepseek",
-      "upstreamId": "deepseek-v4-flash",
-      "displayName": "DeepSeek V4 Flash (0731)",
-      "aliases": [],
-      "endpoints": [
-        "responses"
-      ],
-      "contextWindow": {
-        "value": 1000000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "maxOutputTokens": {
-        "value": 384000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
-        },
-        "efforts": [
-          "none",
-          "low",
           "high",
           "max"
         ],
@@ -32775,7 +32701,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "azure-ai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "endpoint not derivable — WS-13b §2 (round-1 finding I-1, list (b)): Azure AI Foundry has a real, documented public API, but its base URL is a PER-TENANT TEMPLATE (`https://<resource>.services.ai.azure.com/openai/v1/` or `https://<resource>.openai.azure.com/openai/v1/` — the operator's own resource name), not a fixed host. `defaultEndpoints.api` is immutable generated data (R6-11) and a template is not an endpoint, so an overlay row here would be the exact failure this lane's own endpoint rule exists to prevent — a row that validates and cannot serve a turn. Docs: https://learn.microsoft.com/azure/ai-foundry. RULING (round 1): a dedicated host-supplied-endpoint adapter shape, of the kind `azure-openai` already has, is a SPINE item for the fix wave; this id is admissible the day it exists."
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed PER-TENANT overlay row — WS-13b §2/§10, P7a. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it. P6.5 additionally refused it as `endpoint-not-derivable`: Azure AI Foundry has a real, documented public API, but its base URL is a PER-TENANT TEMPLATE (`https://<resource>.services.ai.azure.com/openai/v1/` or `https://<resource>.openai.azure.com/openai/v1/` — the operator's own resource name), not a fixed host, and `defaultEndpoints.api` is immutable generated data (R6-11). THAT REFUSAL IS DISCHARGED (user ruling, WS-13b §10, 2026-09-06): the row ships with `requiresUserEndpoint: true` and NO endpoint at all, the template moves to `endpointTemplate` where it is documentation rather than data, and the host supplies the real base URL — so the row no longer validates-and-cannot-serve; it refuses with a typed `endpoint-required` until a host names its tenant. Docs: https://learn.microsoft.com/azure/ai-foundry. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde`, `arcee-ai` and `cline` carry."
     },
     {
       "upstreamId": "azure-openai",
@@ -33512,6 +33438,14 @@
       "path": "deepseekProvider.alternateFormats[0].headers",
       "sourcePath": "open-sse/config/providers/registry/deepseek/index.ts",
       "reason": "provider request headers carry client-identity mirroring (vendor CLI user-agents, beta flags, stainless versions) — WS-13 §5: never imported; Winter adapters author their own"
+    },
+    {
+      "upstreamId": "deepseek",
+      "scope": "model",
+      "exclusionClass": "out-of-scope",
+      "path": "deepseek.models[deepseek-v4-flash]",
+      "sourcePath": "open-sse/config/providers/registry/deepseek/index.ts",
+      "reason": "reviewed model exclusion: DeepSeek's current official Models & Pricing page calls the current V4.1 Flash wire id `deepseek-flash`; it says legacy `deepseek-v4-flash` is temporarily routed to that model. Winter ships the documented canonical id as an overlay row with the legacy id retained as its provider-local alias, rather than exposing two model rows for one routed backend. See https://api-docs.deepseek.com/quick_start/pricing/ (retrieved 2026-09-19)."
     },
     {
       "upstreamId": "deepseek",
@@ -35367,7 +35301,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "oci",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "endpoint not derivable — WS-13b §2 (round-1 finding I-1, list (b)): OCI Generative AI has a real, documented public API, but its base URL is a PER-TENANT TEMPLATE (`https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1/` — the operator's own region), not a fixed host. `defaultEndpoints.api` is immutable generated data (R6-11) and a template is not an endpoint, so an overlay row here would be the exact failure this lane's own endpoint rule exists to prevent — a row that validates and cannot serve a turn. Docs: https://www.oracle.com/artificial-intelligence/generative-ai. RULING (round 1): a dedicated host-supplied-endpoint adapter shape, of the kind `azure-openai` already has, is a SPINE item for the fix wave; this id is admissible the day it exists."
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed PER-TENANT overlay row — WS-13b §2/§10, P7a. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it. P6.5 additionally refused it as `endpoint-not-derivable`: OCI Generative AI has a real, documented public API, but its base URL is a PER-TENANT TEMPLATE (`https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1/` — the operator's own region), not a fixed host, and `defaultEndpoints.api` is immutable generated data (R6-11). THAT REFUSAL IS DISCHARGED (user ruling, WS-13b §10, 2026-09-06): the row ships with `requiresUserEndpoint: true` and NO endpoint at all, the template moves to `endpointTemplate` where it is documentation rather than data, and the host supplies the real base URL — so the row no longer validates-and-cannot-serve; it refuses with a typed `endpoint-required` until a host names its region. Docs: https://www.oracle.com/artificial-intelligence/generative-ai. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde`, `arcee-ai` and `cline` carry."
     },
     {
       "upstreamId": "ofoxai",
@@ -37015,7 +36949,7 @@
       "exclusionClass": "reviewed-normalization",
       "path": "zai.name",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "upstream's product catalog names this vendor \"Z.AI\", which R6b-5 makes AMBIGUOUS: the vendor documents two dialects, Winter ships them as two rows, and one name cannot tell them apart in a picker. Winter records \"Z.AI GLM Coding (Anthropic dialect)\" — the same name plus the dialect, which is what R6b-5 asks for."
+      "reason": "upstream's product catalog names this vendor \"Z.AI\", which R6b-5 makes AMBIGUOUS: the vendor documents two dialects, Winter ships them as two rows, and one name cannot tell them apart in a picker. Winter records \"Z.AI API (Anthropic dialect)\" — the same name plus the dialect, which is what R6b-5 asks for."
     },
     {
       "upstreamId": "zai-web",

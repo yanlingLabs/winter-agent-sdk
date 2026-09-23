@@ -885,6 +885,42 @@
       "scope": "llm"
     },
     {
+      "id": "kimi-coding-openai",
+      "displayName": "Kimi Code (OpenAI dialect)",
+      "$comment": "The Kimi Code membership endpoint supports both documented dialects. This separate subscription row is the OpenAI-compatible sibling of `kimi-coding`, not Moonshot's token-billed platform API.",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.kimi.com/coding/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Membership API-key access, plan-dependent model entitlements, and the OpenAI-compatible endpoint are documented, but no Winter live gate has exercised this subscription surface."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.kimi.com/code/docs/en/kimi-code/models.html — Kimi Code's current model configuration documents the OpenAI-compatible Coding endpoint at https://api.kimi.com/coding/v1, membership API keys, and third-party tool use (retrieved 2026-09-19).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
       "id": "lemonade",
       "displayName": "Lemonade Server (local)",
       "protocols": [
@@ -2273,11 +2309,47 @@
     },
     {
       "id": "zai",
-      "displayName": "Z.AI GLM Coding (OpenAI dialect)",
+      "displayName": "Z.AI API (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions"
       ],
-      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). The OPENAI half of z.ai's GLM Coding Plan. Its Anthropic sibling is the EXTRACTED `zai-anthropic` row — upstream's own `zai` entry is `format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`, which z.ai's Claude-client doc confirms verbatim, so the allowlist admits that id under the sibling id rather than under `zai` (the `gemini` -> `google` precedent). Upstream's `glm`/`glm-cn`/`glmt` ids reach this same endpoint through a bespoke `glm` executor Winter does not represent; they are in `blocked` pointing here.",
+      "$comment": "Normal Z.AI token-billed API. This is deliberately distinct from `zai-coding`, whose Coding Plan key uses the different `/api/coding/paas/v4` endpoint and spends subscription credits rather than API balance. The provider documentation shows this ordinary OpenAI-compatible endpoint in its GLM-5.2 quick start; its pricing table is the basis for the token rates on this provider's models. The Anthropic-compatible route remains separately represented as `zai-anthropic` because adapters are dialect-specific.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.z.ai/api/paas/v4"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is fetched-document, but no live gate case has run against this endpoint"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.z.ai/guides/llm/glm-5.2 — Z.AI's own normal API quick start, retrieved 2026-09-19: the OpenAI-compatible client uses an API key and base URL `https://api.z.ai/api/paas/v4/`; the separately documented Coding Plan endpoint is not used here.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zai-coding",
+      "displayName": "Z.AI GLM Coding Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "The GLM Coding Plan is a distinct subscription entitlement, not the normal Z.AI API balance. It uses a Coding Plan API key and `https://api.z.ai/api/coding/paas/v4`; model usage consumes plan credits subject to five-hour and weekly limits. `pricingBasis: subscription` intentionally keeps every model's token price undefined: ModelPricing cannot represent the plan's credits, rolling quotas, peak/off-peak discount, or plan tier. The provider's current plan documentation lists GLM-5.3 and GLM-5.3-Flash as the effective models; documented legacy ids are aliases on those two rows rather than separately priced models.",
       "authKinds": [
         "api-key"
       ],
@@ -2296,13 +2368,51 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "admission is fetched-document, but no live gate case has run against this endpoint; the model roster is the sibling's and is unverified on this dialect"
+          "The vendor limits subscription benefits to its listed tools and environments; although its current list names Codex, this application has not run a live plan-key gate against the endpoint.",
+          "Plan entitlement, context, and rate limits vary by current vendor plan and are not discoverable from the normal API's `/models` response."
         ]
       },
-      "pricingBasis": "token",
+      "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.z.ai/devpack/tool/others — z.ai's own GLM Coding Plan docs, retrieved 2026-09-06: the \"Coding Endpoint\" table lists `https://api.z.ai/api/coding/paas/v4` under \"OpenAI Chat Completions\", and the Cline configuration example repeats it.",
+        "citation": "https://docs.z.ai/devpack/overview and https://docs.z.ai/devpack/tool/others — Z.AI's current GLM Coding Plan documentation, retrieved 2026-09-19: it is a subscription package; the OpenAI Chat Completions Coding Endpoint is `https://api.z.ai/api/coding/paas/v4`; supported tools include Codex; and plan usage is governed by five-hour and weekly credit limits.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zai-coding-anthropic",
+      "displayName": "Z.AI GLM Coding Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `zai-coding`. Z.AI's current GLM Coding Plan documentation explicitly supports Anthropic Messages at this root and gives a Claude Code configuration using the same plan API key. It is still subscription-priced: the plan's credits and limits are neither per-token list prices nor representable by ModelPricing.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.z.ai/api/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "The vendor documents the Claude Code configuration but this application has not run a live plan-key gate against the Anthropic-compatible endpoint.",
+          "The published OpenAI Chat reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.z.ai/devpack/tool/claude and https://docs.z.ai/devpack/tool/others — Z.AI's current GLM Coding Plan documentation, retrieved 2026-09-19: the Claude Code configuration uses `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`; the Coding Plan supports the Anthropic protocol; and the plan is subscription credit based.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -2413,6 +2523,78 @@
         "basis": "oauth-documented",
         "citation": "audit:2.5 — vendor announcement https://x.ai/news/grok-opencode (\"More open-source agents and integrations are coming soon\") + xAI's own public client, Apache-2.0, https://github.com/xai-org/grok-build at commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9; constants derived in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md",
         "tier": "audit"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "minimax-token-plan",
+      "displayName": "MiniMax Token Plan (OpenAI dialect)",
+      "$comment": "Subscription-only sibling of `minimax`: MiniMax documents a Token Plan Subscription Key that is distinct from a pay-as-you-go API key. The shared OpenAI-compatible endpoint does not make the two billing boundaries interchangeable.",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.minimax.io/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "MiniMax documents plan-key use in OpenAI-compatible tools, but Winter has not run a subscription-key live gate or verified entitlement differences among plan tiers."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.minimax.io/subscribe/coding-plan and https://platform.minimax.io/protocol/paid-agreement — MiniMax's Token Plan page documents use with MiniMax Code and OpenAI-compatible tools; its terms state that a Token Plan Subscription Key and normal pay-as-you-go API Key are separate (retrieved 2026-09-19).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "novita-coding",
+      "displayName": "Novita Coding Plan",
+      "$comment": "Subscription-only sibling of `novita`: the Coding Plan publishes a fixed nine-model allowance on Novita's normal OpenAI-compatible API surface. It has no per-token price fields because plan credits, not ordinary API metering, govern it.",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.novita.ai/openai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Novita documents the Coding Plan model set and its API-key OpenAI-compatible surface, but Winter has not run a plan-key live gate or established tier-specific rate limits."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://novita.ai/coding-plan and https://docs.novita.ai/guides/introduction — Novita's Coding Plan lists its nine included models; Novita's current docs declare Bearer API-key authentication and the OpenAI-compatible base https://api.novita.ai/openai (retrieved 2026-09-19).",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     }
