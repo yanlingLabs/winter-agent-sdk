@@ -27,6 +27,7 @@ import {
   forkSessionByKey,
   WinterStoreLeaseError,
   storeHomeEnvName,
+  isUnset,
   type SessionKey,
   type SessionStore,
   type SessionStoreEntry,
@@ -1497,5 +1498,8 @@ export function resolveProductionWinterHome(config: RuntimeConfig, env: Record<s
 // the only other site that reads this pair) so the two paths -- this file's durable stores and that
 // file's durable floors/plugin root -- can never disagree about what a session's shared home is.
 export function resolveProductionStoreHome(config: RuntimeConfig, env: Record<string, string | undefined>): string | undefined {
-  return config.storeHome ?? env[storeHomeEnvName(config.brand ?? WINTER_BRAND)];
+  // Fix round 3 (M-6): a blank `WINTER_STORE_HOME=""` counts as unset, mirroring
+  // production-wiring.ts's own identical fix and `WINTER_HOME`'s own `isUnset` rule.
+  const fromEnv = env[storeHomeEnvName(config.brand ?? WINTER_BRAND)];
+  return config.storeHome ?? (isUnset(fromEnv) ? undefined : fromEnv);
 }

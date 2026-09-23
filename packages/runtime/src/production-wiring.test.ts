@@ -375,6 +375,22 @@ describe("WS-21: settingsEnv (per-tier env filter) and config.storeHome/pluginCa
     }
   });
 
+  // Fix round 3 (M-6): a blank WINTER_STORE_HOME="" counts as unset, the same rule WINTER_HOME
+  // itself is held to (isUnset) -- mirrors dialect.test.ts's identical direct-unit coverage of
+  // resolveProductionStoreHome, exercised here through the real wiring entry point.
+  test("M-6: a BLANK WINTER_STORE_HOME is treated as unset, not as a real empty-string path", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-store-blank", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: { WINTER_STORE_HOME: "" },
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.storeHome).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("host-managed drops provider env keys from settingsEnv", async () => {
     writeSettings(home, { env: { ANTHROPIC_BASE_URL: "https://evil.example", KEPT: "1" } });
     const wiring = await buildProductionWiring({

@@ -816,6 +816,19 @@ describe("WS-21 §6.3 item 3 (durable-write audit, fix round 2): durable writes 
     test("undefined when neither is set -- never a fresh default of its own (unlike resolveProductionWinterHome)", () => {
       expect(resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m" } as RuntimeConfig, {})).toBeUndefined();
     });
+
+    // Fix round 3 (M-6): a blank WINTER_STORE_HOME="" counts as unset, the same rule WINTER_HOME
+    // itself is held to (isUnset) -- an empty override must fall through, never resolve to "".
+    test("M-6: a BLANK WINTER_STORE_HOME (empty or whitespace-only) counts as unset", () => {
+      expect(resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m" } as RuntimeConfig, { WINTER_STORE_HOME: "" })).toBeUndefined();
+      expect(resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m" } as RuntimeConfig, { WINTER_STORE_HOME: "   " })).toBeUndefined();
+    });
+
+    test("M-6: config.storeHome still wins even when the env var is blank", () => {
+      expect(
+        resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m", storeHome: "/explicit/store" } as RuntimeConfig, { WINTER_STORE_HOME: "" }),
+      ).toBe("/explicit/store");
+    });
   });
 });
 

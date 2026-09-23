@@ -23,7 +23,7 @@
 // invisibly.
 import { join } from "node:path";
 import type { InitPluginInfo, RuntimeConfig, SdkPluginConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
+import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, isUnset, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
 import { applyHostManagedSettingsFilter, filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
 // P7a (D19): the two process-level brand surfaces this module installs per session -- see (10b).
 import { rebrandStandingServerTools } from "./tools/registry.ts";
@@ -617,7 +617,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // (every incarnation before the router links `buildRunHome`, or any non-router host) reads as "no
   // shared store home / no shared plugin cache" -- both `undefined`, and every consumer of them
   // (L1a.7) falls back to `winterHome`.
-  const storeHome = config.storeHome ?? env[storeHomeEnvName(brand)];
+  // Fix round 3 (M-6): a BLANK `WINTER_STORE_HOME=""` counts as unset, the same "missing key, empty
+  // string, or whitespace-only string" rule `WINTER_HOME` itself is held to (`isUnset`, this
+  // module's own `resolveWinterHome` call above uses it internally) -- an empty override must fall
+  // through to "no shared store home", never resolve to a real, empty-string path.
+  const storeHomeEnv = env[storeHomeEnvName(brand)];
+  const storeHome = config.storeHome ?? (isUnset(storeHomeEnv) ? undefined : storeHomeEnv);
   const pluginCacheDir = config.pluginCacheDir ?? env[pluginCacheDirEnvName(brand)];
   const hostManaged = env[providerManagedByHostEnvName(brand)] === "1" || env[providerManagedByHostEnvName(brand)] === "true";
   const warnings: string[] = [];
