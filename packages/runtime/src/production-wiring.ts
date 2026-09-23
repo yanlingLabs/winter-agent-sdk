@@ -517,12 +517,14 @@ export interface ProductionWiring {
  * SESSION'S OWN PROVIDER (dist-session fixes E4).
  *
  * A host commonly spawns with the provider-local id plus `Options.provider` (the Winter daemon does),
- * and one bare id is served by many providers -- `deepseek-v4-flash` by twelve, each with its own row.
- * A first-match search over the whole catalog named the model by whichever provider sorted first.
+ * and one bare id is served by many providers -- `deepseek-v4-flash` by eleven, each with its own row
+ * (deepseek's and deepseek-anthropic's own rows are now `deepseek-flash`, keeping `deepseek-v4-flash`
+ * only as an alias). A first-match search over the whole catalog named the model by whichever
+ * provider sorted first.
  *
  *   - with `providerId`: that provider's rows only, in TWO PASSES like the adapters' descriptor index --
  *     key or upstream id first, alias only after -- so an alias can never shadow a real id, and
- *     novita's provider-local `deepseek/deepseek-v4-flash` names novita's row, not deepseek's KEY;
+ *     novita's provider-local `deepseek/deepseek-v4-pro` names novita's row, not deepseek's KEY;
  *   - without one (a session with no provider identity at all): the string is read as a catalog KEY
  *     when it is one (a key names its provider), and a bare id or alias only when exactly ONE row in
  *     the whole catalog answers to it. Ambiguous -> nothing, and the line keeps the bare id.
