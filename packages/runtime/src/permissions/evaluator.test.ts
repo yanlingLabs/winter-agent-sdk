@@ -2826,6 +2826,36 @@ describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not ju
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own trusted-symlink
+  // fallback for ALLOW rules (`ZCt`/`ni`/`QCt`, dump-confirmed) -- an allow rule written in the
+  // commonly-typed short form (`//tmp/**`) must still fire when the call's REAL resolved path comes
+  // back in the long form (`/private/tmp/...`, what `realpathSync` actually returns on macOS). The
+  // target does not need to exist on disk: `resolveRealTarget`'s own graceful fallback walks up to
+  // the nearest EXISTING ancestor (here, `/tmp` itself, a real OS path) and realpaths THAT, which is
+  // enough to exercise the alias without creating a real file under `/tmp`.
+  test("fix round 5: an allow rule written //tmp/** matches a target whose REAL path resolves to /private/tmp/... (claude's own trusted-symlink fallback)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ rules: withRules(rule("Edit(//tmp/**)", "allow")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/tmp/winter-fix-round-5-probe-does-not-exist.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
+  });
+
+  // The scope check: claude's own `ZCt` hardcodes "allow" regardless of caller -- DENY/ASK gets no
+  // alias fallback. This is not actually a gap: `target` is already the REAL (long-form) path via
+  // `resolveRealTarget`, so a deny rule written in the LONG form already matches it directly with no
+  // aliasing needed; this test is the control proving deny still behaves via direct matching alone.
+  test("fix round 5 control: a deny rule written in the LONG form //private/tmp/** still matches directly, no alias fallback needed for deny", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      specialChecks: REAL_SPECIAL_CHECKS,
+      policy: policy({ rules: withRules(rule("Edit(//private/tmp/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/tmp/winter-fix-round-5-deny-probe-does-not-exist.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
 });
 
 describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-aware too (a live fail-open this task's own matrix would otherwise miss)", () => {

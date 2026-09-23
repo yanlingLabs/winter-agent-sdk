@@ -38,7 +38,17 @@ import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, shellWords, stripWrappers, type ParsedRule } from "./grammar.ts";
 import { checkSymlinkBothEnds, resolveRealTarget, resolveTargetPath } from "./paths.ts";
-import { fileRuleKindFor, canonicalFileRuleAuthoringToolName, matchFileRulesGrouped, matchesSingleFileRulePattern, escapeFileRulePathSegment, isPathWithinRoot, type FileRuleCandidate, type FileRuleKind } from "./file-rules.ts";
+import {
+  fileRuleKindFor,
+  canonicalFileRuleAuthoringToolName,
+  matchFileRulesGrouped,
+  matchesSingleFileRulePattern,
+  escapeFileRulePathSegment,
+  isPathWithinRoot,
+  canonicalizeTrustedSymlinkPath,
+  type FileRuleCandidate,
+  type FileRuleKind,
+} from "./file-rules.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
 import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
@@ -908,8 +918,20 @@ function findMatchingFileRuleEntry(
   const target = resolveRealTarget(absPath);
   const matchAt = (candidatePath: string): SourcedRuleEntry | null => matchFileRulesGrouped(candidates, candidatePath, { cwd: ctx.cwd, home: ctx.home }, direction);
   if (direction === "allow") {
-    const linkMatch = matchAt(absPath);
-    const targetMatch = matchAt(target);
+    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own `ZCt` tries the
+    // TRUSTED-SYMLINK-ALIASED spelling of a candidate path when the raw one does not match an allow
+    // rule (dump-confirmed by content search: `Ea(u,n,r,"allow")`, then `QCt(u)` retried the SAME
+    // way, `"allow"` hardcoded regardless of caller) -- so a rule written `allow //tmp/**` matches a
+    // target whose resolved real path is `/private/tmp/...`, the spelling `realpathSync` actually
+    // returns. DENY/ASK never gets this fallback, matching `ZCt`'s own scope exactly.
+    const matchAtWithAlias = (candidatePath: string): SourcedRuleEntry | null => {
+      const direct = matchAt(candidatePath);
+      if (direct !== null) return direct;
+      const aliased = canonicalizeTrustedSymlinkPath(candidatePath);
+      return aliased !== candidatePath ? matchAt(aliased) : null;
+    };
+    const linkMatch = matchAtWithAlias(absPath);
+    const targetMatch = matchAtWithAlias(target);
     return linkMatch !== null && targetMatch !== null ? linkMatch : undefined;
   }
   return matchAt(absPath) ?? matchAt(target) ?? undefined;

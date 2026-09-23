@@ -20,6 +20,7 @@ import {
   normalizeFileRulePattern,
   escapeFileRulePathSegment,
   resolvesWithinPluginRoot,
+  canonicalizeTrustedSymlinkPath,
   type FileRuleCandidate,
 } from "./file-rules.ts";
 
@@ -342,6 +343,36 @@ describe("resolvesWithinPluginRoot -- fix round 5, the plugin-manifest traversal
     const root = mkTemp("winter-fence-root-");
     expect(resolvesWithinPluginRoot(join(root, "a\\b"), root)).toBe(false);
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own trusted-symlink
+// mapping (`ni`/`QCt`, dump-confirmed) -- these probes exercise the pairs that actually hold on the
+// REAL machine running this test (verified via `readlink -f`: `/tmp`->`/private/tmp`,
+// `/var`->`/private/var`, `/etc`->`/private/etc` all resolve that way on macOS; `/bin`/`/lib`/`/sbin`
+// do not on every macOS version -- e.g. a sealed-system-volume install may have `/bin` as a real,
+// non-symlinked directory -- which is exactly why the map is VERIFIED dynamically, never assumed).
+describe("canonicalizeTrustedSymlinkPath -- fix round 5, claude's trusted-symlink mapping (ni/QCt)", () => {
+  test("rewrites /private/tmp/... to /tmp/...", () => {
+    expect(canonicalizeTrustedSymlinkPath("/private/tmp/x/y.txt")).toBe("/tmp/x/y.txt");
+  });
+
+  test("rewrites /private/var/... to /var/...", () => {
+    expect(canonicalizeTrustedSymlinkPath("/private/var/folders/abc")).toBe("/var/folders/abc");
+  });
+
+  test("rewrites the bare real directory itself (no trailing segment)", () => {
+    expect(canonicalizeTrustedSymlinkPath("/private/tmp")).toBe("/tmp");
+  });
+
+  test("a path with no matching real prefix passes through unchanged", () => {
+    expect(canonicalizeTrustedSymlinkPath("/Users/someone/project/file.txt")).toBe("/Users/someone/project/file.txt");
+  });
+
+  test("does not false-positive on a LONGER name that merely starts with the same characters", () => {
+    // "/private/tmpfoo" must not be treated as "/private/tmp" + "foo" -- the prefix check requires
+    // an exact match or a path separator immediately after it.
+    expect(canonicalizeTrustedSymlinkPath("/private/tmpfoo/x")).toBe("/private/tmpfoo/x");
   });
 });
 

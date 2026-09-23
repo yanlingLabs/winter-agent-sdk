@@ -75,6 +75,7 @@
 //     changes AT MOST which of two otherwise-equivalent overlapping rules a caller cites in an
 //     audit message -- never the allow/deny/ask verdict itself, which depends only on whether SOME
 //     rule in the group matched.
+import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import ignoreFactory from "ignore";
 import { resolveRealTarget } from "./paths.ts";
@@ -314,6 +315,61 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
 // SV-8: the acceptEdits working-directory boundary -- a plain path-prefix test, NOT a glob
 // ---------------------------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------------------------
+// Fix round 5: claude's trusted-symlink equivalences (`ni`/`QCt`, dump-confirmed) -- shared by the
+// acceptEdits boundary check below and the allow-rule matching fallback in `evaluator.ts`'s
+// `findMatchingFileRuleEntry`.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The SIX real-directory/trusted-alias pairs claude's own `ni()` checks (content-search confirmed
+ * against the installed claude CLI binary, 2.1.280 -- the pinned 2.1.250 build was unavailable
+ * locally): `/private/tmp`↔`/tmp`, `/private/var`↔`/var`, `/private/etc`↔`/etc`, `/usr/bin`↔`/bin`,
+ * `/usr/lib`↔`/lib`, `/usr/sbin`↔`/sbin`. Round 4's own `isPathWithinRoot` only ever hardcoded the
+ * first two; this round widens it to all six and, matching `ni()` exactly, VERIFIES each pair
+ * dynamically (`realpathSync(alias) === real`) rather than assuming it holds -- macOS maintains
+ * these as symlinks, but a pair that does not resolve that way on a given machine is excluded, never
+ * assumed. Memoized: these are real, stable OS paths that do not change within one process's
+ * lifetime, mirroring `ni()`'s own caching.
+ */
+const TRUSTED_SYMLINK_CANDIDATES: readonly (readonly [real: string, alias: string])[] = [
+  ["/private/tmp", "/tmp"],
+  ["/private/var", "/var"],
+  ["/private/etc", "/etc"],
+  ["/usr/bin", "/bin"],
+  ["/usr/lib", "/lib"],
+  ["/usr/sbin", "/sbin"],
+];
+
+let cachedTrustedSymlinkEquivalences: Map<string, string> | undefined;
+
+function trustedSymlinkEquivalences(): Map<string, string> {
+  if (cachedTrustedSymlinkEquivalences !== undefined) return cachedTrustedSymlinkEquivalences;
+  const result = new Map<string, string>();
+  for (const [real, alias] of TRUSTED_SYMLINK_CANDIDATES) {
+    try {
+      if (realpathSync(alias) === real) result.set(real, alias);
+    } catch {
+      // not present (or not a symlink to the expected target) on this machine -- excluded, not assumed
+    }
+  }
+  cachedTrustedSymlinkEquivalences = result;
+  return result;
+}
+
+/**
+ * `QCt`'s own job: rewrite a path through its REAL prefix (e.g. `/private/tmp/x`, what
+ * `realpathSync` actually returns) back to the commonly-typed TRUSTED alias (`/tmp/x`) -- the
+ * direction a real, resolved path needs to go to be compared against a rule an author wrote in the
+ * short form. A path with no matching real prefix passes through unchanged.
+ */
+export function canonicalizeTrustedSymlinkPath(path: string): string {
+  for (const [real, alias] of trustedSymlinkEquivalences()) {
+    if (path === real || path.startsWith(real + sep)) return alias + path.slice(real.length);
+  }
+  return path;
+}
+
 /**
  * SV-8 (the router same-view test on the 57e7fef binary): claude's own acceptEdits
  * working-directory boundary check is `sm` (dump-confirmed by content search) -- a plain RELATIVE-
@@ -330,21 +386,20 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
  * concern), which does.
  *
  * Ported: `caseFold` (default `true`, matching `sm`'s own default and I-D's case-insensitivity
- * finding generally) folds BOTH paths before computing the relative path between them; the macOS
- * `/private/var` -> `/var` and `/private/tmp` -> `/tmp` aliasing is real-symlink-aware -- macOS
- * itself maintains both as symlinks to the `/private/...` originals, so a session cwd resolved
- * through one spelling and a root configured with the other name the SAME real directory (this
- * matters in practice: `os.tmpdir()` on macOS resolves through `/private/var/folders/...`, which is
- * exactly the shape every mkdtemp-based fixture in this codebase's own test suite produces). Not
- * ported: `sm`'s own `uncShapeParity` and `skipPrivateAlias` options (Windows-only concerns) and its
- * `Gn`/`Ha` UNC-path checks -- this codebase supports macOS only (CLAUDE.md's own "latest-OS
- * floors" rule).
+ * finding generally) folds BOTH paths before computing the relative path between them; the trusted-
+ * symlink aliasing (fix round 5: all SIX pairs `ni()`/`canonicalizeTrustedSymlinkPath` cover, widened
+ * from round 4's hardcoded `/private/var`/`/private/tmp` pair) is real-symlink-aware -- macOS itself
+ * maintains these as symlinks, so a session cwd resolved through one spelling and a root configured
+ * with the other name the SAME real directory (this matters in practice: `os.tmpdir()` on macOS
+ * resolves through `/private/var/folders/...`, which is exactly the shape every mkdtemp-based fixture
+ * in this codebase's own test suite produces). Not ported: `sm`'s own `uncShapeParity` and
+ * `skipPrivateAlias` options (Windows-only concerns) and its `Gn`/`Ha` UNC-path checks -- this
+ * codebase supports macOS only (CLAUDE.md's own "latest-OS floors" rule).
  */
 export function isPathWithinRoot(childPath: string, rootPath: string, opts: { caseFold?: boolean } = {}): boolean {
   const caseFold = opts.caseFold ?? true;
-  const alias = (p: string): string => p.replace(/^\/private\/var\//, "/var/").replace(/^\/private\/tmp(\/|$)/, "/tmp$1");
   const fold = (p: string): string => (caseFold ? p.toLowerCase() : p);
-  const rel = relative(fold(alias(rootPath)), fold(alias(childPath)));
+  const rel = relative(fold(canonicalizeTrustedSymlinkPath(rootPath)), fold(canonicalizeTrustedSymlinkPath(childPath)));
   if (rel === "") return true;
   if (rel === ".." || rel.startsWith(`..${sep}`)) return false;
   return !isAbsolute(rel);
