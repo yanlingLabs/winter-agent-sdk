@@ -1239,6 +1239,25 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
+  // Fix round 6, R5-2 (the re-review against the pinned 2.1.250 dump): round 5 widened
+  // isPathWithinRoot's own alias-folding to claude's SIX-pair trusted-symlink map (`ni()`/`Sl()`),
+  // which does NOT belong here -- the pinned 2.1.250 dump's own `sm` (the acceptEdits boundary
+  // check) aliases ONLY `/private/var/` and `/private/tmp`, never `/private/etc`/`/usr/bin`/
+  // `/usr/lib`/`/usr/sbin`. With those four extra pairs, Winter was auto-approving MORE than
+  // claude does. Reverted: `isPathWithinRoot` is back to the two-pair form; the six-pair map now
+  // backs ONLY the allow-rule retry in evaluator.ts (`cqe`'s own scope).
+  test("fix round 6, R5-2: with cwd /etc, a write to /private/etc/x is NOT auto-approved -- /private/etc is no longer an aliased boundary pair", async () => {
+    const ctx = baseCtx({ cwd: "/etc", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/private/etc/winter-round6-probe-does-not-exist.txt" }), ctx);
+    expect(record.decision).not.toBe("allow");
+  });
+
+  test("fix round 6, R5-2 control: cwd /work/proj (an ordinary path, not a trusted-symlink pair at all) still auto-approves normally, unaffected by the revert", async () => {
+    const ctx = baseCtx({ cwd: "/work/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/work/proj/src/b.ts" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
   test("a recognized Bash fs-op, in-bounds (the brief's own fixture: in-root `sed -i` approved in acceptEdits)", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Bash", { command: "sed -i 's/x/y/' ./notes.txt" }), ctx);

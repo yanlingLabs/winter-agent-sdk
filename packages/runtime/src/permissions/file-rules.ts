@@ -386,20 +386,31 @@ export function canonicalizeTrustedSymlinkPath(path: string): string {
  * concern), which does.
  *
  * Ported: `caseFold` (default `true`, matching `sm`'s own default and I-D's case-insensitivity
- * finding generally) folds BOTH paths before computing the relative path between them; the trusted-
- * symlink aliasing (fix round 5: all SIX pairs `ni()`/`canonicalizeTrustedSymlinkPath` cover, widened
- * from round 4's hardcoded `/private/var`/`/private/tmp` pair) is real-symlink-aware -- macOS itself
- * maintains these as symlinks, so a session cwd resolved through one spelling and a root configured
- * with the other name the SAME real directory (this matters in practice: `os.tmpdir()` on macOS
- * resolves through `/private/var/folders/...`, which is exactly the shape every mkdtemp-based fixture
- * in this codebase's own test suite produces). Not ported: `sm`'s own `uncShapeParity` and
- * `skipPrivateAlias` options (Windows-only concerns) and its `Gn`/`Ha` UNC-path checks -- this
- * codebase supports macOS only (CLAUDE.md's own "latest-OS floors" rule).
+ * finding generally) folds BOTH paths before computing the relative path between them; the macOS
+ * `/private/var` -> `/var` and `/private/tmp` -> `/tmp` aliasing is real-symlink-aware -- macOS
+ * itself maintains both as symlinks to the `/private/...` originals, so a session cwd resolved
+ * through one spelling and a root configured with the other name the SAME real directory (this
+ * matters in practice: `os.tmpdir()` on macOS resolves through `/private/var/folders/...`, which is
+ * exactly the shape every mkdtemp-based fixture in this codebase's own test suite produces). Not
+ * ported: `sm`'s own `uncShapeParity` and `skipPrivateAlias` options (Windows-only concerns) and its
+ * `Gn`/`Ha` UNC-path checks -- this codebase supports macOS only (CLAUDE.md's own "latest-OS
+ * floors" rule).
+ *
+ * Fix round 6 (R5-2, the re-review against the pinned 2.1.250 dump): ONLY these TWO pairs -- round
+ * 5 widened this to the full six-pair `ni()`/`Sl()` map (`/private/etc`, `/usr/bin`, `/usr/lib`,
+ * `/usr/sbin` included), which was WRONG for `sm` specifically: content search against the pinned
+ * 2.1.250 dump (not the 2.1.280 build round 5 was cited against) found `sm`'s own alias regexes
+ * verbatim -- `g=r?/^\/private\/var\//i:/^\/private\/var\//,w=r?/^\/private\/tmp(\/|$)/i:/^\/private\/
+ * tmp(\/|$)/` -- exactly these two, unconditionally, never the wider six-pair set. Reverted to match;
+ * the six-pair map (`trustedSymlinkEquivalences`/`canonicalizeTrustedSymlinkPath`) stays, but is now
+ * used ONLY by the allow-rule retry in evaluator.ts (`cqe`'s own scope, confirmed at the same dump
+ * site), never by this function.
  */
 export function isPathWithinRoot(childPath: string, rootPath: string, opts: { caseFold?: boolean } = {}): boolean {
   const caseFold = opts.caseFold ?? true;
+  const alias = (p: string): string => p.replace(/^\/private\/var\//, "/var/").replace(/^\/private\/tmp(\/|$)/, "/tmp$1");
   const fold = (p: string): string => (caseFold ? p.toLowerCase() : p);
-  const rel = relative(fold(canonicalizeTrustedSymlinkPath(rootPath)), fold(canonicalizeTrustedSymlinkPath(childPath)));
+  const rel = relative(fold(alias(rootPath)), fold(alias(childPath)));
   if (rel === "") return true;
   if (rel === ".." || rel.startsWith(`..${sep}`)) return false;
   return !isAbsolute(rel);
@@ -411,33 +422,50 @@ export function isPathWithinRoot(childPath: string, rootPath: string, opts: { ca
 
 /**
  * The traversal fence for a plugin MANIFEST's own declared component paths (`commands`/`agents`/
- * `skills`/`output-styles`/`workflows`) -- REALPATH-AWARE, unlike `isPathWithinRoot` alone (a pure
- * lexical prefix test), which would let a SYMLINK planted lexically inside the plugin root but
- * resolving OUTSIDE it through unchallenged. Ported from claude's own `KGe` (dump-confirmed by
- * content search against the installed claude CLI binary, 2.1.280 -- the pinned 2.1.250 build was
- * unavailable locally, so this is cited by content, not by offset): realpath the candidate,
- * realpath the root (`plugins/loader.ts`'s `resolveRoot` deliberately does NOT realpath the plugin
- * root at load time -- its own header explains why -- so a symlinked plugin root would otherwise
- * fail every inside-check falsely if only the candidate side were resolved; `KGe`'s own
- * `anchor.roots.some(...)`, plural, is this same both-sides requirement), then check containment.
- * `resolveRealTarget` (paths.ts) already has the graceful "walk up to the nearest existing ancestor"
- * fallback `KGe`'s own `ben` sibling function provides for a candidate that does not exist YET --
- * reused rather than re-derived.
+ * `skills`/`output-styles`/`workflows`/`hooks`).
  *
- * `resolveRealTarget` RETHROWS a non-ENOENT failure (ELOOP on a symlink cycle, EACCES, ...) -- caught
- * here and treated as a refusal, mirroring `KGe`'s own "it could not be resolved" `escapes` verdict,
- * rather than letting a malformed manifest entry crash the whole plugin-loading pass.
+ * Fix round 6 (R5-1 + a promoted minor, the re-review against the PINNED 2.1.250 dump): claude's own
+ * check here is `nV` (dump-confirmed by content search against the pinned dump directly, at the
+ * scratchpad path the controller named -- superseding fix round 5's citation of `KGe`/`Aoe` against
+ * the INSTALLED 2.1.280 binary, which this round's own ruling says is not the parity authority):
+ * `nV(root,entry)` resolves `entry` against `root`, computes `u=path.relative(root,resolved)`, and
+ * refuses (`return null`) when `u.startsWith("..")`. Three ways this DIFFERS from `isPathWithinRoot`/
+ * `sm` above, all ported exactly rather than reused:
+ *   1. CASE-SENSITIVE, always -- `nV`'s own body has no folding call anywhere (confirmed by reading
+ *      it in full), unlike `sm`'s own `r?/.../i:/.../ ` case-fold branching. Fix round 5's own
+ *      `resolvesWithinPluginRoot` wrongly delegated to `isPathWithinRoot`'s DEFAULT `caseFold:true`,
+ *      so on a case-sensitive volume a manifest entry like `../FOO/agents` under a root
+ *      `.../plugins/foo` was admitted (folded, `FOO` read as `foo`) where claude's own `nV` (and
+ *      this rewrite) refuses it.
+ *   2. NAIVE STRING-PREFIX, not segment-aware -- `u.startsWith("..")` is a bare string test, unlike
+ *      `sm`'s own `uj` (`/(?:^|[\\/])\.\.(?:[\\/]|$)/`, confirmed by reading ITS full definition too),
+ *      which requires a `..` SEGMENT bounded by a separator or a string edge. This means a component
+ *      name that merely STARTS WITH the two characters `..` -- e.g. `"..x/agents"`, a real,
+ *      non-escaping subdirectory name -- is REFUSED by claude too, not only a genuine `"../"` escape.
+ *      Matched here rather than "fixed", per the ruling: claude's own inconsistency between its two
+ *      path-safety mechanisms is not this codebase's to resolve by choosing the more correct one.
+ *   3. NO trusted-symlink alias mapping at all -- `nV`'s own body never calls anything resembling
+ *      `Smt`/`canonicalizeTrustedSymlinkPath`. Moot in practice here regardless, since both operands
+ *      below are ALREADY realpath'd before this comparison runs (a real, resolved path from
+ *      `/tmp`/`/var` already comes back in its long `/private/...` form either way).
  *
- * DISCLOSED SIMPLIFICATION: `KGe`'s own `wen` sibling cross-checks `stat(candidate)` against
- * `stat(real)` by raw `(dev,ino)` identity, as a defence against a TOCTOU race between its own
- * `realpath()` call and a later read -- belt-and-suspenders against the filesystem changing under a
- * concurrent reader. Winter's loader runs synchronously within one `loadPlugins()` call in a single
- * process; that race window does not exist here the same way, so this is not ported.
+ * DISCLOSED DIVERGENCE FROM THE PINNED 2.1.250, kept as DELIBERATE HARDENING (the controller's own
+ * explicit ruling): `nV` itself is PURELY LEXICAL -- 2.1.250 has no symlink-following/realpath step
+ * for a plugin component path at all. This function still realpaths both the candidate and the
+ * plugin root first (originally ported from the INSTALLED 2.1.280 binary's own `KGe`/`Aoe`, which DID
+ * add this in a build newer than the pin), refusing a symlinked override that points outside the
+ * plugin where 2.1.250 would load it -- the safe direction, and it matches claude's own newer
+ * behaviour. `nV`'s own comparison shape (case-sensitive, naive-prefix, no alias) is then applied to
+ * the REALPATH'D forms rather than to the raw ones `nV` itself compares. `resolveRealTarget` (paths.ts)
+ * has the graceful "walk up to the nearest existing ancestor" fallback for a candidate that does not
+ * exist YET, and rethrows a non-ENOENT failure (ELOOP on a symlink cycle, EACCES, ...), caught here
+ * and treated as a refusal rather than letting a malformed manifest entry crash the whole
+ * plugin-loading pass.
  */
 export function resolvesWithinPluginRoot(candidatePath: string, pluginRoot: string): boolean {
-  // `KGe`'s own defensive check (a literal backslash "is not resolved reliably on this platform").
-  // Inert on macOS -- the only platform this codebase targets (CLAUDE.md's own latest-OS-floors
-  // rule) -- ported anyway for parity and because it is genuinely one line.
+  // A literal backslash "is not resolved reliably on this platform" -- ported from the 2.1.280
+  // binary's own `KGe` for parity; inert on macOS, the only platform this codebase targets
+  // (CLAUDE.md's own latest-OS-floors rule), and genuinely one line either way.
   if (candidatePath.includes("\\")) return false;
   let realCandidate: string;
   let realRoot: string;
@@ -447,7 +475,10 @@ export function resolvesWithinPluginRoot(candidatePath: string, pluginRoot: stri
   } catch {
     return false;
   }
-  return isPathWithinRoot(realCandidate, realRoot);
+  const rel = relative(realRoot, realCandidate);
+  if (rel === "") return true;
+  if (rel.startsWith("..")) return false;
+  return !isAbsolute(rel);
 }
 
 // ---------------------------------------------------------------------------------------------

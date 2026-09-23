@@ -464,6 +464,21 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
+  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): a name starting
+  // with ".." (the coordinator's own example, "..x/agents") must be REFUSED as a plugin component
+  // path, matching claude's own nV (a naive startsWith("..") check, not a segment-aware one) --
+  // end to end, at the loader level, not only at resolvesWithinPluginRoot's own unit level.
+  test("fix round 6: a workflows override entry starting with '..' (e.g. '..x/agents') is refused, matching claude's own nV", () => {
+    const parent = mkTemp("winter-plugin-workflows-dotdot-prefix-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "..x", "agents"), { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "..x/agents" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.workflowsPaths).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
   // Round 5's own explicit ruling: an ABSOLUTE path entry must be refused too, when it resolves
   // outside the plugin root -- `resolve(root, entry)` discards `root` entirely for an absolute later
   // argument (ordinary node:path semantics), so this exercises the SAME escape check from a

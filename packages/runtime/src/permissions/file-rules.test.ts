@@ -281,7 +281,7 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
 // loader would hand it (`resolve(root, entry)`'s result) -- the LOADER-level test suite
 // (plugins/loader.test.ts) is where a raw manifest entry like "../x" is exercised end to end,
 // since collapsing "../" is `path.resolve`'s own job, done before this function is ever called.
-describe("resolvesWithinPluginRoot -- fix round 5, the plugin-manifest traversal fence (Aoe/KGe)", () => {
+describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest traversal fence (KGe realpath step + claude's own nV comparison)", () => {
   function mkTemp(prefix: string): string {
     return mkdtempSync(join(tmpdir(), prefix));
   }
@@ -342,6 +342,45 @@ describe("resolvesWithinPluginRoot -- fix round 5, the plugin-manifest traversal
   test("a literal backslash refuses outright -- KGe's own defensive check, ported for parity", () => {
     const root = mkTemp("winter-fence-root-");
     expect(resolvesWithinPluginRoot(join(root, "a\\b"), root)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // Fix round 6, R5-1 (the re-review against the pinned 2.1.250 dump): claude's own nV compares
+  // case-SENSITIVELY -- round 5's own delegation to isPathWithinRoot's default caseFold:true was
+  // wrong. Neither side needs to exist on disk: resolveRealTarget's own fallback (walk up to the
+  // nearest EXISTING ancestor, "/" here, and rejoin the literal, case-PRESERVED tail) means this
+  // exercises the comparison directly, without needing a genuinely case-sensitive volume (this dev
+  // machine's default APFS format is case-insensitive, so a REAL directory pair differing only by
+  // case cannot be constructed via mkdirSync at all: the filesystem would resolve either spelling to
+  // the SAME one real directory).
+  test("R5-1: a candidate differing from the root only in CASE is refused, not admitted", () => {
+    const root = "/winter-round6-r5-1-does-not-exist/plugins/foo";
+    const candidate = "/winter-round6-r5-1-does-not-exist/plugins/FOO/agents";
+    expect(resolvesWithinPluginRoot(candidate, root)).toBe(false);
+  });
+
+  test("R5-1 control: the SAME case still admits normally", () => {
+    const root = "/winter-round6-r5-1-does-not-exist/plugins/foo";
+    const candidate = "/winter-round6-r5-1-does-not-exist/plugins/foo/agents";
+    expect(resolvesWithinPluginRoot(candidate, root)).toBe(true);
+  });
+
+  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): claude's own nV
+  // uses a NAIVE startsWith("..") check (dump-confirmed, reading nV's full body), not the
+  // segment-aware one isPathWithinRoot/sm has -- so a component name that merely STARTS WITH the two
+  // characters ".." is refused too, not only a genuine "../" escape. A real behaviour CHANGE from
+  // round 5 (which delegated to isPathWithinRoot's segment-aware check and would have admitted this).
+  test("minor: a name starting with '..' (e.g. '..x/agents') is REFUSED, matching claude's own nV exactly", () => {
+    const root = mkTemp("winter-fence-root-");
+    mkdirSync(join(root, "..x", "agents"), { recursive: true });
+    expect(resolvesWithinPluginRoot(join(root, "..x", "agents"), root)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("control: an ordinary subdirectory name not starting with '..' is still admitted", () => {
+    const root = mkTemp("winter-fence-root-");
+    mkdirSync(join(root, "agents"), { recursive: true });
+    expect(resolvesWithinPluginRoot(join(root, "agents"), root)).toBe(true);
     rmSync(root, { recursive: true, force: true });
   });
 });
