@@ -1327,3 +1327,111 @@ describe("WS-13c: the wiring's model-family surface", () => {
     }
   });
 });
+
+// WS-21 lane L1b, Task L1b.2 (spec §5.2/§6.3 item 5): the shared plugins root -- both runtimes read
+// the SAME `installed_plugins.json` (`@yanlinglabs/winter-agent-sdk`'s `manage.ts` writes it; this
+// suite writes it directly, the same shape a real `winter plugin install` would leave behind) and the
+// SAME settings `enabledPlugins` map gates what natively loads.
+describe("WS-21 §5.2/§6.3 item 5: the shared plugins root -- installed + enabled plugins load natively", () => {
+  /** A minimal real plugin directory: one skill, nothing else. */
+  function writePluginContent(root: string): void {
+    mkdirSync(join(root, "skills", "ship"), { recursive: true });
+    writeFileSync(join(root, "skills", "ship", "SKILL.md"), "---\ndescription: ships\n---\nBODY");
+  }
+
+  function writeInstalledPlugins(pluginsRoot: string, plugins: Record<string, unknown>): void {
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins }));
+  }
+
+  test("enabledPlugins: true loads the plugin's skill, named <plugin>:<skill> (the directory's own basename); false does not", async () => {
+    const pluginDir = join(home, "plugin-src", "p");
+    writePluginContent(pluginDir);
+    const pluginsRoot = join(home, "plugins");
+    writeInstalledPlugins(pluginsRoot, { "p@m": [{ scope: "user", installPath: pluginDir }] });
+    writeSettings(home, { enabledPlugins: { "p@m": true } });
+
+    const enabled = await buildProductionWiring({
+      config: { sessionId: "s-enabled", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(enabled.engineOptions.initSkills).toEqual(["p:ship"]);
+    } finally {
+      enabled.dispose();
+    }
+
+    writeSettings(home, { enabledPlugins: { "p@m": false } });
+    const disabled = await buildProductionWiring({
+      config: { sessionId: "s-disabled", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(disabled.engineOptions.initSkills).toEqual([]);
+    } finally {
+      disabled.dispose();
+    }
+  });
+
+  test("with pluginCacheDir set, a plugin under THAT root loads even when winterHome is a disposable run folder", async () => {
+    const pluginDir = join(home, "plugin-src", "p");
+    writePluginContent(pluginDir);
+    // The SHARED root -- a stand-in for `<storeHome>/plugins` -- lives OUTSIDE `winterHome`.
+    const sharedPluginsRoot = mkdtempSync(join(tmpdir(), "winter-shared-plugins-"));
+    writeInstalledPlugins(sharedPluginsRoot, { "p@m": [{ scope: "user", installPath: pluginDir }] });
+    // `winterHome` itself is a SEPARATE, throwaway "run folder" -- its OWN "plugins" subdirectory
+    // (the fallback root) is never created, so a plugin loading at all here proves `pluginCacheDir`
+    // won, not the `winterHome`-relative fallback.
+    const runFolder = mkdtempSync(join(tmpdir(), "winter-run-folder-"));
+    writeSettings(runFolder, { enabledPlugins: { "p@m": true } });
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-run-folder", cwd, model: "winter-test/echo", winterHome: runFolder, settingSources: ["user"], pluginCacheDir: sharedPluginsRoot },
+      env: {},
+      winterHome: runFolder,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toEqual(["p:ship"]);
+    } finally {
+      wiring.dispose();
+      rmSync(sharedPluginsRoot, { recursive: true, force: true });
+      rmSync(runFolder, { recursive: true, force: true });
+    }
+  });
+
+  test("a directory marketplace's plugin loads IN PLACE -- straight from the marketplace's own directory, nothing copied", async () => {
+    // Built with the SDK's own management API (`@yanlinglabs/winter-agent-sdk`'s `manage.ts`) --
+    // the real `winter plugin marketplace add` + `winter plugin install` path, not a hand-written
+    // installed_plugins.json -- so this proves the two modules (the CLI-facing writer, the
+    // runtime-facing reader) actually agree on the file.
+    const { addMarketplace, installPlugin } = await import("@yanlinglabs/winter-agent-sdk");
+    const marketplaceDir = join(home, "local-marketplace");
+    mkdirSync(join(marketplaceDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "m", owner: { name: "test" }, plugins: [{ name: "p", source: "./plugins/p" }] }),
+    );
+    writePluginContent(join(marketplaceDir, "plugins", "p"));
+
+    const pluginsRoot = join(home, "plugins");
+    const options = { pluginsRoot, settingsPathFor: () => join(home, "settings.json") };
+    await addMarketplace(options, marketplaceDir);
+    const installed = await installPlugin(options, "p@m", "user");
+    // Read in place, F15/§5.2: the resolved install path IS inside the marketplace's own directory,
+    // never a copy under pluginsRoot.
+    expect(installed.installPath).toBe(join(marketplaceDir, "plugins", "p"));
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-marketplace", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toEqual(["p:ship"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
