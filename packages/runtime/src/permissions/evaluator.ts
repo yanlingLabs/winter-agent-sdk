@@ -37,7 +37,8 @@
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, shellWords, stripWrappers, type ParsedRule } from "./grammar.ts";
-import { matchFileRuleAtBothEnds, checkSymlinkBothEnds, resolveRealTarget } from "./paths.ts";
+import { matchFileRuleAtBothEnds, checkSymlinkBothEnds, resolveRealTarget, resolveTargetPath } from "./paths.ts";
+import { fileRuleKindFor, canonicalFileRuleAuthoringToolName, matchFileRulesGrouped, matchesSingleFileRulePattern, type FileRuleCandidate, type FileRuleKind } from "./file-rules.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
 import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
@@ -748,38 +749,15 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
 // handles correctly on its own.
 
 function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "allow" | "denyAsk", ctx: EvaluationContext): boolean {
-  // Lens item 2 (task-6 brief): FILE_RULE_TOOLS (Task 8, RULING P3-E: Read/Edit/Write/NotebookEdit)
-  // with a SCOPED pattern specifier route to matchFileRule (paths.ts), never matchesRule. A bare
-  // rule or `Tool(*)` (specifier undefined / wildcardAll) skips this branch entirely — matchesRule
-  // already resolves those correctly via tool-name matching alone, without ever touching call.input.
-  if (FILE_RULE_TOOLS.has(rule.toolName) && rule.specifier?.kind === "pattern") {
-    if (rule.toolName !== call.toolName) return false; // literal match only — WS-07 never documents a globbed tool name for this family
-    // Task 8 (RULING P3-E): `fileRulePathField` -- the pinned field name per tool (file_path for
-    // Read/Edit/Write, notebook_path for NotebookEdit) -- shared with edit-recognition.ts/
-    // extractCandidateWritePaths so this dispatch can never drift from theirs.
-    const rawPath = call.input[fileRulePathField(call.toolName)];
-    // I1 (fix wave, P3 close-out): Glob/Grep's own `path` field is OPTIONAL on the call (absent ==
-    // "scan from cwd", mirroring glob.ts/grep.ts's own `input.path !== undefined ? resolve(ctx.cwd,
-    // input.path) : ctx.cwd`) -- an absent path must still resolve to "." here, or a scoped
-    // Glob/Grep deny/ask/allow rule could never match the (extremely common) no-`path`-given call
-    // shape at all.
-    const path = typeof rawPath === "string" ? rawPath : rawPath === undefined && (call.toolName === "Glob" || call.toolName === "Grep") ? "." : undefined;
-    if (path === undefined) return false;
-    // Ruling P2-J (Task 7, rider 2): symlink-both-ends composed here — deny/ask fire if the LINK OR
-    // the resolved TARGET matches; allow requires BOTH. Closes the fail-open T6's report flagged
-    // ("deny Read(//etc/passwd) does not fire on a Read of a symlink whose target is /etc/passwd").
-    return matchFileRuleAtBothEnds(rule.specifier.source, {
-      path,
-      cwd: ctx.cwd,
-      home: ctx.home,
-      direction,
-      // sourceDir intentionally omitted: SourcedRuleEntry (ruleset.ts) carries no per-entry
-      // settings-source directory at P2 — no settings-file loader exists yet (P5). paths.ts's own
-      // documented behavior for an absent sourceDir makes a `/`-anchored rule inert on EITHER
-      // direction (MatchFileRuleOptions.sourceDir's own comment) — the same conservative default
-      // this whole phase applies to every other unresolvable-anchor case.
-    });
-  }
+  // Fix round 4 (C-1 + SV-7, the router same-view test): FILE_RULE_TOOLS (Read/Edit/Write/
+  // NotebookEdit/Glob/Grep) with a SCOPED pattern specifier is no longer handled HERE at all --
+  // claude's own file-rule pipeline (jOe -> xi -> ki -> ln -> Ma, file-rules.ts's own port) matches
+  // every applicable rule for one (kind, behavior) pair TOGETHER, as a single `ignore()` group, not
+  // one rule at a time the way this per-rule function is shaped -- a negation pattern (`!x`) and the
+  // grouped un-anchoring `ki` applies only make sense evaluated as a group (this module's own
+  // file-rules.ts header explains why). `findMatchingFileRuleEntry` below is the FILE_RULE_TOOLS
+  // entry point now; `findMatchingRuleEntry` branches to it before ever reaching this function, so a
+  // FILE_RULE_TOOLS rule with a pattern specifier can no longer reach this line at all.
 
   // Phase 5 Task 8 (rider 18, WS-07 §3): a `Skill(...)` rule matches on the skill's own IDENTITIES
   // plus an argument prefix -- routed to `skills/permission-rules.ts`, never to `matchesRule`.
@@ -862,6 +840,66 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
 // loop. The one production caller is evaluate()'s own stage 5, for `policy.mode === "auto"`
 // (WS-07 §10.1 step 2: broad-allow suspension) — every OTHER call site (stage 2/3's deny/ask
 // lookups, every non-auto mode's stage 5) passes no `opts` at all and is completely unaffected.
+/**
+ * Fix round 4 (C-1 + SV-7): the FILE_RULE_TOOLS entry point, replacing the old per-rule
+ * `matchFileRuleAtBothEnds` call inside `matchesRuleForCall`. Every candidate rule for the call's
+ * OWN file-rule kind (`fileRuleKindFor`, SV-7's tool-to-rule-kind map) is gathered FIRST and matched
+ * as ONE group (`matchFileRulesGrouped`, file-rules.ts) -- never one rule at a time -- so a
+ * negation pattern among the candidates behaves the way claude's own grouped `ignore()` instance
+ * does. Trust-gating and `opts.skip` are applied identically to `findMatchingRuleEntry`'s own
+ * per-rule loop, BEFORE a candidate ever enters the group, so a project-tier allow rule still
+ * requires workspace trust and an auto-mode-suspended entry is still excluded.
+ *
+ * Ruling P2-J (Task 7, rider 2), preserved: symlink-both-ends -- deny/ask fire if the LINK OR the
+ * resolved TARGET matches (either end may cite a DIFFERENT winning rule); allow requires BOTH ends
+ * to match SOMETHING in the group (not necessarily the same rule -- matchFileRuleAtBothEnds's own
+ * boolean-only composition never required that either).
+ */
+function findMatchingFileRuleEntry(
+  rules: SourcedRuleSet,
+  call: PermissionCall,
+  behavior: PermissionBehavior,
+  ctx: EvaluationContext,
+  kind: FileRuleKind,
+  opts?: { skip?: (entry: SourcedRuleEntry) => boolean },
+): SourcedRuleEntry | undefined {
+  const direction: "allow" | "denyAsk" = behavior === "allow" ? "allow" : "denyAsk";
+  // Task 8 (RULING P3-E): `fileRulePathField` -- the pinned field name per tool (file_path for
+  // Read/Edit/Write, notebook_path for NotebookEdit). I1 (P3 close-out): Glob/Grep's own `path`
+  // field is OPTIONAL (absent == "scan from cwd"), so an absent path still resolves to ".", or a
+  // scoped Glob/Grep rule could never match the (extremely common) no-`path`-given call shape.
+  const rawPath = call.input[fileRulePathField(call.toolName)];
+  const path = typeof rawPath === "string" ? rawPath : rawPath === undefined && (call.toolName === "Glob" || call.toolName === "Grep") ? "." : undefined;
+  if (path === undefined) return undefined;
+
+  const pool = ctx.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
+  const candidates: FileRuleCandidate<SourcedRuleEntry>[] = [];
+  // SV-7's "reverse" finding: only a rule literally AUTHORED under the kind's own canonical tool
+  // name ("Edit" for "edit", "Read" for "read") is ever consulted -- a Write(...)/NotebookEdit(...)/
+  // Glob(...)/Grep(...)-authored rule is dead code claude never reads, even for a call from that
+  // exact same tool (canonicalFileRuleAuthoringToolName's own header).
+  const authoringToolName = canonicalFileRuleAuthoringToolName(kind);
+  for (const entry of pool) {
+    if (entry.behavior !== behavior) continue;
+    if (opts?.skip?.(entry)) continue;
+    if (behavior === "allow" && entry.source === "project" && !ctx.trustedWorkspace) continue;
+    if (entry.rule.specifier?.kind !== "pattern") continue; // a bare/wildcardAll rule for this tool is the OLD per-rule path's job, not this group's
+    if (entry.rule.toolName !== authoringToolName) continue;
+    candidates.push({ entry, pattern: entry.rule.specifier.source });
+  }
+  if (candidates.length === 0) return undefined;
+
+  const absPath = resolveTargetPath(path, ctx.cwd);
+  const target = resolveRealTarget(absPath);
+  const matchAt = (candidatePath: string): SourcedRuleEntry | null => matchFileRulesGrouped(candidates, candidatePath, { cwd: ctx.cwd, home: ctx.home }, direction);
+  if (direction === "allow") {
+    const linkMatch = matchAt(absPath);
+    const targetMatch = matchAt(target);
+    return linkMatch !== null && targetMatch !== null ? linkMatch : undefined;
+  }
+  return matchAt(absPath) ?? matchAt(target) ?? undefined;
+}
+
 export function findMatchingRuleEntry(
   rules: SourcedRuleSet,
   call: PermissionCall,
@@ -871,6 +909,15 @@ export function findMatchingRuleEntry(
 ): SourcedRuleEntry | undefined {
   const direction: "allow" | "denyAsk" = behavior === "allow" ? "allow" : "denyAsk";
   const pool = ctx.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
+  // Fix round 4 (C-1 + SV-7): a FILE_RULE_TOOLS call's SCOPED-pattern candidates are decided as one
+  // group first (findMatchingFileRuleEntry, above) -- see that function's own header. A rule with
+  // NO pattern specifier (a bare `Edit` deny, or `Tool(*)`) for the same tool is untouched by this
+  // and still falls through to the per-rule loop below, exactly as before this fix round.
+  const kind = fileRuleKindFor(call.toolName);
+  if (kind !== undefined) {
+    const fileMatch = findMatchingFileRuleEntry(rules, call, behavior, ctx, kind, opts);
+    if (fileMatch !== undefined) return fileMatch;
+  }
   for (const entry of pool) {
     if (entry.behavior !== behavior) continue;
     if (opts?.skip?.(entry)) continue;
@@ -881,6 +928,10 @@ export function findMatchingRuleEntry(
     // and must move together, which is why the full-tier x behaviour x trust matrix in
     // permissions/p5d-trust-matrix.test.ts drives BOTH.
     if (behavior === "allow" && entry.source === "project" && !ctx.trustedWorkspace) continue;
+    // A FILE_RULE_TOOLS entry with a pattern specifier was already considered above (win or lose as
+    // part of the group) and must never ALSO be checked here through matchesRuleForCall, which no
+    // longer has a FILE_RULE_TOOLS branch of its own to check it with anyway.
+    if (kind !== undefined && entry.rule.specifier?.kind === "pattern" && fileRuleKindFor(entry.rule.toolName) === kind) continue;
     if (matchesRuleForCall(entry.rule, call, direction, ctx)) return entry;
   }
   return undefined;
@@ -1143,7 +1194,19 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
     // paths.ts's own readDenyBlocksEdit primitive now is. ANY candidate path matching is enough —
     // deny is a safety check (mirrors isCriticalRemoval/isProtectedWrite's own "any candidate path"
     // looping, and matchesRuleForCall's own "ANY dangerous subcommand taints the whole compound").
-    if (candidatePaths.some((path) => matchFileRuleAtBothEnds(pattern, { path, cwd: ctx.cwd, home: ctx.home, direction: "denyAsk" }))) {
+    // Fix round 4 (C-1): the grammar is now file-rules.ts's ported pipeline, not the old
+    // matchFileRuleAtBothEnds -- matchesSingleFileRulePattern's own header explains why this stays
+    // a single-pattern check rather than a grouped one (this is a cross-tool safety net with no
+    // claude analogue, not part of the SV-7/C-1 ported pipeline itself).
+    const matchesCandidate = (path: string): boolean => {
+      const absPath = resolveTargetPath(path, ctx.cwd);
+      const target = resolveRealTarget(absPath);
+      return (
+        matchesSingleFileRulePattern(pattern, absPath, { cwd: ctx.cwd, home: ctx.home }, "denyAsk") ||
+        matchesSingleFileRulePattern(pattern, target, { cwd: ctx.cwd, home: ctx.home }, "denyAsk")
+      );
+    };
+    if (candidatePaths.some(matchesCandidate)) {
       return entry;
     }
   }

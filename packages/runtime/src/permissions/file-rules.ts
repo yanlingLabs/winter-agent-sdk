@@ -114,6 +114,23 @@ export function fileRuleKindFor(toolName: string): FileRuleKind | undefined {
   }
 }
 
+/**
+ * The ONE literal tool name a rule must be AUTHORED under to ever be consulted for `kind` -- claude's
+ * own `ub` filters `ruleValue.toolName` by EXACT STRING EQUALITY against a single literal per kind
+ * (`tn`/`"Edit"` for `"edit"`, `wt`/`"Read"` for `"read"`; dump-confirmed, `ln`'s own two-case
+ * switch), never against every tool that happens to share the kind. This is what makes SV-7's
+ * "reverse" finding true: a rule AUTHORED as `Write(...)`, `NotebookEdit(...)`, `Glob(...)` or
+ * `Grep(...)` is dead code claude never reads for ANY call -- not even a call from that SAME literal
+ * tool -- because `ub` was never invoked with that string. `Write`/`NotebookEdit`/`Glob`/`Grep`
+ * remain valid rule-authoring tool names SYNTACTICALLY (grammar.ts's `FILE_RULE_TOOLS` still parses
+ * them -- Winter does not forbid authoring one), but this function is what `findMatchingFileRuleEntry`
+ * (evaluator.ts) filters CANDIDATES with, so only `Edit(...)`/`Read(...)`-authored rules ever reach
+ * a group.
+ */
+export function canonicalFileRuleAuthoringToolName(kind: FileRuleKind): "Edit" | "Read" {
+  return kind === "edit" ? "Edit" : "Read";
+}
+
 // ---------------------------------------------------------------------------------------------
 // `jOe`: anchor resolution
 // ---------------------------------------------------------------------------------------------
@@ -278,4 +295,18 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
     }
   }
   return null;
+}
+
+/**
+ * A SINGLE pattern against a SINGLE path -- for a caller that is already iterating rule entries one
+ * at a time for a reason unrelated to C-1/SV-7 (e.g. evaluator.ts's own cross-tool
+ * `findFileDenyBlockingEdit`, a Winter-invented safety net with no claude analogue: claude's own
+ * Write decision never consults `Read(...)` rules at all, so "a Read deny also blocks a Write" is
+ * this codebase's own extension, not a ported behaviour). Grouping (this module's own header)
+ * therefore does not apply across DIFFERENT callers' unrelated single-pattern checks the way it does
+ * within one `matchFileRulesGrouped` call -- this is a thin, no-negation-support convenience, not a
+ * second matching engine.
+ */
+export function matchesSingleFileRulePattern(pattern: string, path: string, opts: { cwd: string; home: string }, behavior: "allow" | "denyAsk"): boolean {
+  return matchFileRulesGrouped([{ entry: true, pattern }], path, opts, behavior) !== null;
 }

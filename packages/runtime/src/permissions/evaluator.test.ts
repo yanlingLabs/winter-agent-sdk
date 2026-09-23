@@ -2186,13 +2186,92 @@ describe("Task 8 (P3 close-out): the baseline `~/.winter/run` read denial (WS-12
   });
 });
 
+// Fix round 4 (SV-7, the router same-view test on the 57e7fef binary): "which rule kind each tool
+// consults." Under acceptEdits, an Edit(...) ASK rule made claude ask before a WRITE; Winter wrote
+// the file without asking, because its old per-rule matching required an exact toolName match. The
+// reverse also held: a Write(...) rule fired on Winter but never on claude (claude checks a Write
+// against Edit(...) rules only). Same-view-style differential cases, end to end through evaluate().
+describe("SV-7: claude's tool-to-rule-kind mapping -- Edit/Write/NotebookEdit share one kind, Read/Glob/Grep share another", () => {
+  test("an Edit(...) ASK rule fires for a Write call, matching claude -- the exact SV-7 finding", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(secrets/**)", "ask")) }),
+    });
+    const record = await evaluate(call("Write", { file_path: "/work/secrets/key.pem", content: "x" }), ctx);
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("an Edit(...) DENY rule fires for a Write call", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Write", { file_path: "/work/secrets/key.pem", content: "x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("the reverse: a Write(...)-authored rule NEVER fires, not even for a Write call -- it is dead code, matching claude exactly", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Write(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Write", { file_path: "/work/secrets/key.pem", content: "x" }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("a NotebookEdit(...)-authored rule never matches through the SV-7 kind-mapped consultation for its own tool -- Edit is the ONE canonical authoring name for the edit kind", async () => {
+    // Same tool on both sides (rule and call), deliberately: `findFileDenyBlockingEdit`'s OWN
+    // cross-tool safety net (a Winter-only extension, "a Read/Edit/Write/NotebookEdit deny also
+    // blocks a DIFFERENT write-class tool's call on the same path") explicitly skips an entry whose
+    // `toolName` already equals the call's own tool ("left to the ordinary stage-2 lookup"), so this
+    // combination isolates the SV-7 kind-mapped consultation specifically, with no other mechanism
+    // that could rescue a false pass.
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("NotebookEdit(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/secrets/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("cross-tool safety net still applies independently: a NotebookEdit(...) deny STILL blocks a DIFFERENT write-class tool (Edit) on the same path -- a pre-existing Winter-only extension, unaffected by SV-7's canonical-authoring-name rule", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("NotebookEdit(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/secrets/key.pem", old_string: "a", new_string: "b" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a Read(...) ASK rule fires for a Glob call, matching claude's own read-kind grouping", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "ask")) }),
+    });
+    const record = await evaluate(call("Glob", { pattern: "*", path: "/work/secrets" }), ctx);
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("a Grep(...)-authored rule NEVER fires -- Read is the ONE canonical authoring name for the read kind", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Grep(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Grep", { pattern: "x", path: "/work/secrets" }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+});
+
 describe("Task 8 (P3 close-out, RULING P3-E): NotebookEdit joins FILE_RULE_TOOLS/write-path extraction, exactly like Edit/Write", () => {
   test("a deny rule on a notebook path blocks NotebookEdit, before ever reaching the mode/prompt stage (mirrors the Edit/Write fixture above)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the denial happens BEFORE the prompt stage
+    // Fix round 4 (SV-7): authored under Edit(...), not NotebookEdit(...) -- a NotebookEdit(...)-
+    // authored rule is dead code claude never reads, even for a NotebookEdit call itself (Edit is
+    // the ONE canonical authoring name for the whole edit-class kind).
     const ctx = baseCtx({
       promptStage: promptSpy.stage,
       cwd: "/work",
-      policy: policy({ mode: "default", rules: withRules(rule("NotebookEdit(secrets/**)", "deny")) }),
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(secrets/**)", "deny")) }),
     });
     const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/secrets/analysis.ipynb", new_source: "1+1" }), ctx);
     expect(promptSpy.calls.length).toBe(0);
@@ -2311,15 +2390,18 @@ describe("I1 (fix wave, P3 close-out): Glob/Grep join the dedicated-read-tool ba
     expect(record).toMatchObject({ decision: "deny", mechanism: "rule", source: "managed" });
   });
 
-  test("a Read(...) baseline deny rule alone does NOT cover a Grep call -- matchesRuleForCall requires an exact toolName match (documents why engine.ts must emit all three)", async () => {
+  // Fix round 4 (SV-7, the router same-view test), superseding this test's own pre-fix-round-4 name
+  // and premise: claude's file-rule grammar has only TWO rule kinds, "edit" and "read" -- Read/Glob/
+  // Grep all consult `Read(...)`-authored rules, and there is no per-exact-tool-name matching left
+  // at all (file-rules.ts's own `fileRuleKindFor`). A `Read(...)`-only baseline now DOES cover a
+  // Grep call, matching claude; engine.ts emitting all three tool names is still harmlessly
+  // redundant (a Read(...)-only baseline is now sufficient), not required the way this test used to
+  // document.
+  test("SV-7: a Read(...) baseline deny rule ALONE now covers a Grep call too -- Read/Glob/Grep share one rule kind, matching claude", async () => {
     const readOnlyBaseline = withRules(rule("Read(~/.winter/run)", "deny", "managed"), rule("Read(~/.winter/run/**)", "deny", "managed"));
     const ctx = baseCtx({ home: "/synthetic/home", cwd: "/work", policy: policy({ mode: "default", rules: readOnlyBaseline }) });
     const record = await evaluate(call("Grep", { pattern: "x", path: "/synthetic/home/.winter/run" }), ctx);
-    // Falls through to the ordinary built-in-read-only baseline (path outside cwd would normally
-    // prompt, but /synthetic/home/.winter/run isn't within /work's bounds either -- so this call is
-    // actually denied by the generic post-allow-stage fallback, NOT by a rule; the point of this
-    // test is `record.mechanism !== "rule"`, proving a Read-only rule set is not itself sufficient).
-    expect(record.mechanism).not.toBe("rule");
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule", source: "managed" });
   });
 });
 

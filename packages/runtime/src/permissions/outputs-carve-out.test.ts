@@ -50,7 +50,11 @@ const escapeSeam = { bashSandboxEscape: (c: PermissionCall) => c.input["dangerou
 
 describe("with outputsDir set, a write there is judged like any other (policy-appropriately)", () => {
   test("a Write the host's allow rule names is allowed; without outputsDir the floor asked", async () => {
-    const rules = [rule(`Write(/${OUT}/**)`, "allow")];
+    // Fix round 4 (SV-7): authored under Edit(...), not Write(...) -- a Write(...)-authored rule is
+    // dead code claude never reads, even for a Write call (file-rules.ts's own
+    // canonicalFileRuleAuthoringToolName). Edit is the ONE canonical authoring name for the whole
+    // edit-class kind (Edit/Write/NotebookEdit).
+    const rules = [rule(`Edit(/${OUT}/**)`, "allow")];
     const withOut = ctxWith("default", rules, { outputsDir: OUT });
     expect(await evaluate(write(`${OUT}/report.md`), withOut.ctx)).toMatchObject({ decision: "allow", mechanism: "rule" });
     const without = ctxWith("default", rules);

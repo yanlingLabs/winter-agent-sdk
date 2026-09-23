@@ -207,7 +207,16 @@ const MEMORY_TOPIC = `${MEMORY_DIR}/topics/build-conventions.md`;
 // settings-file directory", which is `undefined` for a hand-built entry and makes the whole rule
 // silently INERT -- the exact trap `buildBaselineDenyRules` carries its own `//`-anchor comment for.
 // A bare-absolute spelling here made this fixture's `deny` case pass for the wrong reason.
-const USER_ALLOW_PROJECTS = sourceRule({ toolName: "Write", ruleContent: "~/.winter/projects/**" }, "allow", "user");
+//
+// Fix round 4 (SV-7, the router same-view test): authored under `toolName: "Edit"`, NOT `"Write"`,
+// even though every call this fixture drives is a `Write`. This is deliberate, not a typo: claude's
+// own file-rule pipeline consults a rule ONLY when it is literally authored under the kind's ONE
+// canonical tool name ("Edit" for the edit kind, which covers Edit/Write/NotebookEdit calls) --
+// `canonicalFileRuleAuthoringToolName` (file-rules.ts). A rule authored as `Write(...)` is dead code
+// claude never reads for ANY call, even a Write call itself -- so a host who wants to rescue a
+// Write with an allow rule must write it as `Edit(...)`, matching what a real claude-compatible
+// settings.json author now has to do too.
+const USER_ALLOW_PROJECTS = sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects/**" }, "allow", "user");
 
 describe("SDK 0.0.4: projects/<key>/memory/** is writable by the write-class tools", () => {
   test("the index and a topic file are allowed OUTRIGHT under bypassPermissions", async () => {
@@ -276,7 +285,8 @@ describe("SDK 0.0.4: projects/<key>/memory/** is writable by the write-class too
   });
 
   test("a user-authored DENY still wins -- the skip is scoped to MANAGED entries", async () => {
-    const userDeny = sourceRule({ toolName: "Write", ruleContent: "~/.winter/projects/**" }, "deny", "user");
+    // Fix round 4 (SV-7): `toolName: "Edit"`, not `"Write"` -- see USER_ALLOW_PROJECTS's own comment.
+    const userDeny = sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects/**" }, "deny", "user");
     const out = await decide({ toolName: "Write", input: { file_path: MEMORY_INDEX, content: "x" }, toolUseId: "m6" }, "bypassPermissions", [userDeny]);
     expect(out.decision).toBe("deny");
     expect(out.mechanism).toBe("rule");

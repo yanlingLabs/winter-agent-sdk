@@ -156,7 +156,10 @@ function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
   return !trimmed.includes("/") && !hasUnescapedWildcard(trimmed);
 }
 
-function resolveTargetPath(path: string, cwd: string): string {
+// Fix round 4: exported so evaluator.ts's file-rules.ts-backed callers normalize a call's raw path
+// field the SAME way this module's own matchFileRule always has, rather than a second, slightly
+// different resolve-and-normalize step drifting in over time.
+export function resolveTargetPath(path: string, cwd: string): string {
   const abs = isAbsolute(path) ? path : join(cwd, path);
   return stripTrailingSlash(normalize(abs));
 }
