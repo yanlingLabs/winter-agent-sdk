@@ -289,7 +289,7 @@ import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 import { DEFAULT_SANDBOX_SETTINGS, resolveNetworkPosture } from "./sandbox/profile.ts";
 // B-H1(a): whether this HOST can actually sandbox -- a session that asked for one on a machine
 // without `sandbox-exec` gets no containment, and therefore earns no auto-allow.
-import { isSandboxAvailable } from "./sandbox/spawn.ts";
+import { isSandboxAvailable, resolveExecutionPath } from "./sandbox/spawn.ts";
 // Phase 4 Task 8 (rider 3, WS-09 §10): Lane B's pure alias helpers -- single-hop canonical-identity
 // resolution for the permission/hook axis, and duplicate suppression over the advertised partition.
 // Both shipped as pure functions with no engine call site (R4-10 forbade Lane B from adding one);
@@ -2718,20 +2718,26 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   //   1. the setting is ON for this session (`sandbox.autoAllowBashIfSandboxed`);
   //   2. the sandbox is ENABLED and genuinely AVAILABLE on this host -- a session that asked for a
   //      sandbox on a machine with no `sandbox-exec` gets no containment, so it gets no allow;
-  //   3. the call is a Bash-family call that has NOT opted out. RULING P3-J's
-  //      `dangerouslyDisableSandbox: true` still prompts, because a call that switches the fence off
-  //      has none of the containment this allow is paying for -- which is the whole composition.
+  //   3. the call is a Bash call the Bash tool will actually RUN sandboxed -- not an honoured
+  //      `dangerouslyDisableSandbox` override and not an allowed `excludedCommands` entry, both of
+  //      which run with none of the containment this allow is paying for.
   //
   // Monitor is deliberately EXCLUDED alongside Bash's inclusion, matching the acceptEdits arm's own
   // I2 scoping ("stricter, never looser"): the setting names Bash and nothing else.
   const sandboxSettingsForSession = config.sandbox ?? DEFAULT_SANDBOX_SETTINGS;
+  // Both predicates below READ the Bash tool's own posture table (`resolveExecutionPath`, the one the
+  // spawn uses) instead of re-spelling it: a hand copy missed `excludedCommands`, so an allowed
+  // excluded command -- which runs UNSANDBOXED -- was auto-allowed as though it were contained.
+  const bashPostureFor = (call: PermissionCall, dangerouslyDisableSandbox: boolean) => {
+    const command = call.input["command"];
+    return resolveExecutionPath({ settings: sandboxSettingsForSession, command: typeof command === "string" ? command : "", dangerouslyDisableSandbox }).posture;
+  };
   const bashRunsSandboxed = (call: PermissionCall): boolean => {
     if (sandboxSettingsForSession.autoAllowBashIfSandboxed !== true) return false;
-    if (sandboxSettingsForSession.enabled === false) return false;
     if (call.toolName !== "Bash") return false;
-    // An override takes the call OUT of the sandbox -- unless the policy forbids unsandboxed commands,
-    // in which case the flag is ignored and the call runs sandboxed (`sandbox/spawn.ts`).
-    if (call.input["dangerouslyDisableSandbox"] === true && sandboxSettingsForSession.allowUnsandboxedCommands !== false) return false;
+    // An override takes the call OUT of the sandbox unless the policy forbids unsandboxed commands
+    // (the flag is then ignored); an allowed `excludedCommands` entry runs unsandboxed too.
+    if (bashPostureFor(call, call.input["dangerouslyDisableSandbox"] === true) !== "sandboxed") return false;
     return isSandboxAvailable();
   };
 
@@ -2747,11 +2753,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    */
   const bashSandboxEscape = (call: PermissionCall): boolean => {
     if (call.toolName !== "Bash" || call.input["dangerouslyDisableSandbox"] !== true) return false;
-    if (sandboxSettingsForSession.enabled === false) return false;
-    if (sandboxSettingsForSession.allowUnsandboxedCommands === false) return false;
-    const command = call.input["command"];
-    if (typeof command === "string" && sandboxSettingsForSession.allowUnsandboxedCommands === true && sandboxSettingsForSession.excludedCommands?.includes(command) === true) return false;
-    return true;
+    return bashPostureFor(call, true) !== "sandboxed" && bashPostureFor(call, false) === "sandboxed";
   };
   /**
    * `signal` pins the turn this evaluation belongs to (see `evaluateWithFreshPolicy`); absent reads the

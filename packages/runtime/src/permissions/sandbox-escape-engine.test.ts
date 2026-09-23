@@ -49,3 +49,14 @@ test("allowUnsandboxedCommands: false -- the flag removes no sandbox, so a read-
   const r = await drive({ sandbox: { allowUnsandboxedCommands: false } } as Partial<RuntimeConfig>, { command: "ls", dangerouslyDisableSandbox: true }, { behavior: "deny", message: "unused" });
   expect(r.permissionRequests).toHaveLength(0);
 });
+
+// `autoAllowBashIfSandboxed` pays for containment, so it may only clear a command the Bash tool will
+// actually run sandboxed. An allowed `excludedCommands` entry runs UNSANDBOXED (`resolveExecutionPath`
+// row 3), and the predicate used to re-spell the table without that row.
+test("autoAllowBashIfSandboxed does not clear an allowed excludedCommands entry (it runs unsandboxed)", async () => {
+  const command = "touch /tmp/winter-excluded-marker";
+  const sandboxed = await drive({ sandbox: { enabled: true, autoAllowBashIfSandboxed: true } } as Partial<RuntimeConfig>, { command }, { behavior: "deny", message: "unused" });
+  expect(sandboxed.permissionRequests).toHaveLength(0); // control: a sandboxed run is auto-allowed
+  const excluded = await drive({ sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: true, excludedCommands: [command] } } as Partial<RuntimeConfig>, { command }, { behavior: "deny", message: "no" });
+  expect(excluded.permissionRequests).toHaveLength(1);
+});
