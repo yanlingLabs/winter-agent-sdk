@@ -4,6 +4,12 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.19
+
+0.0.18 was tagged but never published: its release job stopped on a test that needs the macOS
+sandbox, which the Linux release runner does not have. 0.0.19 is 0.0.18 plus that test's darwin gate;
+every change below under 0.0.18 ships first in 0.0.19.
+
 ## 0.0.18
 
 Parity fixes from the Winter dist-session investigation. `dangerouslyDisableSandbox` now follows the
