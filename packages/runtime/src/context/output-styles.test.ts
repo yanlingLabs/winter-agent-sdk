@@ -164,3 +164,69 @@ describe("context/output-styles.ts -- a PROJECT-tier style may add to the prompt
     expect(style.replacementDowngraded).toBe(false);
   });
 });
+
+// WS-21 §6.3 item 1 (fix round 2): plugin output styles, named as claude names one --
+// `<plugin>:<style>`, where `<style>` is the file's OWN frontmatter `name:` when present, else the
+// filename stem (loadPluginOutputStyles.ts, the pinned reference -- the one place in this file that
+// lets a declared name win, since a plugin style's identity is always namespaced under the
+// installed plugin's own name and can never impersonate a neighbour).
+describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () => {
+  let pluginDir: string;
+  beforeEach(() => {
+    pluginDir = mkdtempSync(join(tmpdir(), "winter-style-plugin-"));
+  });
+  afterEach(() => {
+    rmSync(pluginDir, { recursive: true, force: true });
+  });
+
+  test("a plugin style resolves by <plugin>:<filename-stem> when the file declares no name:", () => {
+    writeStyle(pluginDir, "concise", "---\ndescription: short answers\n---\nBe concise.\n");
+    const style = resolveOutputStyle("mypkg:concise", { cwd: "/nonexistent", home: "/nonexistent", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
+    expect(style).toBeTruthy();
+    expect(style.name).toBe("mypkg:concise");
+    expect(style.source).toBe("plugin");
+    expect(style.description).toBe("short answers");
+    expect(style.body).toContain("Be concise.");
+  });
+
+  test("a declared frontmatter name: WINS over the filename for a plugin style -- claude's own rule", () => {
+    writeStyle(pluginDir, "file-stem-name", "---\nname: real-name\ndescription: d\n---\nbody\n");
+    const byDeclaredName = resolveOutputStyle("mypkg:real-name", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    const byFileStem = resolveOutputStyle("mypkg:file-stem-name", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(byDeclaredName?.name).toBe("mypkg:real-name");
+    expect(byFileStem).toBeNull(); // the filename stem is NOT the identity once a name: is declared
+  });
+
+  test("a declared name still cannot escape the slug jail", () => {
+    // The outer qualified-name regex already refuses a `:`-adjacent slash/dot, so the meaningful
+    // probe is the FILE'S OWN declared name, not the requested string: a file whose frontmatter
+    // claims an illegal identity must never resolve under ANY name, including its own filename.
+    writeStyle(pluginDir, "evasive", "---\nname: ../../etc/passwd\ndescription: d\n---\nbody\n");
+    expect(resolveOutputStyle("mypkg:evasive", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })).toBeNull();
+  });
+
+  test("an unknown plugin name resolves to null", () => {
+    writeStyle(pluginDir, "concise", "---\ndescription: d\n---\nbody\n");
+    expect(resolveOutputStyle("nosuchplugin:concise", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })).toBeNull();
+  });
+
+  test("a plugin present but with no outputStylesPath resolves to null, never throws", () => {
+    expect(resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg" }] })).toBeNull();
+  });
+
+  test("with no pluginOutputStyles given at all, a qualified name resolves to null (pre-fix-round-2 callers unaffected)", () => {
+    expect(resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x" })).toBeNull();
+  });
+
+  test("an absent description falls back to a plain, honest label (Winter has no markdown-excerpt extractor)", () => {
+    writeStyle(pluginDir, "nodesc", "---\nkeep-coding-instructions: true\n---\nbody\n");
+    const style = resolveOutputStyle("mypkg:nodesc", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
+    expect(style.description).toBe("Output style from the mypkg plugin");
+  });
+
+  test("a plugin style is resolved regardless of settingSources -- plugins are never source-gated (matching agents/skills/MCP)", () => {
+    writeStyle(pluginDir, "concise", "---\ndescription: d\n---\nbody\n");
+    const style = resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x", settingSources: [], pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style).not.toBeNull();
+  });
+});

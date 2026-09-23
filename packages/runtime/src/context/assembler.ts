@@ -47,7 +47,7 @@ import { neutralizeReminderTags } from "./injection.ts";
 import { gitInstructionsEnabled } from "./git-status.ts";
 import type { ContextEntry } from "./request-layout.ts";
 import { memoryDirFor } from "./memory-key.ts";
-import { resolveOutputStyle, type ResolvedOutputStyle } from "./output-styles.ts";
+import { resolveOutputStyle, type PluginOutputStyleSource, type ResolvedOutputStyle } from "./output-styles.ts";
 import { renderPlanModeBlock } from "./plan-mode.ts";
 
 export interface SystemPromptAssemblerDeps {
@@ -67,6 +67,15 @@ export interface SystemPromptAssemblerDeps {
    * would be invisible -- the assembler would keep working, just with stale values.
    */
   settings?: () => Settings | undefined;
+  /**
+   * WS-21 §6.3 item 1 (fix round 2): the session's ENABLED plugins that ship an `output-styles/`
+   * directory. A plain VALUE, not a live getter like `settings` above -- a session's loaded-plugin
+   * set is resolved once per incarnation (production-wiring.ts's own precedent for skills/agents/
+   * MCP: plugins are not something a settings-watcher hot-reloads mid-session), so there is nothing
+   * to re-read on a later `assemble()` call. Omitted means no `<plugin>:<style>` name ever resolves,
+   * exactly like every pre-fix-round-2 caller.
+   */
+  pluginOutputStyles?: readonly PluginOutputStyleSource[];
 }
 
 /** A `{ type: "preset" }` object, recognised structurally: it arrives as JSON over `--config-json`. */
@@ -240,6 +249,9 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
           brand,
           ...(settingSources !== undefined ? { settingSources } : {}),
           ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
+          // WS-21 §6.3 item 1 (fix round 2): plugin styles, off `deps` directly -- a fixed-per-
+          // incarnation value, not something `resolveContext`'s settings-driven shape needs to carry.
+          ...(deps.pluginOutputStyles !== undefined ? { pluginOutputStyles: deps.pluginOutputStyles } : {}),
         });
       }
       const styleBody = style !== null && style.body.trim().length > 0 ? style.body : undefined;

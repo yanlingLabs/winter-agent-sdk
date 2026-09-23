@@ -33,7 +33,7 @@
 //      DISCLOSED as a Lane C decision, raised for the controller in the task-6 report: neither
 //      WS-11 §6.5 nor P5-A speaks to the replace power specifically, and the alternative readings
 //      (trust-gate project styles entirely, or honour the replacement) are both defensible.
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { capBytes, neutralizeReminderTags } from "./injection.ts";
@@ -51,7 +51,7 @@ export interface ResolvedOutputStyle {
   body: string;
   /** `true` (the default) appends the body after the authored prompt; `false` replaces the authored prompt. */
   keepBasePrompt: boolean;
-  source: "project" | "user" | "builtin";
+  source: "project" | "user" | "builtin" | "plugin";
   /** True when the file asked to REPLACE the prompt and the project-tier trust rule downgraded it to an append. */
   replacementDowngraded: boolean;
 }
@@ -131,6 +131,64 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
   return { name: fallbackName, description, body: capBytes(neutralizeReminderTags(body), OUTPUT_STYLE_MAX_BYTES).text, keepBasePrompt, source, replacementDowngraded: false };
 }
 
+// WS-21 §6.3 item 1 (fix round 2): a plugin-contributed output style, named as claude names one
+// (loadPluginOutputStyles.ts, the pinned reference) -- `<pluginName>:<baseName>`, where `baseName`
+// is the file's own frontmatter `name:` WHEN PRESENT, else the filename stem. This is the ONE place
+// in this file that lets frontmatter `name:` win: `parseStyleFile` above deliberately never does
+// (a project/user style's identity is always the filename stem, `name:` parsed and ignored, per its
+// own header) because a checked-in style must not be able to claim an identity a caller has not
+// validated. A plugin style cannot pull that trick against a NEIGHBOUR project/user style -- its
+// identity is always qualified with the installed plugin's own name, a namespace only the plugin's
+// installer controls -- so the parity fix the coordinator asked for (claude's own naming rule) does
+// not reopen that hole.
+function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName: string): ResolvedOutputStyle | null {
+  let raw: string;
+  try {
+    if (!statSync(path).isFile()) return null;
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  if (!raw.startsWith("---")) return null;
+  const end = raw.indexOf("\n---", 3);
+  if (end === -1) return null;
+
+  let description = "";
+  let keepBasePrompt = true;
+  let declaredName: string | undefined;
+  for (const rawLine of raw.slice(3, end).split(/\r?\n/)) {
+    const line = rawLine.replace(/\r$/, "");
+    const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+    if (m === null) continue;
+    const key = m[1]!.toLowerCase();
+    const value = m[2]!.trim();
+    if (key === "description") description = value;
+    else if (key === "keep-coding-instructions") keepBasePrompt = value !== "false";
+    else if (key === "name" && value.length > 0) declaredName = value;
+  }
+  const baseName = declaredName ?? fallbackBaseName;
+  if (!STYLE_NAME.test(baseName)) return null; // a declared name still cannot escape the same slug jail every OTHER identity in this file is held to
+
+  const body = raw.slice(end + 4).replace(/^\r?\n/, "");
+  return {
+    name: `${pluginName}:${baseName}`,
+    // claude falls back to an excerpt of the markdown body; Winter has no such extractor anywhere
+    // yet (disclosed rather than silently guessed), so an absent description falls back to a plain,
+    // honest label instead of inventing markdown-excerpt logic this fix round did not ask for.
+    description: description.length > 0 ? description : `Output style from the ${pluginName} plugin`,
+    body: capBytes(neutralizeReminderTags(body), OUTPUT_STYLE_MAX_BYTES).text,
+    keepBasePrompt,
+    source: "plugin",
+    replacementDowngraded: false,
+  };
+}
+
+/** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the two fields output-style resolution needs, so this file never depends on the plugin loader's own shape. */
+export interface PluginOutputStyleSource {
+  name: string;
+  outputStylesPath?: string;
+}
+
 export interface OutputStyleLookup {
   cwd: string;
   /** The resolved winter home (`~/<brand.homeDirName>` by default). */
@@ -141,13 +199,51 @@ export interface OutputStyleLookup {
   settingSources?: readonly SettingSource[];
   /** RULING P5-A's host-declared trust bit. Only `true` lets a PROJECT-tier style replace the prompt. */
   trustedWorkspace?: boolean;
+  /**
+   * WS-21 §6.3 item 1 (fix round 2): the session's ENABLED plugins, projected to just the two
+   * fields a `<plugin>:<style>` lookup needs. Omitted (every pre-fix-round-2 caller) means no
+   * plugin ever resolves -- a qualified name simply falls through to `null`, matching what happened
+   * before this field existed.
+   */
+  pluginOutputStyles?: readonly PluginOutputStyleSource[];
 }
 
 /**
- * Resolve a style by name: project (source-gated) > user (source-gated) > built-in. Never throws;
- * `null` means the name resolves to nothing, which the assembler treats as "no style".
+ * Resolve a style by name: a `<plugin>:<style>` qualified name resolves against that plugin's own
+ * `output-styles/` directory (WS-21 §6.3 item 1) regardless of `settingSources` -- a plugin is
+ * DELIBERATELY NOT source-gated anywhere else in this codebase either (subagents/definitions.ts's
+ * own header states the identical reasoning: a plugin is loaded because the HOST or the USER
+ * decided to, a decision already made outside the repository, so gating it on workspace trust would
+ * make plugin behaviour depend on which directory the session happens to be in). Otherwise: project
+ * (source-gated) > user (source-gated) > built-in. Never throws; `null` means the name resolves to
+ * nothing, which the assembler treats as "no style".
  */
 export function resolveOutputStyle(name: string, lookup: OutputStyleLookup): ResolvedOutputStyle | null {
+  const qualified = /^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(name);
+  if (qualified !== null) {
+    const [, pluginName, styleName] = qualified;
+    const plugin = lookup.pluginOutputStyles?.find((p) => p.name === pluginName);
+    if (plugin?.outputStylesPath === undefined) return null;
+    // A DIRECTORY SCAN, not a direct `<styleName>.md` join: a plugin style's identity may come from
+    // its OWN frontmatter `name:` rather than its filename (parsePluginStyleFile's own header), so
+    // the only way to find "the file whose resolved identity is this qualified name" is to check
+    // every candidate -- mirroring claude's own "load every style, then match by name" shape without
+    // needing a separate list-all API this codebase's "resolve by exact name" design does not have.
+    let entries: string[];
+    try {
+      entries = readdirSync(plugin.outputStylesPath);
+    } catch {
+      return null;
+    }
+    for (const entry of entries.sort()) {
+      if (!entry.toLowerCase().endsWith(".md")) continue;
+      const fallbackBase = entry.slice(0, -3);
+      const found = parsePluginStyleFile(join(plugin.outputStylesPath, entry), pluginName!, fallbackBase);
+      if (found !== null && found.name === name) return found;
+    }
+    return null;
+  }
+
   if (!STYLE_NAME.test(name)) return null;
   const sources = lookup.settingSources ?? (["user", "project", "local"] as const);
 

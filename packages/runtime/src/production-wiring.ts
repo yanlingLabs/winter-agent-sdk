@@ -37,7 +37,7 @@ import { defaultTrustSource } from "./settings/trust.ts";
 // rn-1 (residual round 2): the child-mirror seam is typed AGAINST the factory's own options, so an
 // undeclared field is a compile error here rather than a silent drop there. Type-only, no cycle.
 import type { DefaultChildEngineFactoryOptions } from "./subagents/register-default-factory.ts";
-import { resolveOutputStyle } from "./context/output-styles.ts";
+import { resolveOutputStyle, type PluginOutputStyleSource } from "./context/output-styles.ts";
 import { isAuthoredPromptRegion } from "./context/assembler.ts";
 import { loadPlugins } from "./plugins/loader.ts";
 import { resolveEnabledPlugins } from "./plugins/installed.ts";
@@ -459,6 +459,12 @@ export interface ProductionWiring {
      * later lane adds is a one-line change here, not a second field.
      */
     attachmentProducers?: readonly AttachmentProducer[];
+    /**
+     * WS-21 §6.3 item 1 (fix round 2): the enabled plugins that ship a `workflows/` directory,
+     * threaded to `EngineOptions.pluginWorkflows` -> `RegistryToolExecutorDeps.pluginWorkflows`
+     * (registry.ts) so the Workflow tool's `<plugin>:<name>` resolution can find them.
+     */
+    pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
     extraMcpServerSources: readonly McpServerSource[];
     initSlashCommands: readonly string[];
     initSkills: readonly string[];
@@ -697,6 +703,17 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   for (const rejection of plugins.rejected) {
     warnings.push(`plugin "${rejection.path}" was not loaded (${rejection.kind}): ${rejection.reason}`);
   }
+  // WS-21 §6.3 item 1 (fix round 2): `PluginBundle.outputStylesPath` was resolved by L1b's loader
+  // but had no consumer -- this is that consumer's own input, a minimal projection so
+  // context/output-styles.ts never depends on plugins/bundle.ts's full shape. Fixed per incarnation,
+  // like every other plugin-derived value this file threads (skills/agents/MCP), not re-derived
+  // per `assemble()` call.
+  const pluginOutputStyles: PluginOutputStyleSource[] = plugins.bundles.map((b) => ({ name: b.name, ...(b.outputStylesPath !== undefined ? { outputStylesPath: b.outputStylesPath } : {}) }));
+  // WS-21 §6.3 item 1 (fix round 2): `PluginBundle.workflowsPath`'s own missing consumer, the
+  // sibling gap to `outputStylesPath` above -- same source, same "fixed per incarnation" reasoning.
+  const pluginWorkflows: { name: string; workflowsPath?: string }[] = plugins.bundles
+    .filter((b) => b.workflowsPath !== undefined)
+    .map((b) => ({ name: b.name, workflowsPath: b.workflowsPath! }));
   // Review r2 finding 2 (whole-branch): a rejected `<plugin>/agents/*.md` file (missing/invalid
   // `name:`, missing `description:`) used to vanish with no report at all -- the plugin itself
   // still loads (`rejected` above is per-PLUGIN, this is per-FILE within one that loaded), so this
@@ -842,7 +859,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
   // (10) THE ASSEMBLER (Lane C). Its `home` is the resolved winter root and its `settings` is the
   // post-OVERLAY_NEVER_KEYS effective getter (rider 24, asserted above).
-  const systemPromptAssembler = createSystemPromptAssembler({ home: winterHome, settings: settingsGetter });
+  const systemPromptAssembler = createSystemPromptAssembler({ home: winterHome, settings: settingsGetter, pluginOutputStyles });
 
   // (10b) THE TWO PROCESS-LEVEL SURFACES A BRAND CANNOT REACH BY PARAMETER (P7a, D19).
   //
@@ -958,6 +975,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     brand,
     trustedWorkspace,
     ...(settingSources !== undefined ? { settingSources } : {}),
+    pluginOutputStyles,
   });
   if (styleForWarning?.replacementDowngraded === true) {
     warnings.push(
@@ -1495,6 +1513,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       ...(fileCheckpointSink !== undefined ? { fileCheckpointSink } : {}),
       extraHookEntries,
       ...(attachmentProducers !== undefined ? { attachmentProducers } : {}),
+      ...(pluginWorkflows.length > 0 ? { pluginWorkflows } : {}),
       extraMcpServerSources,
       initSlashCommands,
       initSkills,

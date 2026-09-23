@@ -1143,6 +1143,14 @@ export interface EngineOptions {
    */
   attachmentProducers?: readonly AttachmentProducer[];
   /**
+   * WS-21 §6.3 item 1 (fix round 2): the session's ENABLED plugins that ship a `workflows/`
+   * directory -- threaded into `RegistryToolExecutorDeps.pluginWorkflows` (registry.ts) so the
+   * Workflow tool's `<plugin>:<name>` resolution (`workflows/store.ts`) can find them. A plain
+   * value, not a getter: a session's loaded-plugin set is resolved once per incarnation, like
+   * skills/agents/MCP are.
+   */
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  /**
    * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
    * knows one (production wiring answers from the catalog). Absent => the bare-id line.
    */
@@ -1896,6 +1904,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     omitProjectContext,
     exactRequestLayout,
     attachmentProducers,
+    pluginWorkflows,
     describeModel,
     now: engineClock,
     commandResolver,
@@ -3467,6 +3476,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // fences DURABLE content (checkpoint/provider-state) where it actually lives, not the per-run
       // folder `resolvedWinterHome` names once the router links `buildRunHome`.
       ...(config.storeHome !== undefined ? { storeHome: config.storeHome } : {}),
+      // WS-21 §6.3 item 1, fix round 2: so the Workflow tool can resolve a `<plugin>:<name>` workflow.
+      ...(pluginWorkflows !== undefined ? { pluginWorkflows } : {}),
       getCwd: () => currentCwd,
       probeReadAccess: (filePath: string) => probeReadAccess(filePath, makeEvalCtx()),
       // Task 2 (P3, WS-06 §3.5) completes this seam's engine plumbing. registry.ts's own

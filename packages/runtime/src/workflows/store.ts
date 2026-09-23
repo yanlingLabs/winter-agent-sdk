@@ -34,8 +34,14 @@ export function projectWorkflowsDir(brand?: Pick<BrandProfile, "projectDirName">
 export const PROJECT_WORKFLOWS_DIR = projectWorkflowsDir();
 
 export type ResolvedWorkflowSource =
-  | { ok: true; source: string; path: string | undefined; source_kind: "project" | "builtin" }
+  | { ok: true; source: string; path: string | undefined; source_kind: "project" | "builtin" | "plugin" }
   | { ok: false; error: string };
+
+/** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the two fields workflow resolution needs. */
+export interface PluginWorkflowSource {
+  name: string;
+  workflowsPath?: string;
+}
 
 export interface ResolveWorkflowByNameOptions {
   cwd: string;
@@ -48,12 +54,24 @@ export interface ResolveWorkflowByNameOptions {
    * trust-gated its own project workflow directory for the same reason. The consequence is real and
    * worth stating: in an untrusted workspace `name` resolves nothing, so a freshly-cloned repo's
    * workflows do not run until the workspace is trusted. `script`/`scriptPath` are unaffected.
+   *
+   * A PLUGIN workflow (below) is DELIBERATELY NOT gated on this bit, for the identical reason every
+   * other plugin-contributed resource in this codebase (skills, agents, commands, output styles,
+   * MCP servers) is not: a plugin is loaded because the HOST or the USER already decided to, outside
+   * the repository, so gating it on workspace trust would make plugin behaviour depend on which
+   * directory the session happens to be in.
    */
   trustedWorkspace: boolean;
   /** Injectable for the test that proves built-ins are consulted first; production passes nothing. */
   builtins?: Record<string, string>;
   /** P7a (D19): the session's brand -- the project dot-dir workflows live under. Omitted = `WINTER_BRAND`. */
   brand?: Pick<BrandProfile, "projectDirName">;
+  /**
+   * WS-21 §6.3 item 1 (fix round 2): the session's ENABLED plugins that ship a `workflows/`
+   * directory. Omitted (every pre-fix-round-2 caller) means a `<plugin>:<name>` name simply falls
+   * through to "unknown workflow", exactly as it did before this field existed.
+   */
+  pluginWorkflows?: readonly PluginWorkflowSource[];
 }
 
 /**
@@ -67,8 +85,30 @@ export function listBuiltinWorkflows(): string[] {
   return Object.keys(BUILTIN_WORKFLOWS);
 }
 
-/** Built-ins first, then the trusted project directory. Never throws. */
+/** Built-ins first, then a plugin (WS-21 §6.3 item 1) or the trusted project directory. Never throws. */
 export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameOptions): ResolvedWorkflowSource {
+  // WS-21 §6.3 item 1 (fix round 2): a `<plugin>:<name>` qualified name -- the SAME grammar every
+  // other plugin-namespaced identity in this codebase uses (skills, commands, output styles).
+  // Checked BEFORE `WORKFLOW_NAME_RE` (which has no `:` in its own alphabet, so a qualified name
+  // would otherwise be refused outright as "invalid").
+  const qualified = /^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(name);
+  if (qualified !== null) {
+    const [, pluginName, workflowName] = qualified;
+    const plugin = opts.pluginWorkflows?.find((p) => p.name === pluginName);
+    if (plugin?.workflowsPath === undefined) {
+      return { ok: false, error: `unknown workflow "${name}": no plugin named "${pluginName}" is enabled with a workflows/ directory` };
+    }
+    // A `.js` file has no frontmatter -- unlike a plugin output style, its identity is always its
+    // OWN filename stem, never overridable, so a direct join (not a directory scan) is exact.
+    const path = join(plugin.workflowsPath, `${workflowName}.js`);
+    try {
+      if (!statSync(path).isFile()) throw new Error("not a regular file");
+      return { ok: true, source: readFileSync(path, "utf8"), path, source_kind: "plugin" };
+    } catch {
+      return { ok: false, error: `unknown workflow "${name}": no ${workflowName}.js in plugin "${pluginName}"'s workflows/ directory` };
+    }
+  }
+
   if (!WORKFLOW_NAME_RE.test(name)) {
     return { ok: false, error: `invalid workflow name ${JSON.stringify(name)}: expected [A-Za-z0-9_-]+ (no dots, no path separators)` };
   }

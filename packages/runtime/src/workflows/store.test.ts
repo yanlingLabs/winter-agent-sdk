@@ -81,6 +81,67 @@ describe("resolveWorkflowByName -- `.winter/workflows/<name>.js` (WS-11 §1.3)",
   });
 });
 
+// WS-21 §6.3 item 1 (fix round 2): `PluginBundle.workflowsPath` was resolved by L1b's loader but had
+// no consumer -- `<plugin>:<name>` resolves against that plugin's own `workflows/` directory,
+// DELIBERATELY UNGATED by `trustedWorkspace` (a plugin is loaded because the host/user already
+// decided to, matching every other plugin resource in this codebase).
+describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1)", () => {
+  function pluginDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "winter-wf-plugin-"));
+    mkdirSync(join(dir, "workflows"), { recursive: true });
+    return dir;
+  }
+
+  test("a plugin workflow resolves by <plugin>:<filename-stem>, never gated by trustedWorkspace", () => {
+    const dir = pluginDir();
+    writeFileSync(join(dir, "workflows", "ship.js"), SCRIPT);
+    const resolved = resolveWorkflowByName("mypkg:ship", {
+      cwd: "/nonexistent",
+      trustedWorkspace: false,
+      pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }],
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.source).toBe(SCRIPT);
+    expect(resolved.path).toBe(join(dir, "workflows", "ship.js"));
+    expect(resolved.source_kind).toBe("plugin");
+  });
+
+  test("an unknown plugin name is a typed failure, never a throw", () => {
+    const resolved = resolveWorkflowByName("nosuch:ship", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: "/whatever" }] });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toContain("nosuch");
+  });
+
+  test("a plugin present but with no workflowsPath is a typed failure, never a throw", () => {
+    const resolved = resolveWorkflowByName("mypkg:ship", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg" }] });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("with no pluginWorkflows given at all, a qualified name is a typed failure (pre-fix-round-2 callers unaffected)", () => {
+    const resolved = resolveWorkflowByName("mypkg:ship", { cwd: "/x", trustedWorkspace: true });
+    expect(resolved.ok).toBe(false);
+  });
+
+  test("an unknown script within a known plugin is a typed failure naming the plugin", () => {
+    const dir = pluginDir();
+    const resolved = resolveWorkflowByName("mypkg:nope", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: join(dir, "workflows") }] });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toContain("mypkg");
+  });
+
+  test("a bare (unqualified) name still resolves against the project directory exactly as before -- the qualified branch never intercepts it", () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".winter", "workflows", "build.js"), SCRIPT);
+    const resolved = resolveWorkflowByName("build", { cwd, trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg", workflowsPath: "/whatever" }] });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.source_kind).toBe("project");
+  });
+});
+
 describe("persistWorkflowScript -- capture (3)'s durable location, and P5-B's carve-out", () => {
   function home(): string {
     return mkdtempSync(join(tmpdir(), "winter-wf-home-"));

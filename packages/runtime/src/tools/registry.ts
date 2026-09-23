@@ -242,6 +242,14 @@ export interface ToolExecutionContext {
    */
   storeHome?: string;
   /**
+   * WS-21 §6.3 item 1 (durable-write audit sibling, fix round 2): the session's ENABLED plugins
+   * that ship a `workflows/` directory, for the Workflow tool's `<plugin>:<name>` resolution
+   * (`workflows/store.ts`'s `resolveWorkflowByName`). Fixed per incarnation, like every other
+   * plugin-derived value this codebase threads. Absent means no qualified workflow name ever
+   * resolves, matching every pre-fix-round-2 caller.
+   */
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  /**
    * P7a (D19): the session's RESOLVED brand profile, threaded from `RuntimeConfig.brand`.
    *
    * Every tool that names a Winter-owned surface from inside its own executor -- the project
@@ -1492,6 +1500,8 @@ export interface RegistryToolExecutorDeps {
   winterHome?: string;
   /** WS-21 fix round 1, item 4: the shared store home -- see `ToolExecutionContext.storeHome`. */
   storeHome?: string;
+  /** WS-21 §6.3 item 1, fix round 2: plugin workflow directories -- see `ToolExecutionContext.pluginWorkflows`. */
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
   /** P7a (D19): the session's resolved brand -- see `ToolExecutionContext.brand`. */
   brand?: BrandProfile;
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
@@ -1593,6 +1603,8 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         // WS-21 fix round 1, item 4: forwarded so a tool fencing DURABLE content (the seatbelt's
         // checkpoint/provider-state denies) anchors on the shared store home.
         ...(deps.storeHome !== undefined ? { storeHome: deps.storeHome } : {}),
+        // WS-21 §6.3 item 1, fix round 2: forwarded so the Workflow tool can resolve a `<plugin>:<name>` workflow.
+        ...(deps.pluginWorkflows !== undefined ? { pluginWorkflows: deps.pluginWorkflows } : {}),
         ...(deps.brand !== undefined ? { brand: deps.brand } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,

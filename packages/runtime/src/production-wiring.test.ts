@@ -1723,3 +1723,39 @@ describe("WS-21 §5.2/§6.3 item 5: the shared plugins root -- installed + enabl
     }
   });
 });
+
+// WS-21 §6.3 item 1 (fix round 2): a plugin's output-styles/ directory (PluginBundle.
+// outputStylesPath, resolved by L1b's loader but with no consumer until now) is wired into
+// context/output-styles.ts. Drives a REAL turn end to end (runOne + recordedProviderSystems, the
+// SAME pattern the T8 provenance tests above use) so this proves the style's BODY actually reached
+// the provider's own system prompt -- not just that `output_style` echoed the requested name.
+describe("WS-21 §6.3 item 1 (fix round 2): a plugin's output-styles/ are wired end to end", () => {
+  test("selecting <plugin>:<style> injects that plugin style's body into the real system prompt", async () => {
+    const pluginDir = join(home, "plugin-src", "styled");
+    mkdirSync(join(pluginDir, "output-styles"), { recursive: true });
+    writeFileSync(join(pluginDir, "output-styles", "festive.md"), "---\ndescription: festive tone\n---\nRespond with unmistakable festive cheer.\n");
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "styled@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "styled@m": true } });
+
+    resetRecordedProviderSystems();
+    const msgs = await runOne({ sessionId: "s-plugin-style", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], outputStyle: "styled:festive" }, { WINTER_HOME: home });
+    expect(initFrame(msgs).output_style).toBe("styled:festive");
+    expect(recordedProviderSystems().join("\n")).toContain("Respond with unmistakable festive cheer.");
+  });
+
+  test("a DISABLED plugin's style never resolves -- the request falls through to null (no style injected)", async () => {
+    const pluginDir = join(home, "plugin-src", "styled2");
+    mkdirSync(join(pluginDir, "output-styles"), { recursive: true });
+    writeFileSync(join(pluginDir, "output-styles", "festive.md"), "---\ndescription: festive tone\n---\nUNMISTAKABLE PLUGIN MARKER TEXT\n");
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "styled2@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "styled2@m": false } });
+
+    resetRecordedProviderSystems();
+    await runOne({ sessionId: "s-plugin-style-disabled", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], outputStyle: "styled2:festive" }, { WINTER_HOME: home });
+    expect(recordedProviderSystems().join("\n")).not.toContain("UNMISTAKABLE PLUGIN MARKER TEXT");
+  });
+});
