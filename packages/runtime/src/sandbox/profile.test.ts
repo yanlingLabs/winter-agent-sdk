@@ -190,8 +190,8 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(allow file-write-data (path \"/dev/null\") (path \"/dev/stdout\") (path \"/dev/stderr\") (path \"/dev/dtracehelper\"))",
     "(allow file-write* (regex #\"^/var/folders/xx/T/[^/]+$\"))",
     "(deny network*)",
-    "(deny file-write* (subpath \"/Users/x/.winter/backups\"))",
-    "(deny file-write* (subpath \"/Users/x/custom-root/backups\"))",
+    "(deny file-write* (subpath \"/Users/x/.winter/file-history\"))",
+    "(deny file-write* (subpath \"/Users/x/custom-root/file-history\"))",
     "(deny file-write* (literal \"/work/.winter/permissions.local.json\"))",
     "(deny file-write* (literal \"/work/.winter/settings.json\"))",
     "(deny file-write* (literal \"/work/.winter/settings.local.json\"))",
@@ -329,27 +329,31 @@ describe("buildSeatbeltProfile: baseline <home>/.winter/run read denial (WS-12 �
 
 // T8 rider 25 (SECURITY): the checkpoint backup store's shell-side half. The managed permission
 // floor (engine.ts's buildBaselineDenyRules) binds a Write/Edit/NotebookEdit TOOL call; a
-// bash-invoked `echo x >> ~/.winter/backups/<s>/index.jsonl` never passes through a write tool's
-// fence at all, so the seatbelt is the only enforcement point left -- exactly the reasoning WS-12
-// §5.2's control-plane carve-out already records for `.winter/permissions.local.json`.
-describe("buildSeatbeltProfile: baseline <home>/.winter/backups WRITE denial (T8 rider 25)", () => {
-  test("home renders a subpath write-deny for <home>/.winter/backups, layered AFTER the write-allow block", () => {
+// bash-invoked `echo x >> ~/.winter/file-history/<s>/index.jsonl` never passes through a write
+// tool's fence at all, so the seatbelt is the only enforcement point left -- exactly the reasoning
+// WS-12 §5.2's control-plane carve-out already records for `.winter/permissions.local.json`.
+//
+// WS-21 §6.3 item 6, fix round 1: renamed from "backups" -- the checkpoint store's own on-disk
+// dirname (`checkpoint/file-history.ts`'s `CHECKPOINT_BACKUPS_DIRNAME`) is a separate constant,
+// owned by lane L1b, which renames it to match; see this fix round's report.
+describe("buildSeatbeltProfile: baseline <home>/.winter/file-history WRITE denial (T8 rider 25)", () => {
+  test("home renders a subpath write-deny for <home>/.winter/file-history, layered AFTER the write-allow block", () => {
     const home = realTmp();
     const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home });
     const allowIdx = p.indexOf("(allow file-write*\n");
-    const denyIdx = p.indexOf(`(deny file-write* (subpath "${join(home, ".winter", "backups")}"))`);
+    const denyIdx = p.indexOf(`(deny file-write* (subpath "${join(home, ".winter", "file-history")}"))`);
     expect(allowIdx).toBeGreaterThanOrEqual(0);
     expect(denyIdx).toBeGreaterThan(allowIdx);
   });
 
   test("home is canonicalized the same graceful way as every other path this module handles", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, home: "/does/not/exist/home" });
-    expect(p).toContain('(deny file-write* (subpath "/does/not/exist/home/.winter/backups"))');
+    expect(p).toContain('(deny file-write* (subpath "/does/not/exist/home/.winter/file-history"))');
   });
 
-  test("home omitted emits no baseline backups denial (same omitted-is-still-correct posture)", () => {
+  test("home omitted emits no baseline file-history denial (same omitted-is-still-correct posture)", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
-    expect(p).not.toContain(".winter/backups");
+    expect(p).not.toContain(".winter/file-history");
   });
 });
 

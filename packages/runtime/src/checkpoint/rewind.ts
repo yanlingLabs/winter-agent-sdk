@@ -23,7 +23,8 @@ import { blobName, nearestExistingAncestor, parentRealPathOf, readCheckpointInde
  *
  * `index.jsonl` is an ordinary file naming absolute paths, and this function used to act on every
  * one it found. Two independent layers already keep a MODEL away from that file (engine.ts's managed
- * `~/.winter/backups` write denies, and sandbox/profile.ts's seatbelt write-deny for a shell-invoked
+ * `~/.winter/file-history` write denies -- renamed from `~/.winter/backups`, WS-21 §6.3 item 6 fix
+ * round 1 -- and sandbox/profile.ts's seatbelt write-deny for a shell-invoked
  * write) -- this is the third: even GIVEN a hostile index, a rewind may only write or delete inside
  * the roots the session itself could write, so a forged record naming `~/.ssh/authorized_keys` is
  * refused rather than serviced.

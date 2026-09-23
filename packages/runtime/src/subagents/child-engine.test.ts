@@ -2993,8 +2993,9 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
       // THE ASSERTION IS THE FILE'S CONTENT, not a denial count: a denial can be recorded for some
       // other reason while the write still lands, and the content is what the user actually loses.
       expect(readFileSync(victim, "utf8"), "a child must not be able to rewrite a transcript under the resolved winter root").toBe("ORIGINAL\n");
-      // And the neighbouring floor is untouched by this scenario -- no backups directory is created.
-      expect(existsSync(join(home, "backups")), "this probe must not manufacture the other floor's directory").toBe(false);
+      // And the neighbouring floor is untouched by this scenario -- no file-history directory is
+      // created (WS-21 §6.3 item 6, fix round 1: renamed from "backups").
+      expect(existsSync(join(home, "file-history")), "this probe must not manufacture the other floor's directory").toBe(false);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -3077,7 +3078,7 @@ describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session s
     return agentResultText;
   }
 
-  test("the child cannot rewrite `<root>/projects`, and creates no `<root>/backups`", async () => {
+  test("the child cannot rewrite `<root>/projects`, and creates no `<root>/file-history`", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-r2-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "winter-r2-cwd-"));
     try {
@@ -3096,9 +3097,10 @@ describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session s
       // The file's CONTENT, not a denial count: a denial can be recorded for another reason while
       // the write still lands, and the content is what a user actually loses.
       expect(readFileSync(victim, "utf8"), "a non-persistent session's child must still be fenced out of the resolved root").toBe("ORIGINAL\n");
-      // The re-check saw the backups index CREATED in the failing case -- the `//<root>/backups/**`
-      // floor was absent too, not only the `projects` one.
-      expect(existsSync(join(home, "backups")), "the backups floor must be present in the child as well").toBe(false);
+      // The re-check saw the backup index CREATED in the failing case -- the `//<root>/file-history/**`
+      // floor (WS-21 §6.3 item 6, fix round 1: renamed from "backups") was absent too, not only the
+      // `projects` one.
+      expect(existsSync(join(home, "file-history")), "the file-history floor must be present in the child as well").toBe(false);
     } finally {
       for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
     }

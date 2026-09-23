@@ -285,11 +285,16 @@ function basenameOf(absPath: string): string {
 //
 // Narrower than them in two ways, because its path comes from configuration rather than a fixed shape:
 //   - it applies only to an outputs directory strictly INSIDE a winter home, below none of the
-//     daemon's own state (`run`, `runtimes`, `backups`, `projects`) and below no other protected
+//     daemon's own state (`run`, `runtimes`, `file-history`, `projects`) and below no other protected
 //     directory -- a host that named the home itself, or `/repo/.git/out`, lifts nothing;
 //   - below it, the ordinary floors still hold: `$OUTDIR/.git/config` or `$OUTDIR/package.json` is as
 //     protected as it would be in any project.
-const WINTER_HOME_STATE_DIRS: ReadonlySet<string> = new Set(["run", "runtimes", "backups", "projects"]);
+//
+// WS-21 §6.3 item 6, fix round 1: renamed from "backups" -- the checkpoint store's on-disk dirname
+// itself (`checkpoint/file-history.ts`'s `CHECKPOINT_BACKUPS_DIRNAME`) is a SEPARATE constant, owned
+// by lane L1b, which renames it to match. Until both land the two are momentarily out of step; see
+// this fix round's report.
+const WINTER_HOME_STATE_DIRS: ReadonlySet<string> = new Set(["run", "runtimes", "file-history", "projects"]);
 
 /**
  * The winter-home roots an outputs directory may sit inside: the resolved home and the brand's default

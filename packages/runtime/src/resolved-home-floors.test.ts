@@ -94,9 +94,9 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
     expect(denials.length, "and the refusal must be on the ledger").toBeGreaterThan(0);
   });
 
-  test("PROBE-3b INVERTED: a Write under <WINTER_HOME>/backups is DENIED under bypass (rider 25's fence 1)", async () => {
-    const victim = join(home, "backups", "sess", "index.jsonl");
-    mkdirSync(join(home, "backups", "sess"), { recursive: true });
+  test("PROBE-3b INVERTED: a Write under <WINTER_HOME>/file-history is DENIED under bypass (rider 25's fence 1, renamed WS-21 §6.3 item 6)", async () => {
+    const victim = join(home, "file-history", "sess", "index.jsonl");
+    mkdirSync(join(home, "file-history", "sess"), { recursive: true });
     const { denials } = await runBypass([
       { kind: "tool_use", calls: [{ id: "c1", name: "Write", input: { file_path: victim, content: '{"kind":"snapshot","path":"/etc/hosts"}\n' } }] },
       { kind: "text", text: "done" },
@@ -145,13 +145,13 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
     const rules = buildBaselineDenyRules(home);
     const contents = rules.map((r) => (r.ruleValue as { ruleContent?: string }).ruleContent ?? "");
     expect(contents.some((c) => c === "~/.winter/projects/**")).toBe(true);
-    expect(contents.some((c) => c === "~/.winter/backups/**")).toBe(true);
+    expect(contents.some((c) => c === "~/.winter/file-history/**")).toBe(true);
     expect(contents.some((c) => c === "~/.winter/run/**")).toBe(true);
     // `//`-ANCHORED: a single leading `/` means "relative to the rule's own settings-file
     // directory" in WS-07 §3.1's grammar, which is undefined for an engine-seeded rule and makes it
     // silently inert. `//` is the filesystem-root anchor.
     expect(contents.some((c) => c === `/${home}/projects/**`)).toBe(true);
-    expect(contents.some((c) => c === `/${home}/backups/**`)).toBe(true);
+    expect(contents.some((c) => c === `/${home}/file-history/**`)).toBe(true);
     expect(contents.some((c) => c === `/${home}/run/**`)).toBe(true);
   });
 
@@ -168,12 +168,12 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
     expect(new Set(rules).size, "the two anchors coincide -- one set, not two").toBe(rules.length);
   });
 
-  test("both seatbelt profiles deny the RESOLVED root's run/backups, and still deny the OS-home ones", () => {
+  test("both seatbelt profiles deny the RESOLVED root's run/file-history, and still deny the OS-home ones", () => {
     const bash = buildSeatbeltProfile({ cwd, allowNetwork: false, home: homedir(), winterHome: home });
     expect(bash).toContain(`(deny file-read* (subpath "${join(homedir(), ".winter", "run")}"))`);
     expect(bash).toContain(`(deny file-read* (subpath "${join(home, "run")}"))`);
-    expect(bash).toContain(`(deny file-write* (subpath "${join(homedir(), ".winter", "backups")}"))`);
-    expect(bash).toContain(`(deny file-write* (subpath "${join(home, "backups")}"))`);
+    expect(bash).toContain(`(deny file-write* (subpath "${join(homedir(), ".winter", "file-history")}"))`);
+    expect(bash).toContain(`(deny file-write* (subpath "${join(home, "file-history")}"))`);
 
     const worker = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter", { home: homedir(), winterHome: home });
     expect(worker).toContain(`(deny file-read* (subpath "${join(homedir(), ".winter", "run")}"))`);
@@ -182,7 +182,7 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
 
   // WS-21 §3.7/§6.3 item 11: the shared STORE home is now a directory DISTINCT from `winterHome`
   // (the per-run folder). `isProtectedWrite`, `buildBaselineDenyRules` and the seatbelt profile must
-  // all anchor their durable (projects/backups) denies on it, or an escape through whichever
+  // all anchor their durable (projects/file-history) denies on it, or an escape through whichever
   // mechanism did not move would open the exact hole this whole file exists to close.
   describe("WS-21: the shared STORE home, distinct from the per-run folder", () => {
     let storeHome: string;
@@ -206,14 +206,14 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
       expect(isProtectedWrite(allowed, { cwd, home: homedir(), winterHome: home, storeHome })).toBe(false);
     });
 
-    test("buildBaselineDenyRules emits the storeHome-anchored projects/backups floor, and still emits the winterHome-anchored run floor", () => {
+    test("buildBaselineDenyRules emits the storeHome-anchored projects/file-history floor, and still emits the winterHome-anchored run floor", () => {
       const rules = buildBaselineDenyRules(home, WINTER_BRAND, storeHome);
       const contents = rules.map((r) => (r.ruleValue as { ruleContent?: string }).ruleContent ?? "");
       // Durable floor: anchored on storeHome, NOT winterHome.
       expect(contents.some((c) => c === `/${storeHome}/projects/**`)).toBe(true);
-      expect(contents.some((c) => c === `/${storeHome}/backups/**`)).toBe(true);
+      expect(contents.some((c) => c === `/${storeHome}/file-history/**`)).toBe(true);
       expect(contents.some((c) => c === `/${home}/projects/**`)).toBe(false);
-      expect(contents.some((c) => c === `/${home}/backups/**`)).toBe(false);
+      expect(contents.some((c) => c === `/${home}/file-history/**`)).toBe(false);
       // run/ is unaffected -- still anchored on winterHome (the per-run folder), per this floor's
       // own disclosed limitation (sandbox/profile.ts's `storeHome` header restates the same one).
       expect(contents.some((c) => c === `/${home}/run/**`)).toBe(true);
@@ -223,10 +223,10 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
       expect(JSON.stringify(buildBaselineDenyRules(home, WINTER_BRAND))).toBe(JSON.stringify(buildBaselineDenyRules(home, WINTER_BRAND, undefined)));
     });
 
-    test("the seatbelt profile denies reading <storeHome>/projects/<key>/<id>.provider-state.jsonl and writing <storeHome>/backups, but still denies <winterHome>/run", () => {
+    test("the seatbelt profile denies reading <storeHome>/projects/<key>/<id>.provider-state.jsonl and writing <storeHome>/file-history, but still denies <winterHome>/run", () => {
       const bash = buildSeatbeltProfile({ cwd, allowNetwork: false, home: homedir(), winterHome: home, storeHome });
-      expect(bash).toContain(`(deny file-write* (subpath "${join(storeHome, "backups")}"))`);
-      expect(bash).not.toContain(`(deny file-write* (subpath "${join(home, "backups")}"))`);
+      expect(bash).toContain(`(deny file-write* (subpath "${join(storeHome, "file-history")}"))`);
+      expect(bash).not.toContain(`(deny file-write* (subpath "${join(home, "file-history")}"))`);
       expect(bash).toContain(`(deny file-read* (subpath "${join(home, "run")}"))`); // unaffected by storeHome
       // The provider-state read deny is a REGEX on the store home's own canonical path, with only
       // "projects" and "provider-state.jsonl" case-folded into bracket classes -- the directory

@@ -296,8 +296,9 @@ describe("SDK 0.0.4: everything the memory carve-out must NOT open", () => {
     ["a project key that is literally `memory`", `${HOME}/.winter/projects/memory/x.md`],
     // The directory itself, exactly as P5-B refuses its own.
     ["the memory DIRECTORY itself", MEMORY_DIR],
-    // The rider-25 backup store, which shares nothing with this carve-out.
-    ["the checkpoint backup store", `${HOME}/.winter/backups/sess-1/index.jsonl`],
+    // The rider-25 backup store (WS-21 §6.3 item 6, fix round 1: renamed from `backups` to
+    // `file-history`), which shares nothing with this carve-out.
+    ["the checkpoint backup store", `${HOME}/.winter/file-history/sess-1/index.jsonl`],
   ] as const) {
     test(`${label} is STILL denied under bypassPermissions`, async () => {
       const out = await decide({ toolName: "Write", input: { file_path: path, content: "x" }, toolUseId: "d1" });
@@ -393,7 +394,7 @@ describe("SDK 0.0.4 fix wave: exactly which managed entries the carve-out skip s
     ]);
   });
 
-  test("the provider-state sidecar patterns, the run-dir floor and the backups floor are NOT suppressed", () => {
+  test("the provider-state sidecar patterns, the run-dir floor and the file-history floor are NOT suppressed", () => {
     const skip = projectsCarveOutSkip(memoryWrite, ctxFor("bypassPermissions"))!;
     const survivors = describeEntries((e) => !skip(e));
     // The sidecar patterns share the `projects` prefix, which is exactly why the content test alone
@@ -403,7 +404,8 @@ describe("SDK 0.0.4 fix wave: exactly which managed entries the carve-out skip s
       "Glob(~/.winter/projects/**/*.provider-state.jsonl)",
       "Grep(~/.winter/projects/**/*.provider-state.jsonl)",
       "Read(~/.winter/run)",
-      "Write(~/.winter/backups/**)",
+      // WS-21 §6.3 item 6, fix round 1: renamed from "Write(~/.winter/backups/**)".
+      "Write(~/.winter/file-history/**)",
     ]) {
       expect([pattern, survivors.includes(pattern)]).toEqual([pattern, true]);
     }

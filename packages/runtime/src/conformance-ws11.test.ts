@@ -606,7 +606,7 @@ const WS11_10: ConformanceRow[] = [
     status: "new",
     citations: [
       { file: "./permissions/baseline-backups-deny.test.ts", testName: `Write to the checkpoint index is DENIED under bypass (the tampered-index case)` },
-      { file: "./sandbox/deny.darwin.test.ts", testName: `a sandboxed write under <home>/.winter/backups is denied while a sibling under the same .winter writes fine` },
+      { file: "./sandbox/deny.darwin.test.ts", testName: `a sandboxed write under <home>/.winter/file-history is denied while a sibling under the same .winter writes fine` },
       { file: "./checkpoint/sink.test.ts", testName: `a hostile record naming a path OUTSIDE the session's roots cannot DELETE it` },
     ],
     note:

@@ -365,12 +365,13 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
     .filter((r) => r.length > 0)
     .join("\n");
 
-  // T8 rider 25 (SECURITY): the checkpoint BACKUP STORE, write-side. `<home>/<homeDirName>/backups/`
+  // T8 rider 25 (SECURITY): the checkpoint BACKUP STORE, write-side. `<home>/<homeDirName>/file-history/`
+  // (renamed from `backups/`, WS-21 §6.3 item 6 fix round 1 -- see this rule's own header below)
   // holds the pre-image bytes a `rewind_files` writes back over the user's own files, plus the
   // `index.jsonl` that says which files those bytes go to. The managed permission floor
   // (engine.ts's buildBaselineDenyRules) binds a Write/Edit/NotebookEdit TOOL call -- but a
-  // bash-invoked `echo x >> ~/<homeDirName>/backups/<s>/index.jsonl` never passes through a write tool's
-  // fence at all, so the seatbelt is the only enforcement point left. Exactly the reasoning WS-12
+  // bash-invoked `echo x >> ~/<homeDirName>/file-history/<s>/index.jsonl` never passes through a
+  // write tool's fence at all, so the seatbelt is the only enforcement point left. Exactly the reasoning WS-12
   // §5.2's control-plane carve-out already records for the project `permissions.local.json`, applied to
   // a store whose whole purpose is to be replayed over the user's files later.
   //
@@ -398,12 +399,16 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
     .filter((r) => r.length > 0)
     .join("\n");
 
+  // WS-21 §6.3 item 6, fix round 1: renamed from "backups" here. The checkpoint store's own on-disk
+  // dirname (`checkpoint/file-history.ts`'s `CHECKPOINT_BACKUPS_DIRNAME`) is a separate constant,
+  // owned by lane L1b, which renames it to match -- until both land the two are momentarily out of
+  // step; see this fix round's report.
   const denyBackupsDirRule = [
-    input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "backups")))}"))` : "",
+    input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "file-history")))}"))` : "",
     // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
-    // RESOLVED root's `backups/`, which is what `checkpoint/sink.ts` has always used. WS-21 §3.7:
-    // `durableRoot` prefers `storeHome`.
-    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-write* (subpath "${sbplString(canon(join(durableRoot, "backups")))}"))` : "",
+    // RESOLVED root's `file-history/`, which is what `checkpoint/sink.ts` has always used. WS-21
+    // §3.7: `durableRoot` prefers `storeHome`.
+    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-write* (subpath "${sbplString(canon(join(durableRoot, "file-history")))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");

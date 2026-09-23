@@ -1627,14 +1627,19 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
       }
     }
   }
-  // WS-21 §3.7: `projects`/`backups` (soon `file-history`, L1b) are DURABLE -- they live under the
-  // shared STORE home once the router links `buildRunHome`, a directory now DISTINCT from
-  // `resolvedWinterHome` (the per-run folder). `durableRoot` is what this floor anchors on; absent
-  // a `resolvedStoreHome`, it degrades to `resolvedWinterHome`, byte-identical to pre-WS-21.
+  // WS-21 §3.7: `projects`/`file-history` are DURABLE -- they live under the shared STORE home once
+  // the router links `buildRunHome`, a directory now DISTINCT from `resolvedWinterHome` (the per-run
+  // folder). `durableRoot` is what this floor anchors on; absent a `resolvedStoreHome`, it degrades
+  // to `resolvedWinterHome`, byte-identical to pre-WS-21.
+  //
+  // WS-21 §6.3 item 6, fix round 1: renamed from "backups" here. The checkpoint store's own on-disk
+  // dirname (`checkpoint/file-history.ts`'s `CHECKPOINT_BACKUPS_DIRNAME`) is a separate constant,
+  // owned by lane L1b, which renames it to match -- until both land the two are momentarily out of
+  // step; see this fix round's report.
   const durableRoot = resolvedStoreHome ?? resolvedWinterHome;
   if (durableRoot !== undefined && resolve(durableRoot) !== defaultHome) {
     const durableRootAnchor = `/${resolve(durableRoot)}`;
-    for (const dir of ["projects", "backups"]) {
+    for (const dir of ["projects", "file-history"]) {
       for (const tool of ["Write", "Edit", "NotebookEdit"]) {
         absolute.push(sourceRule({ toolName: tool, ruleContent: `${durableRootAnchor}/${dir}` }, "deny", "managed"));
         absolute.push(sourceRule({ toolName: tool, ruleContent: `${durableRootAnchor}/${dir}/**` }, "deny", "managed"));
@@ -1720,10 +1725,13 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
 
     // --- Phase 5 Task 8 rider 25 (SECURITY): the checkpoint BACKUP STORE is write-denied too ------
     //
-    // `~/.winter/backups/<session>/` holds the pre-image bytes a `rewind_files` writes back over the
-    // user's own files, plus the `index.jsonl` that says WHICH files those bytes go to. Both halves
-    // are attacker-useful: writing the index names an arbitrary path for the next rewind to write or
-    // DELETE; writing a blob chooses the bytes that land on a path the session legitimately tracked.
+    // `~/.winter/file-history/<session>/` (renamed from `backups/`, WS-21 §6.3 item 6 fix round 1 --
+    // the checkpoint store's own on-disk dirname, `checkpoint/file-history.ts`'s
+    // `CHECKPOINT_BACKUPS_DIRNAME`, is a separate constant owned by lane L1b, which renames it to
+    // match) holds the pre-image bytes a `rewind_files` writes back over the user's own files, plus
+    // the `index.jsonl` that says WHICH files those bytes go to. Both halves are attacker-useful:
+    // writing the index names an arbitrary path for the next rewind to write or DELETE; writing a
+    // blob chooses the bytes that land on a path the session legitimately tracked.
     //
     // The M13 reasoning applies verbatim -- `permissions/protected.ts` protects the dot-dir's writes,
     // but `resolveProtectedWrite` returns `allow` under `bypassPermissions` (WS-07 §6.7's matrix) and
@@ -1738,12 +1746,12 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
     // model could already read in place -- denying reads would buy nothing and regress nothing.
     // `checkpoint/rewind.ts` carries the complementary half: a record naming a path outside the
     // session's own writable roots is refused even if the index says otherwise.
-    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/backups` }, "deny", "managed"),
-    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/backups/**` }, "deny", "managed"),
-    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/backups` }, "deny", "managed"),
-    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/backups/**` }, "deny", "managed"),
-    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/backups` }, "deny", "managed"),
-    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/backups/**` }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/file-history` }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: `${homeAnchor}/file-history/**` }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/file-history` }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: `${homeAnchor}/file-history/**` }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/file-history` }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: `${homeAnchor}/file-history/**` }, "deny", "managed"),
 
     // --- Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecars are READ-DENIED -----------
     //
@@ -2027,8 +2035,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // RuntimeConfig field wins in either direction, the env var is the fallback, and absent-and-unset
   // keeps the 0.0.16 default (background).
   const backgroundByDefault = config.backgroundByDefault ?? resolveBackgroundByDefaultEnabled(engineEnv ?? process.env, sessionBrand);
-  // WS-21 §3.7: the durable projects/backups floor anchors on `config.storeHome` when the router
-  // supplied one -- see `buildBaselineDenyRules`'s own header for why `run` stays on `resolvedWinterHome`.
+  // WS-21 §3.7: the durable projects/file-history floor anchors on `config.storeHome` when the
+  // router supplied one -- see `buildBaselineDenyRules`'s own header for why `run` stays on
+  // `resolvedWinterHome`.
   const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome, sessionBrand, config.storeHome);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header

@@ -334,15 +334,15 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
   // therefore structurally cannot see the class -- which is exactly how the OS-home anchoring
   // survived two SECURITY-rated reviews.
   describe("baseline denies follow the RESOLVED winter home (I1)", () => {
-    t("under a WINTER_HOME not named `.winter`, its own run/ is unreadable and backups/ unwritable, while a sibling still works", async () => {
+    t("under a WINTER_HOME not named `.winter`, its own run/ is unreadable and file-history/ unwritable, while a sibling still works", async () => {
       const cwd = proj();
       // The resolved root, deliberately NOT named `.winter`, and NOT under `home`.
       const winterHome = proj();
       mkdirSync(join(winterHome, "run"), { recursive: true });
-      mkdirSync(join(winterHome, "backups", "sess-1"), { recursive: true });
+      mkdirSync(join(winterHome, "file-history", "sess-1"), { recursive: true });
       const secret = join(winterHome, "run", "core.sock-info.txt");
       writeFileSync(secret, "socket-secret");
-      const indexFile = join(winterHome, "backups", "sess-1", "index.jsonl");
+      const indexFile = join(winterHome, "file-history", "sess-1", "index.jsonl");
       const sibling = join(winterHome, "sibling.txt");
 
       // cwd is the RESOLVED ROOT here, so its whole tree is inside a writable root -- without the
@@ -363,11 +363,15 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
 
   // T8 rider 25 (SECURITY): the checkpoint backup store must be unwritable from a sandboxed shell.
   // The positive control is what makes this mean something -- the SAME home is a writable root here
-  // (cwd IS home), so a sibling under `.winter` writes fine and only `backups/` is fenced off.
-  describe("baseline <home>/.winter/backups write denial (T8 rider 25)", () => {
-    t("a sandboxed write under <home>/.winter/backups is denied while a sibling under the same .winter writes fine", async () => {
+  // (cwd IS home), so a sibling under `.winter` writes fine and only `file-history/` is fenced off.
+  //
+  // WS-21 §6.3 item 6, fix round 1: renamed from "backups" -- the checkpoint store's own on-disk
+  // dirname (`checkpoint/file-history.ts`'s `CHECKPOINT_BACKUPS_DIRNAME`) is a separate constant,
+  // owned by lane L1b, which renames it to match; see this fix round's report.
+  describe("baseline <home>/.winter/file-history write denial (T8 rider 25)", () => {
+    t("a sandboxed write under <home>/.winter/file-history is denied while a sibling under the same .winter writes fine", async () => {
       const home = proj();
-      const backups = join(home, ".winter", "backups", "sess-1");
+      const backups = join(home, ".winter", "file-history", "sess-1");
       mkdirSync(backups, { recursive: true });
       const indexFile = join(backups, "index.jsonl");
       const siblingFile = join(home, ".winter", "sibling.txt");

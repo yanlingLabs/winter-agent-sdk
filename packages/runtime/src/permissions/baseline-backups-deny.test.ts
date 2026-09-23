@@ -1,5 +1,11 @@
-// T8 rider 25 (SECURITY): `~/.winter/backups/**` joins the managed write floor, alongside the
+// T8 rider 25 (SECURITY): `~/.winter/file-history/**` joins the managed write floor, alongside the
 // `projects` block M13 landed.
+//
+// WS-21 §6.3 item 6, fix round 1: renamed from `~/.winter/backups/**` here (the managed deny rule,
+// `permissions/protected.ts`'s `WINTER_HOME_STATE_DIRS` and `engine.ts`'s `buildBaselineDenyRules`).
+// The checkpoint store's own on-disk dirname (`checkpoint/file-history.ts`'s
+// `CHECKPOINT_BACKUPS_DIRNAME`) is a SEPARATE constant, owned by lane L1b, which renames it to
+// match -- until both land the two are momentarily out of step; see this fix round's report.
 //
 // The finding, in the same shape as M13's: `checkpoint/`'s backup store holds the PRE-IMAGE BYTES a
 // `rewind_files` writes back over the user's own files, plus the `index.jsonl` that says WHICH files
@@ -36,9 +42,9 @@ import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 
 const HOME = "/synthetic/home/tester";
 const CWD = "/synthetic/workspace";
-const INDEX = `${HOME}/.winter/backups/sess-1/index.jsonl`;
-const BLOB = `${HOME}/.winter/backups/sess-1/0123456789abcdef@v1`;
-const BACKUPS_DIR = `${HOME}/.winter/backups`;
+const INDEX = `${HOME}/.winter/file-history/sess-1/index.jsonl`;
+const BLOB = `${HOME}/.winter/file-history/sess-1/0123456789abcdef@v1`;
+const BACKUPS_DIR = `${HOME}/.winter/file-history`;
 
 function ctxFor(mode: PermissionMode): EvaluationContext {
   return {
@@ -61,7 +67,7 @@ async function decide(call: PermissionCall, mode: PermissionMode = "bypassPermis
   return { decision: record.decision, mechanism: record.mechanism };
 }
 
-describe("rider 25: writes under ~/.winter/backups are denied, even under bypassPermissions", () => {
+describe("rider 25: writes under ~/.winter/file-history are denied, even under bypassPermissions", () => {
   test("Write to the checkpoint index is DENIED under bypass (the tampered-index case)", async () => {
     const out = await decide({ toolName: "Write", input: { file_path: INDEX, content: '{"kind":"snapshot","path":"/etc/hosts"}' }, toolUseId: "t1" });
     expect(out.decision).toBe("deny");
