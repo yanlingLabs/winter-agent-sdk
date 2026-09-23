@@ -32,14 +32,59 @@ function resolveCanonical(raw: string): string {
 // linked worktree (verified empirically against real git 2.50 across all three cases; task-6
 // report). Returns null when `resolvedCwd` isn't inside a git repository, or git itself is
 // unavailable — callers fall back to scoping memory the same as the transcript/temp keys.
+//
+// THE ROOT MUST OWN THE CWD. `--git-common-dir` is whatever the cwd's `.git` FILE says, so a
+// directory whose `.git` reads `gitdir: /other/.git` resolved to `/other` and took `/other`'s memory
+// directory (and every project-keyed thing derived from it). The candidate is kept only when it
+// CONTAINS the cwd (a checkout, any subdirectory), or the cwd lies inside a worktree that common dir
+// itself registers (`git --git-dir <common> worktree list` — read through the common dir, so the
+// cwd's own `.git` file has no say), or that dir's own `core.worktree` names the checkout (a
+// submodule: its common dir is `<outer>/.git/modules/<name>`). Otherwise the cwd is its own root
+// (null). The Winter daemon applies the identical rule to its own project root (memory-dir.ts).
+// Each extra git spawn runs only when the rung before it failed: an ordinary checkout pays none.
 function gitCommonRoot(resolvedCwd: string): string | null {
+  let commonDir: string;
   try {
-    const raw = execFileSync("git", ["-C", resolvedCwd, "rev-parse", "--git-common-dir"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const commonDir = isAbsolute(raw) ? raw : resolvePath(resolvedCwd, raw);
-    return platformNormalize(dirname(realpathSync(commonDir)));
+    const raw = runGit(["-C", resolvedCwd, "rev-parse", "--git-common-dir"]);
+    commonDir = platformNormalize(realpathSync(isAbsolute(raw) ? raw : resolvePath(resolvedCwd, raw)));
+  } catch {
+    return null;
+  }
+  const candidate = dirname(commonDir);
+  if (isWithin(resolvedCwd, candidate)) return candidate;
+  if (registeredWorktrees(commonDir).some((worktree) => isWithin(resolvedCwd, worktree))) return candidate;
+  const configured = configuredWorktree(commonDir);
+  if (configured !== null && isWithin(resolvedCwd, configured)) return configured;
+  return null;
+}
+
+function runGit(args: string[]): string {
+  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+}
+
+/** `path` is `dir` or lies beneath it (both canonical). */
+function isWithin(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
+}
+
+/** The worktrees `commonDir` registers, canonical; `[]` when git refuses. */
+function registeredWorktrees(commonDir: string): string[] {
+  try {
+    return runGit(["--git-dir", commonDir, "worktree", "list", "--porcelain"])
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => resolveCanonical(line.slice("worktree ".length)));
+  } catch {
+    return [];
+  }
+}
+
+/** `core.worktree` from `commonDir`'s OWN config (a submodule's checkout), canonical; relative values
+ *  resolve against the git dir, as git resolves them. Null when unset. */
+function configuredWorktree(commonDir: string): string | null {
+  try {
+    const raw = runGit(["--git-dir", commonDir, "config", "--get", "core.worktree"]);
+    return raw.length > 0 ? resolveCanonical(isAbsolute(raw) ? raw : resolvePath(commonDir, raw)) : null;
   } catch {
     return null;
   }

@@ -321,6 +321,101 @@ describe("compatibilityKeys", () => {
   });
 });
 
+// The memory key's project root must OWN the cwd: `--git-common-dir` is whatever the cwd's `.git`
+// FILE says, so a forged one borrowed another project's root (and so its memory directory). The
+// daemon's own project root applies the identical rule (Winter memory-dir.ts, repoRootFor).
+describe("compatibilityKeys: the git root must own the cwd", () => {
+  function fixture(): { base: string; git: (args: string[], cwd: string) => string; repo: (dir: string) => string } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "winter-paths-owner-")));
+    const git = (args: string[], cwd: string): string => execFileSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "protocol.file.allow=always", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const repo = (dir: string): string => {
+      mkdirSync(dir, { recursive: true });
+      git(["init", "-q", "-b", "main"], dir);
+      writeFileSync(join(dir, "f.txt"), "hi");
+      git(["add", "f.txt"], dir);
+      git(["commit", "-q", "-m", "init"], dir);
+      return dir;
+    };
+    return { base, git, repo };
+  }
+
+  test("a forged `.git` FILE pointing at another project's git dir: the cwd is its own root", () => {
+    const { base, repo } = fixture();
+    try {
+      const other = repo(join(base, "other"));
+      const forged = join(base, "forged");
+      mkdirSync(forged);
+      writeFileSync(join(forged, ".git"), `gitdir: ${join(other, ".git")}\n`);
+      const keys = compatibilityKeys(forged);
+      expect(keys.memoryProjectKey).toBe(keys.transcriptProjectKey);
+      expect(keys.memoryProjectKey).not.toBe(compatibilityKeys(other).memoryProjectKey);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a forged `.git` FILE pointing at a REGISTERED worktree's git dir borrows nothing either", () => {
+    const { base, git, repo } = fixture();
+    try {
+      const main = repo(join(base, "main"));
+      git(["worktree", "add", "-q", "-b", "feature", join(base, "wt1")], main);
+      const forged = join(base, "forged");
+      mkdirSync(forged);
+      writeFileSync(join(forged, ".git"), `gitdir: ${join(main, ".git", "worktrees", "wt1")}\n`);
+      const keys = compatibilityKeys(forged);
+      expect(keys.memoryProjectKey).toBe(keys.transcriptProjectKey);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a nested directory in a linked worktree still resolves to the main repo root", () => {
+    const { base, git, repo } = fixture();
+    try {
+      const main = repo(join(base, "main"));
+      const worktree = join(base, "wt1");
+      git(["worktree", "add", "-q", "-b", "feature", worktree], main);
+      const nested = join(worktree, "a", "b");
+      mkdirSync(nested, { recursive: true });
+      expect(compatibilityKeys(nested).memoryProjectKey).toBe(transcriptProjectKey(main));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a submodule resolves to ITS checkout (core.worktree), from the checkout and from deeper inside", () => {
+    const { base, git, repo } = fixture();
+    try {
+      const inner = repo(join(base, "inner"));
+      const outer = repo(join(base, "outer"));
+      git(["submodule", "add", "-q", inner, "sub"], outer);
+      const checkout = join(outer, "sub");
+      const deep = join(checkout, "deep");
+      mkdirSync(deep);
+      expect(compatibilityKeys(checkout).memoryProjectKey).toBe(transcriptProjectKey(checkout));
+      expect(compatibilityKeys(deep).memoryProjectKey).toBe(transcriptProjectKey(checkout));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a forged `.git` FILE pointing at a submodule's git dir: the cwd is its own root", () => {
+    const { base, git, repo } = fixture();
+    try {
+      const inner = repo(join(base, "inner"));
+      const outer = repo(join(base, "outer"));
+      git(["submodule", "add", "-q", inner, "sub"], outer);
+      const forged = join(base, "forged");
+      mkdirSync(forged);
+      writeFileSync(join(forged, ".git"), `gitdir: ${join(outer, ".git", "modules", "sub")}\n`);
+      const keys = compatibilityKeys(forged);
+      expect(keys.memoryProjectKey).toBe(keys.transcriptProjectKey);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- P7a fix wave (item 5, whole-branch review M-3): the dev profile's OTHER HALF ------------------
 //
 // `<PREFIX>PROFILE=dev` already selected `~/<homeDirName>-dev`; WS-01's Phase 6 amendment pairs the
