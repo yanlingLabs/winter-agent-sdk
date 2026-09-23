@@ -226,13 +226,21 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({ ...first, ...second });
   });
 
-  test("M-5: a manifest `hooks` array element that is a STRING (a path to a further file) is skipped -- disclosed, out of this round's scope", () => {
+  // Fix round 5, superseding this test's pre-round-5 name and premise: a manifest `hooks` array
+  // element that is a STRING (a path to a further hooks file) is now LOADED and merged, the same
+  // wrapped shape hooks/hooks.json itself is read as (readHooksFile's own citation). Round 5's own
+  // dedicated describe block below covers this shape thoroughly; this one keeps its ORIGINAL fixture
+  // (a non-existent referenced file) to prove the OTHER array element still loads regardless.
+  test("M-5/round-5: a manifest `hooks` array element that is a STRING pointing at a MISSING file is warned and skipped, without affecting the other element", () => {
     const parent = mkTemp("winter-plugin-hooks-array-string-");
     const root = join(parent, "hooked-array-string");
     mkdirSync(root, { recursive: true });
     const real = { PreToolUse: [{ hooks: [{ type: "command", command: "real" }] }] };
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: ["more-hooks.json", real] }));
-    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(real);
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toEqual(real);
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("was not found");
   });
 
   // M-5's merge must not swallow a MALFORMED per-event value before settings/loaders/hooks.ts's own
@@ -253,14 +261,20 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
   // Pre-fix `merged[event] = Array.isArray(existing) && Array.isArray(entries) ? [...] : entries`
   // fell to the `entries` branch whenever EITHER side was malformed, so a later malformed value won
   // outright even over an earlier valid array -- silently discarding real, working hooks.
-  test("minors: a malformed manifest value does NOT replace a valid hooks.json array for the same event -- the valid one is kept", () => {
+  test("minors: a malformed manifest value does NOT replace a valid hooks.json array for the same event -- the valid one is kept, and it is REPORTED", () => {
     const parent = mkTemp("winter-plugin-hooks-malformed-overwrite-");
     const root = join(parent, "hooked-malformed-overwrite");
     mkdirSync(root, { recursive: true });
     const validFromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "real" }] }] };
     write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: validFromFile }));
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: { PreToolUse: "not an array" } }));
-    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(validFromFile);
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toEqual(validFromFile);
+    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): a dropped malformed value
+    // must be reported, the same way every other hook-load problem already is.
+    expect(result.hookFileWarnings).toHaveLength(1);
+    expect(result.hookFileWarnings[0]).toContain("PreToolUse");
+    expect(result.hookFileWarnings[0]).toContain("malformed");
   });
 
   // The reverse ordering: an EARLIER malformed value (hooks.json) must not survive over a LATER
@@ -786,6 +800,109 @@ describe("loadPlugins: a manifest `outputStyles` override (fix round 5)", () => 
     const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
     expect(bundle.outputStylesPath).toBe(resolve(root, "output-styles"));
     expect(bundle.outputStylesPaths).toBeUndefined();
+  });
+});
+
+// Fix round 5, item 2 of the ruling: a manifest `hooks` entry that is a bare STRING (a relative path
+// to a further hooks file). Content-search confirmed against the installed claude CLI binary
+// (2.1.280): the string-entry branch calls the SAME `I1t` reader hooks/hooks.json itself uses (so
+// the referenced file is WRAPPED, `{"hooks": {...}}`, not a bare event-map) and the SAME `E$`/`ZP`
+// fence every other manifest custom-path override uses; additive with hooks/hooks.json.
+describe("loadPlugins: a manifest `hooks` STRING entry -- a path to a further hooks file (fix round 5)", () => {
+  test("a bare STRING (not inside an array) loads and merges, additively with hooks/hooks.json", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-bare-");
+    const root = join(parent, "hooked");
+    const fromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "from-file" }] }] };
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: fromFile }));
+    const fromReferenced = { PostToolUse: [{ hooks: [{ type: "command", command: "from-referenced" }] }] };
+    write(join(root, "more-hooks.json"), JSON.stringify({ hooks: fromReferenced }));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: "./more-hooks.json" }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({ ...fromFile, ...fromReferenced });
+  });
+
+  test("a STRING inside an array, alongside an inline object, both merge", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-array-");
+    const root = join(parent, "hooked");
+    mkdirSync(root, { recursive: true });
+    const inline = { PreToolUse: [{ hooks: [{ type: "command", command: "inline" }] }] };
+    const fromReferenced = { PostToolUse: [{ hooks: [{ type: "command", command: "referenced" }] }] };
+    write(join(root, "more-hooks.json"), JSON.stringify({ hooks: fromReferenced }));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: ["./more-hooks.json", inline] }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({ ...inline, ...fromReferenced });
+  });
+
+  test("the referenced file is read WRAPPED, the same shape hooks/hooks.json itself is -- a bare event-map with no \"hooks\" key warns and contributes nothing", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-unwrapped-");
+    const root = join(parent, "hooked");
+    mkdirSync(root, { recursive: true });
+    write(join(root, "more-hooks.json"), JSON.stringify({ PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] })); // no "hooks" wrapper
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: "./more-hooks.json" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toBeUndefined();
+    expect(result.hookFileWarnings).toHaveLength(1);
+    expect(result.hookFileWarnings[0]).toContain("no \"hooks\" key");
+  });
+
+  test("a RELATIVE traversal entry (../x) is refused with a warning, never a throw", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-escape-");
+    const root = join(parent, "hooked");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: "../../etc/hooks.json" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.rejected).toEqual([]);
+    expect(result.bundles[0]!.hooks).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("a SYMLINK entry resolving outside the plugin root is refused (fix round 5's realpath fence)", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-symlink-out-");
+    const root = join(parent, "hooked");
+    mkdirSync(root, { recursive: true });
+    const outside = mkTemp("winter-plugin-hooks-string-symlink-target-");
+    write(join(outside, "leaked-hooks.json"), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "leaked" }] }] } }));
+    symlinkSync(join(outside, "leaked-hooks.json"), join(root, "escape-link.json"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: "./escape-link.json" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("an entry that does not exist is warned and skipped, never a throw", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-missing-");
+    const root = join(parent, "hooked");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: "./does-not-exist.json" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toBeUndefined();
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("was not found");
+  });
+
+  test("an entry that names the standard hooks/hooks.json itself is silently loaded once, no duplicate warning", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-self-");
+    const root = join(parent, "hooked");
+    const fromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "standard" }] }] };
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: fromFile }));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: "./hooks/hooks.json" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toEqual(fromFile); // loaded once, not doubled
+    expect(result.manifestPathWarnings).toEqual([]);
+    expect(result.hookFileWarnings).toEqual([]);
+  });
+
+  test("two STRING entries resolving to the SAME file are de-duplicated, with a warning", () => {
+    const parent = mkTemp("winter-plugin-hooks-string-duplicate-");
+    const root = join(parent, "hooked");
+    const fromReferenced = { PostToolUse: [{ hooks: [{ type: "command", command: "referenced" }] }] };
+    write(join(root, "more-hooks.json"), JSON.stringify({ hooks: fromReferenced }));
+    // Two DIFFERENT spellings resolving to the identical real file.
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: ["./more-hooks.json", "././more-hooks.json"] }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toEqual(fromReferenced); // loaded once
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("duplicates another entry");
   });
 });
 

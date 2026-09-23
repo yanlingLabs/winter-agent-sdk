@@ -449,8 +449,16 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
  * convention with no wrapper of its own) already provides -- a caller reading `bundle.hooks` never
  * has to know which of the two files it came from.
  */
-function readPluginHooksJson(root: string, pluginName: string, warnings: string[]): unknown {
-  const path = join(root, "hooks", "hooks.json");
+/**
+ * Reads and parses ONE hooks file at an already-resolved absolute PATH, wrapped-object shape
+ * (`{"hooks": {<Event>: [...]}, "modules"?: [...] }`) -- Winter has no modules concept, so only the
+ * `"hooks"` key is extracted. Generalised in fix round 5 from the pre-round-5 `readPluginHooksJson`
+ * (which only ever read `<root>/hooks/hooks.json`) so the SAME reader serves a manifest `hooks`
+ * STRING entry too: claude's own consumer runs the identical `I1t` on both (dump-confirmed by
+ * content search against the installed claude CLI binary, 2.1.280) -- a manifest-referenced hooks
+ * file is WRAPPED the same way `hooks/hooks.json` itself is, not a bare event-map.
+ */
+function readHooksFile(path: string, pluginName: string, sourceLabel: string, warnings: string[]): unknown {
   try {
     if (!statSync(path).isFile()) return undefined;
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -461,11 +469,15 @@ function readPluginHooksJson(root: string, pluginName: string, warnings: string[
     // `"hooks"` key (and, per its own schema, no `"modules"` key either -- Winter has no modules
     // concept to check, so a bare-object-without-"hooks" is the one shape this codebase can detect)
     // is a warning, not a silent no-op.
-    warnings.push(`plugin "${pluginName}"'s hooks/hooks.json has no "hooks" key -- check that the file follows the required schema ({"hooks": {<Event>: [...]}})`);
+    warnings.push(`plugin "${pluginName}"'s ${sourceLabel} has no "hooks" key -- check that the file follows the required schema ({"hooks": {<Event>: [...]}})`);
     return undefined;
   } catch {
     return undefined;
   }
+}
+
+function readPluginHooksJson(root: string, pluginName: string, warnings: string[]): unknown {
+  return readHooksFile(join(root, "hooks", "hooks.json"), pluginName, "hooks/hooks.json", warnings);
 }
 
 /**
@@ -482,7 +494,80 @@ function readPluginHooksJson(root: string, pluginName: string, warnings: string[
  * from that element today, exactly as it did before this fix (manifest.hooks was not read at all
  * unless hooks.json was absent).
  */
-function mergeHookSources(fromHooksJson: unknown, manifestHooks: unknown): Record<string, unknown> | undefined {
+/**
+ * Fix round 5: resolves every STRING element of a manifest `hooks` value (a bare string, or a
+ * string mixed into an array alongside object entries) into a hooks-object, read the SAME wrapped
+ * way `hooks/hooks.json` itself is (`readHooksFile`'s own header has the citation). Uses the SAME
+ * traversal fence every other manifest custom-path override uses (`resolvesWithinPluginRoot`) --
+ * content-search confirmed against the installed claude CLI binary (2.1.280): the string-entry
+ * branch calls the identical `E$`/`ZP` resolve-and-check pair `Tb` itself is built on.
+ *
+ * Two claude-specific de-duplication rules, ported: an entry that resolves to EXACTLY the default
+ * `hooks/hooks.json` file is skipped (it already loads on its own; re-listing it must not double-
+ * merge its own hooks) -- SILENT on claude's own side (a log line, never pushed to its errors
+ * collection) and kept silent here for the identical reason: it is not a problem, it is the author
+ * naming a file that was always going to load anyway. Two STRING entries resolving to the SAME
+ * file are also de-duplicated, but Winter always WARNS for it (`manifestPathWarnings`) rather than
+ * porting claude's own conditional-on-an-internal-flag escalation, whose exact trigger the dump
+ * excerpt does not name -- a disclosed simplification toward "always tell the author," the safer
+ * direction for a warning channel.
+ */
+function resolveManifestHooksStringEntries(root: string, pluginName: string, declared: unknown, warnings: { paths: string[]; content: string[] }): unknown[] {
+  const entries = Array.isArray(declared) ? declared : declared !== undefined ? [declared] : [];
+  const defaultHooksJsonPath = resolve(join(root, "hooks", "hooks.json"));
+  const defaultHooksJsonReal = (() => {
+    try {
+      return realpathSync(defaultHooksJsonPath);
+    } catch {
+      return defaultHooksJsonPath;
+    }
+  })();
+  const seenReal = new Set<string>();
+  const results: unknown[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string" || entry.length === 0) continue; // a non-string element is the OBJECT shape, handled by the caller's own fold pass, not here
+    const full = resolve(root, entry);
+    if (!resolvesWithinPluginRoot(full, root)) {
+      warnings.paths.push(`plugin "${pluginName}"'s manifest "hooks" entry "${entry}" escapes the plugin directory -- ignoring it`);
+      continue;
+    }
+    let isFile: boolean;
+    try {
+      isFile = statSync(full).isFile();
+    } catch {
+      isFile = false;
+    }
+    if (!isFile) {
+      warnings.paths.push(`plugin "${pluginName}"'s manifest "hooks" entry "${entry}" was not found at ${full} -- ignoring it`);
+      continue;
+    }
+    const real = (() => {
+      try {
+        return realpathSync(full);
+      } catch {
+        return full;
+      }
+    })();
+    if (real === defaultHooksJsonReal) continue; // names the standard hooks/hooks.json, which loads on its own -- silent, not a problem (claude's own posture)
+    if (seenReal.has(real)) {
+      warnings.paths.push(`plugin "${pluginName}"'s manifest "hooks" entry "${entry}" duplicates another entry (both resolve to ${real}) -- loaded once`);
+      continue;
+    }
+    seenReal.add(real);
+    const hooksObject = readHooksFile(full, pluginName, `manifest "hooks" entry "${entry}"`, warnings.content);
+    if (hooksObject !== undefined) results.push(hooksObject);
+  }
+  return results;
+}
+
+function mergeHookSources(
+  root: string,
+  pluginName: string,
+  fromHooksJson: unknown,
+  manifestHooks: unknown,
+  pathWarnings: string[],
+  contentWarnings: string[],
+): Record<string, unknown> | undefined {
   // DELIBERATELY UNVALIDATED at the per-event level: whether an event's value is really an ARRAY
   // of matcher-shaped entries is `settings/loaders/hooks.ts`'s own `pluginHookEntries` job (it
   // REPORTS a malformed block against the plugin's path, never throws -- hooks.test.ts's own fixture
@@ -508,15 +593,25 @@ function mergeHookSources(fromHooksJson: unknown, manifestHooks: unknown): Recor
       sawAny = true;
       const existing = merged[event];
       if (Array.isArray(existing) && Array.isArray(entries)) merged[event] = [...existing, ...entries];
-      else if (Array.isArray(existing)) merged[event] = existing; // keep the valid one; drop the malformed later value
-      else merged[event] = entries;
+      else if (Array.isArray(existing)) {
+        // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): a dropped malformed
+        // value must be REPORTED, the same way every other hook-load problem is -- the pre-fix
+        // silence made "kept the valid one" indistinguishable from "there was only ever one value."
+        contentWarnings.push(`plugin "${pluginName}": a malformed "${event}" hooks value was dropped in favour of an earlier valid array for the same event`);
+      } else merged[event] = entries;
     }
   };
   foldObject(fromHooksJson);
   if (Array.isArray(manifestHooks)) {
-    for (const item of manifestHooks) foldObject(item); // a string element (a further file path) is out of scope -- see this function's own header
+    for (const item of manifestHooks) foldObject(item); // a string element is the OTHER shape, folded below
   } else {
     foldObject(manifestHooks);
+  }
+  // Fix round 5: the string-element shape, ADDITIVE with everything folded above (claude's own
+  // manifest schema describes every accepted `hooks` shape as additive to hooks/hooks.json; this
+  // extends the SAME rule to a shape this codebase previously left unread).
+  for (const hooksObject of resolveManifestHooksStringEntries(root, pluginName, manifestHooks, { paths: pathWarnings, content: contentWarnings })) {
+    foldObject(hooksObject);
   }
   return sawAny ? merged : undefined;
 }
@@ -709,7 +804,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     // describes the manifest field as "in addition to those in hooks/hooks.json, if it exists",
     // dump-confirmed). The pre-fix-round-3 `??` fallback silently dropped a manifest's own hooks
     // whenever a hooks.json ALSO existed.
-    const hooks = mergeHookSources(readPluginHooksJson(root, name, hookFileWarnings), manifest?.hooks);
+    const hooks = mergeHookSources(root, name, readPluginHooksJson(root, name, hookFileWarnings), manifest?.hooks, manifestPathWarnings, hookFileWarnings);
     // Fix round 5: a manifest `agents` override SHADOWS the default `agents/` directory (the SAME
     // gate/warning shape workflows already has, `!j.agents&&Fe` dump-confirmed) -- `requireDirectory:
     // false` since claude's own `Tb` call for `agents` accepts a bare file.
