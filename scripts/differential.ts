@@ -76,7 +76,28 @@ const FIXTURE_CURRENT_DATE_SENTENCE = "Today's date is <FIXTURE-DATE>.";
 
 function scrubWinterHome(entries: ConformanceTraceEntry[], winterHome: string): ConformanceTraceEntry[] {
   const json = JSON.stringify(entries).split(winterHome).join(FIXTURE_WINTER_HOME).replace(/Today's date is \d{4}-\d{2}-\d{2}\./g, FIXTURE_CURRENT_DATE_SENTENCE);
-  return JSON.parse(json) as ConformanceTraceEntry[];
+  return (JSON.parse(json) as ConformanceTraceEntry[]).map(scrubResultTokenCounts);
+}
+
+// Since 0.0.18 every `result` carries this turn's `usage` and unpriced rows land in `modelUsage`. The
+// fixture providers' synthetic counts measure the request's characters, and the request carries this
+// run's temp-dir paths, whose LENGTH differs by machine -- so the counts are machine-specific (the
+// release runner is Linux, a developer is on macOS). The keys stay (their presence is the pinned
+// shape); the counting math is pinned by unit tests, not by a byte-frozen golden.
+const RESULT_USAGE_TOKEN_KEYS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"];
+const MODEL_USAGE_TOKEN_KEYS = ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"];
+function scrubResultTokenCounts(entry: ConformanceTraceEntry): ConformanceTraceEntry {
+  const p = entry.payload as { type?: string; usage?: Record<string, unknown>; modelUsage?: Record<string, Record<string, unknown>> } | undefined;
+  if (p?.type !== "result") return entry;
+  const mask = (row: Record<string, unknown>, keys: string[]): Record<string, unknown> => {
+    const out = { ...row };
+    for (const k of keys) if (typeof out[k] === "number") out[k] = `<${k}>`;
+    return out;
+  };
+  const payload: Record<string, unknown> = { ...p };
+  if (p.usage !== undefined) payload.usage = mask(p.usage, RESULT_USAGE_TOKEN_KEYS);
+  if (p.modelUsage !== undefined) payload.modelUsage = Object.fromEntries(Object.entries(p.modelUsage).map(([k, row]) => [k, mask(row, MODEL_USAGE_TOKEN_KEYS)]));
+  return { ...entry, payload };
 }
 
 function kindOf(msg: { type: string; subtype?: string }): string {

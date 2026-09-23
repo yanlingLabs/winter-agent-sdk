@@ -88,10 +88,10 @@
         "output_tokens_details": {
           "thinking_tokens": 0
         },
-        "input_tokens": 100,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "output_tokens": 0,
+        "input_tokens": "<input_tokens>",
+        "cache_creation_input_tokens": "<cache_creation_input_tokens>",
+        "cache_read_input_tokens": "<cache_read_input_tokens>",
+        "output_tokens": "<output_tokens>",
         "server_tool_use": {
           "web_search_requests": 0,
           "web_fetch_requests": 0
@@ -108,10 +108,10 @@
       "permission_denials": [],
       "modelUsage": {
         "winter-test/echo": {
-          "inputTokens": 100,
-          "outputTokens": 0,
-          "cacheReadInputTokens": 0,
-          "cacheCreationInputTokens": 0,
+          "inputTokens": "<inputTokens>",
+          "outputTokens": "<outputTokens>",
+          "cacheReadInputTokens": "<cacheReadInputTokens>",
+          "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
           "costUSD": 0,
           "canonicalModel": "winter-test/echo"
@@ -148,10 +148,10 @@
         "output_tokens_details": {
           "thinking_tokens": 0
         },
-        "input_tokens": 100,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "output_tokens": 0,
+        "input_tokens": "<input_tokens>",
+        "cache_creation_input_tokens": "<cache_creation_input_tokens>",
+        "cache_read_input_tokens": "<cache_read_input_tokens>",
+        "output_tokens": "<output_tokens>",
         "server_tool_use": {
           "web_search_requests": 0,
           "web_fetch_requests": 0
@@ -168,10 +168,10 @@
       "permission_denials": [],
       "modelUsage": {
         "winter-test/echo": {
-          "inputTokens": 200,
-          "outputTokens": 0,
-          "cacheReadInputTokens": 0,
-          "cacheCreationInputTokens": 0,
+          "inputTokens": "<inputTokens>",
+          "outputTokens": "<outputTokens>",
+          "cacheReadInputTokens": "<cacheReadInputTokens>",
+          "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
           "costUSD": 0,
           "canonicalModel": "winter-test/echo"
@@ -208,10 +208,10 @@
         "output_tokens_details": {
           "thinking_tokens": 0
         },
-        "input_tokens": 100,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "output_tokens": 0,
+        "input_tokens": "<input_tokens>",
+        "cache_creation_input_tokens": "<cache_creation_input_tokens>",
+        "cache_read_input_tokens": "<cache_read_input_tokens>",
+        "output_tokens": "<output_tokens>",
         "server_tool_use": {
           "web_search_requests": 0,
           "web_fetch_requests": 0
@@ -228,10 +228,10 @@
       "permission_denials": [],
       "modelUsage": {
         "winter-test/echo": {
-          "inputTokens": 300,
-          "outputTokens": 0,
-          "cacheReadInputTokens": 0,
-          "cacheCreationInputTokens": 0,
+          "inputTokens": "<inputTokens>",
+          "outputTokens": "<outputTokens>",
+          "cacheReadInputTokens": "<cacheReadInputTokens>",
+          "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
           "costUSD": 0,
           "canonicalModel": "winter-test/echo"
@@ -268,10 +268,10 @@
         "output_tokens_details": {
           "thinking_tokens": 0
         },
-        "input_tokens": 950,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "output_tokens": 0,
+        "input_tokens": "<input_tokens>",
+        "cache_creation_input_tokens": "<cache_creation_input_tokens>",
+        "cache_read_input_tokens": "<cache_read_input_tokens>",
+        "output_tokens": "<output_tokens>",
         "server_tool_use": {
           "web_search_requests": 0,
           "web_fetch_requests": 0
@@ -288,10 +288,10 @@
       "permission_denials": [],
       "modelUsage": {
         "winter-test/echo": {
-          "inputTokens": 1250,
-          "outputTokens": 0,
-          "cacheReadInputTokens": 0,
-          "cacheCreationInputTokens": 0,
+          "inputTokens": "<inputTokens>",
+          "outputTokens": "<outputTokens>",
+          "cacheReadInputTokens": "<cacheReadInputTokens>",
+          "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
           "costUSD": 0,
           "canonicalModel": "winter-test/echo"
@@ -353,10 +353,10 @@
         "output_tokens_details": {
           "thinking_tokens": 0
         },
-        "input_tokens": 950,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "output_tokens": 0,
+        "input_tokens": "<input_tokens>",
+        "cache_creation_input_tokens": "<cache_creation_input_tokens>",
+        "cache_read_input_tokens": "<cache_read_input_tokens>",
+        "output_tokens": "<output_tokens>",
         "server_tool_use": {
           "web_search_requests": 0,
           "web_fetch_requests": 0
@@ -373,10 +373,10 @@
       "permission_denials": [],
       "modelUsage": {
         "winter-test/echo": {
-          "inputTokens": 2200,
-          "outputTokens": 0,
-          "cacheReadInputTokens": 0,
-          "cacheCreationInputTokens": 0,
+          "inputTokens": "<inputTokens>",
+          "outputTokens": "<outputTokens>",
+          "cacheReadInputTokens": "<cacheReadInputTokens>",
+          "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
           "costUSD": 0,
           "canonicalModel": "winter-test/echo"
