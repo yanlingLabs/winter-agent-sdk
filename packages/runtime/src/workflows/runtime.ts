@@ -23,7 +23,7 @@ import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphor
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
-import type { BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { persistWorkflowScript, workflowTranscriptDir, workflowRunsDir, resolveWorkflowByName } from "./store.ts";
 import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, type WorkerInit, type WorkflowRef } from "./bridge.ts";
 import type { WorkflowSessionRuntime } from "./host-registry.ts";
@@ -123,7 +123,7 @@ export interface WorkflowRuntimeDeps {
   /** Overridable resolver for a nested `workflow(nameOrRef)`. Defaults to store.ts's project resolution. */
   resolveNestedWorkflow?: (
     ref: WorkflowRef,
-    ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile; pluginWorkflows?: readonly { name: string; workflowsPath?: string }[] },
+    ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile; pluginWorkflows?: readonly { name: string; workflowsPath?: string }[]; winterHome?: string; settingSources?: readonly SettingSource[] },
   ) => Promise<{ ok: true; source: string } | { ok: false; error: string }>;
   /** Skips the `sandbox-exec` availability refusal. Only a non-default spawner has any business setting this. */
   requireSandbox?: boolean;
@@ -709,6 +709,9 @@ export class WorkflowRuntime {
         ...(this.deps.session.brand !== undefined ? { brand: this.deps.session.brand } : {}),
         // WS-21 §6.3 item 1 (batch-2 fix round): a nested `workflow("plugin:name")` call.
         ...(this.deps.session.pluginWorkflows !== undefined ? { pluginWorkflows: this.deps.session.pluginWorkflows } : {}),
+        // SV-5 fix round 3: the user/project tiers, gated exactly like the top-level Workflow tool.
+        ...(this.deps.session.discoveryWinterHome !== undefined ? { winterHome: this.deps.session.discoveryWinterHome } : {}),
+        ...(this.deps.session.settingSources !== undefined ? { settingSources: this.deps.session.settingSources } : {}),
       });
     } catch (err) {
       resolved = { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -811,7 +814,7 @@ export class WorkflowRuntime {
 
 async function defaultNestedResolver(
   ref: WorkflowRef,
-  ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile; pluginWorkflows?: readonly { name: string; workflowsPath?: string }[] },
+  ctx: { cwd: string; trustedWorkspace: boolean; brand?: BrandProfile; pluginWorkflows?: readonly { name: string; workflowsPath?: string }[]; winterHome?: string; settingSources?: readonly SettingSource[] },
 ): Promise<{ ok: true; source: string } | { ok: false; error: string }> {
   if ("name" in ref) {
     const resolved = resolveWorkflowByName(ref.name, {
@@ -820,6 +823,9 @@ async function defaultNestedResolver(
       ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
       // WS-21 §6.3 item 1 (batch-2 fix round): a nested `workflow("plugin:name")` call.
       ...(ctx.pluginWorkflows !== undefined ? { pluginWorkflows: ctx.pluginWorkflows } : {}),
+      // SV-5 fix round 3: the user/project tiers, gated exactly like the top-level Workflow tool.
+      ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+      ...(ctx.settingSources !== undefined ? { settingSources: ctx.settingSources } : {}),
     });
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }

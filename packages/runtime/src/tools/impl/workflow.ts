@@ -291,6 +291,11 @@ function resolveSource(input: WorkflowInput, ctx: ToolExecutionContext): { ok: t
       ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
       // WS-21 §6.3 item 1, fix round 2: a `<plugin>:<name>` workflow.
       ...(ctx.pluginWorkflows !== undefined ? { pluginWorkflows: ctx.pluginWorkflows } : {}),
+      // SV-5 fix round 3: the user tier (`<winterHome>/workflows`) and its `settingSources` gate,
+      // and the project tier's `settingSources` gate (I-4) -- `ctx.winterHome` is the SAME resolved
+      // root skills/agents/commands already read (never `storeHome`, SV-1/SV-2's rule).
+      ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+      ...(ctx.settingSources !== undefined ? { settingSources: ctx.settingSources } : {}),
     });
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }

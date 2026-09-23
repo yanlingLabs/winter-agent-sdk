@@ -42,8 +42,9 @@ import { isAuthoredPromptRegion } from "./context/assembler.ts";
 import { loadPlugins } from "./plugins/loader.ts";
 import { resolveEnabledPlugins } from "./plugins/installed.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
-import { SkillIndex } from "./skills/store.ts";
+import { SkillIndex, type SkillMeta } from "./skills/store.ts";
 import { buildSkillListing, type SkillOverrides } from "./skills/listing.ts";
+import { listWorkflowsForListing } from "./workflows/store.ts";
 import { autoSkillPermissionEntries, isSkillEnabled, validateSkillsOption } from "./skills/option.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime } from "./skills/runtime.ts";
 import { FilesystemCommandResolver } from "./commands/resolver.ts";
@@ -938,17 +939,42 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         })
       : undefined;
 
+  // SV-5 (the router same-view test, real claude 2.1.250): claude's `getWorkflowCommands` folds
+  // EVERY discovered workflow (plugin + project + user) into the SAME `{type:"prompt", ...}` shape
+  // as a markdown slash command / "user-invocable" skill, and that shape feeds the init `skills`,
+  // init `slash_commands` AND the model-facing Skill listing alike -- a plugin workflow named
+  // `sv-flow` in plugin `sv-plugin` is listed as `sv-plugin:sv-flow` in all three, never under its
+  // filename, and the fixture proved Winter listed it in NONE of them. `workflows/store.ts`'s
+  // `listWorkflowsForListing` is the ONE discovery read shared by all three surfaces below, so they
+  // can never disagree about what exists (`workflows/store.ts`'s own header: this file resolves the
+  // user tier for the FIRST time, closing WS-11 §11 OQ2).
+  const workflowListing = listWorkflowsForListing({
+    cwd: config.cwd,
+    trustedWorkspace,
+    brand,
+    winterHome,
+    ...(settingSources !== undefined ? { settingSources } : {}),
+    ...(pluginWorkflows.length > 0 ? { pluginWorkflows } : {}),
+  });
+
   // (14) THE INIT FRAME's four P5 fields.
   //
   // `slash_commands` comes from `slashCommandNames(resolver, cwd)` -- which ALREADY includes the
   // engine's own `/compact`, so the engine must not prepend it a second time. The construction cwd
   // and the live cwd are the same value at startup, which is when the init frame is emitted.
-  const initSlashCommands = slashCommandNames(commandResolver, config.cwd);
+  // SV-5: a workflow's qualified/bare name is APPENDED, matching claude's own `getWorkflowCommands`
+  // fold -- ordering evidence for "relative to skills" was not found in the pinned dump (disclosed
+  // in the lane report), so workflows are appended AFTER the resolver's own names, a disclosed
+  // default rather than an invented pin.
+  const initSlashCommands = [...slashCommandNames(commandResolver, config.cwd), ...workflowListing.map((w) => w.name)];
   // `skills` reflects the session FILTER, not the whole index: a session configured with
   // `skills: ["review"]` should not advertise every skill on disk as available. `validateSkillsOption`
   // returns `index.names()` for `undefined`/`"all"` (capture (4): omission is not "skills off") and
   // the caller's own list otherwise -- including the empty one, which is a real configuration.
-  const initSkills = validation.ok ? validation.skills : [];
+  // SV-5: workflow names are UNCONDITIONALLY appended, never run through `isSkillEnabled`'s
+  // `config.skills` filter -- claude's own discovery has no equivalent "skills allowlist" axis for
+  // workflows, and `WorkflowListingEntry` carries no field such a filter could match against.
+  const initSkills = [...(validation.ok ? validation.skills : []), ...workflowListing.map((w) => w.name)];
   const initPlugins = pluginInitInfo(plugins.bundles);
   // The pinned field is REQUIRED (`sdk.d.ts:4879`). It reports the CONFIGURED name -- the same chain
   // the assembler resolves with -- never a name invented because the file behind it is missing:
@@ -1001,7 +1027,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // skills" configuration whose empty list a `size === 0 || ...` guard would read as "all" (the
   // exact inversion), and `isSkillEnabled` is alias-aware in both directions, so an option listing
   // `.winter:review` enables an invocation of `review` and vice versa.
-  const listedSkills = skillIndex.list().filter((skill) => isSkillEnabled(config.skills, skill.name, skillIndex));
+  // SV-5: a workflow becomes a SYNTHETIC `SkillMeta` entry, carrying the meta description straight
+  // into the same listing text a real skill's `description` would -- `SkillTier` has no dedicated
+  // "workflow" member (`skills/loader.ts`), so `source` is tagged with the ORIGIN tier a workflow
+  // actually has (`"project"` / `"user"` / `"plugin"`), which is also the pinned binary's own
+  // `loadedFrom` grouping in spirit (its `"skills"` catch-all for anything not built-in/plugin).
+  // Never filtered through `isSkillEnabled` -- see `initSkills`'s comment just above.
+  const workflowSkillEntries: SkillMeta[] = workflowListing.map((w) => ({ name: w.name, description: w.description, source: w.source, path: w.path }));
+  const listedSkills = [...skillIndex.list().filter((skill) => isSkillEnabled(config.skills, skill.name, skillIndex)), ...workflowSkillEntries];
   const skillListing = buildSkillListing(listedSkills, {
     ...(skillOverrides !== undefined ? { skillOverrides } : {}),
     ...(skillListingMaxDescChars !== undefined ? { maxDescChars: skillListingMaxDescChars } : {}),
@@ -1521,6 +1554,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       extraHookEntries,
       ...(attachmentProducers !== undefined ? { attachmentProducers } : {}),
       ...(pluginWorkflows.length > 0 ? { pluginWorkflows } : {}),
+      // SV-5 fix round 3 (I-4): so the Workflow tool's project/user tier resolution is source-gated
+      // exactly like skills/agents/rules -- the SAME `settingSources` local this file already
+      // threads to every one of those (line 623).
+      ...(settingSources !== undefined ? { settingSources } : {}),
       extraMcpServerSources,
       initSlashCommands,
       initSkills,

@@ -1,4 +1,4 @@
-import type { BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 // Phase 5 Lane W (task 4): the SESSION-SCOPED registration seam the Workflow tool reads.
 //
 // WHY THIS EXISTS. `WorkflowRunHost` (workflows/seam.ts, frozen) bundles four things a run needs:
@@ -39,8 +39,21 @@ export interface WorkflowSessionRuntime {
   sessionId?: string;
   /** The winter root this session persists under -- `resolveWinterHome()`'s value, whose `projects/` child holds the session area. */
   winterHome: string;
+  /**
+   * SV-5 fix round 3: the DISCOVERY root a nested `workflow(name)` call's project/user tier
+   * resolution reads (`resolveWorkflowByName`'s `winterHome` -- the user tier's
+   * `<winterHome>/workflows`) -- DELIBERATELY DISTINCT from `winterHome` above, which is the
+   * DURABLE persist root (`storeHome ?? winterHome`) capture (3)'s script path is built from.
+   * Conflating the two would read the user tier from the wrong root whenever a router-linked run
+   * has a `storeHome` that differs from its per-run `winterHome` -- exactly the SV-1/SV-2 bug class
+   * this field exists to not repeat. Absent means the nested resolver's user tier stays inert,
+   * matching every pre-fix-round-3 caller.
+   */
+  discoveryWinterHome?: string;
   /** P7a (D19): the session's brand -- the project dot-dir a `workflow(name)` resolves under, and the worker seatbelt's fences. */
   brand?: BrandProfile;
+  /** SV-5 fix round 3 (I-4): threaded to `resolveWorkflowByName` so a nested call's project/user tier resolution is source-gated exactly like the top-level Workflow tool. */
+  settingSources?: readonly SettingSource[];
   /**
    * WS-21 §6.3 item 1 (batch-2 fix round): the session's ENABLED plugins that ship a `workflows/`
    * directory -- threaded to `defaultNestedResolver` (workflows/runtime.ts) so a nested

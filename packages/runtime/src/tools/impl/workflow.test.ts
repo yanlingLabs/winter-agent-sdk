@@ -136,10 +136,13 @@ describe("input schema -- the seven fields and their three doc-asserted rules (i
     expect(result.output).toContain("missing.js");
   });
 
-  test("`name` resolves from the project's .winter/workflows/ (WS-11 §1.3)", async () => {
+  test("`name` resolves from the project's .winter/workflows/, by the script's own meta.name -- NOT its filename (SV-5)", async () => {
     mkdirSync(join(cwd, ".winter", "workflows"), { recursive: true });
+    // The filename ("named.js") deliberately differs from META's own declared name ("wf"): identity
+    // is the parsed meta block, matching claude's own project-tier discovery (store.test.ts's
+    // identical fixture shape for the plugin/project tiers).
     writeFileSync(join(cwd, ".winter", "workflows", "named.js"), META + `return "from-name";`);
-    const out = await output({ name: "named" });
+    const out = await output({ name: "wf" });
     expect(readFileSync(out.scriptPath!, "utf8")).toContain("from-name");
   });
 

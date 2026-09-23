@@ -1818,6 +1818,93 @@ describe("WS-21 §5.2/§6.3 item 5: the shared plugins root -- installed + enabl
   });
 });
 
+// SV-5 (the router same-view test, real claude 2.1.250): the fixture the coordinator measured
+// against -- a plugin `sv-plugin` with `workflows/flow-file.js` whose OWN declared `meta.name` is
+// `sv-flow` -- listed by claude as `sv-plugin:sv-flow` in the init `skills`, init `slash_commands`
+// AND the model-facing Skill listing, never under the filename. Before this fix the Winter runtime
+// listed it in none of the three.
+describe("SV-5: plugin/project/user workflows are listed in all three init surfaces", () => {
+  function writeSvPluginWorkflow(root: string): void {
+    mkdirSync(join(root, "workflows"), { recursive: true });
+    writeFileSync(join(root, "workflows", "flow-file.js"), `export const meta = { name: "sv-flow", description: "Runs the SV-5 flow" };\nreturn 1;`);
+  }
+
+  test("a plugin workflow is listed as <plugin>:<meta.name> in initSkills, initSlashCommands and skillListing", async () => {
+    const pluginDir = join(home, "plugin-src", "sv-plugin");
+    writeSvPluginWorkflow(pluginDir);
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "sv-plugin@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "sv-plugin@m": true } });
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv5-plugin", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toContain("sv-plugin:sv-flow");
+      expect(wiring.engineOptions.initSlashCommands).toContain("sv-plugin:sv-flow");
+      expect(wiring.engineOptions.skillListing.map((s) => s.name)).toContain("sv-plugin:sv-flow");
+      const listedEntry = wiring.engineOptions.skillListing.find((s) => s.name === "sv-plugin:sv-flow");
+      expect(listedEntry?.description).toContain("Runs the SV-5 flow");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a project workflow (trusted workspace) is listed by its bare meta.name, not its filename", async () => {
+    mkdirSync(join(cwd, ".winter", "workflows"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "workflows", "whatever-filename.js"), `export const meta = { name: "proj-flow", description: "A project flow" };\nreturn 1;`);
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv5-project", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user", "project"], trustedWorkspace: true },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toContain("proj-flow");
+      expect(wiring.engineOptions.initSlashCommands).toContain("proj-flow");
+      expect(wiring.engineOptions.skillListing.map((s) => s.name)).toContain("proj-flow");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a user workflow (<winterHome>/workflows) is listed even in an UNTRUSTED workspace -- WS-11 §11 OQ2 closed", async () => {
+    mkdirSync(join(home, "workflows"), { recursive: true });
+    writeFileSync(join(home, "workflows", "mine.js"), `export const meta = { name: "user-flow", description: "A user flow" };\nreturn 1;`);
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv5-user", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toContain("user-flow");
+      expect(wiring.engineOptions.initSlashCommands).toContain("user-flow");
+      expect(wiring.engineOptions.skillListing.map((s) => s.name)).toContain("user-flow");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("no workflows anywhere -- the three surfaces are unaffected, byte-identical to before this fix", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv5-none", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toEqual([]);
+      expect(wiring.engineOptions.initSlashCommands).not.toContain(undefined);
+      expect(wiring.engineOptions.skillListing).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
+
 // WS-21 §6.3 item 1 (fix round 2): a plugin's output-styles/ directory (PluginBundle.
 // outputStylesPath, resolved by L1b's loader but with no consumer until now) is wired into
 // context/output-styles.ts. Drives a REAL turn end to end (runOne + recordedProviderSystems, the

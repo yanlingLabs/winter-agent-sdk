@@ -34,7 +34,7 @@
 // "correctly-absent (v1)"). Per-tool ground truth (§2/§3) is treated as authoritative over §1.1's
 // introductory type sketch; `ToolDisposition` below widens to 5 members rather than silently
 // mis-filing those two tools under an existing value.
-import type { PermissionMode, BackgroundTaskMessage, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionMode, BackgroundTaskMessage, BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import { parseRule } from "../permissions/grammar.ts";
 // Fix round 1, RULING P3-B: probeReadWouldPrompt's boolean widened to this named 3-state result --
@@ -249,6 +249,14 @@ export interface ToolExecutionContext {
    * resolves, matching every pre-fix-round-2 caller.
    */
   pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  /**
+   * SV-5 fix round 3 (I-4): the session's resolved `settingSources` (`RuntimeConfig.settingSources`),
+   * for the Workflow tool's project/user tier resolution (`workflows/store.ts`'s
+   * `resolveWorkflowByName`) -- the same fact `production-wiring.ts` already resolves once per
+   * incarnation for skills/agents/rules/MCP. Absent means every tier is allowed, matching claude's
+   * own `settingSources` default and every pre-fix-round-3 caller.
+   */
+  settingSources?: readonly SettingSource[];
   /**
    * P7a (D19): the session's RESOLVED brand profile, threaded from `RuntimeConfig.brand`.
    *
@@ -1502,6 +1510,8 @@ export interface RegistryToolExecutorDeps {
   storeHome?: string;
   /** WS-21 §6.3 item 1, fix round 2: plugin workflow directories -- see `ToolExecutionContext.pluginWorkflows`. */
   pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  /** SV-5 fix round 3 (I-4): the session's resolved settingSources -- see `ToolExecutionContext.settingSources`. */
+  settingSources?: readonly SettingSource[];
   /** P7a (D19): the session's resolved brand -- see `ToolExecutionContext.brand`. */
   brand?: BrandProfile;
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
@@ -1605,6 +1615,8 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.storeHome !== undefined ? { storeHome: deps.storeHome } : {}),
         // WS-21 §6.3 item 1, fix round 2: forwarded so the Workflow tool can resolve a `<plugin>:<name>` workflow.
         ...(deps.pluginWorkflows !== undefined ? { pluginWorkflows: deps.pluginWorkflows } : {}),
+        // SV-5 fix round 3 (I-4): forwarded so the Workflow tool's project/user tiers are source-gated.
+        ...(deps.settingSources !== undefined ? { settingSources: deps.settingSources } : {}),
         ...(deps.brand !== undefined ? { brand: deps.brand } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,

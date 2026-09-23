@@ -287,9 +287,9 @@ describe("listWorkflowsForListing -- SV-5's three listing surfaces feed off this
       pluginWorkflows: [{ name: "sv-plugin", workflowsPath: join(pluginDir, "workflows") }],
     });
 
-    expect(listing).toContainEqual({ name: "build", description: "Builds", source: "project" });
-    expect(listing).toContainEqual({ name: "personal", description: "Mine", source: "user" });
-    expect(listing).toContainEqual({ name: "sv-plugin:sv-flow", description: "Runs the flow", source: "plugin" });
+    expect(listing).toContainEqual(expect.objectContaining({ name: "build", description: "Builds", source: "project" }));
+    expect(listing).toContainEqual(expect.objectContaining({ name: "personal", description: "Mine", source: "user" }));
+    expect(listing).toContainEqual(expect.objectContaining({ name: "sv-plugin:sv-flow", description: "Runs the flow", source: "plugin" }));
   });
 
   test("an untrusted workspace excludes the project entry but keeps user and plugin", () => {
@@ -315,7 +315,7 @@ describe("listWorkflowsForListing -- SV-5's three listing surfaces feed off this
     const listing = listWorkflowsForListing({ cwd, trustedWorkspace: true, winterHome });
     const rows = listing.filter((w) => w.name === "shared");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual({ name: "shared", description: "from project", source: "project" });
+    expect(rows[0]).toMatchObject({ name: "shared", description: "from project", source: "project" });
   });
 
   test("entries are sorted by name within the user/project group", () => {

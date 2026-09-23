@@ -42,6 +42,10 @@ import {
   WINTER_BRAND,
   envName,
   type BrandProfile,
+  // SV-5 fix round 3 (I-4): threaded to the Workflow tool's `resolveWorkflowByName` call so its
+  // project/user tier gating matches skills'/agents' own `settingSources` gate, not `trustedWorkspace`
+  // alone.
+  type SettingSource,
 } from "@yanlinglabs/winter-agent-sdk";
 // R-7b-4: the per-session messaging facet's wire shapes + the guards this side runs on an incoming
 // request, and the messaging contract the handler answers with.
@@ -1151,6 +1155,15 @@ export interface EngineOptions {
    */
   pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
   /**
+   * SV-5 fix round 3 (I-4): the session's resolved `settingSources`, threaded to
+   * `RegistryToolExecutorDeps.settingSources` / `ToolExecutionContext.settingSources` so the
+   * Workflow tool's project/user tier resolution is gated on `"project"`/`"user"` membership, not
+   * `trustedWorkspace` alone -- the same fact `production-wiring.ts` already resolves once per
+   * incarnation for skills/agents/rules. Absent means every tier is allowed, matching every
+   * pre-fix-round-3 caller.
+   */
+  settingSources?: readonly SettingSource[];
+  /**
    * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
    * knows one (production wiring answers from the catalog). Absent => the bare-id line.
    */
@@ -1905,6 +1918,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     exactRequestLayout,
     attachmentProducers,
     pluginWorkflows,
+    settingSources,
     describeModel,
     now: engineClock,
     commandResolver,
@@ -3478,6 +3492,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(config.storeHome !== undefined ? { storeHome: config.storeHome } : {}),
       // WS-21 §6.3 item 1, fix round 2: so the Workflow tool can resolve a `<plugin>:<name>` workflow.
       ...(pluginWorkflows !== undefined ? { pluginWorkflows } : {}),
+      // SV-5 fix round 3 (I-4): so the Workflow tool's project/user tier resolution is source-gated.
+      ...(settingSources !== undefined ? { settingSources } : {}),
       getCwd: () => currentCwd,
       probeReadAccess: (filePath: string) => probeReadAccess(filePath, makeEvalCtx()),
       // Task 2 (P3, WS-06 §3.5) completes this seam's engine plumbing. registry.ts's own
@@ -4188,6 +4204,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-21 §6.3 item 1 (batch-2 fix round): so a nested `workflow("plugin:name")` call resolves
       // a plugin workflow, matching the top-level Workflow tool.
       ...(pluginWorkflows !== undefined ? { pluginWorkflows } : {}),
+      // SV-5 fix round 3: `discoveryWinterHome` is DELIBERATELY NOT `workflowWinterHome` above --
+      // that one is the DURABLE persist root (`storeHome ?? winterHome`, WS-21 §3.7/§6.3 item 11);
+      // this is the RUN-folder root `resolveWorkflowByName`'s user tier reads (SV-1/SV-2's rule:
+      // discovery reads `winterHome`, never `storeHome`), so a nested `workflow(name)` call's
+      // project/user resolution matches the top-level Workflow tool's (`ctx.winterHome`) exactly.
+      ...(resolvedWinterHome !== undefined ? { discoveryWinterHome: resolvedWinterHome } : {}),
+      // SV-5 fix round 3 (I-4): so a nested call is source-gated exactly like the top-level tool.
+      ...(settingSources !== undefined ? { settingSources } : {}),
       projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env, sessionBrand),
       sessionTempDir: resolveSessionTempPaths().root,
       structured: structuredOutput,

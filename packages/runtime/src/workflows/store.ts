@@ -97,7 +97,7 @@ export interface WorkflowDiscoveryOptions {
    * `trustedWorkspace:true` -- must pass it; nothing derives it from `trustedWorkspace`, which is a
    * different, narrower gate (R4-7) than this one.
    */
-  settingSources?: SettingSource[] | undefined;
+  settingSources?: readonly SettingSource[] | undefined;
 }
 
 export interface ResolveWorkflowByNameOptions extends WorkflowDiscoveryOptions {
@@ -125,7 +125,7 @@ export function listBuiltinWorkflows(): string[] {
  */
 const WORKFLOW_SCRIPT_MAX_BYTES = 524288;
 
-function sourcesAllow(settingSources: SettingSource[] | undefined, tier: SettingSource): boolean {
+function sourcesAllow(settingSources: readonly SettingSource[] | undefined, tier: SettingSource): boolean {
   return settingSources === undefined || settingSources.includes(tier);
 }
 
@@ -244,6 +244,8 @@ export interface WorkflowListingEntry {
   name: string;
   description: string;
   source: "project" | "user" | "plugin";
+  /** The script's real filesystem path -- carried through so a caller building a `SkillMeta`-shaped synthetic entry (production-wiring.ts) never has to invent one. */
+  path: string;
 }
 
 /**
@@ -267,18 +269,18 @@ export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): Workflo
   for (const plugin of opts.pluginWorkflows ?? []) {
     if (plugin.workflowsPath === undefined) continue;
     for (const w of [...discoverWorkflowsInDir(plugin.workflowsPath).values()].sort((a, b) => a.name.localeCompare(b.name))) {
-      out.push({ name: `${plugin.name}:${w.name}`, description: w.description, source: "plugin" });
+      out.push({ name: `${plugin.name}:${w.name}`, description: w.description, source: "plugin", path: w.path });
     }
   }
-  const merged = new Map<string, { name: string; description: string; source: "project" | "user" }>();
+  const merged = new Map<string, WorkflowListingEntry>();
   if (sourcesAllow(opts.settingSources, "user") && opts.winterHome !== undefined) {
     for (const w of discoverWorkflowsInDir(join(opts.winterHome, "workflows")).values()) {
-      merged.set(w.name, { name: w.name, description: w.description, source: "user" });
+      merged.set(w.name, { name: w.name, description: w.description, source: "user", path: w.path });
     }
   }
   if (opts.trustedWorkspace && sourcesAllow(opts.settingSources, "project")) {
     for (const w of discoverWorkflowsInDir(join(opts.cwd, projectWorkflowsDir(opts.brand))).values()) {
-      merged.set(w.name, { name: w.name, description: w.description, source: "project" });
+      merged.set(w.name, { name: w.name, description: w.description, source: "project", path: w.path });
     }
   }
   for (const w of [...merged.values()].sort((a, b) => a.name.localeCompare(b.name))) out.push(w);
