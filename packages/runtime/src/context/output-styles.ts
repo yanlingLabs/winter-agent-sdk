@@ -37,6 +37,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { capBytes, neutralizeReminderTags } from "./injection.ts";
+import { parseFrontmatter } from "../subagents/definitions.ts";
 
 export const DEFAULT_OUTPUT_STYLE_NAME = "default";
 
@@ -131,16 +132,21 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
   return { name: fallbackName, description, body: capBytes(neutralizeReminderTags(body), OUTPUT_STYLE_MAX_BYTES).text, keepBasePrompt, source, replacementDowngraded: false };
 }
 
-// WS-21 §6.3 item 1 (fix round 2): a plugin-contributed output style, named as claude names one
-// (loadPluginOutputStyles.ts, the pinned reference) -- `<pluginName>:<baseName>`, where `baseName`
-// is the file's own frontmatter `name:` WHEN PRESENT, else the filename stem. This is the ONE place
-// in this file that lets frontmatter `name:` win: `parseStyleFile` above deliberately never does
-// (a project/user style's identity is always the filename stem, `name:` parsed and ignored, per its
-// own header) because a checked-in style must not be able to claim an identity a caller has not
-// validated. A plugin style cannot pull that trick against a NEIGHBOUR project/user style -- its
-// identity is always qualified with the installed plugin's own name, a namespace only the plugin's
-// installer controls -- so the parity fix the coordinator asked for (claude's own naming rule) does
-// not reopen that hole.
+// WS-21 §6.3 item 1 (fix round 2, corrected in the batch-2 fix round): a plugin-contributed output
+// style, named as claude names one -- `<pluginName>:<baseName>`, where `baseName` is the file's own
+// frontmatter `name:` WHEN PRESENT, else the filename stem. This is the ONE place in this file that
+// lets frontmatter `name:` win: `parseStyleFile` above deliberately never does (a project/user
+// style's identity is always the filename stem, `name:` parsed and ignored, per its own header)
+// because a checked-in style must not be able to claim an identity a caller has not validated. A
+// plugin style cannot pull that trick against a NEIGHBOUR project/user style -- its identity is
+// always qualified with the installed plugin's own name, a namespace only the plugin's installer
+// controls -- so the parity fix does not reopen that hole.
+//
+// USES THE SHARED `parseFrontmatter` (subagents/definitions.ts, the SAME `Bun.YAML.parse`-backed
+// parser matching claude's own pinned frontmatter module), not a third hand-rolled scanner: this
+// file used to carry its own `---`-line-scanning logic for plugin styles, duplicating
+// `parseStyleFile`'s ALREADY-simpler hand-rolled version above (itself untouched -- claude parity
+// was never asked for project/user styles, whose identity rule is deliberately the opposite one).
 function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName: string): ResolvedOutputStyle | null {
   let raw: string;
   try {
@@ -149,34 +155,32 @@ function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName
   } catch {
     return null;
   }
-  if (!raw.startsWith("---")) return null;
-  const end = raw.indexOf("\n---", 3);
-  if (end === -1) return null;
+  const { attrs, body: parsedBody } = parseFrontmatter(raw);
+  // No frontmatter fence at all (or one with zero keys -- functionally identical for every field
+  // below, all of which are optional) is not a style, matching `parseStyleFile`'s own "no fence ->
+  // not a style" gate one function up.
+  if (Object.keys(attrs).length === 0) return null;
 
-  let description = "";
-  let keepBasePrompt = true;
-  let declaredName: string | undefined;
-  for (const rawLine of raw.slice(3, end).split(/\r?\n/)) {
-    const line = rawLine.replace(/\r$/, "");
-    const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
-    if (m === null) continue;
-    const key = m[1]!.toLowerCase();
-    const value = m[2]!.trim();
-    if (key === "description") description = value;
-    else if (key === "keep-coding-instructions") keepBasePrompt = value !== "false";
-    else if (key === "name" && value.length > 0) declaredName = value;
-  }
+  const declaredNameRaw = attrs["name"];
+  const declaredName = typeof declaredNameRaw === "string" && declaredNameRaw.length > 0 ? declaredNameRaw : undefined;
   const baseName = declaredName ?? fallbackBaseName;
   if (!STYLE_NAME.test(baseName)) return null; // a declared name still cannot escape the same slug jail every OTHER identity in this file is held to
 
-  const body = raw.slice(end + 4).replace(/^\r?\n/, "");
+  const descriptionRaw = attrs["description"];
+  // claude falls back to an excerpt of the markdown body; Winter has no such extractor anywhere yet
+  // (disclosed rather than silently guessed), so an absent description falls back to a plain,
+  // honest label instead of inventing markdown-excerpt logic this fix round did not ask for.
+  const description = typeof descriptionRaw === "string" && descriptionRaw.length > 0 ? descriptionRaw : `Output style from the ${pluginName} plugin`;
+
+  // The frontmatter key keeps Norma's shipped spelling (matching `parseStyleFile` above); a real
+  // YAML boolean OR its quoted string form both mean "false" -- everything else, including absent, keeps the base prompt.
+  const keepRaw = attrs["keep-coding-instructions"];
+  const keepBasePrompt = !(keepRaw === false || keepRaw === "false");
+
   return {
     name: `${pluginName}:${baseName}`,
-    // claude falls back to an excerpt of the markdown body; Winter has no such extractor anywhere
-    // yet (disclosed rather than silently guessed), so an absent description falls back to a plain,
-    // honest label instead of inventing markdown-excerpt logic this fix round did not ask for.
-    description: description.length > 0 ? description : `Output style from the ${pluginName} plugin`,
-    body: capBytes(neutralizeReminderTags(body), OUTPUT_STYLE_MAX_BYTES).text,
+    description,
+    body: capBytes(neutralizeReminderTags(parsedBody.trim()), OUTPUT_STYLE_MAX_BYTES).text,
     keepBasePrompt,
     source: "plugin",
     replacementDowngraded: false,
