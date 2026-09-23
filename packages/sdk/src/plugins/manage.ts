@@ -85,7 +85,7 @@ export type PluginScope = "user" | "project" | "local";
 export interface PluginManagerOptions {
   /** claude's plugins root (WS-21 §6.3 item 5: `storeHome/plugins`) -- `installed_plugins.json` and `known_marketplaces.json` live directly under it. */
   pluginsRoot: string;
-  /** The `enabledPlugins` carrier for one scope -- the settings file at that tier (`sdk/settings.json`, `.winter/settings.json`, `.winter/settings.local.json`). */
+  /** The `enabledPlugins` carrier for one scope -- the settings file at that tier (the shared runtime home's own `settings.json` for `user`; the project dir's `settings.json`/`settings.local.json` for `project`/`local`). */
   settingsPathFor(scope: PluginScope): string;
 }
 
