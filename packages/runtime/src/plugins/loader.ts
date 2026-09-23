@@ -531,6 +531,18 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     // rather than `.length > 0`.
     const workflowsOverride = pluginWorkflowsOverride(root, name, manifest, workflowsPathWarnings);
     const workflowsPath = workflowsOverride === undefined ? componentDirIfPresent(root, "workflows") : undefined;
+    // Fix round 4 (minors, M-3's last bullet), advisor catch: claude's own `Tb` call site is guarded
+    // by `if(j.workflows&&Be){...D.push({type:"folder-shadowed-by-manifest",...})}` a few lines
+    // above the citation `pluginWorkflowsOverride`'s own header quotes -- a warning fires whenever
+    // the override key is present AND the default directory ALSO exists on disk, telling the plugin
+    // author their `workflows/` folder is being ignored rather than leaving them to notice by its
+    // absence from the listing. Checked independently of whether any override entry resolved (the
+    // same `!== undefined` reasoning `workflowsPath`'s own suppression above already uses).
+    if (workflowsOverride !== undefined && componentDirIfPresent(root, "workflows") !== undefined) {
+      workflowsPathWarnings.push(
+        `plugin "${name}": the "workflows/" folder exists but is not auto-loaded because the manifest sets "workflows"`,
+      );
+    }
     const binPath = componentDirIfPresent(root, "bin");
 
     seenRoots.add(identity);

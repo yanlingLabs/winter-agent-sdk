@@ -247,8 +247,11 @@ export interface ToolExecutionContext {
    * (`workflows/store.ts`'s `resolveWorkflowByName`). Fixed per incarnation, like every other
    * plugin-derived value this codebase threads. Absent means no qualified workflow name ever
    * resolves, matching every pre-fix-round-2 caller.
+   *
+   * Fix round 4 (minors, M-3's last bullet): also carries `workflowsPaths` -- see
+   * `engine.ts`'s own `EngineOptions.pluginWorkflows` for why this widened rather than a new field.
    */
-  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
   /**
    * SV-5 fix round 3 (I-4): the session's resolved `settingSources` (`RuntimeConfig.settingSources`),
    * for the Workflow tool's project/user tier resolution (`workflows/store.ts`'s
@@ -1509,7 +1512,7 @@ export interface RegistryToolExecutorDeps {
   /** WS-21 fix round 1, item 4: the shared store home -- see `ToolExecutionContext.storeHome`. */
   storeHome?: string;
   /** WS-21 §6.3 item 1, fix round 2: plugin workflow directories -- see `ToolExecutionContext.pluginWorkflows`. */
-  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
   /** SV-5 fix round 3 (I-4): the session's resolved settingSources -- see `ToolExecutionContext.settingSources`. */
   settingSources?: readonly SettingSource[];
   /** P7a (D19): the session's resolved brand -- see `ToolExecutionContext.brand`. */

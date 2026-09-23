@@ -486,6 +486,20 @@ describe("assembler -- output styles, and the byte-identical-when-unset invarian
     expect(out.system).not.toContain("## Task execution");
   });
 
+  // Advisor catch: claude's own gate (`M===null||M.keepCodingInstructions===!0`) tests only whether
+  // the STYLE OBJECT exists, never whether its body is non-empty -- `assembler.ts`'s own
+  // `dropCodingInstructions` computation deliberately does not require `styleBody !== undefined`.
+  // An empty-bodied keyless style therefore still cuts the section even though it contributes
+  // nothing to the dynamic half; a resolver that gated the drop on `styleBody` (the pre-fix-round-4
+  // shape) would keep the section here, which is the wrong answer.
+  test("I-F: an empty-bodied style with no key still drops the coding-instructions section -- the gate is the style object existing, not the body", () => {
+    mkdirSync(join(home, "output-styles"), { recursive: true });
+    writeFileSync(join(home, "output-styles", "empty-nokey.md"), "---\ndescription: d\n---\n", "utf8");
+    const out = assemble({ config: cfg({ systemPrompt: { type: "preset", preset: "claude_code" }, outputStyle: "empty-nokey" }) });
+    expect(out.system).not.toContain("## Task execution");
+    expect(out.system).toContain("## Careful actions"); // the rest of the preset still stands
+  });
+
   // The MINIMAL arm (`systemPrompt` undefined) has no coding-instructions section at all, so a drop
   // request is a safe no-op -- a DISCLOSED behaviour change from pre-fix-round-4, where this same
   // configuration replaced the whole minimal prompt with the style (rider 22's TRUSTED test below

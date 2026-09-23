@@ -1153,8 +1153,15 @@ export interface EngineOptions {
    * Workflow tool's `<plugin>:<name>` resolution (`workflows/store.ts`) can find them. A plain
    * value, not a getter: a session's loaded-plugin set is resolved once per incarnation, like
    * skills/agents/MCP are.
+   *
+   * Fix round 4 (minors, M-3's last bullet): `workflowsPaths` (a manifest `workflows` override,
+   * `plugins/bundle.ts`'s own citation) is carried alongside `workflowsPath` from here on -- every
+   * hop between `production-wiring.ts`'s own local array and `workflows/store.ts`'s consumption of
+   * it forwards this SAME array reference rather than rebuilding each element, so the value already
+   * survived the trip before this type caught up; widened here so a future hop that DOES rebuild an
+   * element is caught by the type checker instead of silently dropping the field.
    */
-  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
   /**
    * SV-5 fix round 3 (I-4): the session's resolved `settingSources`, threaded to
    * `RegistryToolExecutorDeps.settingSources` / `ToolExecutionContext.settingSources` so the

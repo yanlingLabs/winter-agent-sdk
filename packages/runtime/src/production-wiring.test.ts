@@ -1938,6 +1938,68 @@ describe("SV-5: plugin/project/user workflows are listed in all three init surfa
     }
   });
 
+  // Fix round 4 (minors, M-3's last bullet), the advisor's own discriminating test: the SAME claim
+  // as the test above, but for a plugin whose workflow lives ONLY behind a manifest `workflows`
+  // override -- no default `workflows/` directory exists at all. `engine.ts`'s `EngineOptions.
+  // pluginWorkflows`, `tools/registry.ts`'s `RegistryToolExecutorDeps`/`ToolExecutionContext`, and
+  // `workflows/runtime.ts`'s nested-resolver `ctx` all forward the SAME array reference rather than
+  // rebuilding each element, so `workflowsPaths` was never actually stripped at runtime -- but their
+  // TYPES did not say so until this round, and this is the end-to-end proof that removes all doubt
+  // rather than trusting the structural trace alone. Proves BOTH halves the coordinator's own ruling
+  // needs: the plugin is LISTED (production-wiring.ts's `pluginWorkflows` filter admits an
+  // override-only plugin) AND the Skill/Workflow tool path actually RESOLVES it.
+  test('fix round 4: Skill("<plugin>:<name>") resolves a workflow reachable ONLY through a manifest `workflows` override, no default directory', async () => {
+    const { WINTER_PLUGIN_MANIFEST_DIR } = await import("./plugins/manifest.ts");
+    const pluginDir = join(home, "plugin-src", "override-plugin");
+    mkdirSync(join(pluginDir, "custom-flows"), { recursive: true });
+    writeFileSync(join(pluginDir, "custom-flows", "flow-file.js"), `export const meta = { name: "override-flow", description: "Runs from the override" };\nreturn 1;`);
+    mkdirSync(join(pluginDir, WINTER_PLUGIN_MANIFEST_DIR), { recursive: true });
+    writeFileSync(join(pluginDir, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ name: "override-plugin", workflows: "./custom-flows" }));
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "override-plugin@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "override-plugin@m": true } });
+
+    const sessionId = "s-fr4-override-skill-workflow";
+    const wiring = await buildProductionWiring({
+      config: { sessionId, cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toContain("override-plugin:override-flow");
+      const { getSkillSessionRuntime } = await import("./skills/runtime.ts");
+      const { skillExecutor } = await import("./tools/impl/skill.ts");
+      const runtime = getSkillSessionRuntime(sessionId);
+      expect(runtime, "production-wiring must have registered a skill session runtime").toBeDefined();
+      const ctx = {
+        cwd,
+        home,
+        sessionId,
+        readState: { markRead: () => {}, hasRead: () => false } as unknown as import("./tools/registry.ts").ToolExecutionContext["readState"],
+        emitFrame: () => {},
+        permissions: { probeReadAccess: () => "silent" as const },
+        tempDir: "/nowhere",
+        sandboxSettings: {} as import("./tools/registry.ts").ToolExecutionContext["sandboxSettings"],
+        session: {
+          setCwd() {},
+          addBoundedRoot() {},
+          removeBoundedRoot() {},
+          setPermissionMode() {},
+          getBoundedRoots: () => [],
+          getPermissionMode: () => "default",
+          getSessionRoot: () => cwd,
+          setSessionRoot() {},
+        },
+      } as import("./tools/registry.ts").ToolExecutionContext;
+      const result = await skillExecutor.execute({ skill: "override-plugin:override-flow" }, ctx);
+      expect(result.isError).toBeUndefined();
+      expect(result.output).toContain('Workflow({ name: "override-plugin:override-flow" })');
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("a project workflow (trusted workspace) is listed by its bare meta.name, not its filename", async () => {
     mkdirSync(join(cwd, ".winter", "workflows"), { recursive: true });
     writeFileSync(join(cwd, ".winter", "workflows", "whatever-filename.js"), `export const meta = { name: "proj-flow", description: "A project flow" };\nreturn 1;`);

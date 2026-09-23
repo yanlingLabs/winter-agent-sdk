@@ -60,8 +60,12 @@ export interface WorkflowSessionRuntime {
    * `workflow("plugin:name")` call resolves a plugin workflow exactly like the top-level Workflow
    * tool does (tools/impl/workflow.ts). Absent means a qualified name never resolves here either,
    * matching every pre-fix caller.
+   *
+   * Fix round 4 (minors, M-3's last bullet): also carries `workflowsPaths` -- see
+   * `engine.ts`'s `EngineOptions.pluginWorkflows` for why every hop widened rather than gaining a
+   * new field.
    */
-  pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+  pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
   /** `compatibilityKeys(cwd).transcriptProjectKey`, after `resolveProjectDirName` -- the SAME key the transcript store uses, never a second derivation. */
   projectKey: string;
   /** The session's own temp directory (paths/temp.ts) -- where per-run journals live (store.ts's `workflowRunsDir`). */

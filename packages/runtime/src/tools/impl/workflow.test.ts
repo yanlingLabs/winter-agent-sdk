@@ -168,6 +168,22 @@ describe("input schema -- the seven fields and their three doc-asserted rules (i
     expect(readFileSync(out.scriptPath!, "utf8")).toContain("from-sv-flow");
   });
 
+  // Fix round 4 (minors, M-3's last bullet), the advisor's own discriminating test: SV-5's test
+  // above proves `workflowsPath` reaches the tool executor; this proves `workflowsPaths` (the
+  // manifest override) does too, for a plugin that has ONLY the override -- no default `workflows/`
+  // directory at all, so a silent field-strip anywhere on the engine.ts/registry.ts hop would make
+  // this answer "unknown workflow" even though the SAME plugin is correctly LISTED as a skill.
+  test("fix round 4: a plugin with ONLY workflowsPaths (no workflowsPath) resolves end to end through the tool executor", async () => {
+    const pluginDir = mkdtempSync(join(tmpdir(), "winter-wf-tool-override-"));
+    // Deliberately NOT named "workflows" -- proving this is the manifest override path, not a
+    // default-directory scan that happened to find the file anyway.
+    writeFileSync(join(pluginDir, "custom.js"), `export const meta = { name: "override-flow", description: "d" };\nreturn "from-override";`);
+    const out = await output({ name: "override-pkg:override-flow" }, makeCtx({ pluginWorkflows: [{ name: "override-pkg", workflowsPaths: [pluginDir] }] }));
+    expect(out.error).toBeUndefined();
+    expect(out.workflowName).toBe("override-flow");
+    expect(readFileSync(out.scriptPath!, "utf8")).toContain("from-override");
+  });
+
   // Fix round 3 (M-3's last bullet, WS-11 §11 OQ2 closed): the user tier, end to end through the
   // tool executor via `ctx.winterHome` -- the same field skills/agents/commands already read.
   test("a user-tier workflow (<ctx.winterHome>/workflows) resolves end to end through the tool executor", async () => {

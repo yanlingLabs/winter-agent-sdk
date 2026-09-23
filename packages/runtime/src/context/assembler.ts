@@ -90,7 +90,7 @@ interface PromptRegion {
   staticBlocks: string[];
   /** The caller's own session-specific blocks (the `string[]` arm's half after the boundary). */
   callerDynamicBlocks: string[];
-  /** Winter's own authored text produced this region, so a style may replace it and a version is stamped. */
+  /** Winter's own authored text produced this region, so a style may drop its coding-instructions section (fix round 4/I-F) and a version is stamped. */
   authored: boolean;
   presetVersion?: string;
   /** WS-11 §6.3, and INERT unless the preset arm asked for it (item (c): its own pinned doc says so). */
@@ -313,7 +313,9 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       const systemContextPlacement = !gitWanted ? "none" : region.excludeDynamicSections ? "userContext" : "system";
 
       // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT.
-      // Present only when a project-tier style genuinely asked to replace and was refused.
+      // Present only when a project-tier style genuinely asked to drop the coding-instructions
+      // section (fix round 4/I-F narrowed WHAT this refuses, not whether it can be refused) and was
+      // refused.
       return {
         system,
         systemParts: { staticParts, dynamicParts, hasBoundary: region.authored || region.callerBoundary === true },

@@ -181,6 +181,14 @@ function escapeRegexChar(ch: string): string {
   return REGEXP_SPECIAL.test(ch) ? "\\" + ch : ch;
 }
 
+// WS-21 fix round 4 (minors): SUPERSEDED for Read/Edit permission-rule matching by
+// `permissions/file-rules.ts` (C-1, built on the real `ignore` package) -- retained here only as the
+// matcher for `context/rules.ts`'s `paths:` conditional-attachment globs (F17), which were never
+// asked to replicate claude's file-rule grammar bullet-for-bullet. Said plainly here, at the top,
+// because two of the bullets below now say the opposite of what this block's own next two lines
+// claim ("ported... exactly") -- see those two bullets' own fix-round-4 notes for which claims are
+// wrong and why; this note is what makes reading top-down not land on the wrong one first.
+//
 // SV-6 (the router same-view test, real claude 2.1.250): the ABSOLUTE-PATH-PATTERN grammar, ported
 // to match claude's own file-rule matcher exactly -- the bundled `ignore` npm package (dump-
 // confirmed, claude CLI 2.1.250 / agent-sdk 0.3.250: the package's own `Ignore` class,

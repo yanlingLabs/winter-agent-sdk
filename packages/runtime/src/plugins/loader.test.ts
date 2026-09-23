@@ -359,15 +359,32 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
 // own build-time resolution (escaping, existence, string vs array, the default-dir shadow);
 // `workflows/store.test.ts` covers the consumption side (`discoverWorkflowsAt`).
 describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3's last bullet)", () => {
-  test("a STRING override resolves to workflowsPaths and SHADOWS the default directory", () => {
+  test("a STRING override resolves to workflowsPaths and SHADOWS the default directory, with a folder-shadowed-by-manifest warning", () => {
     const parent = mkTemp("winter-plugin-workflows-string-");
     const root = join(parent, "wf-plugin");
     mkdirSync(join(root, "custom-workflows"), { recursive: true });
     mkdirSync(join(root, "workflows"), { recursive: true }); // the default dir also exists...
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./custom-workflows" }));
-    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    const result = loadPlugins([{ type: "local", path: root }]);
+    const bundle = result.bundles[0]!;
     expect(bundle.workflowsPaths).toEqual([resolve(root, "custom-workflows")]);
     expect(bundle.workflowsPath).toBeUndefined(); // ...but is shadowed, not merged in
+    // Advisor catch: claude's own D.push({type:"folder-shadowed-by-manifest",...}) diagnostic --
+    // the plugin author is TOLD their workflows/ folder is being ignored, not left to notice by its
+    // absence from a listing.
+    expect(result.workflowsPathWarnings).toHaveLength(1);
+    expect(result.workflowsPathWarnings[0]).toContain("workflows/");
+    expect(result.workflowsPathWarnings[0]).toContain("not auto-loaded");
+  });
+
+  test("no folder-shadowed-by-manifest warning when the default directory does not exist -- there is nothing to shadow", () => {
+    const parent = mkTemp("winter-plugin-workflows-string-noshadow-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "custom-workflows"), { recursive: true });
+    // No `workflows/` directory this time.
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./custom-workflows" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.workflowsPathWarnings).toEqual([]);
   });
 
   test("an ARRAY override resolves every entry, directories and files alike", () => {
