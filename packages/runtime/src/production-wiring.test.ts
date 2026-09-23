@@ -1783,6 +1783,39 @@ describe("WS-21 §5.2/§6.3 item 5: the shared plugins root -- installed + enabl
       wiring.dispose();
     }
   });
+
+  // SV-4 (router same-view test): real claude loads a DIRECTORY marketplace's plugin from
+  // `enabledPlugins` ALONE, with NO install step / installed_plugins.json record at all. This test
+  // deliberately never calls `installPlugin` -- only `addMarketplace` (writes known_marketplaces.json)
+  // plus a hand-written `enabledPlugins` entry in settings.json, exactly the state a user reaches by
+  // editing settings directly (or a host that manages enablement without going through the install
+  // flow) rather than running the CLI's install command.
+  test("a plugin enabled ONLY in settings.json (no installed_plugins.json record) loads via its directory marketplace, matching real claude (SV-4)", async () => {
+    const { addMarketplace } = await import("@yanlinglabs/winter-agent-sdk");
+    const marketplaceDir = join(home, "local-marketplace-sv4");
+    mkdirSync(join(marketplaceDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "m4", owner: { name: "test" }, plugins: [{ name: "p4", source: "./plugins/p4" }] }),
+    );
+    writePluginContent(join(marketplaceDir, "plugins", "p4"));
+
+    const pluginsRoot = join(home, "plugins");
+    await addMarketplace({ pluginsRoot, settingsPathFor: () => join(home, "settings.json") }, marketplaceDir);
+    // NO installPlugin call -- installed_plugins.json is never written for "p4@m4" at all.
+    writeSettings(home, { enabledPlugins: { "p4@m4": true } });
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-marketplace-sv4", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.initSkills).toEqual(["p4:ship"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
 });
 
 // WS-21 §6.3 item 1 (fix round 2): a plugin's output-styles/ directory (PluginBundle.
