@@ -16,7 +16,7 @@ import { splitFrames, encodeFrame, SDK_VERSION } from "@yanlinglabs/winter-agent
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { stubExecutor, isTestProviderName, testProviderForNamespace, registerBgTaskTestTool } from "./provider/mock.ts";
-import { resolveEngineSession, resolveProductionWinterHome } from "./store/dialect.ts";
+import { resolveEngineSession, resolveProductionWinterHome, resolveProductionStoreHome } from "./store/dialect.ts";
 // Phase 4 Task 8 (rider 18): the ONE production registration of Lane C's child-engine factory --
 // see that module's own header for why it is a SHARED helper both entrypoints call rather than an
 // inline one-liner here (cross-leg equivalence: a spawned/compiled child shares no module state with
@@ -253,6 +253,11 @@ try {
   const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
     config,
     resolveWinterHome: () => resolveProductionWinterHome(config, process.env),
+    // WS-21 §6.3 item 3 (durable-write audit, fix round 2): every store `resolveEngineSession`
+    // builds (transcript, provider-state sidecar, permission journal, approval store, auto-counter
+    // store) now roots on this instead of `resolveWinterHome`'s own per-run folder -- see that
+    // parameter's own header in dialect.ts.
+    resolveStoreHome: () => resolveProductionStoreHome(config, process.env),
     env: process.env,
   });
   // Rider 18: registered BEFORE runEngine starts, so the very first turn's Agent call can spawn.
@@ -274,10 +279,20 @@ try {
   // store still reports "none -- no durable session store is configured" rather than advertising an
   // absolute path nothing writes. That ordering is pinned by a fixture.
   const childWinterHome = resolveProductionWinterHome(config, process.env);
+  // WS-21 §6.3 item 3 (durable-write audit, fix round 2): `childWinterHome` stays the per-run
+  // folder -- it is still the child's FLOOR ANCHOR (the comment above, unchanged) and
+  // `ChildEngineFactoryDeps.winterHome`'s own contract. The STORE OBJECT itself is a separate
+  // concern: it is where a child's transcript, provider-state sidecar and permission journal
+  // actually land, and rooting it on the per-run folder means a session's own subagent history
+  // vanishes when that folder is deleted after the run (WS-21 §2.1) -- exactly the class of bug
+  // this audit exists to close. `childDurableRoot` mirrors `resolveEngineSession`'s own
+  // `durableRoot` (dialect.ts): the shared store home when this incarnation has one, else the same
+  // per-run folder every pre-WS-21 caller already used, byte-identical.
+  const childDurableRoot = resolveProductionStoreHome(config, process.env) ?? childWinterHome;
   // ONE store object, shared by the child-engine factory and the fix wave's roster restore below --
   // `resolveEngineSession`'s own `store` is a narrower write-side `SessionPersistence`, which can
   // neither list a session's child subkeys nor read a sidecar back.
-  const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childWinterHome });
+  const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childDurableRoot });
   // Phase 5 Task 8. Built BEFORE both `registerDefaultChildEngineFactory` and runEngine, because two of its outputs must reach the engine's own
   // startup: the rule set (`withAutoSkillPermissions`, WS-11 §2.2's automatic `Skill(...)` entries,
   // which `runEngine` seeds once and never re-reads) and the init frame's four P5 fields.

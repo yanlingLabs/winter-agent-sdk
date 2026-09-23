@@ -12,7 +12,7 @@
 // `~/.norma`, `~/.claude`, the Keychain, or a real user's settings, and no path contains a real
 // username.
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtim
 import { providerCredentialRef } from "./provider/credential-api.ts";
 import { loadCatalog, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
-import { recordedProviderSystems, resetRecordedProviderSystems } from "./provider/mock.ts";
+import { recordedProviderSystems, resetRecordedProviderSystems, scriptedProvider } from "./provider/mock.ts";
 import type { Provider, ProviderRequest, ProviderTurn } from "./engine.ts";
 
 let home: string;
@@ -465,6 +465,61 @@ describe("WS-21 §6.3 item 5 (fix round 1): settingsEnv reaches the child env, a
       expect(hostManaged.settings()?.outputStyle).toBe("explanatory");
     } finally {
       hostManaged.dispose();
+    }
+  });
+});
+
+// WS-21 §6.3 item 3 (durable-write audit, fix round 2): the checkpoint sink was constructed with
+// `home: winterHome` (bare, the PER-RUN folder), while the deny floors that are supposed to protect
+// its own blobs (permissions/protected.ts, engine.ts, sandbox/profile.ts -- item 6, fix round 1)
+// anchor on `storeHome ?? winterHome`. A session with a configured store home therefore had its
+// REAL checkpoint blobs written to an UNPROTECTED location while the floor guarded a directory the
+// sink never touched. Drives the real engine end to end (a real Write tool call, no `tools` override
+// -- runEngine builds its own registry-backed executor, per the P3 fix wave's own "omitted tools"
+// rule) so this proves the actual file lands under storeHome, not a claim about the construction
+// call's arguments alone.
+describe("WS-21 §6.3 item 3 (durable-write audit, fix round 2): the checkpoint sink anchors on storeHome", () => {
+  test("a real Write's checkpoint blob is written under storeHome's file-history/, never under winterHome's", async () => {
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-t8-checkpoint-run-"));
+    const storeHome = mkdtempSync(join(tmpdir(), "winter-t8-checkpoint-store-"));
+    const work = mkdtempSync(join(tmpdir(), "winter-t8-checkpoint-work-"));
+    try {
+      const sessionId = "22222222-2222-4222-8222-222222222222";
+      const tracked = join(work, "tracked.txt");
+      writeFileSync(tracked, "original\n");
+      const config: RuntimeConfig = {
+        sessionId,
+        cwd: work,
+        model: "winter-test/echo",
+        enableFileCheckpointing: true,
+        allowedTools: ["Read", "Write"],
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        sandbox: { enabled: false },
+      };
+      const provider = scriptedProvider([
+        // READ THEN WRITE: the real registry-backed executor's read-ladder (permissions/evaluator.ts)
+        // refuses a Write to a file this session has not read yet, even under bypassPermissions --
+        // the same shape subagents/child-engine.test.ts's own fixtures use for the identical reason.
+        { kind: "tool_use", calls: [{ id: "c0", name: "Read", input: { file_path: tracked } }] },
+        { kind: "tool_use", calls: [{ id: "c1", name: "Write", input: { file_path: tracked, content: "changed\n" } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, undefined, { WINTER_HOME: winterHome, WINTER_STORE_HOME: storeHome });
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+      for await (const _chunk of proc.stdout) {
+        /* drain to completion */
+      }
+      await proc.exited;
+
+      expect(readFileSync(tracked, "utf8"), "the write itself must have actually landed").toBe("changed\n");
+      expect(existsSync(join(storeHome, "file-history", sessionId)), "the checkpoint blob/index must be under storeHome's file-history/<sessionUuid>/").toBe(true);
+      expect(existsSync(join(winterHome, "file-history")), "winterHome's own file-history/ must never be created at all").toBe(false);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(storeHome, { recursive: true, force: true });
+      rmSync(work, { recursive: true, force: true });
     }
   });
 });

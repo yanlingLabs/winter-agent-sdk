@@ -883,7 +883,15 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     config.enableFileCheckpointing === true
       ? createFileCheckpointSink({
           sessionUuid: config.sessionId,
-          home: winterHome,
+          // WS-21 §6.3 item 3 (durable-write audit, fix round 2): was bare `winterHome` -- the
+          // checkpoint blobs and index.jsonl this sink writes are exactly what
+          // `permissions/protected.ts`/`engine.ts`/`sandbox/profile.ts`'s "file-history" floors deny
+          // writes to (item 6, fix round 1), and those floors anchor on `storeHome ?? winterHome`
+          // (`durableRoot`, engine.ts's own naming). A sink still writing to bare `winterHome` while
+          // the floor moved to protect `storeHome` would have left the REAL blobs unprotected under
+          // a session with a configured store home -- this is that gap closed, not just a
+          // durability fix.
+          home: storeHome ?? winterHome,
           cwd: config.cwd,
           env,
           // Rider 25: the rewind fence. The session's own writable roots, so a file genuinely edited

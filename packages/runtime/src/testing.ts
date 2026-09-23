@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SpawnedRuntimeProcess, RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import { encodeFrame, splitFrames, WINTER_BRAND, envName } from "@yanlinglabs/winter-agent-sdk";
+import { encodeFrame, splitFrames, WINTER_BRAND, envName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
 import { Queue } from "./protocol/channel.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
@@ -91,6 +91,20 @@ function resolveInMemoryWinterHome(config: RuntimeConfig, env: Record<string, st
   const override = env?.[envName(config.brand ?? WINTER_BRAND, "HOME")];
   if (override !== undefined && override.trim() !== "") return override;
   return mkdtempSync(join(tmpdir(), "winter-inmemory-"));
+}
+
+// WS-21 §6.3 item 3 (durable-write audit, fix round 2): the in-memory leg's own storeHome
+// resolution -- the SAME "never reach the real process.env, only this call's own `env` parameter"
+// discipline as `resolveInMemoryWinterHome` above. UNDEFINED, never a fresh mkdtemp: unlike
+// winterHome (which every caller needs SOME root for), "no shared store was configured" is a
+// legitimate, common outcome production also produces, and every durable-store construction below
+// degrades to the SAME hermetic winterHome root the "ONE root per virtual process" comment above
+// already established -- so a test that never sets this is byte-identical to pre-fix-round-2
+// behaviour, and one that DOES (a `WINTER_STORE_HOME` in its own `env`, or `config.storeHome`) can
+// assert a child's transcript actually lands under a directory distinct from the per-run root.
+function resolveInMemoryStoreHome(config: RuntimeConfig, env: Record<string, string | undefined> | undefined): string | undefined {
+  if (config.storeHome !== undefined) return config.storeHome;
+  return env?.[storeHomeEnvName(config.brand ?? WINTER_BRAND)];
 }
 
 function parseConfigFromArgv(argv: string[]): RuntimeConfig {
@@ -199,6 +213,11 @@ export function inMemoryProcess(
       const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
         config,
         resolveWinterHome: winterHomeOnce,
+        // WS-21 §6.3 item 3 (durable-write audit, fix round 2): mirrors main.ts's own
+        // `resolveStoreHome` -- see `resolveInMemoryStoreHome`'s own header for why this degrades to
+        // `winterHomeOnce()`'s hermetic root (never a real env read) when neither `config.storeHome`
+        // nor this call's own `env` sets one.
+        resolveStoreHome: () => resolveInMemoryStoreHome(config, env),
         env: env ?? {},
       });
       // Phase 4 Task 8 (rider 18): the IDENTICAL registration main.ts performs, so the in-memory leg
@@ -221,9 +240,13 @@ export function inMemoryProcess(
       // store still reports "none -- no durable session store is configured" rather than advertising an
       // absolute path nothing writes. That ordering is pinned by a fixture.
       const childWinterHome = winterHomeOnce();
+      // WS-21 §6.3 item 3 (durable-write audit, fix round 2): mirrors main.ts's own
+      // `childDurableRoot` -- `childWinterHome` stays the floor anchor (unchanged), the STORE OBJECT
+      // roots on the shared store home when this run has one.
+      const childDurableRoot = resolveInMemoryStoreHome(config, env) ?? childWinterHome;
       // ONE store object, shared by the child-engine factory and the roster restore below (see
       // main.ts's own identical comment for why `resolveEngineSession`'s `store` cannot serve).
-      const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childWinterHome });
+      const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childDurableRoot });
       // Phase 5 Task 8: the same wiring main.ts builds, from the same function, against this leg's
       // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
       // `process.env` fallback (that function's own header), so a differential/equivalence run can

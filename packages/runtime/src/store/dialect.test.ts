@@ -31,6 +31,8 @@ import {
   claudeCompactBoundaryEntry,
   claudeCompactSummaryEntry,
   CLAUDE_COMPACT_SUMMARY_PREAMBLE,
+  resolveEngineSession,
+  resolveProductionStoreHome,
   type Chain,
   type SessionCtx,
 } from "./dialect.ts";
@@ -707,6 +709,115 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
   });
 });
 
+// WS-21 §6.3 item 3 (durable-write audit, fix round 2): `resolveEngineSession` built its transcript
+// store, provider-state sidecar, permission journal, approval store and auto-counter store on
+// `resolveWinterHome()` alone -- the PER-RUN folder, deleted after the run under WS-21's own
+// architecture. A session's own durable state must survive that deletion, which means it must
+// anchor on the shared STORE home, never the run folder. These tests drive the REAL stack
+// end-to-end (`inMemoryProcess`, the same pattern the "engine wiring" describe block above uses),
+// plus two direct unit tests of `resolveEngineSession`/`resolveProductionStoreHome` for the branches
+// an end-to-end run cannot cheaply isolate.
+describe("WS-21 §6.3 item 3 (durable-write audit, fix round 2): durable writes anchor on the store home, never the run folder", () => {
+  test("a session's transcript lands under WINTER_STORE_HOME, and WINTER_HOME's own projects/ tree is never created at all", async () => {
+    const winterHome = freshHome();
+    const storeHome = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const config: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" };
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], undefined, undefined, { WINTER_HOME: winterHome, WINTER_STORE_HOME: storeHome });
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+      await drainAll(proc);
+      await proc.exited;
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      expect(existsSync(join(storeHome, "projects", projectKey, `${sessionId}.jsonl`)), "the transcript must be written under the STORE home").toBe(true);
+      expect(existsSync(join(winterHome, "projects")), "the RUN folder's own projects/ tree must never be created at all -- not even the directory").toBe(false);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(storeHome, { recursive: true, force: true });
+    }
+  });
+
+  test("with no WINTER_STORE_HOME set, the transcript stays rooted on WINTER_HOME (regression safety: byte-identical to pre-fix-round-2 behaviour)", async () => {
+    const winterHome = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const config: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" };
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], undefined, undefined, { WINTER_HOME: winterHome });
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+      await drainAll(proc);
+      await proc.exited;
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      expect(existsSync(join(winterHome, "projects", projectKey, `${sessionId}.jsonl`))).toBe(true);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
+  });
+
+  test("resolveEngineSession itself: the returned store, approvalStore and autoStateStore all anchor on resolveStoreHome, not resolveWinterHome (fresh-session branch)", async () => {
+    const winterHome = freshHome();
+    const storeHome = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const config: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" };
+      const result = await resolveEngineSession({ config, resolveWinterHome: () => winterHome, resolveStoreHome: () => storeHome, env: {} });
+      await result.store!.recordUserEntry("hi");
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      expect(existsSync(join(storeHome, "projects", projectKey, `${sessionId}.jsonl`))).toBe(true);
+      expect(existsSync(join(winterHome, "projects"))).toBe(false);
+
+      // approvalStore/autoStateStore share the identical `durableRoot` local (dialect.ts) the
+      // transcript store above does -- record through each to prove their files ALSO land under
+      // storeHome, not winterHome.
+      result.approvalStore!.record({
+        runtimeKind: "winter",
+        sessionId,
+        backendSessionId: sessionId,
+        requestId: "req-1",
+        toolUseID: "tool-1",
+        toolName: "Bash",
+        originalInput: {},
+        displayMetadata: { decisionReason: "test fixture" },
+        policyMode: "default",
+        policyVersion: 0,
+        issuedAt: "2026-09-02T00:00:00.000Z",
+        state: "pending",
+        issuedCwd: cwd,
+        issuedHome: winterHome,
+      });
+      expect(existsSync(join(storeHome, "projects", projectKey, `${sessionId}.approvals.jsonl`))).toBe(true);
+      expect(existsSync(join(winterHome, "projects"))).toBe(false);
+
+      result.autoStateStore!.recordAllow(sessionId);
+      expect(existsSync(join(storeHome, "projects", projectKey, `${sessionId}.auto-state.json`))).toBe(true);
+      expect(existsSync(join(winterHome, "projects"))).toBe(false);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(storeHome, { recursive: true, force: true });
+    }
+  });
+
+  describe("resolveProductionStoreHome", () => {
+    test("config.storeHome wins over the env var", () => {
+      expect(resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m", storeHome: "/explicit/store" } as RuntimeConfig, { WINTER_STORE_HOME: "/env/store" })).toBe("/explicit/store");
+    });
+
+    test("falls back to WINTER_STORE_HOME when config.storeHome is absent", () => {
+      expect(resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m" } as RuntimeConfig, { WINTER_STORE_HOME: "/env/store" })).toBe("/env/store");
+    });
+
+    test("undefined when neither is set -- never a fresh default of its own (unlike resolveProductionWinterHome)", () => {
+      expect(resolveProductionStoreHome({ sessionId: "s", cwd: "/x", model: "m" } as RuntimeConfig, {})).toBeUndefined();
+    });
+  });
+});
 
 // ------------------------------------------------------------------------------------------------
 // Phase 5 fix wave, B-M1: the two entry types rider 16 added shipped with NO tests of their own.

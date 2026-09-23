@@ -26,6 +26,7 @@ import {
   compatibilityKeys,
   forkSessionByKey,
   WinterStoreLeaseError,
+  storeHomeEnvName,
   type SessionKey,
   type SessionStore,
   type SessionStoreEntry,
@@ -1273,6 +1274,21 @@ export async function listChildAgentIds(store: SessionStore, key: { projectKey: 
 export async function resolveEngineSession(opts: {
   config: RuntimeConfig;
   resolveWinterHome: () => string;
+  /**
+   * WS-21 §3.7/§6.3 item 3 (durable-write audit, fix round 2): the shared STORE home, when this
+   * incarnation has one -- called ONLY when persistence is active, same discipline as
+   * `resolveWinterHome`'s own thunk (a caller that wants "never touch the real environment unless a
+   * session actually persists" must be able to defer this too). Every durable write this function
+   * makes (the transcript store, the provider-state sidecar, the permission journal, the approval
+   * store, the auto-counter store) anchors on THIS value, never on `resolveWinterHome`'s own return
+   * -- `winterHome` is the per-run folder (WS-21 §2.1: deleted after the run), and a durable write
+   * rooted there is durable in name only. Omitted, or returning `undefined`, degrades to
+   * `winterHome` itself: byte-identical to every pre-WS-21 caller (`testing.ts`'s in-memory leg,
+   * deliberately -- its own hermetic root is already the single source of truth for a virtual
+   * session, and splitting it further would buy that leg nothing while adding a second root a test
+   * could disagree with itself about).
+   */
+  resolveStoreHome?: () => string | undefined;
   env: Record<string, string | undefined>;
 }): Promise<ResolvedEngineSession> {
   const { config } = opts;
@@ -1285,7 +1301,10 @@ export async function resolveEngineSession(opts: {
   }
 
   const winterHome = opts.resolveWinterHome();
-  const store = new WinterCompatibilitySessionStore({ winterHome });
+  // WS-21 §6.3 item 3 (durable-write audit, fix round 2): every store constructed below is rooted
+  // on `durableRoot`, NOT `winterHome` -- see `resolveStoreHome`'s own header just above for why.
+  const durableRoot = opts.resolveStoreHome?.() ?? winterHome;
+  const store = new WinterCompatibilitySessionStore({ winterHome: durableRoot });
   const defaultProjectKey = compatibilityKeys(config.cwd).transcriptProjectKey;
   // Ruling P1-N (1): resolve the persistent projectKey (WINTER_PROJECT_DIR_NAME override applied,
   // if any) up front — every branch below (fresh session AND continue's single-directory scope)
@@ -1315,13 +1334,13 @@ export async function resolveEngineSession(opts: {
   // round's scope — the real fix is presumably at session-identity allocation, not here); flagged
   // so the accident is never mistaken for a policy.
   if (!wantsContinue && !wantsResume) {
-    const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
+    const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome: durableRoot });
     return {
       config,
       store: writer,
       initialMessages: [],
-      approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
-      autoStateStore: createFileAutoCounterStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
+      approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
+      autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
     };
   }
 
@@ -1336,13 +1355,13 @@ export async function resolveEngineSession(opts: {
       // silently picks an unrelated session, never blocks the run on a typed error for what is, in
       // effect, just an empty project). Same accidental-not-deliberate collision safety as the
       // `!wantsContinue && !wantsResume` branch above — see that branch's own comment.
-      const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
+      const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome: durableRoot });
       return {
         config,
         store: writer,
         initialMessages: [],
-        approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
-        autoStateStore: createFileAutoCounterStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
+        approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
+        autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
       };
     }
     targetSessionId = found;
@@ -1446,14 +1465,14 @@ export async function resolveEngineSession(opts: {
   const initialConversationalUuids = chainEntries
     .filter((e) => (e.message !== undefined && (e.type === "user" || e.type === "assistant" || e.type === "compact_summary")) || (e.type === ATTACHMENT_ENTRY_TYPE && e.attachment !== undefined))
     .map((e) => e.uuid);
-  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome, initialConversationalUuids });
+  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome: durableRoot, initialConversationalUuids });
   const effectiveConfig: RuntimeConfig = { ...config, sessionId: targetSessionId };
-  // Task 11 (WS-07 §9): the SAME (winterHome, targetProjectKey, targetSessionId) triple the writer
+  // Task 11 (WS-07 §9): the SAME (durableRoot, targetProjectKey, targetSessionId) triple the writer
   // above just used — a deferred call from an EARLIER run of this exact session has its approvals
   // file right there, store-adjacent; engine.ts's own resume-consumption step (runEngine, before the
   // turn loop) is what actually reads it back and folds a resolution into `initialMessages`.
-  const approvalStore = createFileDurableApprovalStore({ winterHome, projectKey: targetProjectKey, sessionId: targetSessionId });
-  const autoStateStore = createFileAutoCounterStore({ winterHome, projectKey: targetProjectKey, sessionId: targetSessionId });
+  const approvalStore = createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId });
+  const autoStateStore = createFileAutoCounterStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId });
   return { config: effectiveConfig, store: writer, initialMessages, approvalStore, autoStateStore };
 }
 
@@ -1465,4 +1484,18 @@ export function resolveProductionWinterHome(config: RuntimeConfig, env: Record<s
   // P7a (D19): the session's own profile decides both `<PREFIX>HOME` and the default dir name.
   // Absent only for a config no `query()` produced -- Winter's own names are the reading then.
   return config.winterHome ?? resolveWinterHome(env, config.brand ?? WINTER_BRAND);
+}
+
+// WS-21 §3.7/§6.3 item 3 (durable-write audit, fix round 2): the direct sibling of
+// `resolveProductionWinterHome` above, for the shared STORE home instead of the per-run folder --
+// `config.storeHome` (an explicit per-run override) wins; otherwise the real environment's
+// `WINTER_STORE_HOME`. UNDEFINED when neither is set (every incarnation before the router links
+// `buildRunHome`, or any non-router host) -- there is no bare-brand default the way
+// `resolveWinterHome` has one, because "no shared store was configured" must degrade to the caller's
+// own `winterHome`, never to a second, independently-invented directory. Mirrors production-
+// wiring.ts's own identical one-line resolution (`config.storeHome ?? env[storeHomeEnvName(brand)]`,
+// the only other site that reads this pair) so the two paths -- this file's durable stores and that
+// file's durable floors/plugin root -- can never disagree about what a session's shared home is.
+export function resolveProductionStoreHome(config: RuntimeConfig, env: Record<string, string | undefined>): string | undefined {
+  return config.storeHome ?? env[storeHomeEnvName(config.brand ?? WINTER_BRAND)];
 }
