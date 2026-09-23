@@ -16,7 +16,7 @@
 import type { RewindFilesResult } from "@yanlinglabs/winter-agent-sdk";
 import { lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { blobName, nearestExistingAncestor, parentRealPathOf, readCheckpointIndex, sessionBackupsDir, type CheckpointRecord } from "./file-history.ts";
+import { blobName, nearestExistingAncestor, parentRealPathOf, readCheckpointIndex, sessionCheckpointDir, type CheckpointRecord } from "./file-history.ts";
 
 /**
  * T8 rider 25 (SECURITY): is `absPath` inside one of the session's own writable roots?
@@ -236,7 +236,7 @@ export function rewindToCheckpoint(opts: RewindOptions): RewindFilesResult {
     return { canRewind: false, error: `no checkpoint recorded for user message ${opts.userMessageUuid} in this session` };
   }
   const inScope = records.slice(from);
-  const dir = sessionBackupsDir(opts.home, opts.sessionUuid);
+  const dir = sessionCheckpointDir(opts.home, opts.sessionUuid);
 
   // Reverse order: the LAST write to a path is therefore its OLDEST in-scope snapshot, which is its
   // state at the target envelope. Deltas hold no bytes and are skipped.

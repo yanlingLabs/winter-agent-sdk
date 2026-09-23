@@ -1,13 +1,23 @@
-// Phase 5 Task 7 (Lane K, R5-11 as amended): the BACKUP STORE behind `enableFileCheckpointing`.
+// Phase 5 Task 7 (Lane K, R5-11 as amended); renamed WS-21 lane L1b Task L1b.4 (spec §6.3 item 12,
+// F18): the BACKUP STORE behind `enableFileCheckpointing`.
 //
-// LAYOUT -- `<home>/backups/<session-uuid>/`:
+// LAYOUT -- `<home>/file-history/<session-id>/`:
 //
 //   <path-hash>@v<n>   the pre-image bytes of one snapshot, byte-exact (never text-normalised)
 //   index.jsonl        the append-only record of every intercepted mutation, in order
 //
-// `backups/`, NOT `file-history/<uuid>/`. WS-11 §9's mechanism row and the task brief both say the
-// latter; derived-shapes-p5's capture (2) observed the pinned runtime growing a `backups/` sibling
-// of `projects/` instead, and the R5-11 amendment adopted it. The report wins over the brief.
+// `file-history/<sessionId>/`, NOT `backups/<uuid>/`. WS-11 §9's mechanism row and the original Phase
+// 5 task brief both said `file-history/<uuid>/`; derived-shapes-p5's capture (2) observed the pinned
+// runtime growing a `backups/` sibling of `projects/` instead, and the R5-11 amendment adopted that
+// name (the report won over the brief, at the time). WS-21's own measurement (F18) is that claude's
+// real on-disk name for exactly this mechanism is `file-history/<sessionId>/` -- `backups/` in this
+// codebase was the WRONG name for a store that always held checkpoints, never configuration backups
+// (F18's own words: "Winter's `backups/` actually holds checkpoints, so that is the wrong name") --
+// and WS-21 §2.2 makes tracking claude's own layout deliberate rather than incidental. This rename
+// reverses R5-11's choice on that new evidence; the FLOORS that still say `backups` in
+// `permissions/protected.ts`, `sandbox/profile.ts` and `engine.ts`'s `["projects","backups"]` are a
+// SEPARATE lane's fix round (controller ruling, WS-21 lane L1b fix round 2) -- until they land, a
+// session's own write-protection floor still denies the OLD path, not this new one.
 //
 // `<path-hash>` is the first 16 hex of the sha256 of the ABSOLUTE path -- DISCLOSED: R5-11 marks the
 // real algorithm capture-pending and names exactly this as the fallback. Hashing the absolute path
@@ -31,7 +41,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, stat
 import { dirname, join } from "node:path";
 
 /** The directory name under `~/.winter`. One constant so a fixture and the sink cannot disagree. */
-export const CHECKPOINT_BACKUPS_DIRNAME = "backups";
+export const CHECKPOINT_DIRNAME = "file-history";
 
 /** The private per-session record of intercepted mutations. */
 export const CHECKPOINT_INDEX_FILENAME = "index.jsonl";
@@ -89,8 +99,8 @@ export function checkpointPathHash(absolutePath: string): string {
   return createHash("sha256").update(absolutePath).digest("hex").slice(0, 16);
 }
 
-export function sessionBackupsDir(home: string, sessionUuid: string): string {
-  return join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+export function sessionCheckpointDir(home: string, sessionUuid: string): string {
+  return join(home, CHECKPOINT_DIRNAME, sessionUuid);
 }
 
 export function blobName(pathHash: string, version: number): string {
@@ -137,7 +147,7 @@ export function nearestExistingAncestor(absolutePath: string): { anchorPath: str
  * mid-append) must not make every earlier checkpoint unreadable.
  */
 export function readCheckpointIndex(home: string, sessionUuid: string): CheckpointRecord[] {
-  const file = join(sessionBackupsDir(home, sessionUuid), CHECKPOINT_INDEX_FILENAME);
+  const file = join(sessionCheckpointDir(home, sessionUuid), CHECKPOINT_INDEX_FILENAME);
   if (!existsSync(file)) return [];
   const out: CheckpointRecord[] = [];
   for (const line of readFileSync(file, "utf8").split("\n")) {
@@ -153,7 +163,7 @@ export function readCheckpointIndex(home: string, sessionUuid: string): Checkpoi
 }
 
 export function appendCheckpointRecord(home: string, sessionUuid: string, record: CheckpointRecord): void {
-  const dir = sessionBackupsDir(home, sessionUuid);
+  const dir = sessionCheckpointDir(home, sessionUuid);
   mkdirSync(dir, { recursive: true });
   appendFileSync(join(dir, CHECKPOINT_INDEX_FILENAME), `${JSON.stringify(record)}\n`);
 }
