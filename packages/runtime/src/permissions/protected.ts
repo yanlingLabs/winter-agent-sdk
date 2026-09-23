@@ -447,10 +447,10 @@ function classifyRemovalTarget(rawToken: string, ctx: { cwd: string; home: strin
 // subcommand must be independently permitted" pattern elsewhere in this phase) -- ANY dangerous
 // rm/rmdir anywhere in a compound command taints the whole thing, matching the deny/ask precedent.
 //
-// Unparseable input (`flattenSubcommands` returns `null`) is treated as ONE candidate part -- the raw
-// text itself -- rather than "no opinion": we cannot structurally decompose it, but a best-effort
-// scan over the raw text can still catch an `rm -rf /` hidden behind broken quoting, and WS-07 §13
-// licenses being stricter here, never looser. An empty/all-separator command (`flattenSubcommands`
+// Unparseable input (`flattenSubcommands` returns `null`) is split NAIVELY -- at every separator and
+// substitution opener, quotes ignored -- rather than "no opinion": we cannot structurally decompose
+// it, but a best-effort scan can still catch an `rm -rf /` hidden behind broken (or merely unmodelled)
+// quoting, and WS-07 §13 licenses being stricter here, never looser. An empty/all-separator command (`flattenSubcommands`
 // returns `[]`, NOT `null` -- the same shape edit-recognition.ts's own header warns about) falls
 // back to the identical raw-text treatment, which is harmless (an empty string tokenizes to zero
 // words, so nothing is ever flagged) rather than a special-cased early return.
@@ -458,7 +458,10 @@ export function isCriticalRemoval(command: string, ctx: { cwd: string; home: str
   // EVERY command the string runs -- a removal inside a subshell, a substitution or an `if`/`for`
   // body (`(rm -rf ~)`, `ls $(rm -rf ~)`, `if x; then rm -rf ~; fi`) is as critical as a bare one.
   const split = flattenSubcommands(command);
-  const parts = split !== null && split.length > 0 ? split : [command];
+  // Unparseable (e.g. an ANSI-C `$'\''` quote the scanners do not model): split NAIVELY at every
+  // separator and substitution opener, quotes ignored, so a removal behind the mis-scanned text is
+  // still checked -- extra pieces can only add candidates, never hide one.
+  const parts = split !== null && split.length > 0 ? split : split === null ? command.split(/[;&|\n()`]|\$\(/).map((p) => p.trim()).filter((p) => p.length > 0) : [command];
 
   for (const part of parts) {
     const stripped = stripWrappers(part, "denyAsk");

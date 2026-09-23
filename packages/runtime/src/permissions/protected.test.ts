@@ -224,3 +224,13 @@ describe("claude's DANGEROUS_FILES additions", () => {
     test(`${path} is protected`, () => expect(isProtectedWrite(path, ctx)).toBe(true));
   }
 });
+
+describe("isCriticalRemoval: an unparseable command is split naively, so a removal cannot hide behind it", () => {
+  const ctx = { cwd: "/work/repo", home: "/Users/tester" };
+  test("an ANSI-C quote the scanner does not model", () => {
+    expect(isCriticalRemoval("echo $'\\'' ; rm -rf ~ ; echo ''", ctx).critical).toBe(true);
+  });
+  test("an unterminated quote after the removal", () => {
+    expect(isCriticalRemoval("rm -rf / ; echo 'oops", ctx).critical).toBe(true);
+  });
+});

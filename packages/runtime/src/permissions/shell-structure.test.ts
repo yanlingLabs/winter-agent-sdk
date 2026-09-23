@@ -91,3 +91,16 @@ describe("the widened redirect scan (grammar.ts)", () => {
     expect(joinLineContinuations("a \\\\\\\nb")).toBe("a \\\\b");
   });
 });
+
+describe("comments: only an UNESCAPED word-start `#` begins one (bash)", () => {
+  test("an escaped space does not end the word: `echo x\\ #; rm -rf ~` runs the rm", () => {
+    expect(flattenSubcommands("echo x\\ #; rm -rf ~")).toEqual(["echo x\\ #", "rm -rf ~"]);
+  });
+  test("a quoted `#` is not a comment", () => {
+    expect(flattenSubcommands("echo '#'; rm -rf ~")).toEqual(["echo '#'", "rm -rf ~"]);
+  });
+  test("a word-start `#` after `;` or a redirect operator is", () => {
+    expect(flattenSubcommands("echo x;# rm -rf ~")).toEqual(["echo x"]);
+    expect(flattenSubcommands("echo x ># rm -rf ~")).toEqual(["echo x >"]);
+  });
+});

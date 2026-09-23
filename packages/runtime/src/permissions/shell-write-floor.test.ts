@@ -211,7 +211,7 @@ describe("claude's path constraints run BEFORE the allow rule that would clear a
 
   test("an unparseable command fails CLOSED: asked, never allowed by the rule", async () => {
     const { ctx, prompts } = escapeCtx("default");
-    const record = await evaluate(escaped("echo 'unterminated > .git/config"), ctx);
+    const record = await evaluate(escaped("echo 'unterminated > notes.txt"), ctx);
     expect(record.decision).toBe("deny");
     expect(prompts).toHaveLength(1);
     expect(prompts[0]!.meta.decisionReason).toContain("could not be parsed");
@@ -304,6 +304,19 @@ describe("protected targets match case-insensitively (claude's normalizeCaseForC
       const { ctx, prompts } = ctxWith("bypassPermissions", []);
       expect((await evaluate(bash(command), ctx)).decision).toBe("deny"); // headless
       expect(prompts).toHaveLength(1);
+    });
+  }
+});
+
+describe("an UNPARSEABLE command's protected targets are still seen (read naively)", () => {
+  // `$'…\'…'` is ANSI-C quoting, which the scanners do not model: the command reads as unparseable.
+  // The unparseable ask is not bypass-immune, so without a naive read bypass would write `.git`.
+  for (const command of ["echo $'a\\'b' > .git/config", "echo 'unterminated ; cp x .git/hooks/pre-commit", "echo $'a\\'b' ; echo x >> ~/.zshrc"]) {
+    test(`bypass: \`${command}\` is asked`, async () => {
+      const { ctx, prompts } = ctxWith("bypassPermissions", []);
+      expect((await evaluate(bash(command), ctx)).decision).toBe("deny"); // headless
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]!.meta.decisionReason).toContain("protected path write");
     });
   }
 });

@@ -26,10 +26,10 @@
 //     path extraction (evaluator.ts) can see `echo x > .git/config`'s redirect target even though
 //     `echo` is nowhere near the blessed seven -- "redirect targets count as write paths for the
 //     SpecialChecks seam... but do not widen §6.2's auto-approve set" (this task's own instruction).
-//   - `null` -- nothing write-shaped recognized at all (a plain read-only or unrelated command, or
-//     an unparseable/empty command) -- WS-07 §6.2: "ambiguous/unparseable ... fall back to a
-//     prompt," which for THIS primitive means "the caller gets no paths and no opinion," not "assume
-//     the worst." Distinguishing "no opinion" (null) from "found writes but not blessed" (kind:
+//   - `null` -- nothing write-shaped recognized at all (a plain read-only or unrelated command, or an
+//     empty command). An UNPARSEABLE command is read naively instead (`naiveWritePaths`) and, when it
+//     names any write target, is "other" -- never acceptEdits-eligible; `shellWriteConstraint` is what
+//     makes it ask (WS-07 §6.2: "ambiguous/unparseable ... fall back to a prompt"). Distinguishing "no opinion" (null) from "found writes but not blessed" (kind:
 //     "other") is exactly what lets one function serve both evaluator.ts consumers correctly.
 //
 // Trap avoided (T6 review note, "vacuous match" class): `splitCompound("")` returns `[]`, not
@@ -242,6 +242,24 @@ function teeWritePaths(stripped: string): string[] {
   return nonFlagOperands(truncateAtFirstRedirectOperator(tokens.slice(1)));
 }
 
+/**
+ * Write targets of a command the scanners could not parse, read without regard to quoting: every
+ * redirection-operator target, and the operands of the write verbs in every piece between separators.
+ * Over-approximate by design -- it only feeds the protected floor and the deny rules.
+ */
+function naiveWritePaths(command: string): string[] {
+  const out: string[] = [];
+  for (const m of command.matchAll(/(?:&>>?|[0-9]*>>?\|?|[0-9]*>&|<>)[ \t]*([^\s;&|()<>]+)/g)) {
+    const target = m[1]!.replace(/^['"]|['"]$/g, "");
+    if (!/^(?:[0-9]+|-)$/.test(target)) out.push(target);
+  }
+  for (const piece of command.split(/[;&|\n()`]|\$\(/)) {
+    const stripped = stripWrappers(piece.trim(), "denyAsk");
+    out.push(...(recognizeBashFsOpPaths(stripped) ?? []), ...teeWritePaths(stripped));
+  }
+  return out;
+}
+
 /** A path as the shell will see it: an unquoted leading `~` / `~/` is the home directory. */
 function expandHomeTilde(path: string, home: string | undefined): string {
   if (home === undefined) return path;
@@ -319,11 +337,16 @@ export function recognizeEditOperation(
   const command = shellCommandOf(call);
   if (command === undefined) return null;
   const parts = flattenSubcommands(command);
+  // An UNPARSEABLE command (an unterminated quote, or quoting the scanners do not model, such as
+  // ANSI-C `$'\''`): `shellWriteConstraint` asks for it, but that ask is not bypass-immune, so the
+  // protected floor still needs its targets -- read NAIVELY, which can only add candidates.
+  if (parts === null) {
+    const naive = naiveWritePaths(command);
+    return naive.length > 0 ? { kind: "other", paths: naive.map((p) => expandHomeTilde(p, opts?.home)) } : null;
+  }
   // Coordinator note (T6 review, "vacuous match" class): an empty/all-separator/missing command
-  // must never vacuously recognize as an fs-op over zero parts. An UNPARSEABLE command gets no paths
-  // here either -- `shellWriteConstraint` is what asks for it, since a scan that could not finish
-  // proves nothing about what it writes.
-  if (parts === null || parts.length === 0) return null;
+  // must never vacuously recognize as an fs-op over zero parts.
+  if (parts.length === 0) return null;
 
   const allPaths: string[] = [];
   let allBlessed = true;

@@ -133,8 +133,12 @@ describe("recognizeEditOperation -- ambiguous/unparseable -> null (WS-07 §6.2: 
     expect(recognizeEditOperation(bash(";"))).toBeNull();
   });
 
-  test("an unterminated quote (unparseable) -> null", () => {
-    expect(recognizeEditOperation(bash("rm 'unterminated"))).toBeNull();
+  // Changed with the path-constraints port: an unparseable command's write targets are read NAIVELY
+  // (the protected floor needs them even where the unparseable ask does not bind, under bypass), and
+  // never as the acceptEdits-eligible "bashFsOp" kind. With nothing write-shaped it is still null.
+  test("an unterminated quote (unparseable) -> its naive write targets, kind \"other\"; null when nothing writes", () => {
+    expect(recognizeEditOperation(bash("rm 'unterminated"))).toEqual({ kind: "other", paths: ["unterminated"] });
+    expect(recognizeEditOperation(bash("echo 'unterminated"))).toBeNull();
   });
 
   test("a non-Bash, non-Edit/Write tool -> null", () => {

@@ -49,33 +49,46 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
   const liveBodies: string[] = [];
   let out = "";
   let i = 0;
+  // Does the next character START a word? Only there is `#` a comment (bash). An escaped or quoted
+  // character never ends a word, so `echo x\ #; rm -rf ~` is NOT a comment: the `rm` runs.
+  let wordStart = true;
   while (i < command.length) {
     const ch = command[i]!;
     const top = stack[stack.length - 1]!;
     if (top.kind === "sq") {
       out += ch;
-      if (ch === "'") stack.pop();
+      if (ch === "'") {
+        stack.pop();
+        wordStart = false;
+      }
       i++;
       continue;
     }
     if (ch === "\\" && i + 1 < command.length) {
       out += ch + command[i + 1];
       i += 2;
+      wordStart = false;
       continue;
     }
     if (top.kind === "dq") {
       out += ch;
-      if (ch === '"') stack.pop();
-      else if (ch === "$" && command[i + 1] === "(") {
+      if (ch === '"') {
+        stack.pop();
+        wordStart = false;
+      } else if (ch === "$" && command[i + 1] === "(") {
         stack.push({ kind: "cmd", closer: ")" });
         out += "(";
         i++;
-      } else if (ch === "`") stack.push({ kind: "cmd", closer: "`" });
+        wordStart = true;
+      } else if (ch === "`") {
+        stack.push({ kind: "cmd", closer: "`" });
+        wordStart = true;
+      }
       i++;
       continue;
     }
     // A command context.
-    if (ch === "#" && (i === 0 || /[\s;&|()]/.test(command[i - 1]!))) {
+    if (ch === "#" && wordStart) {
       while (i < command.length && command[i] !== "\n") i++; // a comment runs to the end of its line
       continue;
     }
@@ -83,24 +96,28 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
       stack.pop();
       out += ch;
       i++;
+      wordStart = true;
       continue;
     }
     if (ch === "'" || ch === '"') {
       stack.push({ kind: ch === "'" ? "sq" : "dq" });
       out += ch;
       i++;
+      wordStart = false;
       continue;
     }
     if (ch === "`" || ch === "(") {
       stack.push({ kind: "cmd", closer: ch === "`" ? "`" : ")" });
       out += ch;
       i++;
+      wordStart = true;
       continue;
     }
     if (ch === ")") {
       if (top.closer === ")") stack.pop();
       out += ch; // an unmatched `)` is left for splitCompound to refuse
       i++;
+      wordStart = true;
       continue;
     }
     if (ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
@@ -136,6 +153,7 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
       pending.push({ delim, quoted, stripTabs });
       out += command.slice(i, j);
       i = j;
+      wordStart = false;
       continue;
     }
     if (ch === "\n" && pending.length > 0) {
@@ -153,10 +171,12 @@ export function extractHeredocs(command: string): HeredocExtraction | null {
         if (!doc.quoted) liveBodies.push(body.join("\n"));
       }
       pending.length = 0;
+      wordStart = true;
       continue;
     }
     out += ch;
     i++;
+    wordStart = /[\s;&|<>]/.test(ch);
   }
   return { text: out, liveBodies };
 }
