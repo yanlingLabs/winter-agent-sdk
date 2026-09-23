@@ -4,6 +4,98 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.18
+
+Parity fixes from the Winter dist-session investigation. `dangerouslyDisableSandbox` now follows the
+pinned `claude` 0.3.250 Bash rule instead of always prompting, behind claude's own write-target
+checks; every result carries claude's per-turn `usage`; a model's own reasoning is replayed natively
+instead of being quoted back to it; and model descriptors are always looked up under the request's
+own provider.
+
+### BREAKING
+
+- **`dangerouslyDisableSandbox` is no longer mandatory interaction** (RULING P3-J is superseded by
+  the pinned claude 0.3.250 Bash `checkPermissions`): deny/ask rules, hooks and the path floors
+  decide as for any Bash call; a matching allow rule runs the escape; `bypassPermissions` runs it;
+  `dontAsk` denies it; an escape nothing sanctioned is asked with "Run outside of the sandbox"
+  through the PermissionRequest hook and the host's `canUseTool` in every other mode — auto and plan
+  included, never the classifier. Under auto, the broad-allow suspension still applies, so a bare
+  `Bash(*)` asks where claude would allow. A PreToolUse hook's own ask reason is no longer
+  overwritten. An escape that is also a protected write or a critical removal goes to the host,
+  never the classifier.
+- **Shell write targets are checked the way claude's `checkPathConstraints` checks them**, before
+  any allow rule or mode allow (after the sandbox auto-allow): a target with `$`, `%`, a backtick or
+  a leading `=`, a `~user` form or a glob, a process substitution, an unparseable command, and
+  `cp`/`mv` with any flag are asked (claude's reasons; not bypass-immune). `~`/`~/` targets are the
+  home directory for the protected floor, deny rules and the working-directory check alike. New
+  write forms: `>|`, `>&file`, `&>>`, `<>`, fd-prefixed; backslash-newline is joined; `tee` operands
+  and `cp`/`mv --target-directory`/`-t` are write targets. Protected targets in these forms are
+  asked under bypass.
+- **Every command a string runs is checked** — subshells, brace groups, `$(…)`, backticks,
+  `<(…)`/`>(…)`, if/for bodies, function bodies, unquoted here-documents — by the critical-removal
+  breaker, the write floor, read-only recognition and Bash rule matching (an allow rule must cover
+  the substituted command; a deny rule sees it). `$(cat <<'EOF' … EOF)` adds no command.
+- **Every path and command name read from a shell word is read after bash's quote removal**
+  (single/double quotes, backslashes, ANSI-C `$'…'` decoded, `$"…"`): `'.git'/config`,
+  `.g"i"t/config` and `.\git/…` are `.git`; `'rm'`/`r\m` is `rm` for the critical-removal breaker
+  and for deny/ask rules; quoted flags count for read-only recognition. `$'…'`/`$"…"` targets still
+  ask as an expansion. A quoted `"~/x"` is no longer the home directory (bash does not expand it).
+- **A shell write to a protected path is asked even under `bypassPermissions`** (it was allowed).
+  The resolved winter home is protected wholesale for all tools (the memory, workflow-script and
+  outputs carve-outs stay writable); the three control-plane filenames are protected for shell
+  writes at any depth; protected paths match case-insensitively, and `.gitconfig`, `.gitmodules`
+  and `.ripgreprc` are protected. A rule-allowed shell write outside the working directories, or in
+  a command that changes directory first, asks. A host's Edit/Write/Read deny rule denies a shell
+  write target, and a deny/ask Bash rule binds an unparseable command through its naively split
+  pieces.
+- **Read-only recognition refuses** `find -exec/-execdir/-ok/-okdir/-fprint*/-fls`, `rg --pre`,
+  `git diff/log --output`, and a command whose substituted command is not itself read-only.
+- **`sandbox.allowUnsandboxedCommands: false` ignores the override**: the command runs sandboxed
+  and the result records the request; the Bash text says the parameter is disabled by policy.
+- **Every `result` carries `usage`** — claude's full shape (`WireResultUsage`) with THIS turn's
+  main-loop token counts; never diff it across results. `modelUsage` (session-cumulative) includes
+  unpriced generations at `costUSD: 0` with no `costBasis`; `total_cost_usd` still appears only once
+  something was priced, so an unpriced session's results carry `modelUsage` without it.
+- **New runtime→host frame `control_cancel_request {requestId}`** (`ControlCancelRequestFrame`),
+  sent when a turn is interrupted while a permission prompt is open; `query()` aborts that
+  `canUseTool`'s `signal` and sends no response. `ControlRequestHandler` takes an optional
+  `{ signal }`.
+- **Descriptor lookups take a REQUIRED `providerId`** (`descriptorLookupForAdapter`'s lookup and
+  the OpenAI-family and Bedrock `DescriptorLookup` types). A one-argument implementation still
+  type-checks; a one-argument call does not.
+- **The Skill tool's result begins `Base directory for this skill: <dir>`** and a blank line
+  (claude's header), `<dir>` being the directory the SKILL.md was loaded from.
+- **`recognizeEditOperation`**: an unparseable command naming a write target returns kind "other".
+- **A memory key's git root must own the cwd**: a forged `.git` file no longer borrows another
+  project's; a submodule's key is its own checkout (was `<outer>/.git/modules`).
+
+### Fixed
+
+- A model's own previous turn is replayed natively — in-dialect thinking blocks with the signature
+  the endpoint sent, and native state — and never quoted back as `<recovered_reasoning>` text, even
+  when the catalog gives its row no continuation domain (587 rows). On the wire the 6
+  Anthropic-dialect reasoning rows (deepseek-anthropic 3, kimi-coding 3) now send their own thinking
+  back; no row gains a `reasoning_content` replay; every row stops receiving a tag about its own
+  reasoning. A different model is still labelled prior-model data.
+- A bare wire model id is validated against the request's own provider's catalog row, not whichever
+  provider sorts first (139 rows on `winter.openai-chat-completions`; e.g. `deepseek-v4-flash` was
+  refused against `alibaba-cn`'s row). The `# Environment` model line is named the same way.
+- The Bash tool tells a sandboxed session what claude's does: no network
+  (`Network: {"allowedHosts":[]}`), when to request `dangerouslyDisableSandbox`, and `$TMPDIR`.
+- `autoAllowBashIfSandboxed` no longer clears an allowed `excludedCommands` entry (it runs
+  unsandboxed).
+- An interrupt cancels an open permission prompt at its source; a policy-change retry of an
+  abandoned evaluation stays bound to its own turn; a cancelled request's handler entry is released
+  at once.
+- A later generation no longer rewrites an earlier result's `modelUsage` rows for an in-process host.
+- `Options.outputsDir` inside the winter home is writable for the Bash sandbox and outside the
+  protected floor's winter-home part (the floors below it still hold).
+
+### Docs
+
+- `AdvisorConfig.model`: a provider-qualified tag is the advisor's provider identity; with
+  `authRef` the advisor runs on another provider than the session's. No new field.
+
 ## 0.0.17
 
 Two new built-in tools, `WebFetch` and `WebSearch`, copied from the pinned `claude` 0.3.250 — its
