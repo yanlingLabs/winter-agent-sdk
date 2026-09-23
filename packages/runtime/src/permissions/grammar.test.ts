@@ -712,3 +712,12 @@ describe("P2 fix-wave item 2: the threading fix is linear, not quadratic, in adv
     expect(extractRedirectTargets("echo hi > out.txt 2>> err.log")).toEqual(["out.txt", "err.log"]);
   });
 });
+
+describe("read-only recognition refuses the find/rg/git forms that write or run a command", () => {
+  for (const command of ["find . -exec touch /tmp/x \;", "find . -execdir rm {} +", "find . -ok rm {} \;", "find . -okdir rm {} \;", "find . -fprint out.txt", "find . -fprint0 out", "find . -fprintf out %p", "find . -fls out", "find . \"$X-exec\" touch f \;", "rg --pre 'sh -c id' x", "rg --pre=cat x", "rg . \"$Z--pre=bash\" FILE", "git diff --output=.git/hooks/pre-commit", "git log --output out.txt"]) {
+    test(JSON.stringify(command), () => expect(isRecognizedReadOnly(command)).toBe(false));
+  }
+  for (const command of ["find . -name '*.ts'", "rg TODO src", "git diff HEAD~1", "git log --oneline", "grep -r x ."]) {
+    test(`control: ${JSON.stringify(command)} stays read-only`, () => expect(isRecognizedReadOnly(command)).toBe(true));
+  }
+});

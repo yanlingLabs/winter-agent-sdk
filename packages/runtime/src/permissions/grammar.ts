@@ -149,9 +149,18 @@ const GIT_READ_ONLY_SUBCOMMANDS: ReadonlySet<string> = new Set(["status", "log",
 // newly recognize a command this task was never asked to authorize as auto-approved. The mechanism
 // below is shaped so a later task can add `sed: /(^|\s)-i\b/` alongside a `sed` entry in
 // READ_ONLY_COMMANDS without touching isRecognizedReadOnly's logic at all.
+//
+// claude's read-only find excludes every action that writes or runs a command (readOnlyValidation.ts:
+// -delete, -exec, -execdir, -ok, -okdir, -fprint, -fprint0, -fprintf, -fls); rg's `--pre` runs a
+// command on every file. For both, ANY `$`/backtick is refused too: an expansion can assemble the flag
+// (`rg . "$Z--pre=bash" FILE` -- claude's own example).
 const WRITE_CAPABLE_FLAGS: Readonly<Record<string, RegExp>> = {
-  find: /(^|\s)-delete(\s|$)/,
+  find: /(^|\s)-(?:delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)(\s|$)|[$`]/,
+  rg: /--pre|[$`]/,
 };
+
+// `git diff/log --output=<file>` WRITES that file (`--output=.git/hooks/pre-commit`).
+const GIT_WRITE_CAPABLE_FLAGS = /--output|[$`]/;
 
 // Fixed wrapper set (WS-07 §3, verbatim list) stripped for POSITIVE (allow) matching recognition;
 // `xargs` is handled separately below because of its flag-free precondition.
@@ -627,7 +636,7 @@ export function isRecognizedReadOnly(command: string): boolean {
 
   if (first === "git") {
     const { word: sub } = leadingWord(afterWord);
-    return sub !== undefined && GIT_READ_ONLY_SUBCOMMANDS.has(sub);
+    return sub !== undefined && GIT_READ_ONLY_SUBCOMMANDS.has(sub) && !GIT_WRITE_CAPABLE_FLAGS.test(afterWord);
   }
 
   if (!READ_ONLY_COMMANDS.has(first)) return false;
