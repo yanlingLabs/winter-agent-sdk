@@ -244,11 +244,24 @@ function frontmatterAttrs(raw: string): Record<string, string> {
  * to `loadAgentDefinitions`'s own `onReject`) carries one `AgentDefinitionRejection` per bad file,
  * for `loadPlugins` to fold into `LoadPluginsResult.agentFileRejections`.
  */
-function scanPluginAgents(root: string, pluginName: string): { agents: Record<string, PluginAgentDefinition>; rejected: AgentDefinitionRejection[] } {
-  const agentsRoot = join(root, "agents");
+type ScannedAgents = { agents: Record<string, PluginAgentDefinition>; rejected: AgentDefinitionRejection[] };
+
+/** ONE agent file, parsed. Shared by the default-directory scan and a manifest override's own per-entry file case (fix round 5). */
+function scanPluginAgentFile(full: string, pluginName: string, out: Record<string, PluginAgentDefinition>, rejected: AgentDefinitionRejection[]): void {
+  try {
+    if (!statSync(full).isFile()) return;
+    const parsed = parseAgentDefinitionFile(readFileSync(full, "utf8"), full);
+    if (parsed.ok) out[parsed.name] = { ...parsed.definition, plugin: pluginName };
+    else rejected.push({ source: "plugin", filePath: parsed.filePath, reason: parsed.reason });
+  } catch {
+    // unreadable -- silently skipped, matching the default directory scan's own posture for the same case
+  }
+}
+
+function scanPluginAgentsDir(dir: string, pluginName: string): ScannedAgents {
   let files: string[];
   try {
-    files = readdirSync(agentsRoot).sort();
+    files = readdirSync(dir).sort();
   } catch {
     return { agents: {}, rejected: [] };
   }
@@ -256,14 +269,39 @@ function scanPluginAgents(root: string, pluginName: string): { agents: Record<st
   const rejected: AgentDefinitionRejection[] = [];
   for (const file of files) {
     if (!file.toLowerCase().endsWith(".md")) continue;
-    const full = join(agentsRoot, file);
+    scanPluginAgentFile(join(dir, file), pluginName, out, rejected);
+  }
+  return { agents: out, rejected };
+}
+
+function scanPluginAgents(root: string, pluginName: string): ScannedAgents {
+  return scanPluginAgentsDir(join(root, "agents"), pluginName);
+}
+
+/**
+ * Fix round 5: a manifest `agents` override's own array of paths -- each entry a DIRECTORY (scanned
+ * the same way the default `agents/` directory is) or a single FILE (one agent), mirroring the
+ * default-vs-file branch the real consumer takes (dump-confirmed by content search against the
+ * installed claude CLI binary: `M.agentsPaths.map(...){let stat=await fs.stat(entry);if(stat.
+ * isDirectory()){...scan the dir...}else if(...){...one file...}}`). A later entry's SAME agent name
+ * overrides an earlier one, matching the default directory scan's own within-directory precedent.
+ */
+function scanPluginAgentsOverride(paths: readonly string[], pluginName: string): ScannedAgents {
+  const out: Record<string, PluginAgentDefinition> = {};
+  const rejected: AgentDefinitionRejection[] = [];
+  for (const path of paths) {
+    let isDir: boolean;
     try {
-      if (!statSync(full).isFile()) continue;
-      const parsed = parseAgentDefinitionFile(readFileSync(full, "utf8"), full);
-      if (parsed.ok) out[parsed.name] = { ...parsed.definition, plugin: pluginName };
-      else rejected.push({ source: "plugin", filePath: parsed.filePath, reason: parsed.reason });
+      isDir = statSync(path).isDirectory();
     } catch {
-      continue;
+      continue; // vanished between resolution and this scan -- silently skipped, like the resolver's own unreadable-file posture
+    }
+    if (isDir) {
+      const scanned = scanPluginAgentsDir(path, pluginName);
+      Object.assign(out, scanned.agents);
+      rejected.push(...scanned.rejected);
+    } else {
+      scanPluginAgentFile(path, pluginName, out, rejected);
     }
   }
   return { agents: out, rejected };
@@ -565,8 +603,19 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     // dump-confirmed). The pre-fix-round-3 `??` fallback silently dropped a manifest's own hooks
     // whenever a hooks.json ALSO existed.
     const hooks = mergeHookSources(readPluginHooksJson(root, name, hookFileWarnings), manifest?.hooks);
-    const scannedAgents = scanPluginAgents(root, name);
+    // Fix round 5: a manifest `agents` override SHADOWS the default `agents/` directory (the SAME
+    // gate/warning shape workflows already has, `!j.agents&&Fe` dump-confirmed) -- `requireDirectory:
+    // false` since claude's own `Tb` call for `agents` accepts a bare file.
+    const agentsOverridePaths = resolveManifestComponentOverride(root, name, "agents", manifest?.agents, false, manifestPathWarnings);
+    const scannedAgents = agentsOverridePaths === undefined ? scanPluginAgents(root, name) : scanPluginAgentsOverride(agentsOverridePaths, name);
     agentFileRejections.push(...scannedAgents.rejected);
+    if (
+      agentsOverridePaths !== undefined &&
+      componentDirIfPresent(root, "agents") !== undefined &&
+      !manifestOverrideIncludesDefaultDir(agentsOverridePaths, join(root, "agents"))
+    ) {
+      manifestPathWarnings.push(shadowedFolderWarning(name, "agents", "agents"));
+    }
     const outputStylesPath = componentDirIfPresent(root, "output-styles");
     // Fix round 4/5 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
     // directory the moment the key is present, regardless of how many of its entries resolve --

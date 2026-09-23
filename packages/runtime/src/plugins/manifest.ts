@@ -67,6 +67,19 @@ export interface PluginManifest {
    * into `PluginBundle.workflowsPaths`.
    */
   workflows?: string | string[];
+  /**
+   * WS-21 fix round 5: the same custom-path-override shape as `workflows` above, for the built-in
+   * `agents/` component -- content-search confirmed against the installed claude CLI binary
+   * (2.1.280): `if(pt)ve.agentsPath=$t;if(j.agents){let jn=Array.isArray(j.agents)?j.agents:
+   * [j.agents],qn=await Tb(jn,e,j.name,n,"agents","Agent","specified in manifest but",M,B,!1,h);if
+   * (qn.length>0)ve.agentsPaths=qn}` -- `pt=!j.agents&&Fe` shadows the default directory on the
+   * key's mere presence, the identical `!j.X&&Y` shape `workflows`' own `Lt` gate has. The CONSUMER
+   * side (dump-confirmed separately, a different chunk of the same binary) stat()s each entry and
+   * branches directory-vs-file: `M.agentsPaths.map(async(he)=>{let ve=await stat(he);if(ve.
+   * isDirectory()){...scan the dir...}else if(...){...one file...}})` -- ported as
+   * `scanPluginAgentsOverride`.
+   */
+  agents?: string | string[];
   [key: string]: unknown;
 }
 

@@ -495,6 +495,76 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
   });
 });
 
+// Fix round 5: a manifest `agents` override -- content-search confirmed against the installed claude
+// CLI binary (2.1.280), the closest available build (the pinned 2.1.250 was unavailable locally).
+// Same shape as `workflows` (shadow-on-presence, requireDirectory:false, the O1t suppression), but
+// EAGERLY scanned into `PluginBundle.agents` (a parsed Record) rather than exposed as a raw path.
+describe("loadPlugins: a manifest `agents` override (fix round 5)", () => {
+  function agentFile(name: string, description = "d"): string {
+    return `---\nname: ${name}\ndescription: ${description}\nmodel: sonnet\n---\nYou are ${name}.`;
+  }
+
+  test("a STRING override SHADOWS the default agents/ directory -- only the override's own agent is loaded", () => {
+    const parent = mkTemp("winter-plugin-agents-string-");
+    const root = join(parent, "ag-plugin");
+    write(join(root, "agents", "default-agent.md"), agentFile("default-agent"));
+    write(join(root, "custom-agents", "custom-agent.md"), agentFile("custom-agent"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ agents: "./custom-agents" }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(Object.keys(bundle.agents)).toEqual(["custom-agent"]);
+  });
+
+  test("an ARRAY override mixes a directory entry and a single-file entry", () => {
+    const parent = mkTemp("winter-plugin-agents-array-");
+    const root = join(parent, "ag-plugin");
+    write(join(root, "agents-dir", "one.md"), agentFile("dir-agent"));
+    write(join(root, "solo-agent.md"), agentFile("file-agent"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ agents: ["./agents-dir", "./solo-agent.md"] }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(Object.keys(bundle.agents).sort()).toEqual(["dir-agent", "file-agent"]);
+  });
+
+  test("a SYMLINK override entry resolving outside the plugin root is refused (fix round 5's realpath fence)", () => {
+    const parent = mkTemp("winter-plugin-agents-symlink-out-");
+    const root = join(parent, "ag-plugin");
+    mkdirSync(root, { recursive: true });
+    const outside = mkTemp("winter-plugin-agents-symlink-target-");
+    write(join(outside, "secret", "leaked.md"), agentFile("leaked"));
+    symlinkSync(join(outside, "secret"), join(root, "escape-link"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ agents: "./escape-link" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.agents).toEqual({});
+    expect(result.manifestPathWarnings).toHaveLength(1);
+    expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("folder-shadowed-by-manifest fires when the override drops an existing default directory, and O1t suppresses it when the override names the default directory itself", () => {
+    const parent = mkTemp("winter-plugin-agents-shadow-");
+    const root = join(parent, "ag-plugin");
+    write(join(root, "agents", "default-agent.md"), agentFile("default-agent"));
+    write(join(root, "custom-agents", "custom-agent.md"), agentFile("custom-agent"));
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ agents: "./custom-agents" }));
+    const shadowed = loadPlugins([{ type: "local", path: root }]);
+    expect(shadowed.manifestPathWarnings).toHaveLength(1);
+    expect(shadowed.manifestPathWarnings[0]).toContain("agents/");
+    expect(shadowed.manifestPathWarnings[0]).toContain("not auto-loaded");
+
+    const parent2 = mkTemp("winter-plugin-agents-shadow-self-");
+    const root2 = join(parent2, "ag-plugin");
+    write(join(root2, "agents", "default-agent.md"), agentFile("default-agent"));
+    write(join(root2, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ agents: "./agents" }));
+    const selfNamed = loadPlugins([{ type: "local", path: root2 }]);
+    expect(selfNamed.manifestPathWarnings).toEqual([]);
+    expect(Object.keys(selfNamed.bundles[0]!.agents)).toEqual(["default-agent"]);
+  });
+
+  test("no `agents` key at all falls back to the default directory exactly as before this feature existed", () => {
+    const root = plugin({ manifestDir: WINTER_PLUGIN_MANIFEST_DIR, manifest: {} });
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(Object.keys(bundle.agents)).toEqual(["helper"]); // plugin()'s own default fixture agent
+  });
+});
+
 describe("readPluginManifest", () => {
   test("a missing manifest is neither an error nor a manifest", () => {
     expect(readPluginManifest(mkTemp("winter-nomanifest-"))).toEqual({});
