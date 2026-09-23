@@ -277,16 +277,23 @@ export class SkillIndex {
    * pre-built body directly, keyed by the RESOLVED meta's primary name (so an alias lookup still
    * finds it) -- never touching disk at all, since there is no SKILL.md a workflow script's identity
    * could point this at.
+   *
+   * Fix round 7 (a same-day follow-up to round 6): `isSynthetic` lets a caller (`commands/
+   * resolver.ts`'s `resolve()`) tell a synthetic (workflow-backed) body apart from an ordinary,
+   * on-disk one -- round 6 put `$ARGUMENTS_JSON` into the SHARED `substituteArguments`, making it a
+   * recognised token in EVERY skill/command body; this is the seam that lets the fix scope the JSON
+   * substitution to synthetic bodies only, without the resolver having to re-derive "is this a
+   * workflow" from the name or path.
    */
-  load(name: string): { name: string; body: string; source: SkillTier; path: string } | null {
+  load(name: string): { name: string; body: string; source: SkillTier; path: string; isSynthetic: boolean } | null {
     const meta = this.byName.get(name);
     if (!meta) return null;
     const synthetic = this.syntheticBodies.get(meta.name);
-    if (synthetic !== undefined) return { name: meta.name, body: capBytes(synthetic, this.bodyBytes), source: meta.source, path: meta.path };
+    if (synthetic !== undefined) return { name: meta.name, body: capBytes(synthetic, this.bodyBytes), source: meta.source, path: meta.path, isSynthetic: true };
     // UNBOUNDED, deliberately: the index-time prefix bound (A-11) exists so discovery does not read
     // bodies it drops. This call is the invocation, and the body is the whole point of it.
     const read = readSkillMetadata(meta.path, meta.name);
     if (!read.ok) return null;
-    return { name: meta.name, body: capBytes(read.skill.body, this.bodyBytes), source: meta.source, path: meta.path };
+    return { name: meta.name, body: capBytes(read.skill.body, this.bodyBytes), source: meta.source, path: meta.path, isSynthetic: false };
   }
 }

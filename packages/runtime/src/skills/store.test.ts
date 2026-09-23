@@ -426,6 +426,9 @@ describe("I-E: synthetic (workflow-backed) skill entries", () => {
     const loaded = index.load("sv-plugin:sv-flow");
     expect(loaded?.body).toContain('Workflow({ name: "sv-plugin:sv-flow" })');
     expect(loaded?.source).toBe("plugin");
+    // Fix round 7: `isSynthetic` is the marker `commands/resolver.ts` uses to scope
+    // `$ARGUMENTS_JSON` substitution to workflow-backed bodies only.
+    expect(loaded?.isSynthetic).toBe(true);
   });
 
   test("a real skill and a synthetic entry coexist -- neither shadows the other under different names", () => {
@@ -439,6 +442,9 @@ describe("I-E: synthetic (workflow-backed) skill entries", () => {
     });
     expect(index.load("review")?.body).toBe("REAL BODY");
     expect(index.load("my-flow")?.body).toBe("SYNTHETIC BODY");
+    // Fix round 7: a real, on-disk skill reports `isSynthetic: false`; a workflow-backed one reports `true`.
+    expect(index.load("review")?.isSynthetic).toBe(false);
+    expect(index.load("my-flow")?.isSynthetic).toBe(true);
   });
 
   test("a project-tier synthetic entry gets the SAME project alias every other project skill does", () => {

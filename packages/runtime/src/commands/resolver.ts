@@ -215,20 +215,57 @@ function splitCommand(prompt: string): { name: string; args: string } {
 /**
  * R5-14's substitution, in one place. Every occurrence; no arguments substitutes the empty string.
  *
- * Fix round 6 (a promoted minor): also recognises `$ARGUMENTS_JSON`, substituted with
- * `JSON.stringify(args)` -- a FULLY QUOTED, escaped string literal, for a body that embeds the raw
- * args value INSIDE its own hand-written quotes (workflows/store.ts's `buildWorkflowSkillPrompt` is
- * the one caller today: its invoke line's `args: $ARGUMENTS_JSON` needs the substituted value to
- * already carry safe `"`/`\` escaping, matching claude's own `S(e)` -- dump-confirmed at
- * `createWorkflowCommand`'s own `getPromptForCommand`, `a=e?\`{ name: ${i}, args: ${S(e)} }\`:...\`
- * -- inferred to be JSON-string-quoting from its call-site shape: applied to a plain, always-defined
- * string and used with NO additional quotes around it in the template, exactly what
- * `JSON.stringify` produces). `$ARGUMENTS` (the plain, unescaped token) is substituted SECOND,
- * deliberately: `"$ARGUMENTS_JSON"` contains `"$ARGUMENTS"` as a literal prefix, so substituting the
- * shorter token first would mangle the longer one's own text before it is ever recognised.
+ * Fix round 7 (a same-day correction of round 6): this is claude's OWN mechanism and NOTHING else --
+ * a single `e.replaceAll("$ARGUMENTS", args)` (dump-confirmed at ~275427, the pinned 2.1.250 dump).
+ * Claude has no concept of a second `$ARGUMENTS_JSON` token anywhere in this path. Round 6 folded
+ * `$ARGUMENTS_JSON` INTO this function, which is called for every command file and every skill body
+ * (`resolve()`'s two call sites below) -- making `$ARGUMENTS_JSON` a universally-recognised token in
+ * ordinary user content that claude would never touch. The controller's own repro: a command body
+ * `run $ARGUMENTS_JSON now` invoked with args `a b` must expand to claude's `run a b_JSON now` (a
+ * naive replaceAll on `$ARGUMENTS` alone, leaving the literal `_JSON` suffix behind) -- round 6 instead
+ * produced `run "a b" now`. See `substituteWorkflowArguments` below for where the JSON-escaping
+ * behaviour now lives, scoped to synthetic (workflow-backed) skill bodies only.
  */
 export function substituteArguments(body: string, args: string): string {
-  return body.split("$ARGUMENTS_JSON").join(JSON.stringify(args)).split("$ARGUMENTS").join(args);
+  return body.replaceAll("$ARGUMENTS", args);
+}
+
+/**
+ * The workflow-invoke-line substitution ONLY (fix round 7). `workflows/store.ts`'s
+ * `buildWorkflowSkillPrompt` writes a static body whose invoke line embeds the raw args value INSIDE
+ * its own hand-written quotes (`args: $ARGUMENTS_JSON`), and that value needs `"`/`\` escaping the
+ * way claude's own `S(e)` does it -- dump-confirmed at `createWorkflowCommand`'s `getPromptForCommand`,
+ * `a=e?\`{ name: ${i}, args: ${S(e)} }\`:...\`, and controller-confirmed `S` is `JSON.stringify`
+ * (chunk export at dump ~269598). This function is DELIBERATELY SEPARATE from `substituteArguments`
+ * (never merged into it again): only a synthetic, workflow-backed skill body should ever have
+ * `$ARGUMENTS_JSON` recognised as a token at all; every other command/skill body must see claude's
+ * plain single-token behaviour, `$ARGUMENTS_JSON` included -- since claude itself would leave that
+ * text's `_JSON` suffix untouched.
+ *
+ * A single left-to-right scan, not two `.split().join()` passes: `JSON.stringify(args)` can itself
+ * contain the literal substring `$ARGUMENTS` (e.g. `args = "please pass $ARGUMENTS through"` stringifies
+ * to `"please pass $ARGUMENTS through"`), and a later, separate `$ARGUMENTS` pass over that already-
+ * substituted text would incorrectly re-substitute what the JSON pass just inserted. Scanning once,
+ * left to right, and advancing past whatever was just written never re-visits inserted text.
+ */
+export function substituteWorkflowArguments(body: string, args: string): string {
+  const JSON_TOKEN = "$ARGUMENTS_JSON";
+  const PLAIN_TOKEN = "$ARGUMENTS";
+  let out = "";
+  let i = 0;
+  while (i < body.length) {
+    if (body.startsWith(JSON_TOKEN, i)) {
+      out += JSON.stringify(args);
+      i += JSON_TOKEN.length;
+    } else if (body.startsWith(PLAIN_TOKEN, i)) {
+      out += args;
+      i += PLAIN_TOKEN.length;
+    } else {
+      out += body[i];
+      i++;
+    }
+  }
+  return out;
 }
 
 /**
@@ -396,7 +433,11 @@ export class FilesystemCommandResolver implements CommandResolver {
       // listing/resolve divergence this round closed, displaced in time. `none` means "no command
       // answered", the same thing an unknown `/name` means, and the prompt is used verbatim.
       if (!loaded) return { kind: "none" };
-      return { kind: "expand", text: substituteArguments(loaded.body, args), source: loaded.path };
+      // Fix round 7: ONLY a synthetic (workflow-backed) skill body recognises `$ARGUMENTS_JSON`. An
+      // ordinary, on-disk skill gets claude's own plain substitution, `$ARGUMENTS_JSON` included as
+      // literal text if that is what its body happens to contain.
+      const substitute = loaded.isSynthetic ? substituteWorkflowArguments : substituteArguments;
+      return { kind: "expand", text: substitute(loaded.body, args), source: loaded.path };
     }
 
     const raw = readCommandBody(entry.file.path);

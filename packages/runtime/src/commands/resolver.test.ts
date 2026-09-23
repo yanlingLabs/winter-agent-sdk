@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillIndex, PROJECT_PLUGIN_NAME } from "../skills/store.ts";
-import { FilesystemCommandResolver, substituteArguments } from "./resolver.ts";
+import { FilesystemCommandResolver, substituteArguments, substituteWorkflowArguments } from "./resolver.ts";
 import { BUILTIN_SLASH_COMMANDS, buildSlashCommandListing, slashCommandNames } from "./builtins-listing.ts";
 
 const tempDirs: string[] = [];
@@ -444,38 +444,98 @@ describe("m2: a command file may not claim a qualified `<plugin>:<name>` identit
   });
 });
 
-// Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): `$ARGUMENTS_JSON`,
-// alongside the pre-existing raw `$ARGUMENTS` -- substitutes with `JSON.stringify(args)`, matching
-// claude's own `S(e)` escaping (dump-confirmed at `createWorkflowCommand`'s `getPromptForCommand`,
-// inferred to be JSON-string-quoting from its call-site shape -- applied to a plain, always-defined
-// string, used with no additional quotes around it in the template).
-describe("substituteArguments -- fix round 6, $ARGUMENTS_JSON (JSON.stringify-escaped args)", () => {
+// Fix round 7 (a same-day correction of round 6): round 6 put `$ARGUMENTS_JSON` into the SHARED
+// `substituteArguments`, called for every command file and every skill body -- making it a
+// universally-recognised token in ordinary user content claude would never touch. Claude's own
+// mechanism (dump-confirmed at ~275427, the pinned 2.1.250 dump) is a single `e.replaceAll(
+// "$ARGUMENTS", args)` and nothing else. `substituteArguments` is reverted to exactly that; the
+// JSON-escaping behaviour moves to the new, separate `substituteWorkflowArguments` below, used only
+// for synthetic (workflow-backed) skill bodies (`commands/resolver.ts`'s `resolve()`).
+describe("substituteArguments -- fix round 7, claude parity restored ($ARGUMENTS_JSON is NOT a token here)", () => {
+  test("the plain $ARGUMENTS token substitutes raw, unescaped, exactly as R5-14 pinned it", () => {
+    expect(substituteArguments("args: $ARGUMENTS", 'he said "hi"')).toBe('args: he said "hi"');
+  });
+
+  test("the controller's own repro: a literal $ARGUMENTS_JSON in an ordinary body is NOT recognised as a token -- only its $ARGUMENTS prefix substitutes, leaving the _JSON suffix as literal text, matching claude", () => {
+    expect(substituteArguments("run $ARGUMENTS_JSON now", "a b")).toBe("run a b_JSON now");
+  });
+
+  test("no arguments substitutes the empty string", () => {
+    expect(substituteArguments("args: $ARGUMENTS", "")).toBe("args: ");
+  });
+
+  test("every occurrence substitutes, not just the first", () => {
+    expect(substituteArguments("$ARGUMENTS and $ARGUMENTS", "x")).toBe("x and x");
+  });
+});
+
+// Fix round 6 (originally), re-scoped in round 7: `$ARGUMENTS_JSON` substitutes with
+// `JSON.stringify(args)`, matching claude's own `S(e)` escaping (dump-confirmed at
+// `createWorkflowCommand`'s `getPromptForCommand`; controller-confirmed `S` is `JSON.stringify`,
+// chunk export at dump ~269598) -- but ONLY through `substituteWorkflowArguments`, the function
+// `resolve()` now routes a synthetic (workflow-backed) skill body through. It is never merged back
+// into the shared `substituteArguments`.
+describe("substituteWorkflowArguments -- fix round 6/7, $ARGUMENTS_JSON (JSON.stringify-escaped args), scoped to workflow bodies", () => {
   test("a plain args value is quoted, same visible result as the raw token for a string with nothing to escape", () => {
-    expect(substituteArguments("args: $ARGUMENTS_JSON", "some args here")).toBe('args: "some args here"');
+    expect(substituteWorkflowArguments("args: $ARGUMENTS_JSON", "some args here")).toBe('args: "some args here"');
   });
 
   test("no arguments substitutes an empty JSON string, not an empty raw string", () => {
-    expect(substituteArguments("args: $ARGUMENTS_JSON", "")).toBe('args: ""');
+    expect(substituteWorkflowArguments("args: $ARGUMENTS_JSON", "")).toBe('args: ""');
   });
 
   test("a DOUBLE QUOTE in the args is escaped, not left to break the surrounding literal", () => {
-    expect(substituteArguments('args: $ARGUMENTS_JSON', 'he said "hi"')).toBe('args: "he said \\"hi\\""');
+    expect(substituteWorkflowArguments('args: $ARGUMENTS_JSON', 'he said "hi"')).toBe('args: "he said \\"hi\\""');
   });
 
   test("a BACKSLASH in the args is escaped", () => {
-    expect(substituteArguments("args: $ARGUMENTS_JSON", "a\\b")).toBe('args: "a\\\\b"');
+    expect(substituteWorkflowArguments("args: $ARGUMENTS_JSON", "a\\b")).toBe('args: "a\\\\b"');
   });
 
   test("both a backslash and a quote together are escaped correctly, in combination", () => {
     const args = 'C:\\path\\"quoted"';
-    expect(substituteArguments("args: $ARGUMENTS_JSON", args)).toBe(`args: ${JSON.stringify(args)}`);
+    expect(substituteWorkflowArguments("args: $ARGUMENTS_JSON", args)).toBe(`args: ${JSON.stringify(args)}`);
   });
 
-  test("$ARGUMENTS_JSON is substituted BEFORE the plain $ARGUMENTS token, so the longer token's own text is never mangled by the shorter one's replace", () => {
-    expect(substituteArguments("$ARGUMENTS_JSON then $ARGUMENTS", "x")).toBe('"x" then x');
+  test("$ARGUMENTS_JSON is substituted BEFORE the plain $ARGUMENTS token, so the longer token's own text is never mangled by the shorter one's scan", () => {
+    expect(substituteWorkflowArguments("$ARGUMENTS_JSON then $ARGUMENTS", "x")).toBe('"x" then x');
   });
 
-  test("the plain $ARGUMENTS token is UNCHANGED -- raw, unescaped, exactly as R5-14 pinned it", () => {
-    expect(substituteArguments("args: $ARGUMENTS", 'he said "hi"')).toBe('args: he said "hi"');
+  test("the plain $ARGUMENTS token is UNCHANGED -- raw, unescaped", () => {
+    expect(substituteWorkflowArguments("args: $ARGUMENTS", 'he said "hi"')).toBe('args: he said "hi"');
+  });
+
+  test("a single-pass scan: a JSON-stringified args value that itself contains the literal substring $ARGUMENTS is NOT re-substituted by a later pass", () => {
+    const args = "please pass $ARGUMENTS through";
+    // JSON.stringify(args) contains the literal text "$ARGUMENTS" inside its own quotes -- a naive
+    // two-pass split/join (JSON token first, then plain token) would re-scan that inserted text and
+    // wrongly replace it again. The single-pass scanner must not.
+    expect(substituteWorkflowArguments("args: $ARGUMENTS_JSON", args)).toBe(`args: ${JSON.stringify(args)}`);
+  });
+});
+
+// Fix round 7, end to end: an ORDINARY command file (never synthetic/workflow-backed) reaching
+// `resolve()` must see claude's plain behaviour even when its own body happens to contain the
+// literal text `$ARGUMENTS_JSON` -- the bug the controller's repro named directly. This exercises the
+// real `resolve()` call site, not `substituteArguments` in isolation, so it also catches a future
+// regression where the wrong substitution function gets wired to the non-skill (command-file) branch.
+describe("resolve() -- fix round 7, an ordinary command file is NOT given the JSON-args token", () => {
+  test("a project command file containing literal $ARGUMENTS_JSON expands exactly as claude would -- the _JSON suffix survives as literal text", async () => {
+    const repo = mkTemp("winter-cmd-r7-plain-");
+    writeCommand(repo, "echoargs", "run $ARGUMENTS_JSON now");
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome: mkTemp("winter-cmd-r7-plain-home-") });
+    const result = await resolver.resolve("/echoargs a b", repo);
+    expect(result).toEqual({ kind: "expand", text: "run a b_JSON now", source: join(repo, ".winter", "commands", "echoargs.md") });
+  });
+
+  test("a project SKILL (not workflow-backed) containing literal $ARGUMENTS_JSON also expands claude's way", async () => {
+    const repo = mkTemp("winter-skill-r7-plain-");
+    const skillDir = join(repo, ".winter", "skills", "echoargs");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: echoargs\ndescription: echoes\n---\nrun $ARGUMENTS_JSON now", "utf8");
+    const index = SkillIndex.build({ cwd: repo, winterHome: mkTemp("winter-skill-r7-plain-home-") });
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome: mkTemp("winter-skill-r7-plain-home2-"), skills: index });
+    const result = await resolver.resolve("/echoargs a b", repo);
+    expect(result).toMatchObject({ kind: "expand", text: "run a b_JSON now" });
   });
 });
