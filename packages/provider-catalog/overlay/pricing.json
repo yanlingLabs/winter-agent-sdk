@@ -1,0 +1,243 @@
+{
+  "$comment": "HAND-AUTHORED provider/model price evidence. This is intentionally a narrow patch layer rather than a model overlay: replacing an extracted model row merely to add a price would discard its endpoint, modalities, context window, and effort evidence. All values are USD per million tokens. Where a first-party table is CNY-only, its sourceRef records the exact selected CNY tier and the ECB reference-rate conversion used; `ModelPricing` cannot represent currency, region, or multiple context tiers.",
+  "pricing": {
+    "baidu/ernie-4.5-turbo-128k": {
+      "value": { "inputPerMTokUsd": 0.119445, "outputPerMTokUsd": 0.47778, "cacheReadPerMTokUsd": 0.029861 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — ERNIE-4.5-Turbo-128K online list rate: CNY 0.0008 input, CNY 0.0032 output, and CNY 0.0002 cache-hit input per 1K tokens. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "baidu/ernie-4.5-turbo-32k": {
+      "value": { "inputPerMTokUsd": 0.119445, "outputPerMTokUsd": 0.47778, "cacheReadPerMTokUsd": 0.029861 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — ERNIE-4.5-Turbo-32K online list rate: CNY 0.0008 input, CNY 0.0032 output, and CNY 0.0002 cache-hit input per 1K tokens. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "baidu/ernie-4.5-turbo-vl": {
+      "value": { "inputPerMTokUsd": 0.447919, "outputPerMTokUsd": 1.343756 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — ERNIE-4.5-Turbo-VL online list rate: CNY 0.003 input and CNY 0.009 output per 1K tokens. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "baidu/ernie-5.0": {
+      "value": { "inputPerMTokUsd": 1.493062, "outputPerMTokUsd": 5.972249 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — ERNIE-5.0 online list rate is tiered by input length: CNY 0.006/0.024 per 1K tokens at <=32K and CNY 0.01/0.04 above 32K through 128K. This records the higher CNY 0.01 input / CNY 0.04 output tier so estimates do not under-report long prompts. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "baidu/ernie-5.1": {
+      "value": { "inputPerMTokUsd": 0.895837, "outputPerMTokUsd": 3.284737 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — ERNIE-5.1 online list rate is tiered by input length: CNY 0.004/0.018 per 1K tokens at <=32K and CNY 0.006/0.022 above 32K through 128K. This records the higher CNY 0.006 input / CNY 0.022 output tier so estimates do not under-report long prompts. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qianfan/ernie-5.0-thinking-latest": {
+      "value": { "inputPerMTokUsd": 1.493062, "outputPerMTokUsd": 5.972249 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — the ERNIE-5.0 row explicitly includes ERNIE-5.0-Thinking-Latest. Its list rate is CNY 0.006/0.024 per 1K tokens at <=32K and CNY 0.01/0.04 above 32K through 128K. This records the higher CNY 0.01 input / CNY 0.04 output tier. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qianfan/ernie-5.1": {
+      "value": { "inputPerMTokUsd": 0.895837, "outputPerMTokUsd": 3.284737 },
+      "source": "official-doc",
+      "sourceRef": "https://cloud.baidu.com/doc/qianfan-docs/s/Jm8r1826a — ERNIE-5.1 online list rate is CNY 0.004/0.018 per 1K tokens at <=32K and CNY 0.006/0.022 above 32K through 128K. This records the higher CNY 0.006 input / CNY 0.022 output tier. Converted to USD/MTok using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.5-122b-a10b": {
+      "value": { "inputPerMTokUsd": 0.4, "outputPerMTokUsd": 3.2 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.5-122b-a10b — QwenCloud lists $0.40 input and $3.20 output per 1M tokens for this exact API model (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.5-397b-a17b": {
+      "value": { "inputPerMTokUsd": 0.6, "outputPerMTokUsd": 3.6 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.5-397b-a17b — QwenCloud lists $0.60 input and $3.60 output per 1M tokens for this exact API model (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.5-plus-2026-04-20": {
+      "value": { "inputPerMTokUsd": 0.4, "outputPerMTokUsd": 2.4, "cacheReadPerMTokUsd": 0.04, "cacheWritePerMTokUsd": 0.5 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.5-plus-2026-04-20 — QwenCloud's <=256K tier lists $0.40 input, $2.40 output, $0.50 explicit cache creation, and $0.04 explicit cache read per 1M tokens. The page also advertises a 1M context, but publishes no rate above 256K; ModelPricing therefore records the published <=256K rate only (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.6-27b": {
+      "value": { "inputPerMTokUsd": 0.6, "outputPerMTokUsd": 3.6 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.6-27b — QwenCloud lists $0.60 input and $3.60 output per 1M tokens for this exact API model (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.6-35b-a3b": {
+      "value": { "inputPerMTokUsd": 0.375, "outputPerMTokUsd": 2.25 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.6-35b-a3b — QwenCloud lists $0.375 input and $2.25 output per 1M tokens for this exact API model (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.6-plus": {
+      "value": { "inputPerMTokUsd": 0.5, "outputPerMTokUsd": 3, "cacheReadPerMTokUsd": 0.05, "cacheWritePerMTokUsd": 0.625 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.6-plus — QwenCloud's <=256K tier lists $0.50 input, $3.00 output, $0.625 explicit cache creation, and $0.05 explicit cache read per 1M tokens. The page also advertises a 1M context, but publishes no rate above 256K; ModelPricing therefore records the published <=256K rate only (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.7-max-2026-06-08": {
+      "value": { "inputPerMTokUsd": 2.5, "outputPerMTokUsd": 7.5, "cacheReadPerMTokUsd": 0.5, "cacheWritePerMTokUsd": 3.125 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.7-max-2026-06-08 — QwenCloud lists $2.50 input, $7.50 output, $0.50 implicit-cache input, and $3.125 explicit-cache creation per 1M tokens. It separately lists $0.25 explicit cache read; the one cacheRead field records the higher implicit-cache rate so estimates do not under-report either cache mode (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.7-plus": {
+      "value": { "inputPerMTokUsd": 0.32, "outputPerMTokUsd": 1.28, "cacheReadPerMTokUsd": 0.064, "cacheWritePerMTokUsd": 0.4 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.7-plus — QwenCloud's current <=256K 20%-off price is $0.32 input, $1.28 output, $0.064 implicit-cache input, and $0.40 explicit-cache creation per 1M tokens. It separately lists $0.032 explicit cache read; the one cacheRead field records the higher implicit-cache rate. The undiscounted $0.40/$1.60 list price and the current promotion are both disclosed by the page (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "qwen-cloud/qwen3.8-max": {
+      "value": { "inputPerMTokUsd": 2, "outputPerMTokUsd": 6, "cacheReadPerMTokUsd": 0.25, "cacheWritePerMTokUsd": 2.5 },
+      "source": "official-doc",
+      "sourceRef": "https://www.qwencloud.com/models/qwen3.8-max — QwenCloud lists $2 input, $6 output, $0.25 implicit-cache input, and $2.50 explicit-cache creation per 1M tokens. It separately lists $0.17 explicit cache read; the one cacheRead field records the higher implicit-cache rate so estimates do not under-report either cache mode (retrieved 2026-09-19).",
+      "confidence": "declared",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.5-122b-a10b": {
+      "value": { "inputPerMTokUsd": 0.438363, "outputPerMTokUsd": 3.506606 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.5-122b-a10b at CNY 2.936 input / CNY 23.486 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.5-397b-a17b": {
+      "value": { "inputPerMTokUsd": 0.657545, "outputPerMTokUsd": 3.94482 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.5-397b-a17b at CNY 4.404 input / CNY 26.421 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.5-plus": {
+      "value": { "inputPerMTokUsd": 0.547954, "outputPerMTokUsd": 3.287425 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.5-plus at CNY 2.936/17.614 per MTok through 256K and CNY 3.67/22.018 at 256K-1M. ModelPricing records the higher CNY 3.67 input / CNY 22.018 output tier so estimates do not under-report long prompts. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.6-27b": {
+      "value": { "inputPerMTokUsd": 0.671358, "outputPerMTokUsd": 4.028151 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.6-27b at CNY 4.49652 input / CNY 26.97912 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.6-35b-a3b": {
+      "value": { "inputPerMTokUsd": 0.419599, "outputPerMTokUsd": 2.517594 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.6-35b-a3b at CNY 2.810325 input / CNY 16.86195 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.6-plus": {
+      "value": { "inputPerMTokUsd": 2.237862, "outputPerMTokUsd": 6.713555 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.6-plus at CNY 3.7471/22.4826 per MTok through 256K and CNY 14.9884/44.965 at 256K-1M. ModelPricing records the higher CNY 14.9884 input / CNY 44.965 output tier so estimates do not under-report long prompts. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.7-max": {
+      "value": { "inputPerMTokUsd": 2.797402, "outputPerMTokUsd": 8.392056 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.7-max at CNY 18.736 input / CNY 56.207 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.7-plus": {
+      "value": { "inputPerMTokUsd": 1.342711, "outputPerMTokUsd": 5.370844 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.7-plus at CNY 2.998/11.991 per MTok through 256K and CNY 8.993/35.972 at 256K-1M, marked as a limited-time 20%-off list price. ModelPricing records the higher CNY 8.993 input / CNY 35.972 output list tier so estimates do not under-report long prompts; it may over-report while the promotion applies. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba/qwen3.8-max": {
+      "value": { "inputPerMTokUsd": 2.237802, "outputPerMTokUsd": 6.713555 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — Model Studio International (Singapore) lists qwen3.8-max at CNY 14.988 input / CNY 44.965 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.5-122b-a10b": {
+      "value": { "inputPerMTokUsd": 0.298612, "outputPerMTokUsd": 2.3889 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.5-122b-a10b at CNY 0.8/6.4 per MTok through 128K and CNY 2/16 at 128K-256K. ModelPricing records the higher CNY 2 input / CNY 16 output tier. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.5-397b-a17b": {
+      "value": { "inputPerMTokUsd": 0.447919, "outputPerMTokUsd": 2.687512 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.5-397b-a17b at CNY 1.2/7.2 per MTok through 128K and CNY 3/18 at 128K-256K. ModelPricing records the higher CNY 3 input / CNY 18 output tier. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.5-plus": {
+      "value": { "inputPerMTokUsd": 0.597225, "outputPerMTokUsd": 3.58335 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.5-plus at CNY 0.8/4.8 per MTok through 128K, CNY 2/12 through 256K, and CNY 4/24 at 256K-1M. ModelPricing records the higher CNY 4 input / CNY 24 output tier. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.6-27b": {
+      "value": { "inputPerMTokUsd": 0.447919, "outputPerMTokUsd": 2.687512 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.6-27b at CNY 3 input / CNY 18 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.6-35b-a3b": {
+      "value": { "inputPerMTokUsd": 0.268751, "outputPerMTokUsd": 1.612507 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.6-35b-a3b at CNY 1.8 input / CNY 10.8 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.6-plus": {
+      "value": { "inputPerMTokUsd": 1.19445, "outputPerMTokUsd": 7.166699 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.6-plus at CNY 2/12 per MTok through 256K and CNY 8/48 at 256K-1M. ModelPricing records the higher CNY 8 input / CNY 48 output tier. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.7-max": {
+      "value": { "inputPerMTokUsd": 1.791675, "outputPerMTokUsd": 5.375024 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.7-max at CNY 12 input / CNY 36 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.7-plus": {
+      "value": { "inputPerMTokUsd": 0.895837, "outputPerMTokUsd": 3.58335 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.7-plus at list CNY 2/8 per MTok through 256K and CNY 6/24 at 256K-1M, both marked as limited-time 20%-off. ModelPricing records the higher CNY 6 input / CNY 24 output list tier so estimates do not under-report long prompts; it may over-report while the promotion applies. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "alibaba-cn/qwen3.8-max": {
+      "value": { "inputPerMTokUsd": 1.791675, "outputPerMTokUsd": 5.375024 },
+      "source": "official-doc",
+      "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.8-max at CNY 12 input / CNY 36 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
+      "confidence": "inferred",
+      "observedAt": "2026-09-19T00:00:00Z"
+    }
+  }
+}

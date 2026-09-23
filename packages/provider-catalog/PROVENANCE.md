@@ -7,8 +7,8 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
-| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 540 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 64 providers, 65 models |
+| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 539 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 64 providers, 117 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -113,11 +113,11 @@ and wants to refresh this document by name — not a second gate.
 
 <!-- BEGIN GENERATED: admission-tier census (bun run scripts/provenance-tiers.ts) -->
 
-Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 166 provider rows). Do not edit by hand.
+Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 171 provider rows). Do not edit by hand.
 
 | Tier | Rows | What it means |
 | --- | ---: | --- |
-| **fetched-document** | 39 | a vendor page this repository retrieved and read, on a recorded date |
+| **fetched-document** | 44 | a vendor page this repository retrieved and read, on a recorded date |
 | **pinned-upstream** | 101 | the vendor's own site as the pinned upstream product catalog records it, plus that id's own pinned entry — a real, dated reference, but NOT a page read here |
 | **spec-ruling** | 4 | a ruling in an approved spec (or a user ruling recorded in one) admits the PATH; the row's own details are carried from a reviewed ledger entry — `anthropic`, `azure-ai`, `console`, `oci` |
 | **local** | 12 | a local installation on the operator's own machine — there is no third party to be admitted by — `docker-model-runner`, `lemonade`, `llama-cpp`, `llamafile`, `lm-studio`, `mlx-gemma`, `mlx-qwen`, `ollama-local`, `oobabooga`, `triton`, `vllm`, `xinference` |
@@ -315,7 +315,7 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **722** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **723** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
@@ -342,7 +342,7 @@ row for row"*, because a hand-typed count is the line that goes stale first and 
 | `category-system` | 1 | `auto` is routing policy, which this layer bans |
 | `duplicate-id` | 1 | upstream's second `gpt-4o` |
 | `no-registry-entry` | 1 | `azure-openai` — catalogued upstream, with no backend entry |
-| **`out-of-scope`** | 1 | **`gemini-3.1-flash-tts-preview`** — a TEXT-TO-SPEECH model. WS-13 §4 is a MUST: `tts` rows never feed the worker-model picker, and `scope` is per PROVIDER, so a `gemini` row cannot declare itself `tts` while its provider is `llm`. Excluded through the allowlist's reviewed `modelOverrides`, never a name heuristic — a heuristic would silently drop a future model whose id happened to match |
+| **`out-of-scope`** | 2 | **`gemini-3.1-flash-tts-preview`** is a TEXT-TO-SPEECH model: WS-13 §4 is a MUST, so `tts` rows never feed the worker-model picker. **`deepseek-v4-flash`** is a retired legacy id that DeepSeek temporarily routes to canonical `deepseek-flash`; it is excluded from the stale upstream layer so the catalog has one canonical row with the legacy id as its alias. Both are reviewed `modelOverrides`, never name heuristics |
 
 **`unrepresentable-protocol` is the interesting one.** Upstream's `vertex` entry lists eleven
 `claude-*` models with `targetFormat: "claude"` — Claude models served over Vertex's endpoint in the
@@ -423,7 +423,7 @@ reviewed allowlist change" a property of the pipeline instead of a promise.
 ## Pricing
 
 `overlay/models.json` carries list prices for the cohort rows below, each with the vendor's own
-pricing page as `sourceRef` and the observation instant. The set is pinned by name in
+official pricing or model page as `sourceRef` and the observation instant. The set is pinned by name in
 `src/extract/catalog-integrity.test.ts`, so a row gaining or losing a price is a deliberate edit:
 
 | Model | Input | Output | Cache read | Cache write | Source |
@@ -436,10 +436,24 @@ pricing page as `sourceRef` and the observation instant. The set is pinned by na
 | `google/gemini-3.5-flash-lite` | 0.30 | 2.50 | 0.03 | — | ai.google.dev/gemini-api/docs/pricing |
 | `google/gemini-3.8-flash` | 0.75 | 3.75 | 0.075 | — | ai.google.dev/gemini-api/docs/pricing |
 | `openai/gpt-4.1` | 2.00 | 8.00 | 0.50 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-4.1-mini` | 0.40 | 1.60 | 0.10 | — | developers.openai.com/api/docs/models/gpt-4.1-mini |
+| `openai/gpt-4.1-nano` | 0.10 | 0.40 | 0.025 | — | developers.openai.com/api/docs/models/gpt-4.1-nano |
+| `openai/gpt-4o` | 2.50 | 10.00 | 1.25 | — | developers.openai.com/api/docs/models/gpt-4o |
+| `openai/gpt-4o-2024-11-20` | 2.50 | 10.00 | 1.25 | — | developers.openai.com/api/docs/models/gpt-4o |
+| `openai/gpt-4o-mini` | 0.15 | 0.60 | 0.075 | — | developers.openai.com/api/docs/models/gpt-4o-mini |
+| `openai/gpt-5.4` | 2.50 | 15.00 | 0.25 | — | developers.openai.com/api/docs/models/gpt-5.4 |
+| `openai/gpt-5.4-mini` | 0.75 | 4.50 | 0.075 | — | developers.openai.com/api/docs/models/gpt-5.4-mini |
+| `openai/gpt-5.4-nano` | 0.20 | 1.25 | 0.02 | — | developers.openai.com/api/docs/models/gpt-5.4-nano |
+| `openai/gpt-5.4-pro` | 30.00 | 180.00 | — | — | developers.openai.com/api/docs/models/gpt-5.4-pro |
+| `openai/gpt-5.5` | 5.00 | 30.00 | 0.50 | — | developers.openai.com/api/docs/models/gpt-5.5 |
+| `openai/gpt-5.5-pro` | 30.00 | 180.00 | — | — | developers.openai.com/api/docs/models/gpt-5.5-pro |
+| `openai/gpt-5.6` | 4.00 | 20.00 | 0.40 | — | developers.openai.com/api/docs/models/gpt-5.6-sol |
 | `openai/gpt-5.6-luna` | 0.20 | 1.20 | 0.02 | — | developers.openai.com/api/docs/pricing |
 | `openai/gpt-5.6-sol` | 4.00 | 20.00 | 0.40 | — | developers.openai.com/api/docs/pricing |
 | `openai/gpt-5.6-terra` | 2.00 | 12.00 | 0.20 | — | developers.openai.com/api/docs/pricing |
 | `openai/gpt-6-astra` | 10.00 | 50.00 | 1.00 | 12.50 | developers.openai.com/api/docs/pricing |
+| `openai/o3` | 2.00 | 8.00 | 0.50 | — | developers.openai.com/api/docs/models/o3 |
+| `openai/o3-mini` | 1.10 | 4.40 | 0.55 | — | developers.openai.com/api/docs/models/o3-mini |
 | `openai/o4-mini` | 1.10 | 4.40 | 0.275 | — | developers.openai.com/api/docs/pricing |
 | `xai/grok-4.6` | 2.00 | 6.00 | 0.50 | — | docs.x.ai/docs/models |
 

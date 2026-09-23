@@ -1379,7 +1379,7 @@
       "upstreamId": "nvidia",
       "winterId": "nvidia",
       "expectedCategory": "apikey",
-      "pricingBasis": "token",
+      "pricingBasis": "free",
       "admission": {
         "basis": "api-key",
         "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
@@ -1391,7 +1391,7 @@
           "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
         ]
       },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 49 seeded model row(s), api root https://integrate.api.nvidia.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
+      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 49 seeded model row(s), api root https://integrate.api.nvidia.com/v1. The shipped endpoint is NVIDIA's Build/API Catalog development surface: NVIDIA documents free Developer Program access for prototyping, research, development, and testing, subject to the service's rate limits; it is not a per-token-priced endpoint, so every model remains unpriced and `pricingBasis` is `free`. Production/self-hosted NIM has separate NVIDIA AI Enterprise GPU licensing and is outside this hosted-provider row. Sources: https://docs.api.nvidia.com/nim/docs/product and https://docs.api.nvidia.com/nim/docs/run-anywhere (retrieved 2026-09-19). Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
       "upstreamId": "ollama-cloud",
@@ -1559,7 +1559,7 @@
       "upstreamId": "qwen-cloud-token-plan",
       "winterId": "qwen-cloud-token-plan",
       "expectedCategory": "apikey",
-      "pricingBasis": "token",
+      "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
         "citation": "https://www.qwencloud.com/pricing/token-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
@@ -1571,7 +1571,7 @@
           "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
         ]
       },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 7 seeded model row(s), api root https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
+      "$comment": "D24/R6b-4: a readable Token Plan api-key entry at the pin — OpenAI Chat Completions dialect, 7 seeded model row(s), api root https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. Qwen Cloud documents Token Plan as a subscription/credit product rather than a per-model metered price table: https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview (retrieved 2026-09-19). `subscription` therefore deliberately suppresses invented per-token cost. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
       "upstreamId": "reka",
@@ -1972,7 +1972,7 @@
     {
       "upstreamId": "zai",
       "winterId": "zai-anthropic",
-      "displayNameOverride": "Z.AI GLM Coding (Anthropic dialect)",
+      "displayNameOverride": "Z.AI API (Anthropic dialect)",
       "expectedCategory": "apikey",
       "pricingBasis": "token",
       "admission": {
@@ -2019,6 +2019,12 @@
       "gemini-3.1-flash-tts-preview": {
         "exclude": true,
         "why": "A TEXT-TO-SPEECH model. WS-13 §4/§1 are a MUST: `tts` rows feed a separate subsystem and must never reach the Agent SDK worker-model picker, and the descriptor schema's `scope` is per PROVIDER — a `gemini` row cannot declare itself `tts` while its provider is `llm`. It also exposed the mapper's `outputModalities` default as a false claim: Winter stamps `[\"text\"]` on every row because upstream declares no output modality at all, which for a TTS model is simply wrong. Excluded here rather than shipped as a resolvable `candidate`."
+      }
+    },
+    "deepseek": {
+      "deepseek-v4-flash": {
+        "exclude": true,
+        "why": "DeepSeek's current official Models & Pricing page calls the current V4.1 Flash wire id `deepseek-flash`; it says legacy `deepseek-v4-flash` is temporarily routed to that model. Winter ships the documented canonical id as an overlay row with the legacy id retained as its provider-local alias, rather than exposing two model rows for one routed backend. See https://api-docs.deepseek.com/quick_start/pricing/ (retrieved 2026-09-19)."
       }
     },
     "vertex": {

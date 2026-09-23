@@ -8,6 +8,9 @@
 //   layer 2  OVERLAY   — `packages/provider-catalog/overlay/{providers,models}.json`, hand-authored
 //                        and reviewed. WS-13 §7: overlay evidence is NEVER silently overwritten by
 //                        upstream extraction or live discovery, so the overlay wins every conflict.
+//   layer 3  PRICING   — `packages/provider-catalog/overlay/pricing.json`, a narrow, provider-model
+//                        price-evidence patch. It deliberately cannot replace model capabilities
+//                        extracted from upstream.
 //
 // Usage:
 //   bun run provider:catalog              # regenerate generated/catalog.json + generated/rejections.json
@@ -24,12 +27,13 @@ import { validateCatalog } from "../packages/provider-catalog/src/validate.ts";
 // "which family is this", two assemblers, and a pipeline test that pins them byte-identical.
 import { stampFamilyFields } from "../packages/provider-catalog/src/families.ts";
 import type { ModelFamilyDescriptor, WinterCatalog, WinterProviderDescriptor } from "../packages/provider-catalog/src/types.ts";
-import type { UnstampedModelDescriptor } from "../packages/provider-catalog/src/extract/merge.ts";
+import { applyPricingPatches, type ModelPricingPatches, type UnstampedModelDescriptor } from "../packages/provider-catalog/src/extract/merge.ts";
 
 const PKG = new URL("../packages/provider-catalog/", import.meta.url);
 const OVERLAY_PROVIDERS = fileURLToPath(new URL("overlay/providers.json", PKG));
 const OVERLAY_MODELS = fileURLToPath(new URL("overlay/models.json", PKG));
 const OVERLAY_FAMILIES = fileURLToPath(new URL("overlay/families.json", PKG));
+const OVERLAY_PRICING = fileURLToPath(new URL("overlay/pricing.json", PKG));
 const UPSTREAM_LAYER = fileURLToPath(new URL("generated/upstream-layer.json", PKG));
 const UPSTREAM_PIN = fileURLToPath(new URL("UPSTREAM.json", PKG));
 const OUT_CATALOG = fileURLToPath(new URL("generated/catalog.json", PKG));
@@ -77,6 +81,9 @@ export interface BuildResult {
 export function buildCatalog(): BuildResult {
   const overlayProviders = stripComments(readJson(OVERLAY_PROVIDERS) as { providers: WinterProviderDescriptor[] }).providers;
   const overlayModels = stripComments(readJson(OVERLAY_MODELS) as { models: UnstampedModelDescriptor[] }).models;
+  const pricingPatches = existsSync(OVERLAY_PRICING)
+    ? (stripComments(readJson(OVERLAY_PRICING) as { pricing?: ModelPricingPatches }).pricing ?? {})
+    : {};
   // WS-13c §1 layer 3: the FAMILIES overlay, hand-authored and reviewed like the other two. Absent
   // is legal and means "no families" — every row then stamps `other`, which the validator accepts.
   const overlayFamilies = existsSync(OVERLAY_FAMILIES)
@@ -101,7 +108,10 @@ export function buildCatalog(): BuildResult {
   const overlayProviderIds = new Set(overlayProviders.map((p) => p.id));
   const overlayModelKeys = new Set(overlayModels.map((m) => m.key));
   const providers = [...upstreamProviders.filter((p) => !overlayProviderIds.has(p.id)), ...overlayProviders];
-  const models = [...upstreamModels.filter((m) => !overlayModelKeys.has(m.key)), ...overlayModels];
+  const models = applyPricingPatches(
+    [...upstreamModels.filter((m) => !overlayModelKeys.has(m.key)), ...overlayModels],
+    pricingPatches,
+  );
 
   // Deterministic order — the byte-identical-regeneration test needs one canonical ordering, and
   // "whatever order the layers happened to be written in" is not one. Families sort by `id` for the

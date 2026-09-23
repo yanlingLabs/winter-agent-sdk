@@ -156,12 +156,12 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
   // `zai`, `deepseek` and `openai` all carry `provider.family: "openai"` there, so GPT -> DeepSeek
   // and GPT -> GLM silently skipped, regardless of reasoning risk. `switch-review.ts` now compares
   // MODEL LINEAGE instead (WS-13c's `modelFamily`, via `modelFamilyOf` -- `zai/glm-5` is `"glm"`,
-  // `deepseek/deepseek-reasoner` is `"deepseek"`, `openai/gpt-5.6-luna` is `"gpt"`, all DIFFERENT),
+  // `deepseek/deepseek-v4-pro` is `"deepseek"`, `openai/gpt-5.6-luna` is `"gpt"`, all DIFFERENT),
   // so this table (the controller's own) now runs through the REAL catalog end to end.
-  test("GPT (openai/gpt-5.6-luna, summary records) -> deepseek/deepseek-reasoner: prompts", () => {
+  test("GPT (openai/gpt-5.6-luna, summary records) -> deepseek/deepseek-v4-pro: prompts", () => {
     const registry = realCatalogRegistry();
     const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
-    const deepseek = realEndpoint(registry, "deepseek/deepseek-reasoner");
+    const deepseek = realEndpoint(registry, "deepseek/deepseek-v4-pro");
     const entries = oneTurnEntries("a1");
     const records = [originRecord("a1", gpt), summaryRecord("a1", "gpt's own returned summary")];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: gpt, to: deepseek });
@@ -184,7 +184,7 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
 
   test("DeepSeek (complete exposed) -> zai/glm-5: silent, lossless-portable -- NOT a family skip", () => {
     const registry = realCatalogRegistry();
-    const deepseek = realEndpoint(registry, "deepseek/deepseek-reasoner");
+    const deepseek = realEndpoint(registry, "deepseek/deepseek-v4-pro");
     const glm = realEndpoint(registry, "zai/glm-5");
     const entries = oneTurnEntries("a1");
     const records = [originRecord("a1", deepseek), summaryRecord("a1", "the whole raw DeepSeek trace", "exposed", true)];

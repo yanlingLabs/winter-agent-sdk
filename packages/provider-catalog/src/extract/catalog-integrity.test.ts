@@ -88,33 +88,167 @@ describe("pricing (R6-H, R6-9)", () => {
 
   test("the cohort is priced, and every price is `official-doc` with a page URL and an instant", () => {
     expect(priced.map((m) => m.key).sort()).toEqual([
+      // Alibaba's China and international endpoints have independent published rate tables. The
+      // catalog's values are their conservative highest published context tier, converted from CNY
+      // with the source/reference rate disclosed per row.
+      "alibaba-cn/qwen3.5-122b-a10b",
+      "alibaba-cn/qwen3.5-397b-a17b",
+      "alibaba-cn/qwen3.5-plus",
+      "alibaba-cn/qwen3.6-27b",
+      "alibaba-cn/qwen3.6-35b-a3b",
+      "alibaba-cn/qwen3.6-plus",
+      "alibaba-cn/qwen3.7-max",
+      "alibaba-cn/qwen3.7-plus",
+      "alibaba-cn/qwen3.8-max",
+      "alibaba/qwen3.5-122b-a10b",
+      "alibaba/qwen3.5-397b-a17b",
+      "alibaba/qwen3.5-plus",
+      "alibaba/qwen3.6-27b",
+      "alibaba/qwen3.6-35b-a3b",
+      "alibaba/qwen3.6-plus",
+      "alibaba/qwen3.7-max",
+      "alibaba/qwen3.7-plus",
+      "alibaba/qwen3.8-max",
+      "anthropic/claude-fable-5",
       "anthropic/claude-fable-5-1",
       "anthropic/claude-haiku-4-5-20251001",
+      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-opus-4.5",
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
       "anthropic/claude-opus-5",
+      "anthropic/claude-sonnet-4.5",
+      "anthropic/claude-sonnet-4.6",
       "anthropic/claude-sonnet-5",
-      // WS-20: console/<id> twins of the four priced anthropic rows -- the Console arm is billed
+      // Baidu's current table publishes these exact ERNIE endpoints. Its CNY-only and, for 5.x,
+      // context-tiered rates are represented as the documented upper tier with the conversion and
+      // lower tier disclosed on the individual model row.
+      "baidu/ernie-4.5-turbo-128k",
+      "baidu/ernie-4.5-turbo-32k",
+      "baidu/ernie-4.5-turbo-vl",
+      "baidu/ernie-5.0",
+      "baidu/ernie-5.1",
+      "cerebras/gpt-oss-120b",
+      // WS-20: console/<id> twins of the priced Anthropic rows -- the Console arm is billed
       // per-token exactly like the API-key arm (same admission ruling, same pricingBasis), so the
       // same list-priced rates apply.
+      "console/claude-fable-5",
       "console/claude-fable-5-1",
       "console/claude-haiku-4-5-20251001",
+      "console/claude-haiku-4.5",
+      "console/claude-opus-4.5",
+      "console/claude-opus-4.6",
+      "console/claude-opus-4.7",
+      "console/claude-opus-4.8",
       "console/claude-opus-5",
+      "console/claude-sonnet-4.5",
+      "console/claude-sonnet-4.6",
       "console/claude-sonnet-5",
+      // DeepSeek prices the direct OpenAI-compatible and its own Anthropic-compatible endpoint
+      // identically. Both use the documented PEAK rates; each row's citation discloses the lower
+      // off-peak band that the one-rate schema cannot represent.
+      "deepseek-anthropic/deepseek-flash",
+      "deepseek-anthropic/deepseek-v4-pro",
+      "deepseek/deepseek-flash",
+      "deepseek/deepseek-v4-pro",
+      "fireworks/gpt-oss-120b",
+      "fireworks/kimi-k2p6",
+      "fireworks/minimax-m2p7",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-flash-lite",
       "google/gemini-2.5-pro",
+      "google/gemini-3-flash-preview",
+      "google/gemini-3.1-flash-lite",
+      "google/gemini-3.1-pro-preview",
       // P7a (Lane D): the two Gemini rows P6.6 Task 1b authored but could not price -- its allowed
       // page set named the MODELS index, which links out to per-model pages and states no rates.
       // Both now cite `ai.google.dev/gemini-api/docs/pricing` directly.
       "google/gemini-3.5-flash-lite",
+      "google/gemini-3.7-flash",
       "google/gemini-3.8-flash",
+      "groq/openai/gpt-oss-120b",
+      "groq/openai/gpt-oss-20b",
+      "groq/openai/gpt-oss-safeguard-20b",
+      "minimax/MiniMax-M2.7",
+      "minimax/MiniMax-M2.7-highspeed",
+      "mistral/codestral-latest",
+      "mistral/mistral-large-latest",
+      "mistral/mistral-medium-3-5",
+      "mistral/mistral-small-latest",
+      "moonshot/kimi-k3",
       "openai/gpt-4.1",
+      "openai/gpt-4.1-mini",
+      "openai/gpt-4.1-nano",
+      "openai/gpt-4o",
+      "openai/gpt-4o-2024-11-20",
+      "openai/gpt-4o-mini",
+      "openai/gpt-5.4",
+      "openai/gpt-5.4-mini",
+      "openai/gpt-5.4-nano",
+      "openai/gpt-5.4-pro",
+      "openai/gpt-5.5",
+      "openai/gpt-5.5-pro",
       // P6.6 fix wave (whole-branch Minor-4): the three `gpt` family SLOT rows. They were unpriced,
       // so a session on `sol`/`terra`/`luna` -- three of the four options the Agent tool advertises to
       // a gpt session -- reported no cost at all and `maxBudgetUsd` was inert for them.
+      "openai/gpt-5.6",
       "openai/gpt-5.6-luna",
       "openai/gpt-5.6-sol",
       "openai/gpt-5.6-terra",
       "openai/gpt-6-astra",
+      "openai/o3",
+      "openai/o3-mini",
       "openai/o4-mini",
+      // OpenRouter publishes and bills its own gateway rates. These must not inherit direct OpenAI
+      // figures, even where a value happens to coincide.
+      "openrouter/openai/gpt-4.1",
+      "openrouter/openai/gpt-5.4",
+      "openrouter/openai/gpt-5.4-mini",
+      "openrouter/openai/gpt-5.4-nano",
+      "openrouter/openai/gpt-5.4-pro",
+      "openrouter/openai/gpt-5.5",
+      "openrouter/openai/gpt-5.5-pro",
+      "openrouter/openai/gpt-5.6-luna",
+      "openrouter/openai/gpt-5.6-sol",
+      "openrouter/openai/gpt-5.6-terra",
+      "perplexity/sonar",
+      "perplexity/sonar-deep-research",
+      "perplexity/sonar-pro",
+      "perplexity/sonar-reasoning-pro",
+      "qianfan/ernie-5.0-thinking-latest",
+      "qianfan/ernie-5.1",
+      // Qwen Cloud publishes a separate, USD-denominated rate page for each of these exact API
+      // identifiers. Token Plan remains deliberately absent: it is subscription/credit billed.
+      "qwen-cloud/qwen3.5-122b-a10b",
+      "qwen-cloud/qwen3.5-397b-a17b",
+      "qwen-cloud/qwen3.5-plus-2026-04-20",
+      "qwen-cloud/qwen3.6-27b",
+      "qwen-cloud/qwen3.6-35b-a3b",
+      "qwen-cloud/qwen3.6-plus",
+      "qwen-cloud/qwen3.7-max-2026-06-08",
+      "qwen-cloud/qwen3.7-plus",
+      "qwen-cloud/qwen3.8-max",
+      "together/Qwen/Qwen3.5-9B",
+      "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "xai/grok-4.20-0309-non-reasoning",
+      "xai/grok-4.20-0309-reasoning",
+      "xai/grok-4.3",
       "xai/grok-4.6",
+      "xai/grok-build-0.1",
+      "zai-anthropic/glm-4.7",
+      "zai-anthropic/glm-4.7-flash",
+      "zai-anthropic/glm-5",
+      "zai-anthropic/glm-5.1",
+      "zai-anthropic/glm-5.2",
+      "zai-anthropic/glm-5.3",
+      "zai/glm-4.7",
+      "zai/glm-4.7-flash",
+      "zai/glm-5",
+      "zai/glm-5.1",
+      "zai/glm-5.2",
+      "zai/glm-5.3",
+      "zai/glm-5.3-flash",
     ]);
     for (const model of priced) {
       const pricing = model.pricing!;
@@ -123,8 +257,23 @@ describe("pricing (R6-H, R6-9)", () => {
       expect(pricing.source).toBe("official-doc");
       expect(pricing.sourceRef).toMatch(/^https:\/\//);
       expect(pricing.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-      expect(pricing.value.inputPerMTokUsd).toBeGreaterThan(0);
-      expect(pricing.value.outputPerMTokUsd).toBeGreaterThan(0);
+      // A provider with otherwise metered billing can publish a genuinely free model. Zero is an
+      // explicit official list price, distinct from a row with `pricing` absent (unknown).
+      expect(pricing.value.inputPerMTokUsd).toBeGreaterThanOrEqual(0);
+      expect(pricing.value.outputPerMTokUsd).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test("DeepSeek's time-banded list prices choose the documented peak rate and disclose the off-peak band", () => {
+    for (const [key, input, output, cache] of [
+      ["deepseek/deepseek-flash", 0.3, 1.2, 0.006],
+      ["deepseek-anthropic/deepseek-flash", 0.3, 1.2, 0.006],
+      ["deepseek/deepseek-v4-pro", 1.32, 3.96, 0.044],
+      ["deepseek-anthropic/deepseek-v4-pro", 1.32, 3.96, 0.044],
+    ] as const) {
+      const pricing = catalog.models.find((model) => model.key === key)?.pricing;
+      expect([key, pricing?.value]).toEqual([key, { inputPerMTokUsd: input, outputPerMTokUsd: output, cacheReadPerMTokUsd: cache }]);
+      expect(pricing?.sourceRef).toContain("off-peak");
     }
   });
 
@@ -132,12 +281,11 @@ describe("pricing (R6-H, R6-9)", () => {
     for (const model of upstreamLayer.models) expect((model as { pricing?: unknown }).pricing).toBeUndefined();
   });
 
-  test("gateway, Azure, Bedrock and Vertex rows stay unpriced — a reseller's price is not the vendor's", () => {
+  test("rows without a provider-specific token price stay unpriced", () => {
     // SDK 0.0.4: the two new codex rows join their sibling here. Their `openai/*` twins ARE priced
     // (the metered endpoint's published rates, pinned in the priced set above), and the whole point
     // of this assertion is that a subscription backend must never inherit them.
     for (const key of [
-      "openrouter/openai/gpt-4.1",
       "azure-openai/gpt-4.1",
       "vertex/gemini-2.5-pro",
       "codex-oauth/gpt-5.6-sol",
@@ -371,7 +519,7 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
       expect([model.key, protocol === "openai-responses" || protocol === "azure-openai"]).toEqual([model.key, true]);
     }
     // The two rows that were wrong now ship on the surface their capability is documented for.
-    for (const key of ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]) {
+    for (const key of ["deepseek/deepseek-v4-pro", "deepseek/deepseek-flash"]) {
       expect([key, catalog.models.find((m) => m.key === key)?.endpoints]).toEqual([key, ["chat"]]);
     }
   });
@@ -406,9 +554,14 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     expect(catalog.models.some((m) => m.key.includes("tts") || m.upstreamId.includes("-tts"))).toBe(false);
     const excluded = (rejectionsLedger.rejections as Array<{ exclusionClass: string; path: string; reason: string }>)
       .filter((r) => r.exclusionClass === "out-of-scope");
-    expect(excluded).toHaveLength(1);
-    expect(excluded[0]!.path).toContain("gemini-3.1-flash-tts-preview");
-    expect(excluded[0]!.reason).toContain("TEXT-TO-SPEECH");
+    expect(excluded.map((row) => row.path).sort()).toEqual([
+      "deepseek.models[deepseek-v4-flash]",
+      "gemini.models[gemini-3.1-flash-tts-preview]",
+    ]);
+    const tts = excluded.find((row) => row.path.includes("gemini-3.1-flash-tts-preview"))!;
+    expect(tts.reason).toContain("TEXT-TO-SPEECH");
+    const legacyFlash = excluded.find((row) => row.path.includes("deepseek-v4-flash"))!;
+    expect(legacyFlash.reason).toContain("deepseek-flash");
     // Upstream declares NO output modality for any model, so `["text"]` is Winter's inference. It
     // shipped as `upstream-static`/`inferred`, which reads as "upstream said text".
     //
@@ -649,10 +802,14 @@ describe("WS-13b §2: the widened catalog", () => {
   test.each([
     // The R6b-5 dialect siblings. `zai-anthropic` is EXTRACTED (upstream's own `zai` entry is the
     // Anthropic one) while `zai` is the reviewed overlay row -- so this table also pins that the two
-    // layers produce one coherent pair rather than two rows that happen to exist.
+    // layers produce one coherent pair rather than two rows that happen to exist. The normal Z.AI
+    // API and the Coding Plan are a separate commercial split: normal API calls spend API balance;
+    // Coding Plan calls spend subscription credits on a different endpoint.
     ["deepseek-anthropic", "winter.anthropic-messages", "token"],
     ["zai", "winter.openai-chat-completions", "token"],
     ["zai-anthropic", "winter.anthropic-messages", "token"],
+    ["zai-coding", "winter.openai-chat-completions", "subscription"],
+    ["zai-coding-anthropic", "winter.anthropic-messages", "subscription"],
     ["moonshot", "winter.openai-chat-completions", "token"],
     ["kimi-coding", "winter.anthropic-messages", "subscription"],
     ["minimax", "winter.openai-chat-completions", "token"],
@@ -671,7 +828,7 @@ describe("WS-13b §2: the widened catalog", () => {
     const row = byId.get(id);
     expect(row?.adapterId).toBe(adapterId);
     expect(row?.pricingBasis).toBe(basis);
-    // These fifteen rows are the ones the audit and the vendors' own docs cover, so none of them may
+    // These seventeen rows are the ones the audit and the vendors' own docs cover, so none of them may
     // fall back to the pinned-upstream tier (PROVENANCE.md, "Two tiers").
     //
     // KEYED ON THE TIER FIELD, not on the citation's shape (whole-branch review M-4, ruling R-FW-3).
@@ -682,6 +839,22 @@ describe("WS-13b §2: the widened catalog", () => {
     // the rule can be stated as the rule.
     expect([id, row?.admission.tier]).not.toEqual([id, "pinned-upstream"]);
     expect(catalog.models.some((m) => m.providerId === id && m.status === "candidate")).toBe(true);
+  });
+
+  test("Z.AI keeps the metered API and GLM Coding Plan model identities, endpoints, and billing separate", () => {
+    const api = byId.get("zai");
+    const coding = byId.get("zai-coding");
+    const codingAnthropic = byId.get("zai-coding-anthropic");
+    expect([api?.defaultEndpoints.api, api?.pricingBasis]).toEqual(["https://api.z.ai/api/paas/v4", "token"]);
+    expect([coding?.defaultEndpoints.api, coding?.pricingBasis]).toEqual(["https://api.z.ai/api/coding/paas/v4", "subscription"]);
+    expect([codingAnthropic?.defaultEndpoints.api, codingAnthropic?.pricingBasis]).toEqual(["https://api.z.ai/api/anthropic", "subscription"]);
+
+    const plan53 = catalog.models.find((model) => model.key === "zai-coding/glm-5.3");
+    const planFlash = catalog.models.find((model) => model.key === "zai-coding/glm-5.3-flash");
+    expect(plan53?.aliases).toEqual(["glm-5.2", "glm-5.1"]);
+    expect(planFlash?.aliases).toEqual(["glm-4.7"]);
+    expect([plan53?.pricing, planFlash?.pricing]).toEqual([undefined, undefined]);
+    expect(catalog.models.filter((model) => model.providerId === "zai-coding-anthropic").map((model) => model.pricing)).toEqual([undefined, undefined]);
   });
 
   test("the evidence TIER is data on every row, and it AGREES with the prose it was derived from", () => {
@@ -784,12 +957,13 @@ describe("WS-13b §2: the widened catalog", () => {
     // credential verbatim puts it in the repository just as surely as the row would have, and
     // `scanForSecrets` would be right to flag this file next.
     const anonymousKey = "0".repeat(10);
-    // ...and the sweep runs over the two HAND-AUTHORED SOURCES as well, not only the generated
+    // ...and the sweep runs over all HAND-AUTHORED SOURCES as well, not only the generated
     // artifact. The generated file is the one nobody edits; the overlay and the allowlist are where
     // a future reviewer would actually paste a value, and the merge would carry it through.
     const sources = await Promise.all([
       Bun.file(new URL("../../overlay/providers.json", import.meta.url)).text(),
       Bun.file(new URL("../../overlay/models.json", import.meta.url)).text(),
+      Bun.file(new URL("../../overlay/pricing.json", import.meta.url)).text(),
       Bun.file(new URL("../../../../third_party/omniroute-provider-source/allowlist.json", import.meta.url)).text(),
     ]);
     // MATCHED AS A WHOLE TOKEN, and the reason is an instrument trap this test walked into: a bare
@@ -974,6 +1148,7 @@ describe("WS-13c: model families and slots", () => {
     // ONE canonical model across three spellings and three providers — the whole point of §1.
     expect(canonicalOf("vertex/DeepSeek-V4-Pro")).toBe("deepseek-v4-pro");
     expect(canonicalOf("deepseek/deepseek-v4-pro")).toBe("deepseek-v4-pro");
+    expect(canonicalOf("deepseek/deepseek-flash")).toBe("deepseek-flash");
     expect(canonicalOf("anthropic/claude-haiku-4-5-20251001")).toBe("claude-haiku-4.5-20251001");
     expect(canonicalOf("groq/openai/gpt-oss-120b")).toBe("gpt-oss-120b");
     expect(familyOf("groq/openai/gpt-oss-120b")).toBe("gpt-oss");
@@ -1059,16 +1234,16 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
     }
   });
 
-  test("the two new rows mirror their `sol` sibling EXACTLY, bar the six fields that must differ", () => {
+  test("the two new rows mirror their `sol` sibling EXACTLY, bar the seven fields that must differ", () => {
     // The rows were copied, not re-derived: same backend, same adapter, same Responses dialect, same
     // efforts, same unpriced posture. Asserting the structural equality is what keeps a later edit
     // to one of them from silently splitting the three apart.
     const sol = catalog.models.find((m) => m.key === "codex-oauth/gpt-5.6-sol")!;
-    // The six fields that MUST differ, dropped by name, plus `observedAt` (each row records the date
+    // The seven fields that MUST differ, dropped by name, plus `observedAt` (each row records the date
     // its own evidence was read). Every self-reference -- the key itself and `continuationDomain`'s
     // single entry -- is then normalised to one token, so "names ITSELF" is what is compared rather
     // than "names sol".
-    const DIFFERING = new Set(["key", "upstreamId", "displayName", "canonicalModelId", "$comment", "observedAt"]);
+    const DIFFERING = new Set(["key", "upstreamId", "displayName", "canonicalModelId", "$comment", "defaultEffort", "observedAt"]);
     const strip = (m: WinterModelDescriptor): unknown =>
       JSON.parse(
         JSON.stringify(m, (key, value: unknown) => (DIFFERING.has(key) ? undefined : value)).replace(
@@ -1136,10 +1311,44 @@ test("WS-20: no reasoning-capable openai/codex/anthropic/console row has an empt
     .map((m) => m.key);
   expect(offenders).toEqual([]);
 });
-test("WS-20: the seven gpt-5.6 rows carry the five verified tiers with medium as default", () => {
-  for (const key of ["openai/gpt-5.6", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "codex-oauth/gpt-5.6-sol", "codex-oauth/gpt-5.6-terra", "codex-oauth/gpt-5.6-luna"]) {
+test("WS-20: GPT-5.6 retains provider/model-specific default efforts", () => {
+  for (const [key, defaultEffort] of [
+    ["openai/gpt-5.6", "medium"],
+    ["openai/gpt-5.6-sol", "medium"],
+    ["openai/gpt-5.6-terra", "medium"],
+    ["openai/gpt-5.6-luna", "medium"],
+    ["codex-oauth/gpt-5.6-sol", "low"],
+    ["codex-oauth/gpt-5.6-terra", "medium"],
+    ["codex-oauth/gpt-5.6-luna", "medium"],
+  ] as const) {
     const row = catalog.models.find((m) => m.key === key)!;
     expect([key, row.reasoning!.efforts]).toEqual([key, ["low", "medium", "high", "xhigh", "max"]]);
-    expect([key, row.reasoning!.defaultEffort]).toEqual([key, "medium"]);
+    expect([key, row.reasoning!.defaultEffort]).toEqual([key, defaultEffort]);
+  }
+});
+
+test("OpenRouter's interactive GPT-5 rows keep their provider-specific reasoning vocabularies and prices", () => {
+  // These are the current non-Batch model ids in OpenRouter's public /api/v1/models listing. Its
+  // per-model `reasoning` object is the authority here: OpenRouter's gateway vocabulary differs
+  // from a same-named direct OpenAI model, including the GPT-5.4/5.5 default and the GPT-5.6 `none` tier.
+  for (const [key, efforts, pricing] of [
+    ["openrouter/openai/gpt-5.4", ["xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 2.5, outputPerMTokUsd: 15, cacheReadPerMTokUsd: 0.25 }],
+    ["openrouter/openai/gpt-5.4-mini", ["xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 0.75, outputPerMTokUsd: 4.5, cacheReadPerMTokUsd: 0.075 }],
+    ["openrouter/openai/gpt-5.4-nano", ["xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 0.2, outputPerMTokUsd: 1.25, cacheReadPerMTokUsd: 0.02 }],
+    ["openrouter/openai/gpt-5.4-pro", ["xhigh", "high", "medium"], { inputPerMTokUsd: 30, outputPerMTokUsd: 180 }],
+    ["openrouter/openai/gpt-5.5", ["xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 5, outputPerMTokUsd: 30, cacheReadPerMTokUsd: 0.5 }],
+    ["openrouter/openai/gpt-5.5-pro", ["xhigh", "high", "medium"], { inputPerMTokUsd: 30, outputPerMTokUsd: 180 }],
+    ["openrouter/openai/gpt-5.6-sol", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.2, cacheWritePerMTokUsd: 2.5 }],
+    ["openrouter/openai/gpt-5.6-terra", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 2, outputPerMTokUsd: 12, cacheReadPerMTokUsd: 0.2, cacheWritePerMTokUsd: 2.5 }],
+    ["openrouter/openai/gpt-5.6-luna", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 0.2, outputPerMTokUsd: 1.2, cacheReadPerMTokUsd: 0.02, cacheWritePerMTokUsd: 0.25 }],
+  ] as const) {
+    const row = catalog.models.find((model) => model.key === key);
+    expect([key, row?.upstreamId, row?.reasoning?.efforts, row?.reasoning?.defaultEffort, row?.pricing?.value]).toEqual([
+      key,
+      key.slice("openrouter/".length),
+      Array.from(efforts),
+      "medium",
+      pricing,
+    ]);
   }
 });
