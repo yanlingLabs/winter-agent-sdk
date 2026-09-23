@@ -36,7 +36,7 @@
 //     was ALSO already deny-on-null (T7) — also unchanged by this ruling.
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
-import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, stripWrappers, type ParsedRule } from "./grammar.ts";
+import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, shellWords, stripWrappers, type ParsedRule } from "./grammar.ts";
 import { matchFileRuleAtBothEnds, checkSymlinkBothEnds, resolveRealTarget } from "./paths.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
@@ -581,7 +581,7 @@ function shellCommandChangesDirectory(call: PermissionCall): boolean {
   const parts = flattenSubcommands(raw); // a `cd` inside a subshell moves THAT subshell's writes
   if (parts === null) return true; // unparseable: never assume the base is the cwd
   return parts.some((sub) => {
-    const word = leadingWord(stripWrappers(sub, "denyAsk")).word;
+    const word = shellWords(stripWrappers(sub, "denyAsk"))[0]?.word; // after quote removal: `'cd'` changes directory too
     return word === "cd" || word === "pushd" || word === "popd";
   });
 }
@@ -805,7 +805,7 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
       // Unparseable/over-limit: an ALLOW never matches (the whole command goes to permission
       // handling), but a DENY/ASK rule still binds if any naively-split piece matches -- otherwise a
       // `case` statement or an unterminated quote was a way past `Bash(rm:*)` under bypass.
-      return direction === "denyAsk" && naiveCommandPieces(command).some((sub) => matchesRule(rule, { toolName: call.toolName, input: { ...call.input, command: sub } }, { direction }));
+      return direction === "denyAsk" && naiveCommandPieces(command).some((sub) => [sub, shellWords(sub).map((w) => w.word).join(" ")].some((text) => matchesRule(rule, { toolName: call.toolName, input: { ...call.input, command: text } }, { direction })));
     }
     // Fix round 1, item 1 (IMPORTANT, reviewer-caught): splitCompound("") returns `[]`, not null —
     // an empty/all-separator/missing command scans OK, it just has zero non-empty subcommands.
@@ -817,7 +817,10 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
     // no compound-splitting at all — was already correctly fail-closed on this exact input; see the
     // parity test in evaluator.test.ts).
     if (parts.length === 0) return false;
-    const matchesSub = (sub: string): boolean => matchesRule(rule, { toolName: call.toolName, input: { ...call.input, command: sub } }, { direction });
+    // A DENY/ASK rule also sees the subcommand after bash's quote removal: `'rm' -rf x`, `r\m -rf x`
+    // and `"rm" -rf x` all run rm (an ALLOW rule matches only the text as written, the stricter way).
+    const matchesText = (sub: string): boolean => matchesRule(rule, { toolName: call.toolName, input: { ...call.input, command: sub } }, { direction });
+    const matchesSub = (sub: string): boolean => matchesText(sub) || (direction === "denyAsk" && matchesText(shellWords(sub).map((w) => w.word).join(" ")));
     // WS-07 §3: "every subcommand MUST be independently permitted." Deny/ask are safety checks — ANY
     // dangerous subcommand taints the whole compound. Allow is a grant — this ONE rule only
     // pre-approves the whole compound if it independently covers EVERY subcommand (a conservative,

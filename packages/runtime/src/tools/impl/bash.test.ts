@@ -185,6 +185,11 @@ describe("extractBashPaths (P2-T11 carry)", () => {
     expect(r.writes).toEqual(["a/b/out.txt"]);
   });
 
+  test("quote removal as bash does it: a quoted `cd`, a partly-quoted directory and a quoted target", () => {
+    expect(extractBashPaths({ command: "'cd' 's'ub && echo hi > 'out'.txt" }).writes).toEqual(["sub/out.txt"]);
+    expect(extractBashPaths({ command: 'cd "my dir" && echo hi > ".git"/config' }).writes).toEqual(["my dir/.git/config"]);
+  });
+
   test("a redirect BEFORE a later cd is unaffected by that later cd", () => {
     const r = extractBashPaths({ command: "echo hi > out.txt && cd sub" });
     expect(r.writes).toEqual(["out.txt"]);

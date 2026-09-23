@@ -1,7 +1,7 @@
 // shell-structure.ts: every command a Bash string runs, and grammar.ts's widened redirect scan.
 import { describe, expect, test } from "bun:test";
 import { extractHeredocs, flattenSubcommands, hasProcessSubstitution } from "./shell-structure.ts";
-import { extractRedirectTargets, joinLineContinuations, splitCompound } from "./grammar.ts";
+import { dequoteShellWord, extractRedirectTargets, joinLineContinuations, shellWords, splitCompound } from "./grammar.ts";
 
 describe("flattenSubcommands", () => {
   const cases: Array<[string, string[]]> = [
@@ -142,5 +142,35 @@ describe("a function definition's body is a command like any other", () => {
   }
   test("an ordinary command is untouched", () => {
     expect(flattenSubcommands("functional-test run")).toEqual(["functional-test run"]);
+  });
+});
+
+describe("shellWords / dequoteShellWord: bash's quote removal", () => {
+  const cases: Array<[string, string]> = [
+    ["'.git'/config", ".git/config"],
+    ['".git"/config', ".git/config"],
+    ['.g"i"t/config', ".git/config"],
+    [".\\git/hooks", ".git/hooks"],
+    ["''.git/config", ".git/config"],
+    [".git''/config", ".git/config"],
+    ["$'\\x2egit'/config", ".git/config"],
+    ["$'\\056git'", ".git"],
+    ["$'a\\'b'", "a'b"],
+    ['$".git"', ".git"],
+    ['"a b"', "a b"],
+    ["$(echo .git)/config", "$(echo .git)/config"],
+  ];
+  for (const [word, expected] of cases) {
+    test(JSON.stringify(word), () => expect(dequoteShellWord(word)).toBe(expected));
+  }
+  test("redirect targets are dequoted with it", () => {
+    expect(extractRedirectTargets("echo x > '.git'/config 2>.g\"i\"t/err")).toEqual([".git/config", ".git/err"]);
+  });
+  test("word splitting keeps the raw spelling and whether any of it was quoted", () => {
+    expect(shellWords("cp 'a b' c")).toEqual([
+      { word: "cp", raw: "cp", quoted: false },
+      { word: "a b", raw: "'a b'", quoted: true },
+      { word: "c", raw: "c", quoted: false },
+    ]);
   });
 });

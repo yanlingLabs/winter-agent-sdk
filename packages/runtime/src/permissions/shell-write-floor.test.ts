@@ -346,3 +346,114 @@ describe("a function body is checked like any command -- under bypass too", () =
     expect(prompts.map((p) => p.meta.decisionReason)).toEqual([expect.stringContaining("protected path write")]);
   });
 });
+
+// --- bash's quote removal (final review of the port) --------------------------------------------------
+//
+// A redirect target was cleaned by stripping ONE pair of quotes around the whole word; bash removes
+// every quote and backslash inside it. So `'.git'/config` read as `'.git'/config` -- a directory named
+// `'.git'` -- while bash wrote `.git/config`, and a rule-allowed escape (or bypass) ran it unasked.
+describe("a target is judged after bash's quote removal: every quoted/escaped spelling of a protected path is asked", () => {
+  const quotedProtected = [
+    "echo x > '.git'/config",
+    'echo x > ".git"/config',
+    'echo x > .g"i"t/config',
+    "echo x > .\\git/hooks/pre-commit",
+    "echo x > ''.git/config",
+    "echo x > .git''/config",
+    'echo x > .win"ter"/runtimes/bin/winter',
+    `echo evil > ~/'.winter'/runtimes/bin/winter`,
+    'echo x >> ~/.zsh"rc"',
+  ];
+  for (const command of quotedProtected) {
+    test(`default + Bash(echo:*) + escape: \`${command}\` is asked`, async () => {
+      const { ctx, prompts } = escapeCtx("default");
+      expect((await evaluate(escaped(command), ctx)).decision).toBe("deny"); // headless
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]!.meta.decisionReason).toContain("protected path write");
+    });
+    test(`bypass + escape: \`${command}\` is asked`, async () => {
+      const { ctx, prompts } = escapeCtx("bypassPermissions", []);
+      expect((await evaluate(escaped(command), ctx)).decision).toBe("deny");
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]!.meta.decisionReason).toContain("protected path write");
+    });
+  }
+
+  test("ANSI-C and locale quotes are decoded for the floor AND still asked as an expansion", async () => {
+    // `$'\x2egit'` is `.git`: under bypass (where an expansion ask does not bind) the floor catches it.
+    for (const command of ["echo x > $'\\x2egit'/config", "echo x > $'.git'/config", 'echo x > $".git"/config']) {
+      const bypass = escapeCtx("bypassPermissions", []);
+      await evaluate(escaped(command), bypass.ctx);
+      expect(bypass.prompts.map((p) => p.meta.decisionReason)).toEqual([expect.stringContaining("protected path write")]);
+    }
+    const ruled = escapeCtx("default");
+    await evaluate(escaped("echo x > $'notes'.txt"), ruled.ctx);
+    expect(ruled.prompts.map((p) => p.meta.decisionReason)).toEqual(["Shell expansion syntax in paths requires manual approval"]);
+  });
+
+  test("a deny rule sees the dequoted target: Edit(**/secrets/**) denies `echo t > 'secrets'/api.txt`", async () => {
+    const { ctx, prompts } = ctxWith("bypassPermissions", [rule("Edit(**/secrets/**)", "deny"), rule("Bash(echo:*)", "allow")]);
+    expect(await evaluate(bash("echo t > 'secrets'/api.txt"), ctx)).toMatchObject({ decision: "deny", mechanism: "rule" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  test("a quoted `~` is not the home directory (bash does not expand it): `\"~/x\"` is `<cwd>/~/x`", async () => {
+    const { ctx, prompts } = ctxWith("default", [rule("Bash(echo:*)", "allow")]);
+    expect((await evaluate(bash('echo x > "~/notes.txt"'), ctx)).decision).toBe("allow"); // inside the cwd
+    await evaluate(bash("echo x > ~/notes.txt"), ctx); // the home directory: outside the working directories
+    expect(prompts).toHaveLength(1);
+  });
+
+  test("everyday quoting still works: a quoted in-project target is rule-allowed", async () => {
+    const { ctx, prompts } = ctxWith("default", [rule("Bash(echo:*)", "allow")]);
+    expect((await evaluate(bash('echo x > "build/out file.txt"'), ctx)).decision).toBe("allow");
+    expect((await evaluate(bash("echo x > 'notes.txt'"), ctx)).decision).toBe("allow");
+    expect(prompts).toHaveLength(0);
+  });
+});
+
+describe("the sweep: every other word a path or a verb is read from goes through the same quote removal", () => {
+  test("cp/mv's target directory, quoted: `cp x \"--target-directory=.git\"/hooks` and `cp -t '.git/hooks' x` (bypass)", async () => {
+    for (const command of ['cp x "--target-directory=.git"/hooks', "cp -t '.git/hooks' x", "mv x \".git\"/hooks/"]) {
+      const { ctx, prompts } = ctxWith("bypassPermissions", []);
+      await evaluate(bash(command), ctx);
+      expect(prompts.map((p) => p.meta.decisionReason)).toEqual([expect.stringContaining("protected path write")]);
+    }
+  });
+
+  test("a quoted `'>'` is an argument, not a redirect: `cp a '>' .git/hooks` still names .git/hooks (bypass)", async () => {
+    const { ctx, prompts } = ctxWith("bypassPermissions", []);
+    await evaluate(bash("cp a '>' .git/hooks"), ctx);
+    expect(prompts).toHaveLength(1);
+  });
+
+  test("a quoted verb is the verb: `'rm' -rf ~`, `r\\m -rf ~`, `\"rm\" -rf ~` are critical (bypass)", async () => {
+    for (const command of ["'rm' -rf ~", "r\\m -rf ~", '"rm" -rf ~', "'timeout' 5 rm -rf ~"]) {
+      const { ctx, prompts } = ctxWith("bypassPermissions", []);
+      await evaluate(bash(command), ctx);
+      expect(prompts.map((p) => p.meta.decisionReason)).toEqual([expect.stringContaining("critical removal")]);
+    }
+  });
+
+  test("a quoted `cd` changes directory: `'cd' sub && echo x > f` asks under Bash(echo:*)/Bash(cd:*)", async () => {
+    const { ctx, prompts } = ctxWith("default", [rule("Bash(echo:*)", "allow"), rule("Bash(cd:*)", "allow")]);
+    await evaluate(bash("'cd' sub && echo x > f"), ctx);
+    expect(prompts).toHaveLength(1);
+  });
+
+  test("a deny rule sees a quoted verb: Bash(rm:*) denies `'rm' build.log` and `r\\m build.log` -- under bypass", async () => {
+    for (const command of ["'rm' build.log", "r\\m build.log", '"rm" build.log']) {
+      const { ctx, prompts } = ctxWith("bypassPermissions", [rule("Bash(rm:*)", "deny")]);
+      expect(await evaluate(bash(command), ctx)).toMatchObject({ decision: "deny", mechanism: "rule" });
+      expect(prompts).toHaveLength(0);
+    }
+  });
+
+  test("read-only recognition sees quoted flags: `find . '-exec' touch f \;`, `rg \"--pre\" sh x` are not reads", async () => {
+    for (const command of ["find . '-exec' touch f \;", 'find . -"delete"', 'rg "--pre" sh x', "git diff '--output=.git/hooks/pre-commit'"]) {
+      const { ctx, prompts } = ctxWith("default", []);
+      await evaluate(bash(command), ctx);
+      expect(prompts).toHaveLength(1);
+    }
+  });
+});

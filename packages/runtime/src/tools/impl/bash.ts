@@ -24,7 +24,7 @@ import { join, sep } from "node:path";
 import "../descriptors/bash.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
-import { splitCompound, extractRedirectTargets, leadingWord } from "../../permissions/grammar.ts";
+import { splitCompound, extractRedirectTargets, leadingWord, dequoteShellWord } from "../../permissions/grammar.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 import {
   runCommand,
@@ -710,10 +710,11 @@ function extractBashPaths(input: unknown): ExtractedPaths {
     }
     const trimmed = segment.trim();
     const first = leadingWord(trimmed);
-    if (first.word === "cd") {
+    // Quote removal as bash does it (`'cd' "my dir"` changes into `my dir`) -- grammar.ts's shared one.
+    if (first.word !== undefined && dequoteShellWord(first.word) === "cd") {
       const second = leadingWord(first.afterWord);
       if (second.word !== undefined) {
-        const target = second.word.replace(/^["']|["']$/g, "");
+        const target = dequoteShellWord(second.word);
         base = joinRelative(base, target);
       }
     }

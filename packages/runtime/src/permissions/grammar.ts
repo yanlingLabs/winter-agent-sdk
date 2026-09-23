@@ -483,8 +483,10 @@ export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): s
   let pos = 0;
   for (;;) {
     pos = stripLeadingAssignmentsAt(cmd, info, pos, direction);
-    const { word, end: afterWordEnd } = leadingWordAt(cmd, info, pos);
-    if (word === undefined) return cmd.slice(pos);
+    const { word: rawWord, end: afterWordEnd } = leadingWordAt(cmd, info, pos);
+    if (rawWord === undefined) return cmd.slice(pos);
+    // After quote removal, as bash sees it: `'timeout' 5 rm -rf ~` runs `rm` under `timeout`.
+    const word = dequoteShellWord(rawWord);
 
     if (word === XARGS) {
       const { word: next } = leadingWordAt(cmd, info, afterWordEnd);
@@ -513,16 +515,134 @@ export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): s
 // extractRedirectTargets
 // ---------------------------------------------------------------------------------------------
 
-function stripQuotes(word: string): string {
-  if (word.length >= 2) {
-    const first = word[0];
-    const last = word[word.length - 1];
-    if ((first === '"' || first === "'") && first === last) return word.slice(1, -1);
-  }
-  return word;
+// ---------------------------------------------------------------------------------------------
+// Shell words: bash's quote removal, the ONE implementation every path is derived through
+// ---------------------------------------------------------------------------------------------
+//
+// bash removes EVERY quote and backslash inside a word, not a pair around the whole of it: `'.git'/config`,
+// `.g"i"t/config`, `.\git/config`, `''.git/config` and `.git''/config` all name `.git/config`. A path
+// derived any other way can name a different file than the one bash writes, and the protected floor,
+// the deny rules and the working-directory check then judge the wrong file.
+
+/** One word of a command: its text after quote removal, as written, and whether any of it was quoted. */
+export interface ShellWord {
+  word: string;
+  raw: string;
+  quoted: boolean;
 }
 
-/** One file-writing redirection: the target word as written (`raw`) and with its quotes removed. */
+const ANSI_C_SIMPLE_ESCAPES: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
+
+/** Decodes the escape at `s[i]` (just after a backslash) inside `$'…'`; returns the text and the next index. */
+function decodeAnsiCEscape(s: string, i: number): { text: string; next: number } {
+  const ch = s[i];
+  if (ch === undefined) return { text: "\\", next: i };
+  const simple = ANSI_C_SIMPLE_ESCAPES[ch];
+  if (simple !== undefined) return { text: simple, next: i + 1 };
+  const numeric = (pattern: RegExp, radix: number): { text: string; next: number } | undefined => {
+    const m = pattern.exec(s.slice(i + 1));
+    if (m === null || m[0].length === 0) return undefined;
+    return { text: String.fromCodePoint(Number.parseInt(m[0], radix) % 0x110000), next: i + 1 + m[0].length };
+  };
+  if (ch === "x") return numeric(/^[0-9a-fA-F]{1,2}/, 16) ?? { text: "\\x", next: i + 1 };
+  if (ch === "u") return numeric(/^[0-9a-fA-F]{1,4}/, 16) ?? { text: "\\u", next: i + 1 };
+  if (ch === "U") return numeric(/^[0-9a-fA-F]{1,8}/, 16) ?? { text: "\\U", next: i + 1 };
+  if (/[0-7]/.test(ch)) {
+    const m = /^[0-7]{1,3}/.exec(s.slice(i))!;
+    return { text: String.fromCharCode(Number.parseInt(m[0], 8) & 0xff), next: i + m[0].length };
+  }
+  if (ch === "c" && s[i + 1] !== undefined) return { text: String.fromCharCode(s.charCodeAt(i + 1) & 0x1f), next: i + 2 };
+  return { text: `\\${ch}`, next: i + 1 };
+}
+
+/**
+ * bash's quote removal (and, with `split`, its word splitting at unquoted blanks) over one command's
+ * text: single quotes, double quotes (a backslash there drops -- stricter than bash, which keeps it
+ * before an ordinary character, and never naming a DIFFERENT protected file), backslash escapes,
+ * ANSI-C `$'…'` (decoded) and locale `$"…"` (as double quotes). Expansions are left as written. An
+ * unterminated quote runs to the end.
+ */
+export function shellWords(s: string, split = true): ShellWord[] {
+  const words: ShellWord[] = [];
+  let cur = "";
+  let start = -1;
+  let quoted = false;
+  let quote: '"' | "'" | "$'" | null = null;
+  const end = (i: number): void => {
+    if (start !== -1) words.push({ word: cur, raw: s.slice(start, i), quoted });
+    cur = "";
+    start = -1;
+    quoted = false;
+  };
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i]!;
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      else cur += ch;
+      i++;
+      continue;
+    }
+    if (quote === "$'") {
+      if (ch === "'") {
+        quote = null;
+        i++;
+      } else if (ch === "\\") {
+        const decoded = decodeAnsiCEscape(s, i + 1);
+        cur += decoded.text;
+        i = decoded.next;
+      } else {
+        cur += ch;
+        i++;
+      }
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      else if (ch === "\\" && i + 1 < s.length) {
+        if (s[i + 1] !== "\n") cur += s[i + 1];
+        i++;
+      } else cur += ch;
+      i++;
+      continue;
+    }
+    if (split && /\s/.test(ch)) {
+      end(i);
+      i++;
+      continue;
+    }
+    if (start === -1) start = i;
+    if (ch === "\\") {
+      quoted = true;
+      if (i + 1 < s.length && s[i + 1] !== "\n") cur += s[i + 1];
+      i += 2;
+      continue;
+    }
+    if (ch === "$" && (s[i + 1] === "'" || s[i + 1] === '"')) {
+      quote = s[i + 1] === "'" ? "$'" : '"';
+      quoted = true;
+      i += 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      quoted = true;
+      i++;
+      continue;
+    }
+    cur += ch;
+    i++;
+  }
+  end(s.length);
+  return words;
+}
+
+/** `word` after bash's quote removal, as ONE word (blanks inside it are kept). */
+export function dequoteShellWord(word: string): string {
+  return shellWords(word, false)[0]?.word ?? "";
+}
+
+/** One file-writing redirection: the target word as written (`raw`) and after bash's quote removal. */
 export interface RedirectWrite {
   raw: string;
   target: string;
@@ -559,8 +679,8 @@ export function extractRedirectWrites(rawCommand: string): RedirectWrite[] {
 
   const writes: RedirectWrite[] = [];
   const push = (raw: string): void => {
-    writes.push({ raw, target: stripQuotes(raw) });
-    if (raw.length > 1 && raw.startsWith("!")) writes.push({ raw: raw.slice(1), target: stripQuotes(raw.slice(1)) });
+    writes.push({ raw, target: dequoteShellWord(raw) });
+    if (raw.length > 1 && raw.startsWith("!")) writes.push({ raw: raw.slice(1), target: dequoteShellWord(raw.slice(1)) });
   };
   let i = 0;
   while (i < command.length) {
@@ -604,7 +724,7 @@ export function extractRedirectWrites(rawCommand: string): RedirectWrite[] {
       i = opEnd;
       continue;
     }
-    if (!(descriptorCopy && /^(?:[0-9]+|-)$/.test(stripQuotes(word)))) push(word);
+    if (!(descriptorCopy && /^(?:[0-9]+|-)$/.test(dequoteShellWord(word)))) push(word);
     i = end;
   }
   return writes;
@@ -644,14 +764,19 @@ export function isRecognizedReadOnly(command: string): boolean {
   const { word: first, afterWord } = leadingWord(stripped);
   if (first === undefined) return false;
 
+  // The flags are checked on the arguments AFTER quote removal too: `find . '-exec' …` and
+  // `rg "--pre" …` pass exactly those flags to the program.
+  const dequotedArgs = shellWords(afterWord).map((w) => w.word).join(" ");
+  const hasFlag = (pattern: RegExp): boolean => pattern.test(afterWord) || pattern.test(dequotedArgs);
+
   if (first === "git") {
     const { word: sub } = leadingWord(afterWord);
-    return sub !== undefined && GIT_READ_ONLY_SUBCOMMANDS.has(sub) && !GIT_WRITE_CAPABLE_FLAGS.test(afterWord);
+    return sub !== undefined && GIT_READ_ONLY_SUBCOMMANDS.has(sub) && !hasFlag(GIT_WRITE_CAPABLE_FLAGS);
   }
 
   if (!READ_ONLY_COMMANDS.has(first)) return false;
   const flagPattern = WRITE_CAPABLE_FLAGS[first];
-  if (flagPattern && flagPattern.test(afterWord)) return false;
+  if (flagPattern && hasFlag(flagPattern)) return false;
   return true;
 }
 

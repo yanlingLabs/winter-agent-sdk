@@ -27,7 +27,7 @@
 //     `echo` is nowhere near the blessed seven -- "redirect targets count as write paths for the
 //     SpecialChecks seam... but do not widen §6.2's auto-approve set" (this task's own instruction).
 //   - `null` -- nothing write-shaped recognized at all (a plain read-only or unrelated command, or an
-//     empty command). An UNPARSEABLE command is read naively instead (`naiveWritePaths`) and, when it
+//     empty command). An UNPARSEABLE command is read naively instead (`naiveWriteWords`) and, when it
 //     names any write target, is "other" -- never acceptEdits-eligible; `shellWriteConstraint` is what
 //     makes it ask (WS-07 §6.2: "ambiguous/unparseable ... fall back to a prompt"). Distinguishing "no opinion" (null) from "found writes but not blessed" (kind:
 //     "other") is exactly what lets one function serve both evaluator.ts consumers correctly.
@@ -46,7 +46,7 @@
 // operators, only whitespace-delimited operands within an ALREADY-split-and-stripped subcommand).
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
-import { stripWrappers, extractRedirectWrites } from "./grammar.ts";
+import { stripWrappers, extractRedirectWrites, shellWords, dequoteShellWord, type ShellWord } from "./grammar.ts";
 import { flattenSubcommands, hasProcessSubstitution, naiveCommandPieces } from "./shell-structure.ts";
 
 export type RecognizedEditKind = "edit" | "bashFsOp" | "other";
@@ -74,62 +74,9 @@ export const RECOGNIZED_BASH_FS_OPS: ReadonlySet<string> = new Set(["mkdir", "to
 // second hand-copy -- keeps the "no per-call-site repetition" principle inside T7's own scope too,
 // not just across the rider-2 boundary.
 export function tokenizeWords(s: string): string[] {
-  const words: string[] = [];
-  let cur = "";
-  let inWord = false;
-  // `$'…'` (ANSI-C) is single-quoted text in which `\'` does not end the quote.
-  let quote: '"' | "'" | "$'" | null = null;
-  let i = 0;
-  while (i < s.length) {
-    const ch = s[i]!;
-    if (quote) {
-      if (ch === (quote === '"' ? '"' : "'")) {
-        quote = null;
-        i++;
-        continue;
-      }
-      if ((quote === '"' || quote === "$'") && ch === "\\" && i + 1 < s.length) {
-        cur += s[i + 1];
-        i += 2;
-        continue;
-      }
-      cur += ch;
-      i++;
-      continue;
-    }
-    if (ch === "$" && s[i + 1] === "'") {
-      quote = "$'";
-      inWord = true;
-      i += 2;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      inWord = true;
-      i++;
-      continue;
-    }
-    if (ch === "\\" && i + 1 < s.length) {
-      cur += s[i + 1];
-      inWord = true;
-      i += 2;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (inWord) {
-        words.push(cur);
-        cur = "";
-        inWord = false;
-      }
-      i++;
-      continue;
-    }
-    cur += ch;
-    inWord = true;
-    i++;
-  }
-  if (inWord) words.push(cur);
-  return words;
+  // bash's quote removal, shared with every other path the permission layer derives from a word
+  // (grammar.ts's `shellWords` -- the redirect targets use the identical logic).
+  return shellWords(s).map((w) => w.word);
 }
 
 export function isFlagToken(token: string): boolean {
@@ -152,8 +99,9 @@ export function isFlagToken(token: string): boolean {
 // `extractRedirectTargets` finding a real target regardless of whether this truncation catches the
 // glued form.
 const REDIRECT_OPERATOR_TOKEN = /^(?:&>>?|\d*>>?|\d*>&\d*|<)$/;
-function truncateAtFirstRedirectOperator(tokens: string[]): string[] {
-  const idx = tokens.findIndex((t) => REDIRECT_OPERATOR_TOKEN.test(t));
+/** Cut at the first UNQUOTED redirect operator: a quoted `'>'` is an ordinary argument (a file named `>`). */
+function truncateAtFirstRedirectOperator(tokens: ShellWord[]): ShellWord[] {
+  const idx = tokens.findIndex((t) => !t.quoted && REDIRECT_OPERATOR_TOKEN.test(t.word));
   return idx === -1 ? tokens : tokens.slice(0, idx);
 }
 
@@ -166,14 +114,18 @@ function truncateAtFirstRedirectOperator(tokens: string[]): string[] {
 // the real target" concept, and treating only the last operand as load-bearing would let `mv
 // /etc/passwd ./local-copy` slip through just because the DESTINATION is in-bounds.
 export function nonFlagOperands(tokens: string[]): string[] {
-  const out: string[] = [];
+  return nonFlagWords(tokens.map((word) => ({ word, raw: word, quoted: false }))).map((w) => w.word);
+}
+
+function nonFlagWords(tokens: ShellWord[]): ShellWord[] {
+  const out: ShellWord[] = [];
   let sawDoubleDash = false;
   for (const tok of tokens) {
-    if (!sawDoubleDash && tok === "--") {
+    if (!sawDoubleDash && tok.word === "--") {
       sawDoubleDash = true;
       continue;
     }
-    if (!sawDoubleDash && isFlagToken(tok)) continue;
+    if (!sawDoubleDash && isFlagToken(tok.word)) continue;
     out.push(tok);
   }
   return out;
@@ -188,23 +140,23 @@ export function nonFlagOperands(tokens: string[]): string[] {
 // shape from a genuinely empty GNU sed SCRIPT argument -- an unusual invocation, so misreading it as
 // BSD's suffix-arg is the safer of two guesses per WS-07 §13's "stricter, never looser" license: the
 // consequence of guessing wrong here is one fewer/extra candidate path, not a false auto-approval).
-function sedOperandPaths(rest: string[]): string[] | null {
+function sedOperandWords(rest: ShellWord[]): ShellWord[] | null {
   const tokens = truncateAtFirstRedirectOperator(rest);
-  const filtered: string[] = [];
+  const filtered: ShellWord[] = [];
   let sawDoubleDash = false;
   let sawI = false;
   for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i]!;
+    const tok = tokens[i]!.word;
     if (!sawDoubleDash && tok === "--") {
       sawDoubleDash = true;
       continue;
     }
     if (!sawDoubleDash && isFlagToken(tok)) {
       if (tok === "-i" || tok.startsWith("-i")) sawI = true; // bare `-i` or GNU's attached-suffix `-i.bak`
-      if (tok === "-i" && tokens[i + 1] === "") i++; // BSD `-i ''` suffix-arg idiom
+      if (tok === "-i" && tokens[i + 1]?.word === "") i++; // BSD `-i ''` suffix-arg idiom
       continue;
     }
-    filtered.push(tok);
+    filtered.push(tokens[i]!);
   }
   // WS-07 §6.2 lists `sed` as one of the acceptEdits-blessed verbs specifically for its IN-PLACE
   // idiom -- a bare `sed` (no `-i`) reads and prints, mutating nothing; recognizing it here would
@@ -215,38 +167,42 @@ function sedOperandPaths(rest: string[]): string[] | null {
 }
 
 // `cp`/`mv`'s target-directory option names a write destination that is not an operand:
-// `cp payload --target-directory=.git/hooks`, `mv -t <dir> x`.
-function targetDirectoryValues(tokens: string[]): string[] {
-  const out: string[] = [];
+// `cp payload --target-directory=.git/hooks`, `mv -t <dir> x`. Every token is already dequoted, so
+// `"--target-directory=.git"/hooks` names `.git/hooks` too.
+function targetDirectoryWords(tokens: ShellWord[]): ShellWord[] {
+  const PREFIX = "--target-directory=";
+  const out: ShellWord[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i]!;
-    if (tok === "--") break;
-    if (tok.startsWith("--target-directory=")) out.push(tok.slice("--target-directory=".length));
-    else if ((tok === "--target-directory" || tok === "-t") && tokens[i + 1] !== undefined) out.push(tokens[i + 1]!);
-    else if (/^-[A-Za-z]*t.+/.test(tok) && !tok.startsWith("--")) out.push(tok.slice(tok.indexOf("t") + 1)); // -tDIR, -ftDIR
+    const w = tok.word;
+    if (w === "--") break;
+    if (w.startsWith(PREFIX)) out.push({ word: w.slice(PREFIX.length), raw: tok.raw.startsWith(PREFIX) ? tok.raw.slice(PREFIX.length) : tok.raw, quoted: tok.quoted });
+    else if ((w === "--target-directory" || w === "-t") && tokens[i + 1] !== undefined) out.push(tokens[i + 1]!);
+    else if (/^-[A-Za-z]*t.+/.test(w) && !w.startsWith("--")) out.push({ word: w.slice(w.indexOf("t") + 1), raw: tok.raw, quoted: tok.quoted }); // -tDIR, -ftDIR
   }
   return out;
 }
 
 // Classifies ONE already-stripped subcommand string. Returns `null` when the leading word isn't
 // one of the blessed seven verbs (including when there's no leading word at all -- an empty string).
-function recognizeBashFsOpPaths(stripped: string): string[] | null {
-  const tokens = tokenizeWords(stripped);
+// The verb is matched after quote removal: `'rm'` and `r\m` run rm.
+function recognizeBashFsOpWords(stripped: string): ShellWord[] | null {
+  const tokens = shellWords(stripped);
   if (tokens.length === 0) return null;
   const [cmd, ...rest] = tokens;
-  if (cmd === undefined || !RECOGNIZED_BASH_FS_OPS.has(cmd)) return null;
-  if (cmd === "sed") return sedOperandPaths(rest);
+  if (cmd === undefined || !RECOGNIZED_BASH_FS_OPS.has(cmd.word)) return null;
+  if (cmd.word === "sed") return sedOperandWords(rest);
   const truncated = truncateAtFirstRedirectOperator(rest);
-  const operands = [...nonFlagOperands(truncated), ...(cmd === "cp" || cmd === "mv" ? targetDirectoryValues(truncated) : [])];
+  const operands = [...nonFlagWords(truncated), ...(cmd.word === "cp" || cmd.word === "mv" ? targetDirectoryWords(truncated) : [])];
   return operands.length > 0 ? operands : null;
 }
 
 // `tee` WRITES every file operand. It is not one of §6.2's blessed verbs (so it never makes a call
 // acceptEdits-eligible); its operands only ever ADD write paths for the protected/deny floors.
-function teeWritePaths(stripped: string): string[] {
-  const tokens = tokenizeWords(stripped);
-  if (tokens[0] !== "tee") return [];
-  return nonFlagOperands(truncateAtFirstRedirectOperator(tokens.slice(1)));
+function teeWriteWords(stripped: string): ShellWord[] {
+  const tokens = shellWords(stripped);
+  if (tokens[0]?.word !== "tee") return [];
+  return nonFlagWords(truncateAtFirstRedirectOperator(tokens.slice(1)));
 }
 
 /**
@@ -254,25 +210,26 @@ function teeWritePaths(stripped: string): string[] {
  * redirection-operator target, and the operands of the write verbs in every piece between separators.
  * Over-approximate by design -- it only feeds the protected floor and the deny rules.
  */
-function naiveWritePaths(command: string): string[] {
-  const out: string[] = [];
+function naiveWriteWords(command: string): ShellWord[] {
+  const out: ShellWord[] = [];
   for (const m of command.matchAll(/(?:&>>?|[0-9]*>>?\|?|[0-9]*>&|<>)[ \t]*([^\s;&|()<>]+)/g)) {
-    const target = m[1]!.replace(/^['"]|['"]$/g, "");
-    if (!/^(?:[0-9]+|-)$/.test(target)) out.push(target);
+    const raw = m[1]!;
+    const word = dequoteShellWord(raw);
+    if (!/^(?:[0-9]+|-)$/.test(word)) out.push({ word, raw, quoted: word !== raw });
   }
   for (const piece of naiveCommandPieces(command)) {
     const stripped = stripWrappers(piece, "denyAsk");
-    out.push(...(recognizeBashFsOpPaths(stripped) ?? []), ...teeWritePaths(stripped));
+    out.push(...(recognizeBashFsOpWords(stripped) ?? []), ...teeWriteWords(stripped));
   }
   return out;
 }
 
-/** A path as the shell will see it: an unquoted leading `~` / `~/` is the home directory. */
-function expandHomeTilde(path: string, home: string | undefined): string {
-  if (home === undefined) return path;
-  if (path === "~") return home;
-  if (path.startsWith("~/")) return home + path.slice(1);
-  return path;
+/** A path as the shell will see it: an UNQUOTED leading `~` / `~/` is the home directory (`"~/x"` is not). */
+function pathOf(w: { raw: string; word: string }, home: string | undefined): string {
+  if (home === undefined) return w.word;
+  if (w.raw === "~") return home;
+  if (w.raw.startsWith("~/") && w.word.startsWith("~/")) return home + w.word.slice(1);
+  return w.word;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -348,14 +305,14 @@ export function recognizeEditOperation(
   // ANSI-C `$'\''`): `shellWriteConstraint` asks for it, but that ask is not bypass-immune, so the
   // protected floor still needs its targets -- read NAIVELY, which can only add candidates.
   if (parts === null) {
-    const naive = naiveWritePaths(command);
-    return naive.length > 0 ? { kind: "other", paths: naive.map((p) => expandHomeTilde(p, opts?.home)) } : null;
+    const naive = naiveWriteWords(command);
+    return naive.length > 0 ? { kind: "other", paths: naive.map((w) => pathOf(w, opts?.home)) } : null;
   }
   // Coordinator note (T6 review, "vacuous match" class): an empty/all-separator/missing command
   // must never vacuously recognize as an fs-op over zero parts.
   if (parts.length === 0) return null;
 
-  const allPaths: string[] = [];
+  const allWords: Array<{ raw: string; word: string }> = [];
   let allBlessed = true;
   for (const part of parts) {
     // "denyAsk" wrapper-stripping (WS-07 §3: "Deny/ask matching is more conservative and looks
@@ -366,24 +323,25 @@ export function recognizeEditOperation(
     // narrow "safe" stripping just because this is the acceptEdits arm -- seeing further through the
     // wrapper only ever ADDS a subcommand to bounds-check, it never grants anything by itself.
     const stripped = stripWrappers(part, "denyAsk");
-    const redirects = extractRedirectWrites(stripped).map((w) => w.target);
-    const fsOpPaths = recognizeBashFsOpPaths(stripped);
-    const teePaths = teeWritePaths(stripped);
-    if (fsOpPaths !== null && redirects.length === 0) {
-      allPaths.push(...fsOpPaths);
+    const redirects = extractRedirectWrites(stripped).map((w) => ({ raw: w.raw, word: w.target }));
+    const fsOpWords = recognizeBashFsOpWords(stripped);
+    const teeWords = teeWriteWords(stripped);
+    if (fsOpWords !== null && redirects.length === 0) {
+      allWords.push(...fsOpWords);
     } else {
       // Any subcommand that ISN'T a blessed fs-op verb, OR that IS but also carries its own
       // redirect, demotes the WHOLE call out of "bashFsOp" -- redirects "do not widen §6.2's
       // auto-approve set" even when riding along on an otherwise-recognized command.
       allBlessed = false;
-      if (fsOpPaths !== null) allPaths.push(...fsOpPaths);
-      allPaths.push(...redirects, ...teePaths);
+      if (fsOpWords !== null) allWords.push(...fsOpWords);
+      allWords.push(...redirects, ...teeWords);
     }
   }
-  if (allPaths.length === 0) return null; // nothing write-shaped found at all -- no opinion
+  if (allWords.length === 0) return null; // nothing write-shaped found at all -- no opinion
   // The SAME normalised targets reach every consumer (the protected floor, the deny rules, the
-  // working-directory and acceptEdits bounds): `~/x` is the home directory's `x`, not `<cwd>/~/x`.
-  return { kind: allBlessed ? "bashFsOp" : "other", paths: allPaths.map((p) => expandHomeTilde(p, opts?.home)) };
+  // working-directory and acceptEdits bounds): bash's quote removal (`'.git'/config` is `.git/config`)
+  // and an unquoted `~/x` is the home directory's `x`, not `<cwd>/~/x`.
+  return { kind: allBlessed ? "bashFsOp" : "other", paths: allWords.map((w) => pathOf(w, opts?.home)) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -401,12 +359,16 @@ const TILDE_REASON = "Tilde expansion variants (~user, ~+, ~-) in paths require 
 const PROCESS_SUBSTITUTION_REASON = "Process substitution (>(...) or <(...)) can execute arbitrary commands and requires manual approval";
 const UNPARSEABLE_REASON = "This command could not be parsed, so the files it writes cannot be checked; it requires manual approval";
 
-/** claude's validatePath pre-checks for one WRITE target (surrounding quotes already removed). */
-function writeTargetReason(path: string): string | undefined {
-  if (path.length === 0) return SHELL_EXPANSION_REASON;
-  if (path.startsWith("~") && path !== "~" && !path.startsWith("~/")) return TILDE_REASON;
-  if (path.includes("$") || path.includes("%") || path.includes("`") || path.startsWith("=")) return SHELL_EXPANSION_REASON;
-  if (/[*?[\]{}]/.test(path)) return GLOB_REASON;
+/**
+ * claude's validatePath pre-checks for one WRITE target. Judged on the word AS WRITTEN (`raw`), so an
+ * ANSI-C `$'…'` or locale `$"…"` quote -- which quote removal decodes -- is still an expansion to ask
+ * about; `target` is the word after quote removal.
+ */
+function writeTargetReason(raw: string, target: string): string | undefined {
+  if (target.length === 0) return SHELL_EXPANSION_REASON;
+  if (raw.startsWith("~") && raw !== "~" && !raw.startsWith("~/")) return TILDE_REASON;
+  if (raw.includes("$") || raw.includes("%") || raw.includes("`") || raw.startsWith("=")) return SHELL_EXPANSION_REASON;
+  if (/[*?[\]{}]/.test(raw)) return GLOB_REASON;
   return undefined;
 }
 
@@ -422,16 +384,16 @@ export function shellWriteConstraint(command: string): string | undefined {
   if (parts === null) return command.trim().length > 0 ? UNPARSEABLE_REASON : undefined;
   for (const part of parts) {
     const stripped = stripWrappers(part, "denyAsk");
-    for (const { target } of extractRedirectWrites(stripped)) {
+    for (const { raw, target } of extractRedirectWrites(stripped)) {
       if (target === "/dev/null") continue;
-      const reason = writeTargetReason(target);
+      const reason = writeTargetReason(raw, target);
       if (reason !== undefined) return reason;
     }
     const tokens = tokenizeWords(stripped);
     const verb = tokens[0];
     if ((verb === "cp" || verb === "mv") && tokens.slice(1).some((t) => t.startsWith("-"))) return `${verb} command with flags requires manual approval`;
-    for (const path of [...(recognizeBashFsOpPaths(stripped) ?? []), ...teeWritePaths(stripped)]) {
-      const reason = writeTargetReason(path);
+    for (const w of [...(recognizeBashFsOpWords(stripped) ?? []), ...teeWriteWords(stripped)]) {
+      const reason = writeTargetReason(w.raw, w.word);
       if (reason !== undefined) return reason;
     }
   }
