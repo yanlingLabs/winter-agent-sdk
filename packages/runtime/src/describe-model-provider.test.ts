@@ -19,8 +19,8 @@ const row = (key: string) => loadCatalog().models.find((m) => m.key === key)!;
 describe("describeCatalogModel: the session's own provider's row", () => {
   test("a bare id names the row of the provider it was asked under -- never another provider's", () => {
     const catalog = loadCatalog();
-    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek-anthropic")?.displayName).toBe(row("deepseek-anthropic/deepseek-v4-flash").displayName);
-    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek")?.displayName).toBe(row("deepseek/deepseek-v4-flash").displayName);
+    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek-anthropic")?.displayName).toBe(row("deepseek-anthropic/deepseek-flash").displayName);
+    expect(describeCatalogModel(catalog, "deepseek-v4-flash", "deepseek")?.displayName).toBe(row("deepseek/deepseek-flash").displayName);
     expect(describeCatalogModel(catalog, "deepseek-v4-flash", "alibaba-cn")?.displayName).toBe(row("alibaba-cn/deepseek-v4-flash").displayName);
   });
 
@@ -43,7 +43,7 @@ describe("describeCatalogModel: the session's own provider's row", () => {
 
   test("with no provider: a catalog key resolves; a bare id served by several providers names NONE of them", () => {
     const catalog = loadCatalog();
-    expect(describeCatalogModel(catalog, "deepseek/deepseek-v4-flash")?.displayName).toBe(row("deepseek/deepseek-v4-flash").displayName);
+    expect(describeCatalogModel(catalog, "deepseek/deepseek-flash")?.displayName).toBe(row("deepseek/deepseek-flash").displayName);
     expect(describeCatalogModel(catalog, "deepseek-v4-flash")).toBeUndefined();
     expect(describeCatalogModel(catalog, "winter-test/echo")).toBeUndefined();
   });

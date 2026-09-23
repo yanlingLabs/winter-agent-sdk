@@ -1,4 +1,4 @@
-// E1 (dist-session fixes, 2026-09-22): a MULTI-STEP turn on `deepseek-anthropic/deepseek-v4-flash`,
+// E1 (dist-session fixes, 2026-09-22): a MULTI-STEP turn on `deepseek-anthropic/deepseek-flash`,
 // driven through the REAL engine, the REAL session-provider wiring, the REAL bridge and the REAL
 // Anthropic adapter against a loopback -- and the ground truth read off what the endpoint received.
 //
@@ -22,7 +22,7 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { stubExecutor } from "./mock.ts";
 import { buildSessionProvider } from "./session-provider.ts";
 
-const MODEL = "deepseek-anthropic/deepseek-v4-flash";
+const MODEL = "deepseek-anthropic/deepseek-flash";
 const PROVIDER = "deepseek-anthropic";
 const OWN_THINKING = "step-1 reasoning of my own: list the directory before answering";
 const OWN_SIGNATURE = "sig-deepseek-step-1";

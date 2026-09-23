@@ -48,6 +48,10 @@ export {
 } from "./families.ts";
 export type { SlotNameResolution } from "./families.ts";
 
+// WS-21 lane L1b (spec §8 step 5; F23): the reviewed refresh's own old-tag -> new-key map, derived
+// from `generated/rejections.json` + `generated/catalog.json` -- see tag-renames.ts's own header.
+export { CATALOG_TAG_RENAMES } from "./tag-renames.ts";
+
 import type { WinterCatalog } from "./types.ts";
 import { validateCatalog } from "./validate.ts";
 

@@ -27,7 +27,7 @@ describe("descriptorLookupForAdapter: keyed by the request's own provider", () =
   test("the reported case: deepseek's bare `deepseek-v4-flash` is deepseek's row (effort vocabulary includes `max`), alibaba-cn's is alibaba-cn's", () => {
     const lookup = descriptorLookupForAdapter(loadCatalog(), "winter.openai-chat-completions");
     const deepseek = lookup("deepseek-v4-flash", "deepseek");
-    expect(deepseek?.key).toBe("deepseek/deepseek-v4-flash");
+    expect(deepseek?.key).toBe("deepseek/deepseek-flash");
     expect(deepseek?.reasoning?.efforts).toContain("max");
     expect(lookup("deepseek-v4-flash", "alibaba-cn")?.key).toBe("alibaba-cn/deepseek-v4-flash");
   });
@@ -48,10 +48,18 @@ describe("descriptorLookupForAdapter: keyed by the request's own provider", () =
     expect(lookup("alibaba-cn/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 
-  test("one string, two providers: novita's provider-local `deepseek/deepseek-v4-flash` is novita's row, and the same string under deepseek is deepseek's KEY", () => {
+  // Pre-refresh, "deepseek/deepseek-v4-flash" was BOTH strings at once: novita's own provider-local
+  // id (a literal compound upstream id, unrelated to any rename) AND, byte-for-byte, deepseek's own
+  // global catalog key. The 2026-09-19 refresh renamed deepseek's key to "deepseek/deepseek-flash",
+  // so that coincidence no longer holds -- the two assertions below now use each provider's OWN
+  // current spelling, but the point survives unchanged: the lookup is scoped per provider, so a
+  // string that is one provider's provider-local id is never read as another provider's key.
+  test("provider scoping: novita's provider-local `deepseek/deepseek-v4-flash` is novita's row; deepseek's own compound key resolves only under deepseek", () => {
     const lookup = descriptorLookupForAdapter(loadCatalog(), "winter.openai-chat-completions");
     expect(lookup("deepseek/deepseek-v4-flash", "novita")?.key).toBe("novita/deepseek/deepseek-v4-flash");
-    expect(lookup("deepseek/deepseek-v4-flash", "deepseek")?.key).toBe("deepseek/deepseek-v4-flash");
+    expect(lookup("deepseek/deepseek-flash", "deepseek")?.key).toBe("deepseek/deepseek-flash");
+    // The coincidence is gone: novita's provider-local id is no longer any provider's key at all.
+    expect(lookup("deepseek/deepseek-v4-flash", "deepseek")).toBeUndefined();
   });
 });
 
@@ -119,7 +127,7 @@ describe("the shipped chat adapter validates a deepseek turn against deepseek's 
       const events = await collect(adapter.streamTurn({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }], effort: "medium" }, testContext({ providerId: "deepseek", baseUrl: fake.url, local: true })));
       const error = events.find((e): e is Extract<ProviderEvent, { type: "error" }> => e.type === "error");
       expect(error?.error.code).toBe("capability");
-      expect(error?.error.message).toContain("deepseek/deepseek-v4-flash");
+      expect(error?.error.message).toContain("deepseek/deepseek-flash");
       expect(fake.bodies).toHaveLength(0);
     } finally {
       await fake.close();

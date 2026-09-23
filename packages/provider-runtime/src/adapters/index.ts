@@ -14,8 +14,10 @@
 //
 // THE LOOKUP IS KEYED BY PROVIDER, WITHIN THE ADAPTER (dist-session fixes E4). One adapter serves
 // many providers (`winter.local-openai` twelve local runners, `winter.openai-chat-completions` 138), and
-// the SAME bare upstream id is served by several of them -- `deepseek-v4-flash` by deepseek, alibaba,
-// alibaba-cn and more, each row with its OWN evidence. This lookup used to be one index per ADAPTER,
+// the SAME bare upstream id is served by several of them -- `deepseek-v4-flash` by alibaba,
+// alibaba-cn and more, each row with its OWN evidence (deepseek's own row is now `deepseek-flash`;
+// the 2026-09-19 catalog refresh keeps `deepseek-v4-flash` only as its alias). This lookup used to be
+// one index per ADAPTER,
 // bare id -> first provider in catalog order, so a deepseek turn was validated against alibaba-cn's
 // row and refused ("declares no reasoning effort vocabulary") before it was sent. The same model on
 // another provider is a different model (the user's qualified-tags ruling): every adapter now passes
@@ -38,7 +40,9 @@ import { createLocalOpenAIAdapter } from "./openai/local.ts";
  *
  * `providerId` is REQUIRED: there is no provider-less spelling, because a provider-less lookup is the
  * bare-id resolution the qualified-tags ruling forbids (a string can be one provider's provider-local
- * id AND another provider's catalog key -- novita's `deepseek/deepseek-v4-flash` is deepseek's key).
+ * id and, under a DIFFERENT provider, resolve to nothing at all or to an entirely different row --
+ * novita's `deepseek/deepseek-v4-flash` names novita's row; the identical string under `deepseek`
+ * names nothing, since deepseek's own key is now `deepseek/deepseek-flash`).
  * Every shipped adapter passes `ctx.connection.providerId`. A host's hand-written one-argument lookup
  * is still assignable (TypeScript admits fewer parameters) and simply ignores the provider.
  */
