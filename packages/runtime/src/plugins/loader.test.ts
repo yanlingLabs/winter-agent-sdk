@@ -182,15 +182,18 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(hooks);
   });
 
-  // WS-21 §5.1/§6.3 item 5 (F15): `hooks/hooks.json` -- claude's OWN hooks file, a SEPARATE file from
-  // the manifest -- carried verbatim for a MANIFESTLESS plugin exactly as a manifest-embedded block
-  // already was.
-  test("a MANIFESTLESS plugin's `hooks/hooks.json` is carried verbatim, same shape as a manifest block", () => {
+  // WS-21 §5.1/§6.3 item 5 (F15), CORRECTED by the router's same-view test (SV-3): `hooks/hooks.json`
+  // -- claude's OWN hooks file, a SEPARATE file from the manifest -- is WRAPPED (`{"hooks": {<Event>:
+  // [...]}, ...other keys such as "description"}`), confirmed by running the wrapped shape on REAL
+  // claude (it works) and the unwrapped one (it does not) -- the earlier "flat map" reading was
+  // wrong. `bundle.hooks` is the UNWRAPPED inner event-map, the same bare shape a manifest-embedded
+  // `hooks` block already carries (Winter's own convention, no wrapper of its own).
+  test("a MANIFESTLESS plugin's `hooks/hooks.json` is UNWRAPPED to the bare event-map, same shape as a manifest block", () => {
     const parent = mkTemp("winter-plugin-hooks-json-");
     const root = join(parent, "hooked-manifestless");
     mkdirSync(root, { recursive: true });
     const hooks = { SessionStart: [{ hooks: [{ type: "command", command: "echo start" }] }] };
-    write(join(root, "hooks", "hooks.json"), JSON.stringify(hooks));
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks, description: "a plugin-authored hooks file" }));
     const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
     expect(bundle.hooks).toEqual(hooks);
     expect(bundle.manifestPath).toBeUndefined(); // still manifestless -- hooks.json needs no manifest
@@ -203,8 +206,18 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     const fromManifest = { PreToolUse: [{ hooks: [{ type: "command", command: "manifest" }] }] };
     const fromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "file" }] }] };
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: fromManifest }));
-    write(join(root, "hooks", "hooks.json"), JSON.stringify(fromFile));
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: fromFile }));
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(fromFile);
+  });
+
+  test("a hooks.json with no \"hooks\" key at all (the old, WRONG flat-map shape) yields no hooks, never a throw", () => {
+    const parent = mkTemp("winter-plugin-hooks-unwrapped-");
+    const root = join(parent, "hooked-unwrapped");
+    mkdirSync(root, { recursive: true });
+    // The shape this file used to accept -- a bare event-map with no "hooks" wrapper -- is what real
+    // claude does NOT run (the same-view test's own negative control); Winter must not run it either.
+    write(join(root, "hooks", "hooks.json"), JSON.stringify({ SessionStart: [{ hooks: [{ type: "command", command: "echo start" }] }] }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toBeUndefined();
   });
 
   test("a malformed `hooks/hooks.json` never fails the plugin's load -- absent hooks, not an error", () => {

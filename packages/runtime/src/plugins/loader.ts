@@ -278,17 +278,26 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
  * `<plugin>/hooks/hooks.json` (WS-21 §5.1/§6.3 item 5, F15): claude's OWN hooks file, a SEPARATE file
  * from the manifest -- not the manifest-embedded `hooks` block Winter's own plugin format also
  * accepts (`PluginManifest.hooks`, kept for backward compatibility with a manifest already written
- * that way). Same settings-shaped `{<Event>: [{matcher?, hooks:[...]}]}` document either way, carried
- * verbatim and unparsed here exactly like the manifest's own block -- `pluginHookEntries` is the one
- * parser. Absent, unreadable or malformed never fails the plugin's load, the same posture every other
- * optional plugin file takes.
+ * that way).
+ *
+ * WRAPPED, corrected by the router's same-view test (SV-3): the file's own top-level document is
+ * `{ "hooks": {<Event>: [{matcher?, hooks:[...]}]}, ...other keys such as "description" }`, NOT the
+ * bare event-map itself -- confirmed by the same-view test running the WRAPPED shape on REAL claude
+ * (it works) and the unwrapped one (it does not); the earlier L1b review's "flat map" reading of
+ * this file was wrong. Unwrapped HERE, to the bare `{<Event>: [...]}` event-map, so this function's
+ * result feeds `pluginHookEntries`'s own `{hooks: bundle.hooks}` wrap (settings/loaders/hooks.ts)
+ * the identical bare shape the manifest-embedded fallback (`PluginManifest.hooks`, a Winter-only
+ * convention with no wrapper of its own) already provides -- a caller reading `bundle.hooks` never
+ * has to know which of the two files it came from.
  */
 function readPluginHooksJson(root: string): unknown {
   const path = join(root, "hooks", "hooks.json");
   try {
     if (!statSync(path).isFile()) return undefined;
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    return isPlainObject(parsed) ? parsed : undefined;
+    if (!isPlainObject(parsed)) return undefined;
+    const inner = parsed["hooks"];
+    return isPlainObject(inner) ? inner : undefined;
   } catch {
     return undefined;
   }
