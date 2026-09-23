@@ -132,6 +132,20 @@ describe("installPlugin: writes the V2 record AND enabledPlugins", () => {
     await addMarketplace(options, marketplaceDir);
     await expect(installPlugin(options, "nope@m", "user")).rejects.toThrow(PluginManagerError);
   });
+
+  // A hand-edited settings.json with a trailing comma (or any other malformed JSON) must never be
+  // silently REPLACED by a document holding only `enabledPlugins` -- every other key (permissions,
+  // hooks, env, …) would be gone. `loadSettingsFile` reports this shape as present-but-unloaded with
+  // an empty value map so a READER degrades safely; a WRITER must refuse instead of trusting that
+  // empty map as "the file's real content".
+  test("a malformed settings.json refuses the enable/install write typed rather than overwriting it", async () => {
+    mkdirSync(join(home, "sdk"), { recursive: true });
+    writeFileSync(userSettingsPath, '{"permissions": {"allow": ["Bash"],}}'); // trailing comma: invalid JSON
+    await addMarketplace(options, marketplaceDir);
+    await expect(installPlugin(options, "p@m", "user")).rejects.toThrow(PluginManagerError);
+    // Untouched -- still the same malformed bytes, not overwritten with a partial document.
+    expect(readFileSync(userSettingsPath, "utf8")).toBe('{"permissions": {"allow": ["Bash"],}}');
+  });
 });
 
 // F15's own claim: `installed_plugins.json` has NO lock, so two CONCURRENT writers -- real OS

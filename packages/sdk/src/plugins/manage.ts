@@ -67,7 +67,7 @@
 // an ambiguous bare name is exactly the kind of guess the qualified-tags precedent (WS-20) rules out
 // elsewhere in this codebase; a `winter plugin install <name>` CLI verb can resolve that ambiguity
 // itself (by listing marketplaces and asking) before calling down to this API.
-import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Settings } from "../settings/types.ts";
@@ -180,8 +180,13 @@ const RETRYABLE_RENAME_CODES = new Set(["EXDEV", "EPERM", "EEXIST", "EBUSY"]);
 async function writeJsonAtomicNoLock(path: string, data: unknown): Promise<void> {
   const body = `${JSON.stringify(data, null, 2)}\n`;
   const tmp = `${path}.tmp.${randomBytes(4).toString("hex")}`;
+  // Tracks whether THIS call actually created `tmp`, so the fallback below never unlinks a file it
+  // does not own -- an `open(tmp,"wx")` EEXIST means some OTHER writer already holds that exact
+  // (randomized) temp name, and `tmp` was never ours to clean up.
+  let created = false;
   try {
     const handle = await open(tmp, "wx", 0o600);
+    created = true;
     try {
       await handle.writeFile(body, "utf8");
     } finally {
@@ -193,10 +198,12 @@ async function writeJsonAtomicNoLock(path: string, data: unknown): Promise<void>
     if (code === undefined || !RETRYABLE_RENAME_CODES.has(code)) throw err;
     // The brief's own fallback for this file: write in place rather than refuse the operation.
     await writeFile(path, body, { encoding: "utf8", mode: 0o600 });
-    try {
-      await unlink(tmp);
-    } catch (cleanupErr) {
-      if (!isEnoent(cleanupErr)) throw cleanupErr;
+    if (created) {
+      try {
+        await unlink(tmp);
+      } catch (cleanupErr) {
+        if (!isEnoent(cleanupErr)) throw cleanupErr;
+      }
     }
   }
 }
@@ -214,7 +221,21 @@ async function readInstalledPluginsFile(o: PluginManagerOptions): Promise<Instal
 }
 
 // --- known_marketplaces.json: written under a `.lock`, bounded retries, degrade-not-refuse (F15) --
-
+//
+// A DIRECTORY lock (`mkdir`/`rmdir`), not a file (`open wx`) -- deliberately, for cross-runtime
+// interop. §2.2 has BOTH runtimes writing this same `sdk/plugins/known_marketplaces.json`, and the
+// pinned binary's own call (this file's header) passes `proper-lockfile`-shaped options
+// (`lockfilePath`, `retries:{retries,minTimeout,maxTimeout}`, `onCompromised`) -- and
+// `proper-lockfile` itself locks with `fs.mkdir`/`fs.rmdir`, not a plain file, because a directory
+// create/remove pair is what it uses to detect and reclaim a STALE lock (by the lock directory's own
+// mtime) across process crashes. A file-based lock here would be invisible to claude's own stale-
+// lock reclaim (its `rmdir` on a `.lock` that is actually a FILE fails `ENOTDIR`, so a Winter crash
+// holding the lock would wedge claude's own marketplace writes forever); matching the primitive is
+// what makes a crash mid-lock recoverable by EITHER runtime.
+//
+// This module does NOT itself reclaim a stale lock (no mtime check) -- only claude's own runtime
+// does that, per the retries above. A Winter-only crash-recovery story is a real gap, flagged in the
+// report; claude's 10s-scale default staleness window is what eventually frees a wedged lock today.
 const MARKETPLACES_LOCK_ATTEMPTS = 25;
 const MARKETPLACES_LOCK_RETRY_DELAY_MS = 20;
 
@@ -223,8 +244,7 @@ async function withMarketplacesLock<T>(path: string, fn: () => Promise<T>): Prom
   let acquired = false;
   for (let attempt = 0; attempt < MARKETPLACES_LOCK_ATTEMPTS; attempt++) {
     try {
-      const handle = await open(lockPath, "wx", 0o600);
-      await handle.close();
+      await mkdir(lockPath);
       acquired = true;
       break;
     } catch (err) {
@@ -241,7 +261,7 @@ async function withMarketplacesLock<T>(path: string, fn: () => Promise<T>): Prom
   } finally {
     if (acquired) {
       try {
-        await unlink(lockPath);
+        await rmdir(lockPath);
       } catch (err) {
         if (!isEnoent(err)) throw err;
       }
@@ -342,13 +362,24 @@ async function readEnabledFromSettings(o: PluginManagerOptions, scope: PluginSco
 async function setEnabledInSettings(o: PluginManagerOptions, scope: PluginScope, key: string, enabled: boolean | undefined): Promise<void> {
   const path = o.settingsPathFor(scope);
   const loaded = await loadSettingsFile(path);
+  // `loadSettingsFile` reports a PRESENT-but-unparseable file as `{loaded:false, values:{}}` so a
+  // READER never crashes on it -- but a WRITER must never treat that empty stand-in as "this
+  // settings file has no other keys" and overwrite the real (merely malformed) file with a document
+  // holding only `enabledPlugins`. Every other key -- permissions, hooks, env, everything -- would be
+  // silently gone. Refuse instead: fixing a hand-edited settings file is the user's job, not this
+  // call's to paper over.
+  if (loaded.present && !loaded.loaded) {
+    throw new PluginManagerError(`${path}: cannot update enabledPlugins -- the file exists but ${loaded.error ?? "could not be read"}; fix it by hand first`);
+  }
   const settings: Settings = { ...loaded.values };
   const enabledPlugins = { ...(settings.enabledPlugins ?? {}) };
   if (enabled === undefined) delete enabledPlugins[key];
   else enabledPlugins[key] = enabled;
   settings.enabledPlugins = enabledPlugins;
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  // Same write discipline as installed_plugins.json (F15): temp file, then rename -- this file is
+  // read by a live settings watcher and by both runtimes, never a plain in-place write.
+  await writeJsonAtomicNoLock(path, settings);
 }
 
 // --- marketplaces -----------------------------------------------------------------------------
