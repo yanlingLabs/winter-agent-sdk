@@ -43,6 +43,15 @@ export interface LoadPluginsResult {
    * `warnings` (main.ts's stderr, once per session -- plugin loading runs once).
    */
   agentFileRejections: AgentDefinitionRejection[];
+  /**
+   * Fix round 3 (M-5): a `hooks/hooks.json` that exists, parses as an object, but carries no
+   * top-level `"hooks"` key -- claude's own `hook-load-failed` diagnostic (`hooks.json must have
+   * \`hooks\` (the hook matchers) or \`modules\` (hooks modules), or both`, dump-confirmed). The
+   * plugin itself still loads (a malformed hooks file is not a whole-plugin rejection, matching
+   * `agentFileRejections`'s own precedent immediately above), so this is the one channel that ever
+   * names it. `production-wiring.ts` folds these into the same `warnings` list.
+   */
+  hookFileWarnings: string[];
 }
 
 /**
@@ -290,17 +299,57 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
  * convention with no wrapper of its own) already provides -- a caller reading `bundle.hooks` never
  * has to know which of the two files it came from.
  */
-function readPluginHooksJson(root: string): unknown {
+function readPluginHooksJson(root: string, pluginName: string, warnings: string[]): unknown {
   const path = join(root, "hooks", "hooks.json");
   try {
     if (!statSync(path).isFile()) return undefined;
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (!isPlainObject(parsed)) return undefined;
     const inner = parsed["hooks"];
-    return isPlainObject(inner) ? inner : undefined;
+    if (isPlainObject(inner)) return inner;
+    // Fix round 3 (M-5): claude's own `hook-load-failed` -- a well-formed JSON document with no
+    // `"hooks"` key (and, per its own schema, no `"modules"` key either -- Winter has no modules
+    // concept to check, so a bare-object-without-"hooks" is the one shape this codebase can detect)
+    // is a warning, not a silent no-op.
+    warnings.push(`plugin "${pluginName}"'s hooks/hooks.json has no "hooks" key -- check that the file follows the required schema ({"hooks": {<Event>: [...]}})`);
+    return undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Fix round 3 (M-5): the manifest's own `hooks` field is ADDITIVE to `hooks/hooks.json`, never a
+ * fallback for it -- claude's own manifest schema (`xs`, dump-confirmed) describes every one of its
+ * three accepted shapes as "in addition to those in hooks/hooks.json, if it exists": a bare event-map
+ * object, an ARRAY of such objects, or a STRING path to a further hooks file. Per-event entries
+ * CONCATENATE across every source, hooks.json's own entries first.
+ *
+ * DISCLOSED, CONTAINED SCOPE: `PluginManifest.hooks` is `unknown` (Winter's own type, "carried
+ * verbatim; parsed by the hook loader") and this merges the object/array-of-objects shapes; a STRING
+ * element (a path to ANOTHER hooks file, relative to the plugin root) is a materially separate
+ * file-resolution feature this round does not add -- a manifest using that shape contributes nothing
+ * from that element today, exactly as it did before this fix (manifest.hooks was not read at all
+ * unless hooks.json was absent).
+ */
+function mergeHookSources(fromHooksJson: unknown, manifestHooks: unknown): Record<string, unknown> | undefined {
+  const merged: Record<string, unknown[]> = {};
+  let sawAny = false;
+  const foldObject = (obj: unknown): void => {
+    if (!isPlainObject(obj)) return;
+    for (const [event, entries] of Object.entries(obj)) {
+      if (!Array.isArray(entries)) continue;
+      sawAny = true;
+      (merged[event] ??= []).push(...entries);
+    }
+  };
+  foldObject(fromHooksJson);
+  if (Array.isArray(manifestHooks)) {
+    for (const item of manifestHooks) foldObject(item); // a string element (a further file path) is out of scope -- see this function's own header
+  } else {
+    foldObject(manifestHooks);
+  }
+  return sawAny ? merged : undefined;
 }
 
 /**
@@ -336,6 +385,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
   const bundles: PluginBundle[] = [];
   const rejected: RejectedPlugin[] = [];
   const agentFileRejections: AgentDefinitionRejection[] = [];
+  const hookFileWarnings: string[] = [];
   const seenRoots = new Set<string>();
   const seenNames = new Set<string>();
 
@@ -390,10 +440,12 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
 
     const skipMcpDiscovery = config.skipMcpDiscovery === true;
     const mcp = skipMcpDiscovery ? { servers: {} } : collectMcpServers(root, manifest);
-    // `hooks/hooks.json` (claude's own file) wins over a manifest-embedded `hooks` block when both
-    // exist -- it is the canonical source (F15); the manifest block stays as the fallback for a
-    // manifest already written that way.
-    const hooks = readPluginHooksJson(root) ?? manifest?.hooks;
+    // Fix round 3 (M-5), CORRECTED: `hooks/hooks.json` (claude's own file) and a manifest-embedded
+    // `hooks` block are ADDITIVE, not either/or -- claude loads BOTH (its own manifest schema
+    // describes the manifest field as "in addition to those in hooks/hooks.json, if it exists",
+    // dump-confirmed). The pre-fix-round-3 `??` fallback silently dropped a manifest's own hooks
+    // whenever a hooks.json ALSO existed.
+    const hooks = mergeHookSources(readPluginHooksJson(root, name, hookFileWarnings), manifest?.hooks);
     const scannedAgents = scanPluginAgents(root, name);
     agentFileRejections.push(...scannedAgents.rejected);
     const outputStylesPath = componentDirIfPresent(root, "output-styles");
@@ -421,5 +473,5 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     });
   }
 
-  return { bundles, rejected, agentFileRejections };
+  return { bundles, rejected, agentFileRejections, hookFileWarnings };
 }

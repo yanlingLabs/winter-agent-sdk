@@ -724,6 +724,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   for (const rejection of plugins.agentFileRejections) {
     warnings.push(`plugin agent file "${rejection.filePath}" was rejected: ${rejection.reason} -- add "name:" and "description:" frontmatter to fix.`);
   }
+  // Fix round 3 (M-5): claude's own `hook-load-failed` diagnostic -- a malformed hooks.json (parses,
+  // but carries no "hooks" key) is a warning here too, the same "the plugin still loads, this just
+  // names the broken file" shape as the agent-file rejections immediately above.
+  for (const warning of plugins.hookFileWarnings) warnings.push(warning);
 
   // (3) SKILL INDEX. Addressed by the RESOLVED winter root -- never `permissionHome`.
   const skillIndex = SkillIndex.build({

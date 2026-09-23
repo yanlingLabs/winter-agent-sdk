@@ -74,8 +74,8 @@ describe("loadPlugins: `type: \"local\"` is the only accepted config (WS-11 §4)
   });
 
   test("no plugins at all is an empty result, not an error", () => {
-    expect(loadPlugins(undefined)).toEqual({ bundles: [], rejected: [], agentFileRejections: [] });
-    expect(loadPlugins([])).toEqual({ bundles: [], rejected: [], agentFileRejections: [] });
+    expect(loadPlugins(undefined)).toEqual({ bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [] });
+    expect(loadPlugins([])).toEqual({ bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [] });
   });
 });
 
@@ -199,7 +199,10 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(bundle.manifestPath).toBeUndefined(); // still manifestless -- hooks.json needs no manifest
   });
 
-  test("`hooks/hooks.json` wins over a manifest-embedded `hooks` block when both exist", () => {
+  // Fix round 3 (M-5), CORRECTED: claude's own manifest schema describes the manifest `hooks` field
+  // as ADDITIVE to hooks/hooks.json ("in addition to those in hooks/hooks.json, if it exists",
+  // dump-confirmed), never a fallback -- superseding this test's pre-fix-round-3 name and premise.
+  test("M-5: hooks/hooks.json AND a manifest-embedded `hooks` block are BOTH loaded -- per-event entries concatenate", () => {
     const parent = mkTemp("winter-plugin-hooks-both-");
     const root = join(parent, "hooked-both");
     mkdirSync(root, { recursive: true });
@@ -207,17 +210,51 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     const fromFile = { PreToolUse: [{ hooks: [{ type: "command", command: "file" }] }] };
     write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: fromManifest }));
     write(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: fromFile }));
-    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(fromFile);
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({
+      PreToolUse: [{ hooks: [{ type: "command", command: "file" }] }, { hooks: [{ type: "command", command: "manifest" }] }],
+    });
   });
 
-  test("a hooks.json with no \"hooks\" key at all (the old, WRONG flat-map shape) yields no hooks, never a throw", () => {
+  test("M-5: a manifest `hooks` ARRAY of event-maps merges every element (claude's own xs schema accepts an array)", () => {
+    const parent = mkTemp("winter-plugin-hooks-array-");
+    const root = join(parent, "hooked-array");
+    mkdirSync(root, { recursive: true });
+    const first = { PreToolUse: [{ hooks: [{ type: "command", command: "first" }] }] };
+    const second = { PostToolUse: [{ hooks: [{ type: "command", command: "second" }] }] };
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: [first, second] }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual({ ...first, ...second });
+  });
+
+  test("M-5: a manifest `hooks` array element that is a STRING (a path to a further file) is skipped -- disclosed, out of this round's scope", () => {
+    const parent = mkTemp("winter-plugin-hooks-array-string-");
+    const root = join(parent, "hooked-array-string");
+    mkdirSync(root, { recursive: true });
+    const real = { PreToolUse: [{ hooks: [{ type: "command", command: "real" }] }] };
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: ["more-hooks.json", real] }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(real);
+  });
+
+  test("a manifest with no hooks.json on disk still loads its own embedded `hooks` block", () => {
+    const parent = mkTemp("winter-plugin-hooks-manifest-only-");
+    const root = join(parent, "hooked-manifest-only");
+    mkdirSync(root, { recursive: true });
+    const fromManifest = { PreToolUse: [{ hooks: [{ type: "command", command: "manifest-only" }] }] };
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ hooks: fromManifest }));
+    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(fromManifest);
+  });
+
+  test('M-5: a hooks.json with no "hooks" key (the old, WRONG flat-map shape) yields no hooks from it AND a warning, matching claude\'s own hook-load-failed', () => {
     const parent = mkTemp("winter-plugin-hooks-unwrapped-");
     const root = join(parent, "hooked-unwrapped");
     mkdirSync(root, { recursive: true });
     // The shape this file used to accept -- a bare event-map with no "hooks" wrapper -- is what real
     // claude does NOT run (the same-view test's own negative control); Winter must not run it either.
     write(join(root, "hooks", "hooks.json"), JSON.stringify({ SessionStart: [{ hooks: [{ type: "command", command: "echo start" }] }] }));
-    expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toBeUndefined();
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.hooks).toBeUndefined();
+    expect(result.hookFileWarnings).toHaveLength(1);
+    expect(result.hookFileWarnings[0]).toContain("hooked-unwrapped");
+    expect(result.hookFileWarnings[0]).toContain("hooks");
   });
 
   test("a malformed `hooks/hooks.json` never fails the plugin's load -- absent hooks, not an error", () => {
