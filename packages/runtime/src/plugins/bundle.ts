@@ -65,8 +65,24 @@ export interface PluginBundle {
   // the directory exists; a future consumer resolves its own contents from the path.
   /** Absolute path of `<plugin>/output-styles/`, when it exists. */
   outputStylesPath?: string;
-  /** Absolute path of `<plugin>/workflows/`, when it exists. */
+  /**
+   * Absolute path of `<plugin>/workflows/`, when it exists AND the manifest declares no `workflows`
+   * override (mutually exclusive with `workflowsPaths` below -- see its own comment).
+   */
   workflowsPath?: string;
+  /**
+   * WS-21 fix round 4 (minors, M-3's last bullet): the manifest's own `workflows` key (`string |
+   * string[]`, `manifest.ts`'s own citation), resolved to absolute paths that exist and do not
+   * escape the plugin root -- present iff the manifest declares the key AND at least one entry
+   * resolved (the pinned binary's own `if(qn.length>0)ve.workflowsPaths=qn`, manifest.ts's
+   * citation). REPLACES `workflowsPath` rather than adding to it, and the replacement fires on the
+   * key's mere PRESENCE, not on whether anything resolved (the pinned binary's `Lt` gate is
+   * `!j.workflows&&...`, checked independently of `qn.length`): a plugin whose every declared entry
+   * is invalid ends up with NEITHER field set, exactly as claude leaves it with no workflows source
+   * at all rather than silently falling back to the shadowed default directory. Each entry may be a
+   * directory or a single workflow file.
+   */
+  workflowsPaths?: string[];
   /** Absolute path of `<plugin>/bin/`, when it exists. */
   binPath?: string;
 }

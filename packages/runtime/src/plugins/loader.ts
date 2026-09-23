@@ -18,6 +18,7 @@ import { parseSkillFile } from "../skills/frontmatter.ts";
 import { pluginNameError } from "../skills/frontmatter.ts";
 import { parseAgentDefinitionFile } from "../subagents/definitions.ts";
 import type { AgentDefinitionRejection, PluginAgentDefinition } from "../subagents/definitions.ts";
+import { isPathWithinRoot } from "../permissions/file-rules.ts";
 import { manifestAuthor, readPluginManifest, type PluginManifest } from "./manifest.ts";
 import type { PluginBundle, PluginCommandEntry, PluginMetadata, PluginSkillEntry } from "./bundle.ts";
 
@@ -52,6 +53,14 @@ export interface LoadPluginsResult {
    * names it. `production-wiring.ts` folds these into the same `warnings` list.
    */
   hookFileWarnings: string[];
+  /**
+   * WS-21 fix round 4 (minors, M-3's last bullet): a manifest `workflows` entry that could not be
+   * used -- not a string, escapes the plugin directory, or does not exist -- named per-plugin,
+   * per-entry, on the SAME "recoverable, not a whole-plugin rejection" footing `hookFileWarnings`
+   * above already established for a malformed `hooks.json`. `production-wiring.ts` folds these into
+   * the same `warnings` list too.
+   */
+  workflowsPathWarnings: string[];
 }
 
 /**
@@ -373,6 +382,53 @@ function componentDirIfPresent(root: string, dir: string): string | undefined {
   return isDirectory(path) ? path : undefined;
 }
 
+/**
+ * WS-21 fix round 4 (minors, M-3's last bullet): the manifest's own `workflows` override, resolved.
+ * `undefined` means the manifest declares no `workflows` key at all (the caller falls back to the
+ * default `workflows/` directory); an array (possibly empty) means it DOES, so the default directory
+ * is shadowed regardless of how many entries survive validation (`manifest.ts`'s own citation for
+ * both the shape and the `Lt=!j.workflows&&...` gate this mirrors).
+ *
+ * Each declared entry is resolved against the plugin root and kept only if it both stays within the
+ * plugin directory (a manifest-declared relative path is untrusted content the same way a symlink
+ * target is; `isPathWithinRoot` is fix round 4's own C-1/I-G primitive, reused rather than a second
+ * hand-rolled traversal guard) and exists on disk -- a directory or a single file, both valid for
+ * `workflows` (unlike `skills`, which the SAME citation's `Tb` call requires a directory for). An
+ * entry that fails either check is dropped with a warning (`workflowsPathWarnings`) rather than
+ * failing the whole plugin, on the same "recoverable, not a whole-plugin rejection" footing
+ * `hookFileWarnings` already established for a malformed `hooks.json`.
+ */
+function pluginWorkflowsOverride(root: string, pluginName: string, manifest: PluginManifest | undefined, warnings: string[]): string[] | undefined {
+  const declared = manifest?.workflows;
+  if (declared === undefined) return undefined;
+  const entries = Array.isArray(declared) ? declared : [declared];
+  const resolved: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string" || entry.length === 0) {
+      warnings.push(`plugin "${pluginName}"'s manifest "workflows" entry ${JSON.stringify(entry)} is not a non-empty string -- ignoring it`);
+      continue;
+    }
+    const full = resolve(root, entry);
+    if (!isPathWithinRoot(full, root)) {
+      warnings.push(`plugin "${pluginName}"'s manifest "workflows" path "${entry}" escapes the plugin directory -- ignoring it`);
+      continue;
+    }
+    let exists: boolean;
+    try {
+      statSync(full);
+      exists = true;
+    } catch {
+      exists = false;
+    }
+    if (!exists) {
+      warnings.push(`plugin "${pluginName}"'s manifest "workflows" path "${entry}" was not found at ${full} -- ignoring it`);
+      continue;
+    }
+    resolved.push(full);
+  }
+  return resolved;
+}
+
 function metadataOf(manifest: PluginManifest | undefined): PluginMetadata {
   if (!manifest) return {};
   const author = manifestAuthor(manifest.author);
@@ -395,6 +451,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
   const rejected: RejectedPlugin[] = [];
   const agentFileRejections: AgentDefinitionRejection[] = [];
   const hookFileWarnings: string[] = [];
+  const workflowsPathWarnings: string[] = [];
   const seenRoots = new Set<string>();
   const seenNames = new Set<string>();
 
@@ -458,7 +515,12 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     const scannedAgents = scanPluginAgents(root, name);
     agentFileRejections.push(...scannedAgents.rejected);
     const outputStylesPath = componentDirIfPresent(root, "output-styles");
-    const workflowsPath = componentDirIfPresent(root, "workflows");
+    // Fix round 4 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
+    // directory the moment the key is present, regardless of how many of its entries resolve --
+    // `pluginWorkflowsOverride`'s own header has the citation for why this checks `!== undefined`
+    // rather than `.length > 0`.
+    const workflowsOverride = pluginWorkflowsOverride(root, name, manifest, workflowsPathWarnings);
+    const workflowsPath = workflowsOverride === undefined ? componentDirIfPresent(root, "workflows") : undefined;
     const binPath = componentDirIfPresent(root, "bin");
 
     seenRoots.add(identity);
@@ -478,9 +540,10 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
       skipMcpDiscovery,
       ...(outputStylesPath !== undefined ? { outputStylesPath } : {}),
       ...(workflowsPath !== undefined ? { workflowsPath } : {}),
+      ...(workflowsOverride !== undefined && workflowsOverride.length > 0 ? { workflowsPaths: workflowsOverride } : {}),
       ...(binPath !== undefined ? { binPath } : {}),
     });
   }
 
-  return { bundles, rejected, agentFileRejections, hookFileWarnings };
+  return { bundles, rejected, agentFileRejections, hookFileWarnings, workflowsPathWarnings };
 }

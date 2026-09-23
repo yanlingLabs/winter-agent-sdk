@@ -169,6 +169,72 @@ describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1, batch-2
   });
 });
 
+// Fix round 4 (minors, M-3's last bullet): a manifest `workflows` override -- `PluginBundle` never
+// hands this layer a raw manifest value, only the ALREADY-resolved `workflowsPaths` array
+// (`plugins/loader.ts`'s own job); this describe block is about `discoverWorkflowsAt`'s own
+// consumption of it (directories AND bare files, multiple sources merged), not about resolving the
+// manifest value itself (`plugins/loader.test.ts` covers that).
+describe("resolveWorkflowByName / listWorkflowsForListing -- a plugin's workflowsPaths override (fix round 4, minors: M-3's last bullet)", () => {
+  test("workflowsPaths alone (no workflowsPath) still resolves a qualified name -- an override-only plugin is not the SAME as 'no plugin'", () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-wf-override-"));
+    writeFileSync(join(dir, "custom.js"), SCRIPT);
+    const resolved = resolveWorkflowByName("mypkg:build", {
+      cwd: "/x",
+      trustedWorkspace: true,
+      pluginWorkflows: [{ name: "mypkg", workflowsPaths: [dir] }],
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.source_kind).toBe("plugin");
+  });
+
+  test("a workflowsPaths entry may be a BARE FILE, not only a directory -- claude's own Tb call passes requireDirectory:false for workflows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-wf-override-file-"));
+    const file = join(dir, "one-workflow.js");
+    writeFileSync(file, SCRIPT);
+    const resolved = resolveWorkflowByName("mypkg:build", {
+      cwd: "/x",
+      trustedWorkspace: true,
+      pluginWorkflows: [{ name: "mypkg", workflowsPaths: [file] }],
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.path).toBe(file);
+  });
+
+  test("multiple workflowsPaths entries are all scanned, directories and files mixed", () => {
+    const dirA = mkdtempSync(join(tmpdir(), "winter-wf-override-a-"));
+    const dirB = mkdtempSync(join(tmpdir(), "winter-wf-override-b-"));
+    mkdirSync(join(dirA, "sub"));
+    writeFileSync(join(dirA, "sub", "a.js"), SCRIPT);
+    writeFileSync(join(dirB, "b.js"), `export const meta = { name: "publish", description: "Publishes" };\nreturn 1;`);
+    const listing = listWorkflowsForListing({
+      cwd: "/x",
+      trustedWorkspace: false,
+      pluginWorkflows: [{ name: "mypkg", workflowsPaths: [join(dirA, "sub"), join(dirB, "b.js")] }],
+    });
+    expect(listing.map((w) => w.name).sort()).toEqual(["mypkg:build", "mypkg:publish"]);
+  });
+
+  test("workflowsPath and workflowsPaths together are both scanned (defensive -- bundle.ts's own comment says a real PluginBundle never sets both, but this function does not assume it)", () => {
+    const defaultDir = mkdtempSync(join(tmpdir(), "winter-wf-default-"));
+    writeFileSync(join(defaultDir, "ship.js"), SCRIPT);
+    const overrideDir = mkdtempSync(join(tmpdir(), "winter-wf-override-both-"));
+    writeFileSync(join(overrideDir, "extra.js"), `export const meta = { name: "extra", description: "Extra" };\nreturn 1;`);
+    const listing = listWorkflowsForListing({
+      cwd: "/x",
+      trustedWorkspace: false,
+      pluginWorkflows: [{ name: "mypkg", workflowsPath: defaultDir, workflowsPaths: [overrideDir] }],
+    });
+    expect(listing.map((w) => w.name).sort()).toEqual(["mypkg:build", "mypkg:extra"]);
+  });
+
+  test("neither workflowsPath nor workflowsPaths is the SAME typed failure as before this feature existed", () => {
+    const resolved = resolveWorkflowByName("mypkg:build", { cwd: "/x", trustedWorkspace: true, pluginWorkflows: [{ name: "mypkg" }] });
+    expect(resolved.ok).toBe(false);
+  });
+});
+
 // SV-5 fix round 3 (M-3 + I-4 + the user-tier bullet): dump-confirmed against claude's own
 // `h()`/`D()`/`M()`/`b()`/`k()` workflow-discovery functions (claude CLI 2.1.250 / agent-sdk 0.3.250).
 describe("resolveWorkflowByName -- fix round 3: case sensitivity, size cap, duplicate override, user tier, settingSources (M-3 / I-4)", () => {

@@ -74,8 +74,9 @@ describe("loadPlugins: `type: \"local\"` is the only accepted config (WS-11 §4)
   });
 
   test("no plugins at all is an empty result, not an error", () => {
-    expect(loadPlugins(undefined)).toEqual({ bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [] });
-    expect(loadPlugins([])).toEqual({ bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [] });
+    const empty = { bundles: [], rejected: [], agentFileRejections: [], hookFileWarnings: [], workflowsPathWarnings: [] };
+    expect(loadPlugins(undefined)).toEqual(empty);
+    expect(loadPlugins([])).toEqual(empty);
   });
 });
 
@@ -321,6 +322,76 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     const result = loadPlugins([{ type: "local", path: root }]);
     expect(result.rejected).toEqual([]);
     expect(result.bundles[0]!.skills.map((s) => s.name)).toEqual(["ship"]); // the dangling link contributes nothing, silently
+  });
+});
+
+// Fix round 4 (minors, M-3's last bullet): a manifest `workflows` override -- content-search
+// confirmed against the installed claude CLI binary (`manifest.ts`'s own citation for the exact
+// source, since the pinned 2.1.250 build was unavailable locally). This block is `loadPlugins`'s
+// own build-time resolution (escaping, existence, string vs array, the default-dir shadow);
+// `workflows/store.test.ts` covers the consumption side (`discoverWorkflowsAt`).
+describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3's last bullet)", () => {
+  test("a STRING override resolves to workflowsPaths and SHADOWS the default directory", () => {
+    const parent = mkTemp("winter-plugin-workflows-string-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "custom-workflows"), { recursive: true });
+    mkdirSync(join(root, "workflows"), { recursive: true }); // the default dir also exists...
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./custom-workflows" }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.workflowsPaths).toEqual([resolve(root, "custom-workflows")]);
+    expect(bundle.workflowsPath).toBeUndefined(); // ...but is shadowed, not merged in
+  });
+
+  test("an ARRAY override resolves every entry, directories and files alike", () => {
+    const parent = mkTemp("winter-plugin-workflows-array-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "flows-a"), { recursive: true });
+    write(join(root, "flows-b.js"), "export const meta = { name: \"b\", description: \"b\" };");
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: ["./flows-a", "./flows-b.js"] }));
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.workflowsPaths).toEqual([resolve(root, "flows-a"), resolve(root, "flows-b.js")]);
+  });
+
+  test("an entry that escapes the plugin directory is dropped with a warning, never a throw or a whole-plugin rejection", () => {
+    const parent = mkTemp("winter-plugin-workflows-escape-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "../../etc" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.rejected).toEqual([]);
+    expect(result.bundles[0]!.workflowsPaths).toBeUndefined(); // the one entry was invalid, so nothing survived
+    expect(result.bundles[0]!.workflowsPath).toBeUndefined(); // still shadowed -- the key was present
+    expect(result.workflowsPathWarnings).toHaveLength(1);
+    expect(result.workflowsPathWarnings[0]).toContain("escapes the plugin directory");
+  });
+
+  test("an entry that does not exist on disk is dropped with a warning", () => {
+    const parent = mkTemp("winter-plugin-workflows-missing-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(root, { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: "./does-not-exist" }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.workflowsPaths).toBeUndefined();
+    expect(result.workflowsPathWarnings).toHaveLength(1);
+    expect(result.workflowsPathWarnings[0]).toContain("was not found");
+  });
+
+  test("a mix of valid and invalid entries keeps only the valid ones, and warns once per invalid entry", () => {
+    const parent = mkTemp("winter-plugin-workflows-mixed-");
+    const root = join(parent, "wf-plugin");
+    mkdirSync(join(root, "good"), { recursive: true });
+    write(join(root, WINTER_PLUGIN_MANIFEST_DIR, "plugin.json"), JSON.stringify({ workflows: ["./good", "./missing", "../escapes"] }));
+    const result = loadPlugins([{ type: "local", path: root }]);
+    expect(result.bundles[0]!.workflowsPaths).toEqual([resolve(root, "good")]);
+    expect(result.workflowsPathWarnings).toHaveLength(2);
+  });
+
+  test("no `workflows` key at all falls back to the default directory exactly as before this feature existed", () => {
+    const root = plugin({ manifestDir: WINTER_PLUGIN_MANIFEST_DIR, manifest: {} });
+    mkdirSync(join(root, "workflows"), { recursive: true });
+    const bundle = loadPlugins([{ type: "local", path: root }]).bundles[0]!;
+    expect(bundle.workflowsPath).toBe(resolve(root, "workflows"));
+    expect(bundle.workflowsPaths).toBeUndefined();
   });
 });
 

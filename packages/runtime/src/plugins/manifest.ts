@@ -50,6 +50,22 @@ export interface PluginManifest {
   hooks?: unknown;
   /** RAW per-name configs; validated by Lane A's `resolveMcpServerSources`, never here. */
   mcpServers?: Record<string, unknown>;
+  /**
+   * WS-21 fix round 4 (minors, M-3's last bullet): custom workflow source path(s), REPLACING the
+   * default `workflows/` directory rather than adding to it -- confirmed by content search against
+   * the installed claude CLI binary (`opt/homebrew/Caskroom/claude-code@latest`, 2.1.280; the pinned
+   * 2.1.250 was unavailable locally, so this is the closest available build, cited by content, not
+   * by offset): `if(j.workflows){let jn=Array.isArray(j.workflows)?j.workflows:[j.workflows],
+   * qn=await Tb(jn,e,j.name,n,"workflows","Workflow","specified in manifest but",M,B,!1,h);if
+   * (qn.length>0)ve.workflowsPaths=qn}`, and the default directory is populated only through a
+   * SEPARATE `Lt=!j.workflows&&Be` gate a few lines above -- `Lt` is false whenever `j.workflows` is
+   * present at all, regardless of whether any entry resolves. Each entry may name a DIRECTORY
+   * (scanned the same way as the default one) or a single FILE (the SAME `Tb` call site passes
+   * `requireDirectory:!1` for `workflows`, unlike the `!0` it passes for `skills`, which is the
+   * fourth-from-last argument and the one place the two calls differ). `plugins/loader.ts`'s
+   * `pluginWorkflowsOverride` is where this is resolved into `PluginBundle.workflowsPaths`.
+   */
+  workflows?: string | string[];
   [key: string]: unknown;
 }
 

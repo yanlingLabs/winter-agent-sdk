@@ -465,7 +465,7 @@ export interface ProductionWiring {
      * threaded to `EngineOptions.pluginWorkflows` -> `RegistryToolExecutorDeps.pluginWorkflows`
      * (registry.ts) so the Workflow tool's `<plugin>:<name>` resolution can find them.
      */
-    pluginWorkflows?: readonly { name: string; workflowsPath?: string }[];
+    pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
     extraMcpServerSources: readonly McpServerSource[];
     initSlashCommands: readonly string[];
     initSkills: readonly string[];
@@ -717,9 +717,17 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const pluginOutputStyles: PluginOutputStyleSource[] = plugins.bundles.map((b) => ({ name: b.name, ...(b.outputStylesPath !== undefined ? { outputStylesPath: b.outputStylesPath } : {}) }));
   // WS-21 §6.3 item 1 (fix round 2): `PluginBundle.workflowsPath`'s own missing consumer, the
   // sibling gap to `outputStylesPath` above -- same source, same "fixed per incarnation" reasoning.
-  const pluginWorkflows: { name: string; workflowsPath?: string }[] = plugins.bundles
-    .filter((b) => b.workflowsPath !== undefined)
-    .map((b) => ({ name: b.name, workflowsPath: b.workflowsPath! }));
+  // Fix round 4 (minors, M-3's last bullet): also threads `workflowsPaths` (the manifest override),
+  // and the filter now admits a plugin that has EITHER field -- a plugin using the override
+  // exclusively never has `workflowsPath` set (it is shadowed, `bundle.ts`'s own comment), so
+  // filtering on that field alone would have silently dropped every override-only plugin.
+  const pluginWorkflows: { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[] = plugins.bundles
+    .filter((b) => b.workflowsPath !== undefined || b.workflowsPaths !== undefined)
+    .map((b) => ({
+      name: b.name,
+      ...(b.workflowsPath !== undefined ? { workflowsPath: b.workflowsPath } : {}),
+      ...(b.workflowsPaths !== undefined ? { workflowsPaths: b.workflowsPaths } : {}),
+    }));
   // SV-5 (the router same-view test, real claude 2.1.250): claude's `getWorkflowCommands` folds
   // EVERY discovered workflow (plugin + project + user) into the SAME `{type:"prompt", ...}` shape
   // as a markdown slash command / "user-invocable" skill, and that shape feeds the init `skills`,
@@ -766,6 +774,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // but carries no "hooks" key) is a warning here too, the same "the plugin still loads, this just
   // names the broken file" shape as the agent-file rejections immediately above.
   for (const warning of plugins.hookFileWarnings) warnings.push(warning);
+  // Fix round 4 (minors, M-3's last bullet): same fold, for a manifest `workflows` entry the loader
+  // could not use.
+  for (const warning of plugins.workflowsPathWarnings) warnings.push(warning);
 
   // (3) SKILL INDEX. Addressed by the RESOLVED winter root -- never `permissionHome`.
   const skillIndex = SkillIndex.build({

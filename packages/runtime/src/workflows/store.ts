@@ -45,10 +45,22 @@ export type ResolvedWorkflowSource =
   | { ok: true; source: string; path: string | undefined; source_kind: "project" | "user" | "builtin" | "plugin" }
   | { ok: false; error: string };
 
-/** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the two fields workflow resolution needs. */
+/** A minimal projection of `plugins/bundle.ts`'s `PluginBundle` -- only the fields workflow resolution needs. */
 export interface PluginWorkflowSource {
   name: string;
   workflowsPath?: string;
+  /**
+   * Fix round 4 (minors, M-3's last bullet): the manifest's own `workflows` override -- see
+   * `PluginBundle.workflowsPaths`'s own comment for why this is mutually exclusive with
+   * `workflowsPath` above rather than additive to it. `pluginWorkflowSourcePaths` below is where the
+   * two are combined into the single list every scan actually walks.
+   */
+  workflowsPaths?: readonly string[];
+}
+
+/** Every directory/file this plugin's workflows may live in, default dir first (SourcedRuleEntry-style: harmless to list both, since a real `PluginBundle` never sets both at once -- `bundle.ts`'s own comment). */
+function pluginWorkflowSourcePaths(plugin: PluginWorkflowSource): string[] {
+  return [...(plugin.workflowsPath !== undefined ? [plugin.workflowsPath] : []), ...(plugin.workflowsPaths ?? [])];
 }
 
 /**
@@ -145,10 +157,11 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
   if (qualified !== null) {
     const [, pluginName, metaName] = qualified;
     const plugin = opts.pluginWorkflows?.find((p) => p.name === pluginName);
-    if (plugin?.workflowsPath === undefined) {
+    const pluginWorkflowPaths = plugin !== undefined ? pluginWorkflowSourcePaths(plugin) : [];
+    if (pluginWorkflowPaths.length === 0) {
       return { ok: false, error: `unknown workflow "${name}": no plugin named "${pluginName}" is enabled with a workflows/ directory` };
     }
-    const found = discoverWorkflowsInDir(plugin.workflowsPath).get(metaName!);
+    const found = discoverWorkflowsAt(pluginWorkflowPaths).get(metaName!);
     if (found === undefined) {
       return { ok: false, error: `unknown workflow "${name}": no workflow with meta.name "${metaName}" in plugin "${pluginName}"'s workflows/ directory` };
     }
@@ -224,6 +237,33 @@ interface DiscoveredWorkflowFile {
   phases?: WorkflowMetaPhase[];
 }
 
+/**
+ * ONE candidate file, parsed. Shared by `discoverWorkflowsInDir` (a directory scan) and
+ * `discoverWorkflowsAt` (fix round 4, minors: a manifest `workflows` override entry may itself be a
+ * bare FILE rather than a directory -- `PluginBundle.workflowsPaths`'s own citation) so the two never
+ * drift on the size cap, the parse step or which fields survive.
+ */
+function discoverWorkflowFile(path: string): DiscoveredWorkflowFile | undefined {
+  let source: string;
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > WORKFLOW_SCRIPT_MAX_BYTES) return undefined;
+    source = readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  const parsed = parseWorkflowMeta(source);
+  if (!parsed.ok) return undefined;
+  return {
+    name: parsed.meta.name,
+    description: parsed.meta.description,
+    path,
+    source,
+    ...(parsed.meta.whenToUse !== undefined ? { whenToUse: parsed.meta.whenToUse } : {}),
+    ...(parsed.meta.phases !== undefined ? { phases: parsed.meta.phases } : {}),
+  };
+}
+
 function discoverWorkflowsInDir(dir: string): Map<string, DiscoveredWorkflowFile> {
   const out = new Map<string, DiscoveredWorkflowFile>();
   let entries: string[];
@@ -234,25 +274,36 @@ function discoverWorkflowsInDir(dir: string): Map<string, DiscoveredWorkflowFile
   }
   for (const entry of entries.sort()) {
     if (!entry.endsWith(".js")) continue;
-    const path = join(dir, entry);
-    let source: string;
+    const found = discoverWorkflowFile(join(dir, entry));
+    if (found === undefined) continue;
+    out.set(found.name, found);
+  }
+  return out;
+}
+
+/**
+ * Fix round 4 (minors, M-3's last bullet): scans every one of a plugin's workflow SOURCES -- the
+ * default directory, a manifest override's directories, a manifest override's bare files, all
+ * flattened by `pluginWorkflowSourcePaths` into one ordered list (`PluginBundle.workflowsPaths`'s own
+ * comment is why the two never coexist in practice, but nothing here assumes that). A later source
+ * in the list overrides an earlier one on a `meta.name` collision, matching `discoverWorkflowsInDir`'s
+ * own within-directory precedent (later file wins) extended across sources.
+ */
+function discoverWorkflowsAt(paths: readonly string[]): Map<string, DiscoveredWorkflowFile> {
+  const out = new Map<string, DiscoveredWorkflowFile>();
+  for (const path of paths) {
+    let isDir: boolean;
     try {
-      const stat = statSync(path);
-      if (!stat.isFile() || stat.size > WORKFLOW_SCRIPT_MAX_BYTES) continue;
-      source = readFileSync(path, "utf8");
+      isDir = statSync(path).isDirectory();
     } catch {
-      continue;
+      continue; // vanished between bundle-build and this scan -- silently skipped, like every other unreadable entry in this file
     }
-    const parsed = parseWorkflowMeta(source);
-    if (!parsed.ok) continue;
-    out.set(parsed.meta.name, {
-      name: parsed.meta.name,
-      description: parsed.meta.description,
-      path,
-      source,
-      ...(parsed.meta.whenToUse !== undefined ? { whenToUse: parsed.meta.whenToUse } : {}),
-      ...(parsed.meta.phases !== undefined ? { phases: parsed.meta.phases } : {}),
-    });
+    if (isDir) {
+      for (const [name, found] of discoverWorkflowsInDir(path)) out.set(name, found);
+    } else {
+      const found = discoverWorkflowFile(path);
+      if (found !== undefined) out.set(found.name, found);
+    }
   }
   return out;
 }
@@ -295,8 +346,9 @@ export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): Workflo
     ...(w.phases !== undefined ? { phases: w.phases } : {}),
   });
   for (const plugin of opts.pluginWorkflows ?? []) {
-    if (plugin.workflowsPath === undefined) continue;
-    for (const w of [...discoverWorkflowsInDir(plugin.workflowsPath).values()].sort((a, b) => a.name.localeCompare(b.name))) {
+    const paths = pluginWorkflowSourcePaths(plugin);
+    if (paths.length === 0) continue;
+    for (const w of [...discoverWorkflowsAt(paths).values()].sort((a, b) => a.name.localeCompare(b.name))) {
       out.push(toEntry(w, "plugin", `${plugin.name}:${w.name}`));
     }
   }
