@@ -251,10 +251,33 @@ describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () =>
     expect(style.description).toBe("body");
   });
 
-  test("I-3: an absent description AND an entirely blank body falls back to the fixed label", () => {
+  // Fix round 4 (minors): the fallback label had an extra "the" this test pinned as correct --
+  // claude's own wording (dump-confirmed) has none. Superseding this test's pre-fix-round-4 string.
+  test("I-3/minors: an absent description AND an entirely blank body falls back to the fixed label, claude's exact wording", () => {
     writeStyle(pluginDir, "blank", "---\nkeep-coding-instructions: true\n---\n\n\n");
     const style = resolveOutputStyle("mypkg:blank", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
-    expect(style.description).toBe("Output style from the mypkg plugin");
+    expect(style.description).toBe("Output style from mypkg plugin");
+  });
+
+  // Fix round 4 (minors): `description:` gets the SAME String()-coercion `name:` already had
+  // (I-3, the test above) -- a YAML number or boolean is a valid description, not a reason to fall
+  // back to the body excerpt.
+  test("minors: a declared non-string description (a YAML number) is coerced via String(), not discarded", () => {
+    writeStyle(pluginDir, "numdesc", "---\ndescription: 42\n---\nbody\n");
+    const style = resolveOutputStyle("mypkg:numdesc", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style?.description).toBe("42");
+  });
+
+  test("minors: a declared non-string description (a YAML boolean) is coerced via String(), not discarded", () => {
+    writeStyle(pluginDir, "booldesc", "---\ndescription: true\n---\nbody\n");
+    const style = resolveOutputStyle("mypkg:booldesc", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style?.description).toBe("true");
+  });
+
+  test("minors: a declared description that is neither a string, number nor boolean (an object) still falls back to the body excerpt", () => {
+    writeStyle(pluginDir, "objdesc", "---\ndescription:\n  nested: value\n---\nbody text here\n");
+    const style = resolveOutputStyle("mypkg:objdesc", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] });
+    expect(style?.description).toBe("body text here");
   });
 
   test("I-3: a body excerpt strips a leading markdown heading marker and caps at 100 chars", () => {

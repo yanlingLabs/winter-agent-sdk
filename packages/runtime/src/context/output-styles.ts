@@ -242,9 +242,18 @@ function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName
   // (`bodyExcerpt`, claude's own `jJ`) stands in, falling back to the fixed label only when the body
   // itself has no non-blank line either. Ported now that I-3 asks for parity here explicitly --
   // this module's earlier note that "Winter has no such extractor" is what this closes.
+  //
+  // Fix round 4 (minors): `CN` COERCES a number or boolean YAML value with `String()` rather than
+  // requiring it already be a string -- this module's own `declaredName` two lines up already does
+  // the identical coercion for `name:`, and I-3's port missed doing the same for `description:`. An
+  // object/array/`null`/`undefined` still falls through to the body-excerpt fallback: only the two
+  // primitive scalar kinds `String()` turns into a meaningful label are coerced.
   const descriptionRaw = attrs["description"];
-  const validatedDescription = typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0 ? descriptionRaw.trim() : undefined;
-  const description = validatedDescription ?? bodyExcerpt(parsedBody, `Output style from the ${pluginName} plugin`);
+  const descriptionCoerced =
+    typeof descriptionRaw === "string" || typeof descriptionRaw === "number" || typeof descriptionRaw === "boolean" ? String(descriptionRaw).trim() : "";
+  // Fix round 4 (minors): the fallback label is claude's own EXACT wording, dump-confirmed --
+  // "Output style from X plugin", with no "the". The pre-fix text inserted one.
+  const description = descriptionCoerced.length > 0 ? descriptionCoerced : bodyExcerpt(parsedBody, `Output style from ${pluginName} plugin`);
 
   // Fix round 3 (M-4): pinned `s4`'s own vocabulary via `claudeBoolean`, and the SAME default flip
   // as `parseStyleFile` above -- unresolved (absent, or an unrecognized string) means FALSE, not
