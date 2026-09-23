@@ -333,3 +333,16 @@ describe("a deny rule still binds an unparseable command (naively split)", () =>
     expect(prompts).toHaveLength(1);
   });
 });
+
+describe("a function body is checked like any command -- under bypass too", () => {
+  test("`f() { rm -rf ~; }; f` is a critical removal", async () => {
+    const { ctx, prompts } = ctxWith("bypassPermissions", []);
+    await evaluate(bash("f() { rm -rf ~; }; f"), ctx);
+    expect(prompts.map((p) => p.meta.decisionReason)).toEqual([expect.stringContaining("critical removal")]);
+  });
+  test("`function f { cp x .git/hooks/pre-commit; }; f` is a protected write", async () => {
+    const { ctx, prompts } = ctxWith("bypassPermissions", []);
+    await evaluate(bash("function f { cp x .git/hooks/pre-commit; }; f"), ctx);
+    expect(prompts.map((p) => p.meta.decisionReason)).toEqual([expect.stringContaining("protected path write")]);
+  });
+});

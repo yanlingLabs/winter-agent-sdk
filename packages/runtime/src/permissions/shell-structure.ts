@@ -7,6 +7,7 @@
 //   - a subshell or brace group:            `(cp x .git/hooks/pre-commit)`, `{ rm -rf ~; }`
 //   - a command or process substitution:    `ls $(rm -rf ~)`, `` echo `touch f` ``, `cat <(…)`
 //   - a compound-statement keyword head:    `if true; then rm -rf ~; fi`, `for …; do …; done`
+//   - a function definition's body:         `f() { rm -rf ~; }; f`, `function f { … }`
 //   - an UNQUOTED here-document body, whose `$(…)` runs:  `cat <<EOF` / `$(touch f)` / `EOF`
 //
 // `flattenSubcommands` returns every one of them as its own subcommand, ALONGSIDE the enclosing text
@@ -371,9 +372,17 @@ export function substitutionBodies(text: string, doubleQuoted = false): string[]
   return inDouble && !doubleQuoted ? null : bodies;
 }
 
+/** A function definition's head: `name()`, `function name()` or `function name` -- its BODY is what runs. */
+const FUNCTION_DEFINITION_HEAD = /^(?:function\s+[^\s(){}|&;<>]+\s*(?:\(\s*\)\s*)?|[^\s(){}|&;<>]+\s*\(\s*\)\s*)/;
+
 function stripReservedHeads(part: string): string {
   let s = part.trim();
   for (;;) {
+    const definition = FUNCTION_DEFINITION_HEAD.exec(s);
+    if (definition !== null) {
+      s = s.slice(definition[0].length).trim();
+      continue;
+    }
     const { word, afterWord } = leadingWord(s);
     if (word === undefined || !RESERVED_HEADS.has(word)) return s;
     s = afterWord.trim();

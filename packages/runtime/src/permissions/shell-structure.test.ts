@@ -128,3 +128,19 @@ describe("the scanners follow bash's contexts, so no command is dropped or hidde
     expect(flattenSubcommands("echo \\$'a' ; rm -rf ~")).toContain("rm -rf ~");
   });
 });
+
+describe("a function definition's body is a command like any other", () => {
+  const cases: Array<[string, string]> = [
+    ["f() { rm -rf ~; }; f", "rm -rf ~"],
+    ["f () { rm -rf ~; }", "rm -rf ~"],
+    ["function f { cp x .git/hooks/pre-commit; }; f", "cp x .git/hooks/pre-commit"],
+    ["function f() { rm -rf ~; }", "rm -rf ~"],
+    ["g() (rm -rf ~); g", "rm -rf ~"],
+  ];
+  for (const [command, inner] of cases) {
+    test(JSON.stringify(command), () => expect(flattenSubcommands(command)).toContain(inner));
+  }
+  test("an ordinary command is untouched", () => {
+    expect(flattenSubcommands("functional-test run")).toEqual(["functional-test run"]);
+  });
+});
