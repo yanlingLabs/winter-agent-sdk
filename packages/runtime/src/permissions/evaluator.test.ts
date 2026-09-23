@@ -1207,6 +1207,17 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
     expect(writeRecord).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
+  // Fix round 4 (SV-8, the router same-view test on the 57e7fef binary): under a cwd named like
+  // `[wip] app`, the OLD isWithinBounds (a "**" glob composed against `cwd`) misread the bracket as
+  // a character class once SV-6/C-1 made `[`/`]` glob-special, so acceptEdits asked for every write
+  // inside that cwd instead of auto-approving it. isPathWithinRoot (file-rules.ts) is a plain
+  // path-prefix test with no glob involved, so this must auto-approve exactly like an ordinary cwd.
+  test("SV-8: a cwd containing [wip] still auto-approves an in-bounds Edit -- the boundary check is not a glob at all", async () => {
+    const ctx = baseCtx({ cwd: "/work/[wip] app", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/work/[wip] app/src/a.ts" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
   test("a recognized Bash fs-op, in-bounds (the brief's own fixture: in-root `sed -i` approved in acceptEdits)", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Bash", { command: "sed -i 's/x/y/' ./notes.txt" }), ctx);

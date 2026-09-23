@@ -8,7 +8,7 @@
 // is what paths.test.ts's own (now-superseded) corpus pinned, and claude's answer is the bar this
 // module must clear.
 import { describe, expect, test } from "bun:test";
-import { fileRuleKindFor, matchFileRulesGrouped, resolveFileRuleAnchor, unanchorTrailingDoubleStar, normalizeFileRulePattern, type FileRuleCandidate } from "./file-rules.ts";
+import { fileRuleKindFor, canonicalFileRuleAuthoringToolName, matchFileRulesGrouped, resolveFileRuleAnchor, unanchorTrailingDoubleStar, normalizeFileRulePattern, escapeFileRulePathSegment, type FileRuleCandidate } from "./file-rules.ts";
 
 const CWD = "/w/proj";
 const HOME = "/h";
@@ -198,6 +198,41 @@ describe("unanchorTrailingDoubleStar -- the ki transform", () => {
   });
   test("a pattern not ending in /** passes through unchanged", () => {
     expect(unanchorTrailingDoubleStar("x/*.ts", true)).toBe("x/*.ts");
+  });
+});
+
+describe("canonicalFileRuleAuthoringToolName -- SV-7's own single canonical name per kind", () => {
+  test("edit kind's canonical name is Edit", () => {
+    expect(canonicalFileRuleAuthoringToolName("edit")).toBe("Edit");
+  });
+  test("read kind's canonical name is Read", () => {
+    expect(canonicalFileRuleAuthoringToolName("read")).toBe("Read");
+  });
+});
+
+describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming rule PATTERN TEXT", () => {
+  test("escapes [, ], * and \\", () => {
+    expect(escapeFileRulePathSegment("/home/name[wip]")).toBe("/home/name\\[wip\\]");
+    expect(escapeFileRulePathSegment("/home/name*star")).toBe("/home/name\\*star");
+    expect(escapeFileRulePathSegment("/home/name\\back")).toBe("/home/name\\\\back");
+  });
+
+  test("leaves ? RAW, deliberately -- claude has no working escape for it, and over-matching is the safe direction for a deny", () => {
+    expect(escapeFileRulePathSegment("/home/name?question")).toBe("/home/name?question");
+  });
+
+  test("a path with no special characters passes through unchanged", () => {
+    expect(escapeFileRulePathSegment("/home/ordinary/path")).toBe("/home/ordinary/path");
+  });
+
+  test("the escaped form still matches the REAL path it names, through the real grammar", () => {
+    const real = "/home/name[wip]/projects";
+    const escaped = escapeFileRulePathSegment(real);
+    const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "floor" }, pattern: `//${escaped}/**` }];
+    expect(matchFileRulesGrouped(candidates, `${real}/x.jsonl`, { cwd: "/w", home: "/h" }, "denyAsk")).not.toBeNull();
+    // Proves it is not ALSO accidentally over-matching a DIFFERENT, unescaped sibling name (one bracket
+    // character standing in for "wip") the way a raw, un-escaped class would.
+    expect(matchFileRulesGrouped(candidates, "/home/nameW/projects/x.jsonl", { cwd: "/w", home: "/h" }, "denyAsk")).toBeNull();
   });
 });
 

@@ -37,8 +37,8 @@
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, shellWords, stripWrappers, type ParsedRule } from "./grammar.ts";
-import { matchFileRuleAtBothEnds, checkSymlinkBothEnds, resolveRealTarget, resolveTargetPath } from "./paths.ts";
-import { fileRuleKindFor, canonicalFileRuleAuthoringToolName, matchFileRulesGrouped, matchesSingleFileRulePattern, type FileRuleCandidate, type FileRuleKind } from "./file-rules.ts";
+import { checkSymlinkBothEnds, resolveRealTarget, resolveTargetPath } from "./paths.ts";
+import { fileRuleKindFor, canonicalFileRuleAuthoringToolName, matchFileRulesGrouped, matchesSingleFileRulePattern, escapeFileRulePathSegment, isPathWithinRoot, type FileRuleCandidate, type FileRuleKind } from "./file-rules.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
 import { effectiveDirectories } from "./ruleset.ts";
 import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
@@ -520,9 +520,17 @@ export function boundedRoots(ctx: EvaluationContext): string[] {
 // turn via the symlink-aware composition (rider 2): "allow" requires BOTH the path and its resolved
 // symlink target to fall inside a root, so a symlink planted in-bounds that points out of every
 // granted root is correctly NOT auto-approved.
+//
+// Fix round 4 (SV-8, the router same-view test): this used to reuse the general file-rule matcher
+// with a `"**"` sentinel pattern -- claude's own boundary check is not a glob at all
+// (`isPathWithinRoot`, file-rules.ts's own header has the dump evidence and full reasoning). A root
+// containing `[`, `]`, `*` or `\` (a cwd literally named e.g. `[wip] app`) made the OLD `"**"`-glob
+// composition ask for every write inside it once SV-6/C-1 made those characters glob-special;
+// `isPathWithinRoot` is a plain path-prefix test and needs no escaping for either operand at all.
 function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
   const absPath = resolve(ctx.cwd, path);
-  return boundedRoots(ctx).some((root) => matchFileRuleAtBothEnds("**", { path: absPath, cwd: root, home: ctx.home, direction: "allow" }));
+  const target = resolveRealTarget(absPath);
+  return boundedRoots(ctx).some((root) => isPathWithinRoot(absPath, root) && isPathWithinRoot(target, root));
 }
 
 // The whole-call path extraction the SpecialChecks seam contract asks T7 to own (see that
@@ -1095,7 +1103,12 @@ function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext)
   // applies (engine.ts) -- the floor and this skip predicate must agree on which root emitted it.
   const durableRoot = ctx.storeHome ?? ctx.winterHome;
   if (durableRoot === undefined) return false;
-  const rootPrefix = `/${resolve(durableRoot)}/projects`;
+  // Fix round 4 (I-G): `buildBaselineDenyRules` (engine.ts) now escapes `[`/`]`/`*`/`\` before
+  // interpolating a real resolved path into rule pattern text (escapeFileRulePathSegment,
+  // file-rules.ts) -- this string comparison must escape the SAME way, or a durableRoot containing
+  // any of those four characters would never match the floor's own (now-escaped) spelling, and the
+  // carve-out this function exists to grant would silently stop working for that one home.
+  const rootPrefix = `/${escapeFileRulePathSegment(resolve(durableRoot))}/projects`;
   return content === rootPrefix || content.startsWith(`${rootPrefix}/`);
 }
 
@@ -1645,7 +1658,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
 
   if (mode === "acceptEdits") {
     // WS-07 §6.2: auto-approval is path-bounded (cwd/additionalDirectories), AFTER normalization +
-    // symlink checks (isWithinBounds composes matchFileRuleAtBothEnds, rider 2) + protected/critical
+    // symlink checks (isWithinBounds composes isPathWithinRoot, rider 2 + SV-8) + protected/critical
     // (already excluded above) + Read/Edit deny rules — the latter is enforced generally at STAGE 2
     // now (T6-review obligation), so by the time this arm runs, a Read-deny-blocked path has
     // ALREADY been denied upstream; this arm doesn't need to re-check it.

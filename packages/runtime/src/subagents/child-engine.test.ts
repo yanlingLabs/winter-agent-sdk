@@ -2810,10 +2810,14 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
       expect(existsSync(join(cwdOff, "child.txt")), "control: the child must be able to write").toBe(true);
 
       // THE MEASUREMENT: one managed-tier rule covering both paths.
+      // Fix round 4 (SV-7): authored under Edit(...), not Write(...) -- a Write(...)-authored rule
+      // is dead code claude never reads, even for a Write call (file-rules.ts's own
+      // canonicalFileRuleAuthoringToolName). Edit is the ONE canonical authoring name that covers
+      // Edit/Write/NotebookEdit calls alike.
       const out = await runWithWiring({
         cwd: cwdOn,
         home,
-        managedSettings: { permissions: { deny: [`Write(//${cwdOn}/**)`] } },
+        managedSettings: { permissions: { deny: [`Edit(//${cwdOn}/**)`] } },
         childProvider: childWriting(join(cwdOn, "child.txt")),
         allow: ["Write"],
         parentCallsToolDirectly: { name: "Write", input: { file_path: join(cwdOn, "parent.txt"), content: "PARENT\n" } },
@@ -2854,10 +2858,11 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
     const home = mkdtempSync(join(tmpdir(), "winter-new4-ask-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "winter-new4-ask-cwd-"));
     try {
+      // Fix round 4 (SV-7): authored under Edit(...), not Write(...) -- see the sibling deny fixture above.
       const out = await runWithWiring({
         cwd,
         home,
-        managedSettings: { permissions: { ask: [`Write(//${cwd}/**)`] } },
+        managedSettings: { permissions: { ask: [`Edit(//${cwd}/**)`] } },
         childProvider: childWriting(join(cwd, "child.txt")),
         allow: ["Write"],
         parentCallsToolDirectly: { name: "Write", input: { file_path: join(cwd, "parent.txt"), content: "PARENT\n" } },

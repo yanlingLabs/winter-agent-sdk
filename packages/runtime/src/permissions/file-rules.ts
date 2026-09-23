@@ -75,7 +75,7 @@
 //     changes AT MOST which of two otherwise-equivalent overlapping rules a caller cites in an
 //     audit message -- never the allow/deny/ask verdict itself, which depends only on whether SOME
 //     rule in the group matched.
-import { relative } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 import ignoreFactory from "ignore";
 
 // ---------------------------------------------------------------------------------------------
@@ -295,6 +295,72 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// SV-8: the acceptEdits working-directory boundary -- a plain path-prefix test, NOT a glob
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * SV-8 (the router same-view test on the 57e7fef binary): claude's own acceptEdits
+ * working-directory boundary check is `sm` (dump-confirmed by content search) -- a plain RELATIVE-
+ * PATH PREFIX test, never a compiled glob at all. Winter's own `isWithinBounds` (evaluator.ts) used
+ * to reuse the general file-rule matcher with a `"**"` sentinel pattern -- harmless before SV-6/C-1,
+ * but once the general matcher started interpreting `[`, `]`, `*` and `\` as glob metacharacters, a
+ * cwd or additional-directory root containing any of them (e.g. `[wip] app`) made `"**"` fail to
+ * compile the way the caller intended, and acceptEdits asked for every write inside that cwd instead
+ * of auto-approving them.
+ *
+ * This function sidesteps the escaping question SV-8 raises entirely, the same way claude's own `sm`
+ * does: a plain path-prefix test never interprets EITHER path as glob syntax, so a root containing a
+ * glob-special character needs no escaping here at all -- unlike a real RULE pattern (I-G's own
+ * concern), which does.
+ *
+ * Ported: `caseFold` (default `true`, matching `sm`'s own default and I-D's case-insensitivity
+ * finding generally) folds BOTH paths before computing the relative path between them; the macOS
+ * `/private/var` -> `/var` and `/private/tmp` -> `/tmp` aliasing is real-symlink-aware -- macOS
+ * itself maintains both as symlinks to the `/private/...` originals, so a session cwd resolved
+ * through one spelling and a root configured with the other name the SAME real directory (this
+ * matters in practice: `os.tmpdir()` on macOS resolves through `/private/var/folders/...`, which is
+ * exactly the shape every mkdtemp-based fixture in this codebase's own test suite produces). Not
+ * ported: `sm`'s own `uncShapeParity` and `skipPrivateAlias` options (Windows-only concerns) and its
+ * `Gn`/`Ha` UNC-path checks -- this codebase supports macOS only (CLAUDE.md's own "latest-OS
+ * floors" rule).
+ */
+export function isPathWithinRoot(childPath: string, rootPath: string, opts: { caseFold?: boolean } = {}): boolean {
+  const caseFold = opts.caseFold ?? true;
+  const alias = (p: string): string => p.replace(/^\/private\/var\//, "/var/").replace(/^\/private\/tmp(\/|$)/, "/tmp$1");
+  const fold = (p: string): string => (caseFold ? p.toLowerCase() : p);
+  const rel = relative(fold(alias(rootPath)), fold(alias(childPath)));
+  if (rel === "") return true;
+  if (rel === ".." || rel.startsWith(`..${sep}`)) return false;
+  return !isAbsolute(rel);
+}
+
+// ---------------------------------------------------------------------------------------------
+// I-G: escaping a REAL filesystem path before it becomes rule PATTERN TEXT
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Fix round 4 (I-G): a real, resolved filesystem path (e.g. `resolve(winterHome)`) can legitimately
+ * contain `[`, `]`, `*` or `\` -- none of which were glob-special under Winter's pre-fix-round-4
+ * grammar, but all four are now, since `matchFileRulesGrouped` compiles every pattern through the
+ * real `ignore` package. A caller building a rule PATTERN out of a real path (`buildBaselineDenyRules`,
+ * engine.ts) must escape these four before interpolating the path into pattern text, or a home
+ * directory literally named e.g. `/Users/name[wip]` would have its OWN floor's `[wip]` read back as
+ * a character class instead of the four literal characters it names on disk.
+ *
+ * `?` is DELIBERATELY LEFT RAW, per the controller's own ruling: claude's grammar has no working
+ * escape for `?` at all (this module's own `unanchorTrailingDoubleStar`/`\?`-quirk sibling
+ * documentation) -- an escaped `\?` would require a literal backslash the real path never has, so it
+ * would never match the floor's own intended directory at all. A bare `?` in the pattern instead acts
+ * as a single-character wildcard, which still MATCHES a real `?` in the path (a wildcard matches
+ * anything, including the literal character) -- over-matching by one character class is the safe
+ * direction for a DENY floor (WS-07 §3.1's own posture: a deny that reaches slightly too far is a
+ * false-negative-avoiding cost, never a hole), where an escape that matches NOTHING would be a hole.
+ */
+export function escapeFileRulePathSegment(path: string): string {
+  return path.replace(/[[\]*\\]/g, (ch) => "\\" + ch);
 }
 
 /**

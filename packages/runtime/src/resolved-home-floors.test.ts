@@ -26,6 +26,8 @@ import type { Provider, ProviderTurn } from "./engine.ts";
 import { buildBaselineDenyRules } from "./engine.ts";
 import { buildSeatbeltProfile, buildWorkflowWorkerSeatbeltProfile } from "./sandbox/profile.ts";
 import { isProtectedWrite, isWorkflowScriptCarveOut } from "./permissions/protected.ts";
+import { evaluate, NO_OPINION_HOOK_STAGE, NO_OPINION_PROMPT_STAGE, NO_OPINION_AUTO_ENGINE, NO_SPECIAL_CHECKS } from "./permissions/evaluator.ts";
+import { emptyRuleSet } from "./permissions/ruleset.ts";
 
 let home: string;
 let cwd: string;
@@ -166,6 +168,48 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
     const def = join(homedir(), ".winter");
     const rules = buildBaselineDenyRules(def).map((r) => `${r.rule.toolName}|${(r.ruleValue as { ruleContent?: string }).ruleContent ?? ""}`);
     expect(new Set(rules).size, "the two anchors coincide -- one set, not two").toBe(rules.length);
+  });
+
+  // Fix round 4 (I-G): a real resolved path can legitimately contain `[`, `]`, `*` or `\` -- none of
+  // those were glob-special under Winter's pre-fix-round-4 hand-rolled matcher, but all four are now
+  // (the real `ignore` package, file-rules.ts). Escaped so a home literally named with a `[x]`
+  // segment protects the literal directory rather than reading part of it as a character class.
+  test("I-G: a resolved root containing [x] is ESCAPED in the emitted rule pattern, not read as a character class", () => {
+    const bracketedHome = join(tmpdir(), "winter-i-g-[x]-home");
+    const rules = buildBaselineDenyRules(bracketedHome);
+    const contents = rules.map((r) => (r.ruleValue as { ruleContent?: string }).ruleContent ?? "");
+    expect(contents.some((c) => c === `/${bracketedHome.replace(/[[\]*\\]/g, (ch) => "\\" + ch)}/projects/**`)).toBe(true);
+    // The UNESCAPED spelling must never appear -- proving the floor is not silently reading `[x]` as
+    // a class matching a single character "x" (which would ALSO under-protect: a sibling directory
+    // literally named with any one bracket-class character would wrongly be swept in too).
+    expect(contents.some((c) => c === `/${bracketedHome}/projects/**`)).toBe(false);
+  });
+
+  test("I-G: the escaped floor still DENIES a real write under that bracketed root, end to end", async () => {
+    const bracketedHome = realpathSync(mkdtempSync(join(tmpdir(), "winter-i-g-bracket-home-")));
+    const bracketedDurable = join(bracketedHome, "[wip]");
+    mkdirSync(join(bracketedDurable, "projects", "key"), { recursive: true });
+    try {
+      const rules = buildBaselineDenyRules(bracketedDurable);
+      const targetPath = join(bracketedDurable, "projects", "key", "sess-1.jsonl");
+      const record = await evaluate(
+        { toolName: "Write", input: { file_path: targetPath, content: "x" }, toolUseId: "ig1" },
+        {
+          policy: { mode: "bypassPermissions", version: 0, rules: { ...emptyRuleSet(), entries: rules } },
+          cwd: bracketedDurable,
+          sessionRoot: bracketedDurable,
+          home: bracketedHome,
+          trustedWorkspace: false,
+          hookStage: NO_OPINION_HOOK_STAGE,
+          promptStage: NO_OPINION_PROMPT_STAGE,
+          autoEngine: NO_OPINION_AUTO_ENGINE,
+          specialChecks: NO_SPECIAL_CHECKS,
+        },
+      );
+      expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+    } finally {
+      rmSync(bracketedHome, { recursive: true, force: true });
+    }
   });
 
   test("both seatbelt profiles deny the RESOLVED root's run/file-history, and still deny the OS-home ones", () => {

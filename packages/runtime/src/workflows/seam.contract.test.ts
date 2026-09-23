@@ -212,6 +212,10 @@ describe("RULING P5-B -- the persisted-workflow-script subtree is MODEL-WRITABLE
 
   test("a USER-authored deny on the same subtree is NOT skipped -- only the managed baseline entries are", async () => {
     const ctx = evalCtx("bypassPermissions");
+    // Fix round 4 (SV-7): authored under Edit(...), not Write(...) -- a Write(...)-authored rule is
+    // dead code claude never reads, even for a Write call (file-rules.ts's own
+    // canonicalFileRuleAuthoringToolName). Edit is the ONE canonical authoring name that covers
+    // Edit/Write/NotebookEdit calls alike.
     const withUserDeny: EvaluationContext = {
       ...ctx,
       policy: {
@@ -220,7 +224,7 @@ describe("RULING P5-B -- the persisted-workflow-script subtree is MODEL-WRITABLE
           ...ctx.policy.rules,
           entries: [
             ...ctx.policy.rules.entries,
-            { rule: { toolName: "Write", specifier: { kind: "pattern", source: "~/.winter/projects/**" }, isBareEquivalent: false }, behavior: "deny", source: "user", ruleValue: { toolName: "Write", ruleContent: "~/.winter/projects/**" } },
+            { rule: { toolName: "Edit", specifier: { kind: "pattern", source: "~/.winter/projects/**" }, isBareEquivalent: false }, behavior: "deny", source: "user", ruleValue: { toolName: "Edit", ruleContent: "~/.winter/projects/**" } },
           ],
         },
       },

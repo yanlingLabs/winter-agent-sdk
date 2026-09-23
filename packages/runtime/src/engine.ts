@@ -139,6 +139,7 @@ import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-a
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
+import { escapeFileRulePathSegment } from "./permissions/file-rules.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
@@ -1640,7 +1641,12 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
     // directory", which is `undefined` for an engine-seeded rule and therefore makes the whole rule
     // INERT -- silently. `//` is the filesystem-root anchor. Found by the fixture: the rule list was
     // right and nothing was denied.
-    const root = `/${resolve(resolvedWinterHome)}`;
+    // Fix round 4 (I-G): a real resolved path can legitimately contain `[`, `]`, `*` or `\` -- all
+    // four are glob-special under the fix-round-4 pipeline (file-rules.ts, SV-6/C-1); escaped here so
+    // this floor protects the literal directory even when its own name happens to contain one of
+    // them, rather than misreading part of the path as pattern grammar. `?` is deliberately left raw
+    // -- escapeFileRulePathSegment's own header has the full reasoning.
+    const root = `/${escapeFileRulePathSegment(resolve(resolvedWinterHome))}`;
     for (const dir of ["run"]) {
       for (const tool of ["Read", "Glob", "Grep"]) {
         absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}` }, "deny", "managed"));
@@ -1659,7 +1665,8 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
   // step; see this fix round's report.
   const durableRoot = resolvedStoreHome ?? resolvedWinterHome;
   if (durableRoot !== undefined && resolve(durableRoot) !== defaultHome) {
-    const durableRootAnchor = `/${resolve(durableRoot)}`;
+    // Fix round 4 (I-G): see the `root` anchor's own identical comment just above.
+    const durableRootAnchor = `/${escapeFileRulePathSegment(resolve(durableRoot))}`;
     for (const dir of ["projects", "file-history"]) {
       for (const tool of ["Write", "Edit", "NotebookEdit"]) {
         absolute.push(sourceRule({ toolName: tool, ruleContent: `${durableRootAnchor}/${dir}` }, "deny", "managed"));
