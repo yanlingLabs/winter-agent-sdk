@@ -132,10 +132,12 @@ function isDirEntry(root: string, e: Dirent): boolean {
  * Scan `<root>/<dir>/SKILL.md` for every immediate SUBDIRECTORY of `root`. `exclude` skips reserved
  * subdirectory names (the user root's `self/`, scanned separately as its own tier).
  *
- * A directory whose name fails the slug jail is still scanned: the jail governs the skill NAME, and
- * `parseSkillFile`'s `name:` field may legitimately differ from the directory's. Store-level
- * validation applies the jail to the resolved name (store.ts), which is the name anything can
- * actually reach.
+ * A directory whose name fails the slug jail is still scanned, not skipped here: a skill's identity
+ * is ALWAYS the directory it was discovered under (`parseSkillFile`'s own `fallbackName`, never a
+ * frontmatter `name:` key -- that field's own header explains why the declared-name-wins behaviour
+ * was retired). Filtering the directory out at scan time would make a jail-failing skill vanish with
+ * no explanation; scanning it and letting store-level validation apply the jail to the resolved name
+ * (store.ts) is what lets A-11's "no silent vanish" rule report WHY it was refused.
  */
 export function scanSkillRoot(root: string, source: SkillTier, exclude?: ReadonlySet<string>): SkillScanResult {
   let dirs: string[];
