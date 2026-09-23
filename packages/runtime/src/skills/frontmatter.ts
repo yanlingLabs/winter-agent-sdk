@@ -81,9 +81,17 @@ export function capBytes(s: string, maxBytes: number): string {
 }
 
 /**
- * Parse a SKILL.md's raw text. `null` for anything that is not a usable skill: no leading fence, an
- * unterminated fence, or a missing `description` (a missing `name` falls back to the DIRECTORY name,
- * which is how a skill authored without one still works).
+ * Parse a SKILL.md's raw text. `null` for anything that is not a usable skill: no leading fence, or
+ * an unterminated fence.
+ *
+ * WS-21 §6.3 items 9-10 (claude's `getSkillCommandName`, measured 2026-09-23): a skill's IDENTITY is
+ * always the directory it was discovered under -- `fallbackName` -- never a frontmatter `name:` key.
+ * Earlier this parser let a declared `name:` override the directory, which meant a checked-in
+ * SKILL.md could claim any identity a caller had not yet validated; now the frontmatter's `name:`
+ * line, if present, is not even read. A missing `description:` no longer invalidates the file either
+ * -- it yields `""` and the skill is kept (claude does not drop undescribed skills; the model still
+ * sees the name, and `renderSkillListingLine` already prints a name-only line for an empty
+ * description).
  *
  * The fence must start at byte 0 -- a `---` deeper in the file is body text, never frontmatter.
  */
@@ -99,22 +107,18 @@ export function parseSkillFile(raw: string, fallbackName: string): ParsedSkillFi
   const afterFence = raw.slice(end + 4);
   const eol = afterFence.indexOf("\n");
   const body = (eol === -1 ? "" : afterFence.slice(eol + 1)).replace(/^\r?\n/, "");
-  let name = "";
   let description = "";
   let author = "";
   for (const line of fm.split("\n")) {
-    const m = /^\s*(name|description|author)\s*:\s*(.*)$/.exec(line);
+    const m = /^\s*(description|author)\s*:\s*(.*)$/.exec(line);
     if (!m) continue;
     let v = m[2]!.trim();
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (m[1] === "name") name = v;
-    else if (m[1] === "description") description = v;
+    if (m[1] === "description") description = v;
     else author = v;
   }
-  if (!name) name = fallbackName;
-  if (!name || !description) return null;
   return {
-    name,
+    name: fallbackName,
     description: capBytes(description, DEFAULT_SKILL_DESCRIPTION_BYTES),
     body,
     ...(author ? { author } : {}),

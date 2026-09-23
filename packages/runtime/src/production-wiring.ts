@@ -22,7 +22,8 @@
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
 import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
+import { filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
 // P7a (D19): the two process-level brand surfaces this module installs per session -- see (10b).
 import { rebrandStandingServerTools } from "./tools/registry.ts";
 import { canonicalAliases, WINTER_CANONICAL_ALIASES } from "./toolsearch/aliases.ts";
@@ -482,6 +483,15 @@ export interface ProductionWiring {
    */
   providerWiring: SessionProviderWiring;
   /**
+   * WS-21 §3.4.4 step 4 / §6.3 item 6: every settings tier's `env` block, claude's per-tier filters
+   * applied (`settings/env-filter.ts`), merged HIGHEST-PRECEDENCE-WINS. There is still no production
+   * consumer that applies this to a child spawn's own process env (F7's finding -- `Settings.env`
+   * was declared but never consumed -- is only half-closed by this field: the FILTERING is now real,
+   * the APPLICATION is the next consumer's job), so this is exposed for that consumer rather than
+   * applied to `process.env` here, which would be a global mutation no caller asked for.
+   */
+  settingsEnv: Record<string, string>;
+  /**
    * The config the ENGINE should run, which differs from the input config in the provider-derived
    * defaults only (`contextWindowTokens` from the descriptor when the host stated none).
    *
@@ -507,12 +517,14 @@ export interface ProductionWiring {
  * SESSION'S OWN PROVIDER (dist-session fixes E4).
  *
  * A host commonly spawns with the provider-local id plus `Options.provider` (the Winter daemon does),
- * and one bare id is served by many providers -- `deepseek-v4-flash` by twelve, each with its own row.
- * A first-match search over the whole catalog named the model by whichever provider sorted first.
+ * and one bare id is served by many providers -- `deepseek-v4-flash` by eleven, each with its own row
+ * (deepseek's and deepseek-anthropic's own rows are now `deepseek-flash`, keeping `deepseek-v4-flash`
+ * only as an alias). A first-match search over the whole catalog named the model by whichever
+ * provider sorted first.
  *
  *   - with `providerId`: that provider's rows only, in TWO PASSES like the adapters' descriptor index --
  *     key or upstream id first, alias only after -- so an alias can never shadow a real id, and
- *     novita's provider-local `deepseek/deepseek-v4-flash` names novita's row, not deepseek's KEY;
+ *     novita's provider-local `deepseek/deepseek-v4-pro` names novita's row, not deepseek's KEY;
  *   - without one (a session with no provider identity at all): the string is read as a catalog KEY
  *     when it is one (a key names its provider), and a bare id or alias only when exactly ONE row in
  *     the whole catalog answers to it. Ambiguous -> nothing, and the line keeps the bare id.
@@ -551,6 +563,16 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // one place, and every consumer below is handed a real profile.
   const brand = config.brand ?? WINTER_BRAND;
   const winterHome = opts.winterHome ?? config.winterHome ?? resolveWinterHome(env, brand);
+  // WS-21 §3.7/§6.3 item 11: the child reads these from its OWN env, exactly like `WINTER_HOME`
+  // above -- `query.ts` maps neither of them, so this is the only place either name is read.
+  // `config.storeHome`/`config.pluginCacheDir` (protocol/config.ts, next to `winterHome`) win when
+  // a host set them explicitly, the same precedence `winterHome` already has over env. Absent
+  // (every incarnation before the router links `buildRunHome`, or any non-router host) reads as "no
+  // shared store home / no shared plugin cache" -- both `undefined`, and every consumer of them
+  // (L1a.7) falls back to `winterHome`.
+  const storeHome = config.storeHome ?? env[storeHomeEnvName(brand)];
+  const pluginCacheDir = config.pluginCacheDir ?? env[pluginCacheDirEnvName(brand)];
+  const hostManaged = env[providerManagedByHostEnvName(brand)] === "1" || env[providerManagedByHostEnvName(brand)] === "true";
   const warnings: string[] = [];
   const settingSources: SettingSource[] | undefined = config.settingSources;
 
@@ -1202,11 +1224,39 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   });
   for (const warning of settingsRules.warnings) warnings.push(warning);
 
+  // WS-21 §3.4.4 step 4 / §6.3 item 6 (F17, F20): apply claude's per-tier settings `env` filter
+  // BEFORE any tier's `env` block takes effect. `resolved.perSource` is highest-precedence first
+  // (settingsMcpServerSources's own header states the same order), so folding forward and keeping
+  // only the FIRST tier to claim a key is "highest precedence wins" without a second reverse pass.
+  // `managed` maps onto `filterSettingsEnv`'s "flag" tier for filtering purposes only -- neither
+  // branch of that function treats "user"/"flag"/"managed" differently, so the mapping changes
+  // nothing observable; it exists purely because `EnvFilterTier` has no fifth "managed" member.
+  const settingsEnv: Record<string, string> = {};
+  for (const tier of resolved.perSource) {
+    const tierEnv = tier.values.env;
+    if (tierEnv === undefined) continue;
+    const filterTier: EnvFilterTier = tier.source === "project" || tier.source === "local" || tier.source === "user" ? tier.source : "flag";
+    const filtered = filterSettingsEnv(tierEnv, filterTier, { hostManaged });
+    for (const [key, value] of Object.entries(filtered)) {
+      if (!(key in settingsEnv)) settingsEnv[key] = value;
+    }
+  }
+
+  // The provider-derived config defaults, PLUS the resolved store-home/plugin-cache-dir (§3.7/item
+  // 11) -- every one of them a DEFAULT: an explicit host value on `config` always wins (already
+  // true above, since `storeHome`/`pluginCacheDir` are `config.storeHome ?? env[...]`; this just
+  // makes the RESOLVED value visible on the config every downstream consumer actually reads).
+  const resolvedConfig = {
+    ...config,
+    ...(providerWiring.contextWindowTokens !== undefined ? { contextWindowTokens: providerWiring.contextWindowTokens } : {}),
+    ...(storeHome !== undefined ? { storeHome } : {}),
+    ...(pluginCacheDir !== undefined ? { pluginCacheDir } : {}),
+  };
+
   return {
     providerWiring,
-    // The provider-derived config defaults. `contextWindowTokens` is the only one today, and it is a
-    // DEFAULT: an explicit host value always wins (see `session-provider.ts` for why).
-    config: providerWiring.contextWindowTokens !== undefined ? { ...config, contextWindowTokens: providerWiring.contextWindowTokens } : config,
+    settingsEnv,
+    config: resolvedConfig,
     engineOptions: {
       winterHome,
       settingsRules,

@@ -19,8 +19,12 @@ import { compatibilityKeys } from "./keys.ts";
 // ~/.winter, ~/.norma, ~/.claude, or the real shared /tmp/winter-<uid> chain.
 
 describe("resolveWinterHome", () => {
-  test("defaults to ~/.winter when WINTER_HOME is unset", () => {
-    expect(resolveWinterHome({}).endsWith("/.winter")).toBe(true);
+  // WS-21 §6.3 item 8: the DEFAULT is now `~/<homeDirName>/sdk`, not `~/<homeDirName>` -- every
+  // assertion in this block that used to pin the bare dot-dir now pins its `/sdk` child instead.
+  // An EXPLICIT `<PREFIX>HOME` is UNCHANGED (still the literal override, no `/sdk` appended) --
+  // the suffix is the bare-default's own shape, not something spliced onto a caller's own value.
+  test("defaults to ~/.winter/sdk when WINTER_HOME is unset", () => {
+    expect(resolveWinterHome({}).endsWith("/.winter/sdk")).toBe(true);
   });
 
   test("uses WINTER_HOME when set to a non-blank value", () => {
@@ -28,15 +32,15 @@ describe("resolveWinterHome", () => {
   });
 
   test("treats an empty-string WINTER_HOME as unset", () => {
-    expect(resolveWinterHome({ WINTER_HOME: "" }).endsWith("/.winter")).toBe(true);
+    expect(resolveWinterHome({ WINTER_HOME: "" }).endsWith("/.winter/sdk")).toBe(true);
   });
 
   test("treats a whitespace-only WINTER_HOME as unset", () => {
-    expect(resolveWinterHome({ WINTER_HOME: "   " }).endsWith("/.winter")).toBe(true);
+    expect(resolveWinterHome({ WINTER_HOME: "   " }).endsWith("/.winter/sdk")).toBe(true);
   });
 
   test("an explicit undefined value in the env map is treated as unset", () => {
-    expect(resolveWinterHome({ WINTER_HOME: undefined }).endsWith("/.winter")).toBe(true);
+    expect(resolveWinterHome({ WINTER_HOME: undefined }).endsWith("/.winter/sdk")).toBe(true);
   });
 
   // T6 fix-wave (low): every test above passes an explicit env object — the zero-arg branch
@@ -46,37 +50,37 @@ describe("resolveWinterHome", () => {
   // suite — true for every CI runner and dev machine this repo's own tooling controls, but not a
   // guarantee this test itself can enforce.
   test("the zero-arg branch falls through to the real process.env (flake-aware — assumes WINTER_HOME is unset here, matching resolveTempBase's identical precedent)", () => {
-    expect(resolveWinterHome().endsWith("/.winter")).toBe(true);
+    expect(resolveWinterHome().endsWith("/.winter/sdk")).toBe(true);
   });
 
   // --- P7a spine, Step 3 (D19): the same function under a REUSER's brand ---------------------------
   //
   // The env name is DERIVED from `envPrefix`, so the whole point is that a host running as "Acme"
-  // reads ACME_HOME and lands in ~/.acme — and that Winter's own names do NOTHING for it. A brand
+  // reads ACME_HOME and lands in ~/.acme/sdk — and that Winter's own names do NOTHING for it. A brand
   // module nobody threaded would still pass every test above; only this block would fail.
-  test("a branded profile reads ITS OWN <PREFIX>HOME and defaults to ~/<homeDirName>", () => {
+  test("a branded profile reads ITS OWN <PREFIX>HOME and defaults to ~/<homeDirName>/sdk", () => {
     const acme = (resolveBrand({ envPrefix: "ACME_", homeDirName: ".acme" }) as { ok: true; brand: BrandProfile }).brand;
     expect(resolveWinterHome({ ACME_HOME: "/custom/acme" }, acme)).toBe("/custom/acme");
-    expect(resolveWinterHome({}, acme).endsWith("/.acme")).toBe(true);
+    expect(resolveWinterHome({}, acme).endsWith("/.acme/sdk")).toBe(true);
   });
 
   test("a branded profile IGNORES Winter's own env name — the prefix is not a fallback", () => {
     // Principle 4's shape, one level down: Winter does not honour CLAUDE_* as a fallback, and a
     // reuser's runtime must not honour WINTER_* either, or two products on one machine cross-wire.
     const acme = (resolveBrand({ envPrefix: "ACME_", homeDirName: ".acme" }) as { ok: true; brand: BrandProfile }).brand;
-    expect(resolveWinterHome({ WINTER_HOME: "/winters/home" }, acme).endsWith("/.acme")).toBe(true);
+    expect(resolveWinterHome({ WINTER_HOME: "/winters/home" }, acme).endsWith("/.acme/sdk")).toBe(true);
   });
 
-  test("<PREFIX>PROFILE=dev selects ~/<homeDirName>-dev, and an explicit home still wins over it", () => {
-    expect(resolveWinterHome({ WINTER_PROFILE: "dev" }).endsWith("/.winter-dev")).toBe(true);
+  test("<PREFIX>PROFILE=dev selects ~/<homeDirName>-dev/sdk, and an explicit home still wins over it", () => {
+    expect(resolveWinterHome({ WINTER_PROFILE: "dev" }).endsWith("/.winter-dev/sdk")).toBe(true);
     expect(resolveWinterHome({ WINTER_PROFILE: "dev", WINTER_HOME: "/explicit" })).toBe("/explicit");
     const acme = (resolveBrand({ envPrefix: "ACME_", homeDirName: ".acme" }) as { ok: true; brand: BrandProfile }).brand;
-    expect(resolveWinterHome({ ACME_PROFILE: "dev" }, acme).endsWith("/.acme-dev")).toBe(true);
+    expect(resolveWinterHome({ ACME_PROFILE: "dev" }, acme).endsWith("/.acme-dev/sdk")).toBe(true);
   });
 
   test("an unrecognised profile is the DEFAULT home, never an invented ~/<dir>-<value>", () => {
-    expect(resolveWinterHome({ WINTER_PROFILE: "staging" }).endsWith("/.winter")).toBe(true);
-    expect(resolveWinterHome({ WINTER_PROFILE: "" }).endsWith("/.winter")).toBe(true);
+    expect(resolveWinterHome({ WINTER_PROFILE: "staging" }).endsWith("/.winter/sdk")).toBe(true);
+    expect(resolveWinterHome({ WINTER_PROFILE: "" }).endsWith("/.winter/sdk")).toBe(true);
   });
 });
 
@@ -437,7 +441,9 @@ describe("resolveKeychainServiceForProfile (P7a fix wave, M-3)", () => {
     expect(resolveKeychainServiceForProfile(WINTER, { WINTER_PROFILE: "dev" }, false)).toBe(`${WINTER_BRAND.keychainService}.dev`);
     // Whitespace is trimmed exactly as `resolveWinterHome` trims it -- the two halves read one rule.
     expect(resolveKeychainServiceForProfile(WINTER, { WINTER_PROFILE: " dev " }, false)).toBe(`${WINTER_BRAND.keychainService}.dev`);
-    expect(resolveWinterHome({ WINTER_PROFILE: "dev" }, WINTER_BRAND).endsWith("-dev")).toBe(true);
+    // WS-21 §6.3 item 8: the default now carries a `/sdk` child, so the `-dev` marker is a path
+    // SEGMENT (`.winter-dev`), not the string's own tail any more.
+    expect(resolveWinterHome({ WINTER_PROFILE: "dev" }, WINTER_BRAND).includes("-dev/")).toBe(true);
   });
 
   test("the env NAME is the BRAND's, never Winter's -- `ACME_PROFILE` selects, `WINTER_PROFILE` does not", () => {

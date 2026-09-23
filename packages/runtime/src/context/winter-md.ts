@@ -36,7 +36,8 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
-import { neutralizeReminderTags, readCapped } from "./injection.ts";
+import { expandImports } from "./imports.ts";
+import { neutralizeReminderTags, readWhole } from "./injection.ts";
 
 /**
  * Winter's OWN instructions basename, derived from the default profile rather than spelled.
@@ -47,11 +48,12 @@ import { neutralizeReminderTags, readCapped } from "./injection.ts";
 export const WINTER_MD_BASENAME = WINTER_BRAND.instructionsFile;
 
 /**
- * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): content that
- * rides every request of a session needs a ceiling or one large checked-in file costs the session
- * its window on every request. 32 KB is Norma's shipped instructions cap, carried over.
+ * WS-21 §6.3 item 10 (F7): there is NO per-file byte ceiling here any more. Winter used to cap an
+ * instructions file at 32 KB (Norma's shipped cap); claude does not truncate `CLAUDE.md`, and the
+ * whole point of this workstream is that the two runtimes read the identical file the identical way.
+ * Removed rather than widened, so nothing downstream can quietly reintroduce a cap by reading this
+ * constant.
  */
-export const WINTER_MD_MAX_BYTES = 32 * 1024;
 
 export interface WinterMdBlock {
   /** Absolute path of the file this block came from. */
@@ -161,25 +163,48 @@ export interface WinterMdInput {
   settingSources?: readonly SettingSource[];
   /** P7a (D19): the session's brand. Omitted = `WINTER_BRAND`, i.e. today's `WINTER_MD_BASENAME`. */
   brand?: Pick<BrandProfile, "instructionsFile">;
+  /**
+   * WS-21 §6.3 item 2: UNCONDITIONAL rules (`context/rules.ts`'s `loadRules(...).unconditional`),
+   * rendered as additional blocks AFTER every instructions file -- rules are standing context of
+   * the identical kind an instructions file is, just organised one file per rule instead of a
+   * single instructions basename. A CONDITIONAL rule never belongs here: it rides the on-touch attachment
+   * (`conditionalRuleAttachmentProducer`) instead, appearing only once a matching file is touched.
+   */
+  rules?: readonly { path: string; tier: "user" | "project"; content: string }[];
 }
 
 /**
  * The instructions blocks for a session, in the PINNED ORDER: the user-level file first, then every
- * project file from the repository root down to the cwd.
+ * project file from the repository root down to the cwd, then every unconditional rule.
  *
  * User-first is deliberate. The user's own file under the winter home is standing preference; a
  * project's file is specific to the work in front of the model. Reading the specific thing last
  * matches the outermost-first rule the project walk already follows, so one rule covers the whole
- * ordering rather than two that could drift.
+ * ordering rather than two that could drift. Rules come last because they are the most granular
+ * tier -- narrower in scope than either instructions file, the same reason a project file already
+ * reads after the user's.
  */
 export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
   const sources = input.settingSources ?? (["user", "project", "local"] as const);
   const basename = (input.brand ?? WINTER_BRAND).instructionsFile;
   const localBasename = localInstructionsBasename(basename);
   const blocks: WinterMdBlock[] = [];
+
+  // WS-21 §6.3 item 4: LAZY, so the hermetic `settingSources: []` mode (and a user-only session)
+  // never shells out to git at all -- `projectInstructionRoot` is a real subprocess spawn, and a
+  // USER-tier file's `@import` never consults it (expandImports ignores `projectRoot` for that
+  // tier), so there is nothing to compute until a project/local file is actually about to be read.
+  let projectRootCache: string | null | undefined;
+  const projectRootFor = (scope: WinterMdBlock["scope"]): string | null => (scope === "user" ? null : (projectRootCache ??= projectInstructionRoot(input.cwd)));
+
   const read = (path: string, scope: WinterMdBlock["scope"]): void => {
-    const body = readCapped(path, WINTER_MD_MAX_BYTES);
-    if (body !== null) blocks.push({ path, scope, text: neutralizeReminderTags(body) });
+    const body = readWhole(path);
+    if (body === null) return;
+    // WS-21 §6.3 item 4 (F17): expand this file's OWN `@import` tokens before it becomes a block --
+    // claude does this at load time too, and every downstream reader (renderInstructionsContext,
+    // the assembler) only ever sees the already-expanded text.
+    const { content } = expandImports({ content: body, filePath: path, tier: scope, projectRoot: projectRootFor(scope) });
+    blocks.push({ path, scope, text: neutralizeReminderTags(content) });
   };
 
   if (sources.includes("user")) read(join(input.home, basename), "user");
@@ -194,6 +219,13 @@ export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
       if (includeProject) read(join(dir, basename), "project");
       if (includeLocal) read(join(dir, localBasename), "local");
     }
+  }
+
+  for (const rule of input.rules ?? []) {
+    const text = rule.content.trim();
+    if (text.length === 0) continue;
+    const { content } = expandImports({ content: text, filePath: rule.path, tier: rule.tier, projectRoot: projectRootFor(rule.tier) });
+    blocks.push({ path: rule.path, scope: rule.tier, text: neutralizeReminderTags(content) });
   }
 
   return blocks;

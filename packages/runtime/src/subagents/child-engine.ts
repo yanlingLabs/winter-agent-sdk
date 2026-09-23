@@ -217,6 +217,15 @@ export interface ChildEngineFactoryDeps {
   // supplies this alongside `store`. Absent: `record.transcript` degrades to a relative store key
   // (still meaningful to a caller holding the same store object, just not directly `cat`-able).
   winterHome?: string;
+  /**
+   * WS-21 §3.7: the shared runtime home's durable-paths root (`config.storeHome`), preferred over
+   * `winterHome` wherever this factory resolves an ABSOLUTE durable path for a child -- the
+   * transcript record's own display path, and the provider-state sidecar's attachment gate below
+   * (both point at the SAME `<store>/projects/...` tree `store` itself writes into once its own
+   * construction site prefers `storeHome` too; this factory's own display/gate is what §6.3 item 11
+   * covers). Absent falls back to `winterHome`, byte-identical to pre-WS-21 behaviour.
+   */
+  storeHome?: string;
   env?: Record<string, string | undefined>;
   modelCatalog?: ModelCatalog;
   // WS-10 §5's own fork-mode interactive default -- see policy.ts's own header for why this stays a
@@ -628,6 +637,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     }
     const workspace = workspaceResult.workspace;
 
+    // WS-21 §3.7: every durable, absolute path this factory resolves below (the sidecar attachment
+    // gate, `record.transcript`) prefers the shared store home over the per-run folder `winterHome`.
+    const childDurableRoot = deps.storeHome ?? deps.winterHome;
+
     // --- Durable transcript (WS-05 §4/§5.2/§5.3, WS-10 §7) --------------------------------------
     const childStore = deps.store;
     const projectKey = compatibilityKeys(inherit.sessionRoot).transcriptProjectKey;
@@ -648,8 +661,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             // cross-family handoff record it wrote was lost with the process. `deps.winterHome` is
             // already this factory's own construction-time mirror (read three lines below for the
             // transcript path); the sidecar path is derived from the child transcript path inside
-            // dialect.ts, so the two cannot drift.
-            ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
+            // dialect.ts, so the two cannot drift. WS-21 §3.7: `storeHome` wins when the router
+            // supplied one -- see this factory's own `storeHome` field header.
+            ...(childDurableRoot !== undefined ? { winterHome: childDurableRoot } : {}),
           })
         : undefined;
     // Fix round 1 (finding M1): never claim a transcript that cannot exist (no store configured),
@@ -661,9 +675,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const transcriptPath =
       childStore === undefined
         ? "none -- no durable session store is configured for this run"
-        : deps.winterHome !== undefined
-          ? `${deps.winterHome}/projects/${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`
-          : `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`; // a store exists but this factory has no winterHome to resolve an absolute path -- a relative store key, not directly readable by path, but still a meaningful identifier for a caller holding the same store object
+        : childDurableRoot !== undefined
+          ? `${childDurableRoot}/projects/${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`
+          : `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`; // a store exists but this factory has no winterHome/storeHome to resolve an absolute path -- a relative store key, not directly readable by path, but still a meaningful identifier for a caller holding the same store object
 
     // WS-13c §8: `ChildSessionRecord.model` IS `RecordedModelEffort` (R-6c-20), so `effectiveProvider`/`slot` type-check without a local widening.
     const record: ChildSessionRecord = {
@@ -1140,7 +1154,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // puts the `//<root>/{run,projects,backups}` floors in front of a child running under forced
         // bypass.
         ...(deps.settingsRules !== undefined ? { settingsRules: deps.settingsRules } : {}),
-        ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
+        // WS-21 §3.7: the child's own `buildBaselineDenyRules(resolvedWinterHome)` floor anchors on
+        // the shared store home too, the same `childDurableRoot` preference used above for the
+        // transcript path and the sidecar gate -- `projects/` (what this floor protects) lives under
+        // the store home once the router links `buildRunHome`.
+        ...(childDurableRoot !== undefined ? { winterHome: childDurableRoot } : {}),
         // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
         // because the alternative is a child that fails its FIRST round the moment a caller sets one.
         ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),

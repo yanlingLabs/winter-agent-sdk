@@ -80,6 +80,14 @@ export interface MemoryDirInput {
   cwd: string;
   /** The `~/.winter` root (WINTER_HOME-aware; the caller resolves it). */
   home: string;
+  /**
+   * WS-21 §3.7: the shared runtime home's durable-paths root (`config.storeHome`), preferred over
+   * `home` when present -- code-mode auto-memory is a DURABLE path (spec §3.7's own list), so it
+   * lives under `sdk/projects/<key>/memory`, not the per-run folder `home` names once the router
+   * links `buildRunHome`. Absent (every incarnation before then, or a non-router host) falls back
+   * to `home`, byte-identical to pre-WS-21 behaviour.
+   */
+  storeHome?: string;
   env?: Record<string, string | undefined>;
   /**
    * `Settings.autoMemoryDirectory` (or a host-supplied `SystemPromptInput.memoryDir`) -- REPLACES
@@ -101,5 +109,5 @@ export function memoryDirFor(input: MemoryDirInput): string {
     const expanded = expandTilde(override);
     return isAbsolute(expanded) ? expanded : resolve(input.cwd, expanded);
   }
-  return join(input.home, "projects", memoryProjectKeyFor(input.cwd, input.env), "memory");
+  return join(input.storeHome ?? input.home, "projects", memoryProjectKeyFor(input.cwd, input.env), "memory");
 }

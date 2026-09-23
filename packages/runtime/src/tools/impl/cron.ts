@@ -60,10 +60,26 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, constants as fsConstants, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, disableCronEnvName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 /** P7a (D19): the one brand field the durable store needs -- the project dot-dir it lives under. */
 type CronBrand = Pick<BrandProfile, "projectDirName">;
+
+/**
+ * WS-21 §6.3 items 11/13 (F19a): the twin of claude's `CLAUDE_CODE_DISABLE_CRON`. When set, the
+ * durable scheduled-tasks file is INERT for this session -- CronCreate/CronDelete/CronList never
+ * read or write it, exactly as F19a requires. Non-durable (in-memory) jobs are unaffected: only the
+ * FILE is gated, because it is the one thing a hostile repository's checked-in content can reach
+ * (edit-recognition.ts's own header: the path is fixed and non-model-controllable, but still a real
+ * repo-committed file a session could otherwise be induced to read on every CronList).
+ */
+function isTruthyEnv(v: string | undefined): boolean {
+  return v === "1" || v === "true";
+}
+function cronDisabled(ctx: Pick<ToolExecutionContext, "env" | "brand">): boolean {
+  const env = ctx.env ?? process.env;
+  return isTruthyEnv(env[disableCronEnvName(ctx.brand ?? WINTER_BRAND)]);
+}
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 // Self-sufficiency (Lane A precedent, read.ts): see task-graph.ts's identical comment.
 import "../descriptors/index.ts";
@@ -330,6 +346,9 @@ async function executeCreate(rawInput: unknown, ctx: ToolExecutionContext): Prom
   const record: CronJobRecord = { id: randomUUID(), cron: input.cron, prompt: input.prompt, recurring: input.recurring, durable: input.durable };
 
   if (input.durable) {
+    if (cronDisabled(ctx)) {
+      return errorResult(`durable scheduling is disabled for this session (${disableCronEnvName(ctx.brand ?? WINTER_BRAND)} is set); create a non-durable job instead`);
+    }
     let existing: CronJobRecord[];
     try {
       existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
@@ -371,6 +390,13 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
     return { output: JSON.stringify({ id: input.id }) };
   }
 
+  // WS-21 §6.3 items 11/13 (F19a): the durable file is inert while cron is disabled -- a lookup
+  // that never found it in memory is treated exactly like one the file itself came up empty for
+  // (T8 note 2: "by id" is a lookup contract, never an assertion of prior existence).
+  if (cronDisabled(ctx)) {
+    return { output: JSON.stringify({ id: input.id }) };
+  }
+
   let existing: CronJobRecord[];
   try {
     existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
@@ -396,10 +422,16 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
 
 async function executeList(_rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   let durableJobs: CronJobRecord[];
-  try {
-    durableJobs = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
-  } catch (e) {
-    return errorResult((e as Error).message);
+  if (cronDisabled(ctx)) {
+    // WS-21 §6.3 items 11/13 (F19a): never read the file while cron is disabled -- an empty durable
+    // list, not an error, so CronList still answers with whatever is in memory.
+    durableJobs = [];
+  } else {
+    try {
+      durableJobs = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
+    } catch (e) {
+      return errorResult((e as Error).message);
+    }
   }
   const all = [...durableJobs, ...inMemoryJobs.values()];
   const jobs = all.map((j) => ({

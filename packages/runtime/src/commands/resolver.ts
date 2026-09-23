@@ -34,7 +34,7 @@
 // into a template; the tool door is a model that already has the arguments in its own context.
 // CAPTURE-PENDING: if a differential capture shows the pinned Skill tool substituting, this becomes a
 // one-line change in tools/impl/skill.ts and the two doors converge.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { basename, join } from "node:path";
 import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { isUserInvocable, type SkillOverrides } from "../skills/listing.ts";
@@ -112,6 +112,21 @@ function parseCommandFile(raw: string): { body: string; description?: string; ar
 }
 
 /**
+ * Admit a `readdirSync` entry as a command file, WS-21 §6.3 item 1 (F6, F7): claude follows a
+ * symlinked command `.md` the same way it follows a symlinked skill directory. A dangling link, or
+ * a link to a non-file, is excluded silently.
+ */
+function isFileEntry(dir: string, e: Dirent): boolean {
+  if (e.isFile()) return true;
+  if (!e.isSymbolicLink()) return false;
+  try {
+    return statSync(join(dir, e.name)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Scan one `commands/` directory. FLAT ONLY -- a nested `commands/<dir>/<name>.md` is NOT discovered.
  * DISCLOSED SCOPE LIMIT (report): the pinned branch namespaces nested command files as
  * `<dir>:<name>`, which is the SAME spelling this resolver already uses for plugin qualification, so
@@ -122,7 +137,7 @@ function scanCommandDir(dir: string, source: SlashCommandOrigin): CommandFile[] 
   let names: string[];
   try {
     names = readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith(".md"))
+      .filter((e) => e.name.endsWith(".md") && isFileEntry(dir, e))
       .map((e) => e.name)
       .sort();
   } catch {

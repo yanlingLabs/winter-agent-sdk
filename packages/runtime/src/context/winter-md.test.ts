@@ -3,8 +3,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverWinterMd, localInstructionsBasename, projectInstructionRoot, renderInstructionsContext, INSTRUCTIONS_CONTEXT_HEADER, WINTER_MD_BASENAME, WINTER_MD_MAX_BYTES, _clearProjectRootCacheForTests } from "./winter-md.ts";
-import { TRUNCATION_MARKER } from "./injection.ts";
+import { discoverWinterMd, localInstructionsBasename, projectInstructionRoot, renderInstructionsContext, INSTRUCTIONS_CONTEXT_HEADER, WINTER_MD_BASENAME, _clearProjectRootCacheForTests } from "./winter-md.ts";
 import { makeGitFixture, type GitFixture } from "./git-fixture.ts";
 
 function write(dir: string, text: string): void {
@@ -60,11 +59,39 @@ describe("context/winter-md.ts -- discovery and the settings-SOURCE gate (P5-A)"
     expect(discoverWinterMd({ cwd: root, home })).toEqual([]);
   });
 
-  test("a WINTER.md is capped and marked truncated, so a huge file cannot ride every turn unbounded", () => {
-    write(root, "y".repeat(WINTER_MD_MAX_BYTES + 500));
+  test("a WINTER.md is returned in full, uncapped (WS-21 §6.3 item 10: claude does not truncate CLAUDE.md)", () => {
+    const big = "y".repeat(40 * 1024);
+    write(root, big);
     const block = discoverWinterMd({ cwd: root, home })[0]!;
-    expect(block.text).toContain(TRUNCATION_MARKER);
-    expect(Buffer.byteLength(block.text)).toBeLessThan(WINTER_MD_MAX_BYTES + 400);
+    expect(block.text).toBe(big);
+    expect(Buffer.byteLength(block.text)).toBe(40 * 1024);
+  });
+
+  test("WS-21 §6.3 item 4: a WINTER.md's own @import is expanded before it becomes a block", () => {
+    write(home, "USER LEVEL @./extra.md end");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "extra.md"), "EXTRA", "utf8");
+    const blocks = discoverWinterMd({ cwd: root, home, settingSources: ["user"] });
+    expect(blocks[0]!.text).toBe("USER LEVEL EXTRA end");
+  });
+
+  test("WS-21 §6.3 item 2: unconditional rules render AFTER the instructions files", () => {
+    write(home, "USER LEVEL");
+    write(root, "PROJECT LEVEL");
+    const blocks = discoverWinterMd({
+      cwd: root,
+      home,
+      rules: [
+        { path: "/rules/a.md", tier: "user", content: "Rule A" },
+        { path: "/rules/b.md", tier: "project", content: "Rule B" },
+      ],
+    });
+    expect(blocks.map((b) => [b.scope, b.text])).toEqual([
+      ["user", "USER LEVEL"],
+      ["project", "PROJECT LEVEL"],
+      ["user", "Rule A"],
+      ["project", "Rule B"],
+    ]);
   });
 
   test("a literal </system-reminder> inside WINTER.md is neutralised, so it cannot close the index-0 wrapper", () => {

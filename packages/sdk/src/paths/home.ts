@@ -29,9 +29,21 @@ export type HomeBrand = Pick<BrandProfile, "envPrefix" | "homeDirName">;
  * (packages/runtime/src/brand-gate.test.ts, rules 9 and 10) is what keeps it that way.
  *
  * PRECEDENCE (WS-01 §2.2, and the same rule the current daemon has always had): an explicit
- * `<PREFIX>HOME` wins over EVERYTHING, including the dev profile. `<PREFIX>PROFILE=dev` selects
- * `~/<homeDirName>-dev` — the dev/dist split, so a development build can never share a home (or a
- * transcript store, or a settings file) with the copy a user actually runs.
+ * `<PREFIX>HOME` wins over EVERYTHING, including the dev profile and the WS-21 `sdk` suffix below.
+ * `<PREFIX>PROFILE=dev` selects `~/<homeDirName>-dev/sdk` — the dev/dist split, so a development
+ * build can never share a home (or a transcript store, or a settings file) with the copy a user
+ * actually runs.
+ *
+ * WS-21 §6.3 item 8: the DEFAULT (no `<PREFIX>HOME`, no explicit `brand`-threaded value) is now
+ * `~/<homeDirName>/sdk`, not `~/<homeDirName>` -- Contract A's `sdkHomeOf(home) = join(home, "sdk")`,
+ * inlined here rather than imported (the router that exports it is a separate package this SDK
+ * never depends on). `brand.homeDirName` cannot contain a slash (`brand.ts`'s own validation), so
+ * this is always exactly one extra path segment. This changes ONLY the bare-default case: every
+ * router-routed session gets an EXPLICIT `WINTER_HOME` (the Global Constraints list: "only the
+ * router sets ... WINTER_HOME"), which still wins outright, and the daemon's own pre-router-link
+ * fallback threads its own value too (`session-driver.ts`'s `WINTER_HOME` default, unaffected by
+ * this function). A bare `winter` invocation with no env override is the only caller this moves --
+ * consistent with the shared runtime home being the thing the SDK itself now means by "home".
  */
 export function resolveWinterHome(env?: Record<string, string | undefined>, brand?: HomeBrand): string {
   const b = brand ?? WINTER_BRAND;
@@ -42,7 +54,7 @@ export function resolveWinterHome(env?: Record<string, string | undefined>, bran
   // Exactly one profile has a home of its own. Anything else (including an unrecognised value) is
   // the default home rather than a silently-invented `~/<dir>-<whatever>` directory.
   const dirName = profile !== undefined && profile.trim() === "dev" ? `${b.homeDirName}-dev` : b.homeDirName;
-  return join(homedir(), dirName);
+  return join(homedir(), dirName, "sdk");
 }
 
 /**

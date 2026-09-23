@@ -296,6 +296,98 @@ describe("T8 production wiring: the guards it carries", () => {
   });
 });
 
+// WS-21 §3.4.4 step 4 / §6.3 items 6, 11 (F17, F20): the per-tier settings `env` filter and the
+// store-home/plugin-cache-dir host env vars, wired at `buildProductionWiring`.
+describe("WS-21: settingsEnv (per-tier env filter) and config.storeHome/pluginCacheDir", () => {
+  test("a user-tier settings env block survives, filtered", async () => {
+    writeSettings(home, { env: { KEPT: "1", HOME: "/evil-but-user-tier-keeps-it" } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-env-user", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.settingsEnv).toEqual({ KEPT: "1", HOME: "/evil-but-user-tier-keeps-it" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a project-tier settings env block drops HOME (F17), and PROJECT (the higher-precedence tier) still wins a shared key", async () => {
+    writeSettings(home, { env: { HOME: "/user-home", SHARED: "user-loses" } });
+    mkdirSync(join(cwd, ".winter"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "settings.json"), JSON.stringify({ env: { HOME: "/project-evil", SHARED: "project-wins", PROJECT_ONLY: "1" } }));
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-env-project", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user", "project"], trustedWorkspace: true },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      // resolve.ts's own SOURCE_ORDER_LOWEST_FIRST is ["user", "project", "local"], reversed to
+      // highest-first -- PROJECT outranks USER (claude's own tier precedence), so it wins the
+      // SHARED clash; its HOME is still dropped outright by the project-tier-specific filter (F17),
+      // which runs before the "first tier to claim a key wins" fold, so nothing ever falls through
+      // to the user tier's own (kept, since USER may set HOME) value for that one key.
+      expect(wiring.settingsEnv).toEqual({ HOME: "/user-home", SHARED: "project-wins", PROJECT_ONLY: "1" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("config.storeHome/pluginCacheDir resolve from the process env, absent by default", async () => {
+    const withoutHostVars = await buildProductionWiring({
+      config: { sessionId: "s-store-absent", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(withoutHostVars.config.storeHome).toBeUndefined();
+      expect(withoutHostVars.config.pluginCacheDir).toBeUndefined();
+    } finally {
+      withoutHostVars.dispose();
+    }
+
+    const withHostVars = await buildProductionWiring({
+      config: { sessionId: "s-store-present", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] },
+      env: { WINTER_STORE_HOME: "/shared/sdk", WINTER_PLUGIN_CACHE_DIR: "/shared/sdk/plugins" },
+      winterHome: home,
+    });
+    try {
+      expect(withHostVars.config.storeHome).toBe("/shared/sdk");
+      expect(withHostVars.config.pluginCacheDir).toBe("/shared/sdk/plugins");
+    } finally {
+      withHostVars.dispose();
+    }
+  });
+
+  test("an explicit config.storeHome wins over the env var", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-store-explicit", cwd, model: "winter-test/echo", winterHome: home, settingSources: [], storeHome: "/explicit/store" } as RuntimeConfig,
+      env: { WINTER_STORE_HOME: "/env/store" },
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.storeHome).toBe("/explicit/store");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("host-managed drops provider env keys from settingsEnv", async () => {
+    writeSettings(home, { env: { ANTHROPIC_BASE_URL: "https://evil.example", KEPT: "1" } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-env-hostmanaged", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: { WINTER_PROVIDER_MANAGED_BY_HOST: "1" },
+      winterHome: home,
+    });
+    try {
+      expect(wiring.settingsEnv).toEqual({ KEPT: "1" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // Phase 5 fix wave, Lane Y addendum item 3 + nit n3: what an operator is actually TOLD.
 // ---------------------------------------------------------------------------------------------

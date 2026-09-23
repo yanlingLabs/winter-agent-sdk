@@ -4,7 +4,7 @@
 // an unclaimed `/name` ever reaches a resolver (commands/seam.ts). Nothing here produces the
 // `builtin` arm.
 import { describe, test, expect, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillIndex, PROJECT_PLUGIN_NAME } from "../skills/store.ts";
@@ -76,6 +76,30 @@ describe("FilesystemCommandResolver: `.winter/commands/<name>.md` creates `/name
     const result = await resolver.resolve("/deploy staging", repo);
     expect(result).toEqual({ kind: "expand", text: "Deploy to staging.", source: join(repo, ".winter", "commands", "deploy.md") });
     expect(resolver.list().find((c) => c.name === "deploy")).toEqual({ name: "deploy", description: "ships it", argumentHint: "<env>", source: "project" });
+  });
+});
+
+describe("FilesystemCommandResolver: symlinked command files (WS-21 §6.3 item 1)", () => {
+  test("a symlinked command `.md` resolves like a real one (claude parity)", async () => {
+    const repo = mkTemp("winter-cmd-link-");
+    const real = mkTemp("winter-cmd-link-real-");
+    const commandsDir = join(repo, ".winter", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    const target = join(real, "review.md");
+    writeFileSync(target, "Please review the linked code.", "utf8");
+    const linkPath = join(commandsDir, "review.md");
+    symlinkSync(target, linkPath);
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome: mkTemp("winter-cmd-link-home-") });
+    expect(await resolver.resolve("/review", repo)).toEqual({ kind: "expand", text: "Please review the linked code.", source: linkPath });
+  });
+
+  test("a dangling command symlink is skipped without an error", async () => {
+    const repo = mkTemp("winter-cmd-dangle-");
+    const commandsDir = join(repo, ".winter", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    symlinkSync(join(commandsDir, "nowhere.md"), join(commandsDir, "ghost.md"));
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome: mkTemp("winter-cmd-dangle-home-") });
+    expect(await resolver.resolve("/ghost", repo)).toEqual({ kind: "none" });
   });
 });
 

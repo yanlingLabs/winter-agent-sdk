@@ -336,14 +336,22 @@ export function isOutputsCarveOut(absPath: string, outputsDirs: readonly string[
 // write-shaped -- an Edit/Write's own file_path, or a path recognizeEditOperation extracted from a
 // Bash call). A plain Read of a protected path is correctly UNAFFECTED by this primitive because
 // the seam never calls it for a Read at all, not because of anything checked in here.
-export function isProtectedWrite(path: string, ctx: { cwd: string; home: string; winterHome?: string; brand?: ProtectedBrand; outputsDirs?: readonly string[] }): boolean {
+export function isProtectedWrite(
+  path: string,
+  ctx: { cwd: string; home: string; winterHome?: string; storeHome?: string; brand?: ProtectedBrand; outputsDirs?: readonly string[] },
+): boolean {
   const brand = ctx.brand ?? WINTER_BRAND;
   const absPath = resolve(ctx.cwd, path);
+  // WS-21 §3.7: `projects/` (what both carve-outs below address) lives under the shared STORE home
+  // once the router links `buildRunHome`, not under the per-run folder `ctx.winterHome` names --
+  // the two are now DIFFERENT directories. `durableRoot` is what the carve-outs anchor on; absent a
+  // `storeHome`, it degrades to `ctx.winterHome`, byte-identical to pre-WS-21 behaviour.
+  const durableRoot = ctx.storeHome ?? ctx.winterHome;
   // RULING P5-B: checked FIRST, because the carve-out lives INSIDE the brand's own dot-dir, which
   // `isInsideProtectedDirectory` would otherwise reject unconditionally. Same shape as the
   // pre-existing worktree-area exception one function down, and for the same reason: a subtree
   // the agent is meant to work in cannot also be protected from it.
-  if (isWorkflowScriptCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
+  if (isWorkflowScriptCarveOut(absPath, ctx.home, durableRoot, brand)) return false;
   // SDK 0.0.4: the auto-memory carve-out, checked in the SAME position and for the same reason --
   // it too lives inside the brand's own dot-dir, which `isInsideProtectedDirectory` would otherwise
   // reject unconditionally. This is the half that makes the memory directory writable in the
@@ -351,7 +359,7 @@ export function isProtectedWrite(path: string, ctx: { cwd: string; home: string;
   // the model's every memory write becomes an approval prompt for a path the product told it to use
   // freely. (Under `bypassPermissions` §6.7 already returns `allow`, so that mode was blocked by the
   // stage-2 managed deny alone -- the OTHER half, in evaluator.ts.)
-  if (isMemoryCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
+  if (isMemoryCarveOut(absPath, ctx.home, durableRoot, brand)) return false;
   // The session outputs directory -- see `isOutputsCarveOut`. `outputsDirs` arrives already
   // validated (`isCarvableOutputsDir`) by the evaluator, which also supplies its real path.
   if (ctx.outputsDirs !== undefined && isOutputsCarveOut(absPath, ctx.outputsDirs, brand)) return false;
@@ -361,6 +369,13 @@ export function isProtectedWrite(path: string, ctx: { cwd: string; home: string;
   // and its `runtimes/`, `run/`, `backups/` and settings were writable by a shell command as ordinary
   // files. Checked AFTER the two carve-outs above, which live inside it by design.
   if (ctx.winterHome !== undefined && ctx.winterHome.length > 0 && isAncestorOfOrEqual(resolve(ctx.winterHome).toLowerCase(), absPath.toLowerCase())) return true;
+  // WS-21 §3.7/§7.1: the shared STORE home, WHOLESALE, and SEPARATELY from `ctx.winterHome` above --
+  // once the router links `buildRunHome`, `sdk/settings.json`, `sdk/.winter.json`, `sdk/agents/**`
+  // and the rest of the self-grant surface (spec §7.1's table) live under `storeHome`, a DIFFERENT
+  // directory from the per-run folder `winterHome` now names. Both floors are needed: the run
+  // folder still holds this incarnation's own generated `settings.json`/`.winter.json`, and the
+  // store home holds the durable originals those were built from.
+  if (ctx.storeHome !== undefined && ctx.storeHome.length > 0 && isAncestorOfOrEqual(resolve(ctx.storeHome).toLowerCase(), absPath.toLowerCase())) return true;
   const basename = basenameOf(absPath).toLowerCase();
   // The instructions file is brand-derived, so it is matched from the PROFILE as well as from the
   // seeded default set -- a reuser's ACME.md must be as protected as Winter's own file is.

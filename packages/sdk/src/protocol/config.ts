@@ -339,6 +339,17 @@ export interface RuntimeConfig {
   resumeDropsTurn?: boolean;
   persistSession?: boolean;
   winterHome?: string;
+  /**
+   * WS-21 §3.7/§6.3 item 11: the shared runtime home's durable-paths root (`storeHomeEnvName`'s
+   * value) and the claude-`CLAUDE_CODE_PLUGIN_CACHE_DIR` twin, next to `winterHome` for a host that
+   * assembles `--config-json` directly rather than only setting the child's env. The CANONICAL
+   * channel is still the child's own env (`production-wiring.ts` reads `config.storeHome ??
+   * env[storeHomeEnvName(brand)]`, the same precedence `winterHome` already has over
+   * `resolveWinterHome(env, brand)`) -- these two fields exist so a host with no separate env-setting
+   * step has an equivalent one.
+   */
+  storeHome?: string;
+  pluginCacheDir?: string;
   allowedTools?: string[];
   disallowedTools?: string[];
   // Task 6 (WS-07 §6.4): disableBypassPermissionsMode nests inside `permissions`, mirroring

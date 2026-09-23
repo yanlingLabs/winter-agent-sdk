@@ -1,4 +1,7 @@
 import { test, expect, spyOn, describe } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { query, type QueryInternal } from "./query.ts";
 import type { Options } from "./options.ts";
 import { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
@@ -2241,3 +2244,44 @@ test("control_cancel_request aborts the pending canUseTool's signal, and no resp
   await new Promise((r) => setTimeout(r, 10));
   expect(decodeControlResponse(writes, "perm-cancel")).toBeUndefined();
 });
+
+// WS-21 §3.7/§6.3 items 6, 11: a child started through query() with env.WINTER_STORE_HOME set
+// persists its workflow `scriptPath` under `<storeHome>/projects/`, not under whatever ordinary
+// `winterHome` this in-memory session would otherwise default to. DARWIN-GATED like every other
+// real-workflow-launch test in this workspace (transport-equivalence.test.ts's own P5 workflow
+// scenario): `WorkflowRuntime.launch` refuses outright when `sandbox-exec` is unavailable, and CI is
+// Linux.
+test.skipIf(process.platform !== "darwin")(
+  "WS-21: env.WINTER_STORE_HOME reaches production-wiring.ts through query(), and a launched workflow's scriptPath lands under <storeHome>/projects/",
+  async () => {
+    const storeHome = mkdtempSync(join(tmpdir(), "winter-storehome-e2e-"));
+    try {
+      const gen = query({
+        prompt: "run the workflow",
+        options: {
+          model: "winter-test/p5workflow",
+          allowedTools: ["Workflow", "Agent"],
+          // This test controls the spawn callback directly, so `WINTER_STORE_HOME` is supplied to
+          // `inMemoryProcess` (and from there to `buildProductionWiring`'s `env`) without needing a
+          // real `--config-json`/env round trip -- exactly how `winter-agent-runtime/testing`'s own
+          // `inMemoryProcess(args, provider, tools, env)` fourth parameter exists to be used.
+          spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("p5workflow"), undefined, { WINTER_STORE_HOME: storeHome }),
+        },
+      });
+      const messages: Array<{ type: string; message?: { content?: Array<{ type: string; tool_use_id?: string; content?: string }> } }> = [];
+      for await (const msg of gen) {
+        messages.push(msg as unknown as (typeof messages)[number]);
+      }
+      const toolResultBlock = messages
+        .filter((m) => m.type === "user")
+        .flatMap((m) => m.message?.content ?? [])
+        .find((block) => block.tool_use_id === "p5-workflow-1");
+      expect(toolResultBlock, "the Workflow tool_use's own tool_result must be in the drained messages").toBeDefined();
+      const parsed = JSON.parse(toolResultBlock!.content!) as { scriptPath: string };
+      expect(parsed.scriptPath.startsWith(join(storeHome, "projects") + "/")).toBe(true);
+    } finally {
+      rmSync(storeHome, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);

@@ -6,7 +6,7 @@
 // DEFENSIVE THROUGHOUT, Norma parity: a missing root, an unreadable directory, a malformed
 // SKILL.md, a `SKILL.md` that is itself a directory -- every one is SKIPPED, never thrown. A single
 // broken skill in a checked-in project `skills/` directory must not be able to fail a session's startup.
-import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { parseSkillFile, type ParsedSkillFile } from "./frontmatter.ts";
@@ -111,6 +111,24 @@ export function projectSkillRoots(cwd: string, brand?: Pick<BrandProfile, "proje
 }
 
 /**
+ * Admit a `readdirSync` entry as a skill directory, WS-21 §6.3 item 1 (F6, F7): claude admits
+ * `entry.isDirectory() || entry.isSymbolicLink()`, then resolves the link. A link is resolved
+ * relative to the directory being scanned (`root` here is always that directory, never a
+ * higher-level scan root, since this is called from inside `scanSkillRoot`'s own loop). A dangling
+ * link, or a link to a non-directory, is excluded silently -- the same fate an ordinary
+ * subdirectory with no SKILL.md already has.
+ */
+function isDirEntry(root: string, e: Dirent): boolean {
+  if (e.isDirectory()) return true;
+  if (!e.isSymbolicLink()) return false;
+  try {
+    return statSync(join(root, e.name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Scan `<root>/<dir>/SKILL.md` for every immediate SUBDIRECTORY of `root`. `exclude` skips reserved
  * subdirectory names (the user root's `self/`, scanned separately as its own tier).
  *
@@ -126,8 +144,13 @@ export function scanSkillRoot(root: string, source: SkillTier, exclude?: Readonl
     // filesystems and changes as entries are created and removed. The listing's budget drops from
     // the tail (listing.ts), so an unstable within-root order would make WHICH skills the model can
     // see depend on the order they happened to be written to disk.
+    //
+    // WS-21 §6.3 item 1 (F6, F7): a symlinked skill directory is admitted exactly as claude admits
+    // one (`entry.isDirectory() || entry.isSymbolicLink()`), resolved with `isDirEntry` below. A
+    // dangling link, or a link to a non-directory, is silently excluded -- the same fate a plain
+    // subdirectory with no SKILL.md already has.
     dirs = readdirSync(root, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
+      .filter((e) => isDirEntry(root, e))
       .map((e) => e.name)
       .sort();
   } catch {
@@ -199,7 +222,9 @@ export function readSkillMetadata(path: string, fallbackName: string, opts: { ma
   if (truncated) {
     return { ok: false, reason: `its frontmatter is not closed within the first ${opts.maxBytes} bytes of the file, which is the index-time read bound (SKILL_METADATA_PREFIX_BYTES)` };
   }
-  return { ok: false, reason: "no usable frontmatter: a SKILL.md needs a `---` fence at the very top of the file with at least a `description:` inside it" };
+  // WS-21 §6.3 item 10: a missing `description:` no longer disqualifies a SKILL.md, so the only
+  // remaining unparseable shape is a missing or unterminated frontmatter fence.
+  return { ok: false, reason: "no usable frontmatter: a SKILL.md needs a `---` fence at the very top of the file, closed by another `---` line" };
 }
 
 /** Reads at most `maxBytes` from the head of `path`. `truncated` means the file is longer than that. */
