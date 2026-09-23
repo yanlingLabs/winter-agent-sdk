@@ -341,3 +341,6 @@ export { CATALOG_TAG_RENAMES } from "@yanlinglabs/winter-provider-catalog";
 // implemented once here and exported for `winter plugin` (the CLI verb, not shipped in this task).
 export { PluginManagerError, listMarketplaces, addMarketplace, removeMarketplace, updateMarketplace, installPlugin, uninstallPlugin, setPluginEnabled, updatePlugin, listPlugins } from "./plugins/manage.ts";
 export type { PluginScope, PluginManagerOptions, MarketplaceInfo, InstalledPlugin, PluginListing } from "./plugins/manage.ts";
+// Fix round 3 (I-1, security): the ONE marketplace-manifest plugin-path resolver, shared with
+// runtime's own installed.ts directory-marketplace fallback (SV-4) -- see this file's own header.
+export { resolveMarketplacePluginPath } from "./plugins/marketplace-path.ts";

@@ -72,6 +72,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Settings } from "../settings/types.ts";
 import { loadSettingsFile, type LoadedSettingsFile } from "../settings/sources.ts";
+import { resolveMarketplacePluginPath } from "./marketplace-path.ts";
 
 export class PluginManagerError extends Error {
   constructor(message: string) {
@@ -472,8 +473,18 @@ async function resolvePluginSourcePath(o: PluginManagerOptions, name: string, ma
   if (typeof entry.source !== "string") {
     throw new PluginManagerError(`plugin "${name}@${marketplace}" declares a non-local source, which this build cannot install (no network)`);
   }
-  const pluginRoot = manifest.metadata?.pluginRoot ?? ".";
-  const installPath = resolve(rec.installLocation, pluginRoot, entry.source);
+  // Fix round 3 (I-1, security): the ONE resolver shared with runtime's own directory-marketplace
+  // fallback (marketplace-path.ts's own header) -- a bare `resolve(installLocation, pluginRoot,
+  // entry.source)` here let `source: "../../x"` / `source: "/abs"` / `pluginRoot: "/etc"` escape the
+  // marketplace root entirely, and doubled `pluginRoot: "./plugins"` + `source: "./plugins/foo"`
+  // into `plugins/plugins/foo`. `undefined` covers every refusal shape (escape, absolute, doubled,
+  // or a bare name with no usable pluginRoot) with one typed error, rather than three checks here.
+  const installPath = resolveMarketplacePluginPath(rec.installLocation, manifest.metadata?.pluginRoot, entry.source);
+  if (installPath === undefined) {
+    throw new PluginManagerError(
+      `plugin "${name}@${marketplace}" declares a source (${JSON.stringify(entry.source)}) this build refuses to resolve -- it must be a "./relative/path" under the marketplace root (or a bare name when the marketplace's own metadata.pluginRoot is set), and must not escape the marketplace directory`,
+    );
+  }
   return { installPath, version: entry.version };
 }
 

@@ -97,6 +97,47 @@ describe("installPlugin: writes the V2 record AND enabledPlugins", () => {
     expect(listing).toEqual([{ id: "p", version: "1.0.0", installPath: join(marketplaceDir, "plugins", "p"), scope: "user", enabled: true, marketplace: "m" }]);
   });
 
+  // Fix round 3 (I-1, security): end to end through installPlugin, not just the unit-level resolver
+  // (marketplace-path.test.ts) -- a malicious marketplace manifest entry must never install to a
+  // path outside the marketplace directory.
+  test("I-1: a marketplace entry naming an escaping source is REFUSED typed, never installed -- SECURITY", async () => {
+    writeFileSync(
+      join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "m", owner: { name: "test" }, plugins: [{ name: "evil", source: "../../etc/passwd" }] }),
+    );
+    await addMarketplace(options, marketplaceDir);
+    await expect(installPlugin(options, "evil@m", "user")).rejects.toThrow(PluginManagerError);
+    expect(await listPlugins(options)).toEqual([]);
+  });
+
+  test("I-1: an ABSOLUTE source is refused typed, never installed -- SECURITY", async () => {
+    writeFileSync(
+      join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "m", owner: { name: "test" }, plugins: [{ name: "evil", source: "/etc" }] }),
+    );
+    await addMarketplace(options, marketplaceDir);
+    await expect(installPlugin(options, "evil@m", "user")).rejects.toThrow(PluginManagerError);
+  });
+
+  test("I-1: metadata.pluginRoot and an already-relative source do not double-join", async () => {
+    writeFileSync(
+      join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "m", owner: { name: "test" }, plugins: [{ name: "p", source: "./plugins/p" }], metadata: { pluginRoot: "./plugins" } }),
+    );
+    await addMarketplace(options, marketplaceDir);
+    const installed = await installPlugin(options, "p@m", "user");
+    expect(installed.installPath).toBe(join(marketplaceDir, "plugins", "p")); // NOT plugins/plugins/p
+  });
+
+  test("I-1: a bare source name with no metadata.pluginRoot is refused typed, matching claude's own rule", async () => {
+    writeFileSync(
+      join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "m", owner: { name: "test" }, plugins: [{ name: "p", source: "p" }] }),
+    );
+    await addMarketplace(options, marketplaceDir);
+    await expect(installPlugin(options, "p@m", "user")).rejects.toThrow(PluginManagerError);
+  });
+
   test("setPluginEnabled(false) flips enabledPlugins to false without touching the installed record", async () => {
     await addMarketplace(options, marketplaceDir);
     await installPlugin(options, "p@m", "user");

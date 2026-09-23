@@ -15,7 +15,8 @@
 // `installPath` like `<marketplace>/plugins/p` resolves to the basename `p`, exactly the bare name
 // test coverage expects.
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { resolveMarketplacePluginPath } from "@yanlinglabs/winter-agent-sdk";
 
 export interface PluginRecord {
   /** The `installed_plugins.json` key this record came from -- see the header for why. */
@@ -161,9 +162,16 @@ function resolveDirectoryMarketplacePluginPath(installLocation: string, pluginNa
   const manifest = parsed as { plugins?: unknown; metadata?: { pluginRoot?: unknown } };
   if (!Array.isArray(manifest.plugins)) return undefined;
   const entry = (manifest.plugins as MarketplaceManifestPluginEntryRaw[]).find((p) => p.name === pluginName);
-  if (entry === undefined || typeof entry.source !== "string") return undefined;
-  const pluginRoot = typeof manifest.metadata?.pluginRoot === "string" ? manifest.metadata.pluginRoot : ".";
-  return resolve(installLocation, pluginRoot, entry.source);
+  if (entry === undefined) return undefined;
+  // Fix round 3 (I-1, security): the ONE resolver shared with `@yanlinglabs/winter-agent-sdk`'s own
+  // `manage.ts` (marketplace-path.ts's own header) -- a bare `resolve(installLocation, pluginRoot,
+  // entry.source)` here let `source: "../../x"` / `source: "/abs"` / `pluginRoot: "/etc"` escape the
+  // marketplace root entirely, and that plugin's hooks then run shell commands from wherever it
+  // landed. `undefined` covers every refusal shape (escape, absolute, doubled, or a bare name with
+  // no usable pluginRoot) -- this reader already treats `undefined` as "not resolvable" everywhere
+  // else (a missing/malformed manifest, an unlisted plugin), so a refused source degrades the same
+  // way, never a throw.
+  return resolveMarketplacePluginPath(installLocation, manifest.metadata?.pluginRoot, entry.source);
 }
 
 /**

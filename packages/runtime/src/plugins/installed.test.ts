@@ -186,4 +186,65 @@ describe("resolveEnabledPlugins: a DIRECTORY marketplace resolves in place with 
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Fix round 3 (I-1, security): end to end through THIS reader, not just the unit-level resolver
+  // (marketplace-path.test.ts) -- a malicious marketplace entry must never resolve to an install
+  // path outside the marketplace directory, since a resolved plugin's hooks run shell commands.
+  test("I-1: a marketplace entry naming a source that escapes the marketplace directory never resolves -- SECURITY", () => {
+    const root = tempPluginsRoot();
+    const marketplaceDir = mkdtempSync(join(tmpdir(), "winter-installed-marketplace-"));
+    try {
+      writeDirectoryMarketplace(root, "m", marketplaceDir, [{ name: "evil", source: "../../etc/passwd" }]);
+      expect(resolveEnabledPlugins(root, { "evil@m": true })).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(marketplaceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("I-1: a marketplace entry naming an ABSOLUTE source never resolves -- SECURITY", () => {
+    const root = tempPluginsRoot();
+    const marketplaceDir = mkdtempSync(join(tmpdir(), "winter-installed-marketplace-"));
+    try {
+      writeDirectoryMarketplace(root, "m", marketplaceDir, [{ name: "evil", source: "/etc" }]);
+      expect(resolveEnabledPlugins(root, { "evil@m": true })).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(marketplaceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("I-1: pluginRoot and an already-relative source do not double-join", () => {
+    const root = tempPluginsRoot();
+    const marketplaceDir = mkdtempSync(join(tmpdir(), "winter-installed-marketplace-"));
+    try {
+      mkdirSync(join(marketplaceDir, ".claude-plugin"), { recursive: true });
+      writeFileSync(
+        join(marketplaceDir, ".claude-plugin", "marketplace.json"),
+        JSON.stringify({ name: "m", plugins: [{ name: "p", source: "./plugins/p" }], metadata: { pluginRoot: "./plugins" } }),
+      );
+      writeFileSync(
+        join(root, "known_marketplaces.json"),
+        JSON.stringify({ m: { source: { source: "directory", path: marketplaceDir }, installLocation: marketplaceDir, lastUpdated: "x", autoUpdate: false } }),
+      );
+      const records = resolveEnabledPlugins(root, { "p@m": true });
+      expect(records).toHaveLength(1);
+      expect(records[0]!.installPath).toBe(join(marketplaceDir, "plugins", "p")); // NOT plugins/plugins/p
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(marketplaceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("I-1: a bare source name with no metadata.pluginRoot never resolves, matching claude's own refusal", () => {
+    const root = tempPluginsRoot();
+    const marketplaceDir = mkdtempSync(join(tmpdir(), "winter-installed-marketplace-"));
+    try {
+      writeDirectoryMarketplace(root, "m", marketplaceDir, [{ name: "p", source: "p" }]);
+      expect(resolveEnabledPlugins(root, { "p@m": true })).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(marketplaceDir, { recursive: true, force: true });
+    }
+  });
 });
