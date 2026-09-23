@@ -506,6 +506,16 @@ export async function installPlugin(o: PluginManagerOptions, spec: string, scope
 export async function uninstallPlugin(o: PluginManagerOptions, spec: string, scope: PluginScope): Promise<void> {
   const { name, marketplace } = parseSpec(spec);
   const key = keyFor(name, marketplace);
+  // Pre-flight, before ANYTHING is written (controller fix round 2, out-of-scope finding from the
+  // re-review): the record is removed from installed_plugins.json first and
+  // `setEnabledInSettings(..., undefined)` runs after it, so a settings write that would fail must
+  // be caught HERE, first -- otherwise a malformed settings.json leaves a STALE
+  // `enabledPlugins[key]: true` for a plugin that is already uninstalled, and `setPluginEnabled`
+  // then refuses it as "not installed" (it checks installed_plugins.json, which no longer has the
+  // record) -- a state the ordinary API can no longer reach to fix. Same shape, same fix as
+  // `installPlugin`'s own pre-flight.
+  const settingsPath = o.settingsPathFor(scope);
+  assertSettingsWritable(await loadSettingsFile(settingsPath), settingsPath);
 
   const file = await readInstalledPluginsFile(o);
   const existing = file.plugins[key];

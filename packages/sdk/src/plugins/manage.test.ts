@@ -151,13 +151,52 @@ describe("installPlugin: writes the V2 record AND enabledPlugins", () => {
   // touched at all -- otherwise a refused settings write leaves a plugin installed but never
   // enabled, with nothing recording why. installPlugin's own pre-flight (not just
   // setEnabledInSettings's own, later guard) is what this pins.
-  test("a malformed settings.json refuses BEFORE installed_plugins.json is written -- no orphaned install record", async () => {
-    mkdirSync(join(home, "sdk"), { recursive: true });
-    writeFileSync(userSettingsPath, '{"permissions": {"allow": ["Bash"],}}'); // trailing comma: invalid JSON
+  test("a malformed settings.json refuses BEFORE installed_plugins.json is written -- no orphaned install record, and a PRE-EXISTING sibling record survives untouched", async () => {
     await addMarketplace(options, marketplaceDir);
+    // A sibling plugin installed BEFORE settings ever went bad -- the refused install of "p@m" below
+    // must leave this record exactly as it was, proving the pre-flight refuses cleanly rather than
+    // touching (or losing) installed_plugins.json's EXISTING content on its way to refusing.
+    await installPlugin(options, "q@m", "user");
+    const beforeAttempt = readFileSync(join(pluginsRoot, "installed_plugins.json"), "utf8");
+
+    writeFileSync(userSettingsPath, '{"permissions": {"allow": ["Bash"],}}'); // trailing comma: invalid JSON
     await expect(installPlugin(options, "p@m", "user")).rejects.toThrow(PluginManagerError);
-    // installed_plugins.json was never even created -- the refusal happened before its first write.
-    expect(existsSync(join(pluginsRoot, "installed_plugins.json"))).toBe(false);
+
+    // installed_plugins.json is BYTE-IDENTICAL to before the refused attempt: "p@m" was never added,
+    // and "q@m"'s own pre-existing record is untouched.
+    expect(readFileSync(join(pluginsRoot, "installed_plugins.json"), "utf8")).toBe(beforeAttempt);
+    const parsed = JSON.parse(beforeAttempt) as { plugins: Record<string, unknown> };
+    expect(Object.keys(parsed.plugins)).toEqual(["q@m"]);
+  });
+
+  // Same shape, uninstall side (controller fix round 2, out-of-scope finding from the re-review):
+  // removing "p@m"'s record happens BEFORE `setEnabledInSettings(..., undefined)`, so a refused
+  // settings write must leave BOTH installed_plugins.json's own record for "p@m" AND the settings
+  // file untouched -- otherwise a stale `enabledPlugins["p@m"]: true` survives for a plugin that
+  // `installed_plugins.json` (correctly) still lists as installed, which is at least self-consistent
+  // -- but if the removal had run FIRST (the pre-fix ordering), the record would be gone while the
+  // stale `true` remained, and `setPluginEnabled` would then refuse it as "not installed" with no
+  // way back through the ordinary API.
+  test("a malformed settings.json refuses uninstallPlugin BEFORE the record is removed -- the record and the settings file are both unchanged", async () => {
+    await addMarketplace(options, marketplaceDir);
+    await installPlugin(options, "p@m", "user");
+    const installedBefore = readFileSync(join(pluginsRoot, "installed_plugins.json"), "utf8");
+
+    writeFileSync(userSettingsPath, '{"permissions": {"allow": ["Bash"],}}'); // trailing comma: invalid JSON
+    await expect(uninstallPlugin(options, "p@m", "user")).rejects.toThrow(PluginManagerError);
+
+    expect(readFileSync(join(pluginsRoot, "installed_plugins.json"), "utf8")).toBe(installedBefore);
+    expect(readFileSync(userSettingsPath, "utf8")).toBe('{"permissions": {"allow": ["Bash"],}}');
+    // The plugin is still reported INSTALLED (installed_plugins.json's own record is untouched --
+    // this is the fix's whole point). `enabled` reads `false` here, not because the record's own
+    // enablement changed, but because `readEnabledFromSettings` cannot read a malformed file at all
+    // and answers conservatively -- the SAME "can't prove it's on, so report off" degrade a reader
+    // always makes, unrelated to this fix. The point this test pins is narrower and unconditional:
+    // uninstall never half-applies (record gone, stale settings surviving) -- see the pre-fix
+    // ordering this replaces, where the record WOULD have been gone already at this point.
+    const [listing] = await listPlugins(options);
+    expect(listing?.id).toBe("p");
+    expect(listing?.enabled).toBe(false);
   });
 });
 
