@@ -1,7 +1,7 @@
 // WS-21 lane L1b, Task L1b.3: the plugin-management API's own write discipline (F15), on temp
 // directories and a local directory marketplace only -- no network, matching the brief's test scope.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -145,6 +145,19 @@ describe("installPlugin: writes the V2 record AND enabledPlugins", () => {
     await expect(installPlugin(options, "p@m", "user")).rejects.toThrow(PluginManagerError);
     // Untouched -- still the same malformed bytes, not overwritten with a partial document.
     expect(readFileSync(userSettingsPath, "utf8")).toBe('{"permissions": {"allow": ["Bash"],}}');
+  });
+
+  // Controller fix round 1, finding 1: the settings check must run BEFORE installed_plugins.json is
+  // touched at all -- otherwise a refused settings write leaves a plugin installed but never
+  // enabled, with nothing recording why. installPlugin's own pre-flight (not just
+  // setEnabledInSettings's own, later guard) is what this pins.
+  test("a malformed settings.json refuses BEFORE installed_plugins.json is written -- no orphaned install record", async () => {
+    mkdirSync(join(home, "sdk"), { recursive: true });
+    writeFileSync(userSettingsPath, '{"permissions": {"allow": ["Bash"],}}'); // trailing comma: invalid JSON
+    await addMarketplace(options, marketplaceDir);
+    await expect(installPlugin(options, "p@m", "user")).rejects.toThrow(PluginManagerError);
+    // installed_plugins.json was never even created -- the refusal happened before its first write.
+    expect(existsSync(join(pluginsRoot, "installed_plugins.json"))).toBe(false);
   });
 });
 

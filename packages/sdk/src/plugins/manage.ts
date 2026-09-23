@@ -71,7 +71,7 @@ import { mkdir, open, readFile, rename, rmdir, unlink, writeFile } from "node:fs
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Settings } from "../settings/types.ts";
-import { loadSettingsFile } from "../settings/sources.ts";
+import { loadSettingsFile, type LoadedSettingsFile } from "../settings/sources.ts";
 
 export class PluginManagerError extends Error {
   constructor(message: string) {
@@ -365,18 +365,27 @@ async function readEnabledFromSettings(o: PluginManagerOptions, scope: PluginSco
   return loaded.values.enabledPlugins?.[key] === true;
 }
 
-async function setEnabledInSettings(o: PluginManagerOptions, scope: PluginScope, key: string, enabled: boolean | undefined): Promise<void> {
-  const path = o.settingsPathFor(scope);
-  const loaded = await loadSettingsFile(path);
-  // `loadSettingsFile` reports a PRESENT-but-unparseable file as `{loaded:false, values:{}}` so a
-  // READER never crashes on it -- but a WRITER must never treat that empty stand-in as "this
-  // settings file has no other keys" and overwrite the real (merely malformed) file with a document
-  // holding only `enabledPlugins`. Every other key -- permissions, hooks, env, everything -- would be
-  // silently gone. Refuse instead: fixing a hand-edited settings file is the user's job, not this
-  // call's to paper over.
+// `loadSettingsFile` reports a PRESENT-but-unparseable file as `{loaded:false, values:{}}` so a
+// READER never crashes on it -- but a WRITER must never treat that empty stand-in as "this settings
+// file has no other keys" and overwrite the real (merely malformed) file with a document holding
+// only `enabledPlugins`. Every other key -- permissions, hooks, env, everything -- would be silently
+// gone. Refuse instead: fixing a hand-edited settings file is the user's job, not this call's to
+// paper over.
+//
+// Shared by `setEnabledInSettings` AND `installPlugin`'s own pre-flight (controller fix round 1,
+// finding 1): `installPlugin` calls this BEFORE writing `installed_plugins.json` at all, precisely
+// so a settings file this refuses can never leave a plugin installed-but-unenabled with no record of
+// why. Same check, same message, one place.
+function assertSettingsWritable(loaded: LoadedSettingsFile, path: string): void {
   if (loaded.present && !loaded.loaded) {
     throw new PluginManagerError(`${path}: cannot update enabledPlugins -- the file exists but ${loaded.error ?? "could not be read"}; fix it by hand first`);
   }
+}
+
+async function setEnabledInSettings(o: PluginManagerOptions, scope: PluginScope, key: string, enabled: boolean | undefined): Promise<void> {
+  const path = o.settingsPathFor(scope);
+  const loaded = await loadSettingsFile(path);
+  assertSettingsWritable(loaded, path);
   const settings: Settings = { ...loaded.values };
   const enabledPlugins = { ...(settings.enabledPlugins ?? {}) };
   if (enabled === undefined) delete enabledPlugins[key];
@@ -470,6 +479,15 @@ async function resolvePluginSourcePath(o: PluginManagerOptions, name: string, ma
 
 export async function installPlugin(o: PluginManagerOptions, spec: string, scope: PluginScope): Promise<InstalledPlugin> {
   const { name, marketplace } = parseSpec(spec);
+  // Pre-flight, before ANYTHING is written (controller fix round 1, finding 1): the record below
+  // lands in installed_plugins.json first and `setEnabledInSettings` runs after it, so a settings
+  // write that would fail must be caught here, first -- otherwise a malformed settings.json (or any
+  // other reason `setEnabledInSettings` would refuse) leaves the plugin installed but never enabled,
+  // with nothing recording why. Checked before `resolvePluginSourcePath` too, so a malformed settings
+  // file fails fast without the extra marketplace/manifest read.
+  const settingsPath = o.settingsPathFor(scope);
+  assertSettingsWritable(await loadSettingsFile(settingsPath), settingsPath);
+
   const { installPath, version } = await resolvePluginSourcePath(o, name, marketplace);
   const key = keyFor(name, marketplace);
   await mkdir(o.pluginsRoot, { recursive: true });
