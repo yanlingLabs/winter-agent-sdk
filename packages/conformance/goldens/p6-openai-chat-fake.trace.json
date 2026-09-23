@@ -165,10 +165,11 @@
           "cacheReadInputTokens": "<cacheReadInputTokens>",
           "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
-          "costUSD": 0,
+          "costUSD": 0.00005016,
           "contextWindow": 1000000,
           "maxOutputTokens": 384000,
-          "canonicalModel": "deepseek/deepseek-v4-pro"
+          "canonicalModel": "deepseek/deepseek-v4-pro",
+          "costBasis": "list"
         }
       }
     }

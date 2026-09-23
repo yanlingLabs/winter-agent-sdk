@@ -164,9 +164,10 @@
           "cacheReadInputTokens": "<cacheReadInputTokens>",
           "cacheCreationInputTokens": "<cacheCreationInputTokens>",
           "webSearchRequests": 0,
-          "costUSD": 0,
+          "costUSD": 0.0000242,
           "contextWindow": 1048576,
-          "canonicalModel": "google/gemini-2.5-flash"
+          "canonicalModel": "google/gemini-2.5-flash",
+          "costBasis": "list"
         }
       }
     }
