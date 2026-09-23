@@ -4121,7 +4121,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return new Map([...defs].filter(([name]) => names.has(name)));
   }
 
-  const workflowWinterHome = structuredOutput !== undefined ? (wiredWinterHome ?? config.winterHome) : undefined;
+  // WS-21 §3.7/§6.3 item 11: workflow persistence is a DURABLE path, so it is anchored on the
+  // shared store home when the router supplied one -- `config.storeHome`, threaded here from
+  // `ProductionWiring.config` (production-wiring.ts folds `env[storeHomeEnvName(brand)]`/
+  // `config.storeHome` into the config it returns). Absent (every incarnation before the router
+  // links `buildRunHome`, or a non-router host) falls back to `wiredWinterHome`/`config.winterHome`
+  // exactly as before -- byte-identical to pre-WS-21 behaviour.
+  const workflowWinterHome = structuredOutput !== undefined ? (config.storeHome ?? wiredWinterHome ?? config.winterHome) : undefined;
   // I5: held so teardown withdraws THIS registration and not whichever one is current.
   let disposeWorkflowSession: (() => void) | undefined;
   if (workflowWinterHome !== undefined && structuredOutput !== undefined) {

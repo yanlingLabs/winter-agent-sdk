@@ -15,7 +15,7 @@ import { humanizeCron, resetInMemoryCronStoreForTest, validateCronExpression } f
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 
-function makeCtx(cwd: string): ToolExecutionContext {
+function makeCtx(cwd: string, opts?: { env?: Record<string, string | undefined> }): ToolExecutionContext {
   return {
     cwd,
     home: "/home/test",
@@ -29,6 +29,7 @@ function makeCtx(cwd: string): ToolExecutionContext {
     // (RULING P3-L), not the live ctx.cwd -- this fixture's own session root must track `cwd` (the
     // test's own project dir) for the durable-store tests to exercise the real file path.
     session: { setCwd() {}, addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} },
+    ...(opts?.env !== undefined ? { env: opts.env } : {}),
   };
 }
 
@@ -216,6 +217,68 @@ describe("CronCreate", () => {
       const result = await run("CronCreate", { cron: "* * * * *", prompt: "p", durable: true }, makeCtx(dir));
       expect(result.isError).toBe(true);
       expect(readFileSync(filePath, "utf8")).toBe("{ not valid json");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// WS-21 §6.3 items 11/13 (F19a): WINTER_DISABLE_CRON, the twin of claude's CLAUDE_CODE_DISABLE_CRON.
+// ASSERTS OBSERVABLES, not a spy: `spyOn` cannot intercept cron.ts's own destructured
+// `import { readFileSync } from "node:fs"` (the binding is captured at import time), so these tests
+// prove the file is never consulted by what it PRODUCES -- a planted job never surfaces in CronList,
+// a durable create refuses instead of writing, a delete never mutates the file on disk (re-read
+// directly by the test, a plain top-level call rather than one going through cron.ts's own import).
+describe("WINTER_DISABLE_CRON: the durable file is never read or written", () => {
+  const disabledEnv = { WINTER_DISABLE_CRON: "1" };
+
+  test("a planted scheduled_tasks.json job never appears in CronList", async () => {
+    const { dir, cleanup } = tempProjectDir();
+    try {
+      // Plant the durable file directly (never through cron.ts) so a read would be observable.
+      await run("CronCreate", { cron: "* * * * *", prompt: "planted", durable: true }, makeCtx(dir));
+      const result = await run("CronList", {}, makeCtx(dir, { env: disabledEnv }));
+      expect(JSON.parse(result.output).jobs).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("CronList still reports in-memory (non-durable) jobs while disabled", async () => {
+    const { dir, cleanup } = tempProjectDir();
+    try {
+      await run("CronCreate", { cron: "* * * * *", prompt: "in-memory" }, makeCtx(dir, { env: disabledEnv }));
+      const result = await run("CronList", {}, makeCtx(dir, { env: disabledEnv }));
+      const jobs = JSON.parse(result.output).jobs;
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].prompt).toBe("in-memory");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a durable CronCreate refuses, typed, and never touches the filesystem", async () => {
+    const { dir, cleanup } = tempProjectDir();
+    try {
+      const result = await run("CronCreate", { cron: "* * * * *", prompt: "p", durable: true }, makeCtx(dir, { env: disabledEnv }));
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("WINTER_DISABLE_CRON");
+      const filePath = join(dir, ".winter", "scheduled_tasks.json");
+      expect(() => readFileSync(filePath, "utf8")).toThrow(); // never created
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("CronDelete of a planted durable job's id reports not-found and never mutates the file on disk", async () => {
+    const { dir, cleanup } = tempProjectDir();
+    try {
+      const created = JSON.parse((await run("CronCreate", { cron: "* * * * *", prompt: "p", durable: true }, makeCtx(dir))).output);
+      const filePath = join(dir, ".winter", "scheduled_tasks.json");
+      const before = readFileSync(filePath, "utf8");
+      const result = await run("CronDelete", { id: created.id }, makeCtx(dir, { env: disabledEnv }));
+      expect(JSON.parse(result.output)).toEqual({ id: created.id });
+      expect(readFileSync(filePath, "utf8")).toBe(before); // byte-for-byte untouched
     } finally {
       cleanup();
     }
