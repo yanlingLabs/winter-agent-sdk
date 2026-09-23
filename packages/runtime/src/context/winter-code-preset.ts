@@ -77,3 +77,40 @@ export function resolvePresetSystemPrompt(preset: SystemPromptPreset): string {
   if (append === undefined || append.length === 0) return WINTER_CODE_PRESET;
   return `${WINTER_CODE_PRESET}\n\n${append}`;
 }
+
+// WS-21 fix round 4 (I-F): the split `review-L1a-fix3-findings.md`'s I-F asked for -- "if the preset
+// has no clean section boundary for coding instructions, split it so that one exists". It already
+// has one: the preset's pre-existing `## ` heading structure (WINTER_CODE_PRESET_CATEGORIES above)
+// puts "Task execution" first, immediately followed by "Careful actions", so no edit to
+// `presets/winter-code.md` and no `WINTER_CODE_PRESET_VERSION` bump were needed.
+//
+// ONLY "Task execution" IS THE CUT SECTION -- deliberately narrower than "Task execution" + "Careful
+// actions" together. The discriminating question: would a legitimate NON-coding style (a tutor, a
+// writer) ever want a section gone? "Task execution" (act, don't just narrate a plan; understand
+// before changing; finish what you start; prefer the smallest change) is the coding-task-posture
+// analog of claude's own `tHn()` (dump ~276873, cited by I-F). "Careful actions" is safety floor --
+// sort reversible from irreversible, name the exact destructive target, treat credentials as
+// radioactive, ask before the irreversible -- that must survive every style, coding-focused or not; a
+// non-coding style dropping it on a bare `keep-coding-instructions: false` (M-4: now the default for
+// ANY unresolved value, including absent) would be a safety regression the ruling's "only the coding
+// section" wording does not ask for. Both heading strings are Winter's own authored text (the
+// `WINTER_CODE_PRESET_CATEGORIES` list above), so citing them as split markers is not a citation of
+// claude's own prompt text.
+const CODING_INSTRUCTIONS_HEADING = "## Task execution";
+const CODING_INSTRUCTIONS_NEXT_HEADING = "## Careful actions";
+
+/**
+ * Removes ONLY the coding-instructions section from an authored prompt string, collapsing the
+ * resulting blank-line run back down to one blank line. A SAFE NO-OP when the start heading is
+ * absent (e.g. `MINIMAL_PROMPT`, which has no such section at all -- fix round 4 disclosed this as
+ * an intentional behaviour change, see `assembler.test.ts`) or when the end heading cannot be found
+ * after it (a malformed/future preset shape): returns `prompt` unchanged rather than guessing at or
+ * truncating past a boundary that turned out not to be there.
+ */
+export function dropCodingInstructionsSection(prompt: string): string {
+  const start = prompt.indexOf(CODING_INSTRUCTIONS_HEADING);
+  if (start === -1) return prompt;
+  const end = prompt.indexOf(CODING_INSTRUCTIONS_NEXT_HEADING, start);
+  if (end === -1) return prompt;
+  return `${prompt.slice(0, start)}${prompt.slice(end)}`.replace(/\n{3,}/g, "\n\n").trim();
+}

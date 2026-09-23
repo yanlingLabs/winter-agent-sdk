@@ -393,11 +393,12 @@ const WS11_10: ConformanceRow[] = [
   {
     id: "WS11-07f",
     spec: "WS-11 §10",
-    bullet: "system prompt: a project-tier output style may APPEND but not REPLACE (RULING P5-G), observably",
+    bullet:
+      "system prompt: a project-tier output style may APPEND but not DELETE the coding-instructions section (RULING P5-G, narrowed by fix round 4/I-F), observably",
     status: "new",
     citations: [
-      { file: "./context/assembler.test.ts", testName: `UNTRUSTED: the replacement is downgraded to an append` },
-      { file: "./context/assembler.test.ts", testName: `TRUSTED: the same file replaces, and nothing is reported as downgraded` },
+      { file: "./context/assembler.test.ts", testName: `UNTRUSTED: the drop is downgraded to a keep` },
+      { file: "./context/assembler.test.ts", testName: `TRUSTED: the same file drops the coding-instructions section, and nothing is reported as downgraded` },
     ],
     note: "Rider 22. `output-styles.test.ts` already proved `resolveOutputStyle`'s own downgrade; what had never been proven is that it SURVIVES ASSEMBLY, and that a caller can observe it (`AssembledPrompt.replacementDowngraded`).",
   },

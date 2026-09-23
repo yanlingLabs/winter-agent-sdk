@@ -19,31 +19,46 @@
 //      `user ∈ settingSources` -- the same gate WINTER.md, skills and commands sit behind. Built-ins
 //      are code, not a filesystem tier, so `settingSources: []` still resolves them.
 //
-//   2. A PROJECT-TIER STYLE MAY ADD TO THE PROMPT BUT NOT DELETE IT. `keep-coding-instructions:
-//      false` REPLACES the authored prompt. Reached from a checked-in project-tier output style
-//      in a repository the user merely opened, that is a prompt takeover from untrusted content --
-//      a strictly larger power than WINTER.md has (WINTER.md cannot reach `system` at all), and
-//      closer to the "permission participant" class R4-7 keeps trust-gated than to the instruction
-//      class P5-A only source-gates. So a project-tier replacement is DOWNGRADED to an append
-//      unless the host has declared the workspace trusted (`RuntimeConfig.trustedWorkspace`, the
-//      only source of a true value per P5-A). The style still applies; it just cannot delete
-//      Winter's own text. A USER-tier style replaces with no trust check -- the winter home is the
-//      user's own file and gating it would gate the user against themselves.
+//   2. A PROJECT-TIER STYLE MAY ADD TO THE PROMPT BUT NOT DELETE FROM IT. `keep-coding-instructions:
+//      false` drops the base prompt's coding-instructions section (assembler.ts's
+//      `dropCodingInstructionsSection`, fix round 4/I-F -- see that note below). Reached from a
+//      checked-in project-tier output style in a repository the user merely opened, dropping any of
+//      Winter's own authored text is a takeover from untrusted content -- a strictly larger power
+//      than WINTER.md has (WINTER.md cannot reach `system` at all), and closer to the "permission
+//      participant" class R4-7 keeps trust-gated than to the instruction class P5-A only
+//      source-gates. So a project-tier drop is DOWNGRADED to a pure append unless the host has
+//      declared the workspace trusted (`RuntimeConfig.trustedWorkspace`, the only source of a true
+//      value per P5-A). The style still applies; it just cannot delete Winter's own text. A
+//      USER-tier style drops with no trust check -- the winter home is the user's own file and
+//      gating it would gate the user against themselves.
 //
 //      DISCLOSED as a Lane C decision, raised for the controller in the task-6 report: neither
-//      WS-11 §6.5 nor P5-A speaks to the replace power specifically, and the alternative readings
-//      (trust-gate project styles entirely, or honour the replacement) are both defensible.
+//      WS-11 §6.5 nor P5-A speaks to the drop power specifically, and the alternative readings
+//      (trust-gate project styles entirely, or honour the drop) are both defensible.
 //
 // FIX ROUND 3 (M-4), A DISCLOSED BEHAVIOUR CHANGE: `keep-coding-instructions` ABSENT now means
-// REPLACE, not keep -- the pinned binary's own consumer (`M===null||M.keepCodingInstructions===!0`,
-// dump-confirmed) keeps the base prompt only when NO style is selected at all OR the style's own
-// key is strictly `true`; every other value, including absent, means "replace". This is the inverse
-// of this module's own pre-fix-round-3 default (`true` unless explicitly `false`). Ported exactly
-// per the coordinator's instruction, and it widens bullet 2's downgrade above in the SAME direction
-// it already existed: an untrusted project-tier style that simply never mentions the key now ALSO
-// downgrades to an append (with the `replacementDowngraded` warning), not only one that explicitly
-// wrote `false` -- worth naming here because it changes how often that warning fires, not just what
-// triggers it.
+// DROP, not keep -- the pinned binary's own consumer (`M===null||M.keepCodingInstructions===!0`,
+// dump-confirmed) keeps the coding-instructions section only when NO style is selected at all OR the
+// style's own key is strictly `true`; every other value, including absent, means "drop". This is the
+// inverse of this module's own pre-fix-round-3 default (`true` unless explicitly `false`). Ported
+// exactly per the coordinator's instruction, and it widens bullet 2's downgrade above in the SAME
+// direction it already existed: an untrusted project-tier style that simply never mentions the key
+// now ALSO downgrades to an append (with the `replacementDowngraded` warning), not only one that
+// explicitly wrote `false` -- worth naming here because it changes how often that warning fires, not
+// just what triggers it.
+//
+// FIX ROUND 4 (I-F), CORRECTING M-4's OWN EFFECT: M-4 (above) ported claude's CONDITION for when a
+// style "wins" but not what winning DOES. `review-L1a-fix3-findings.md`'s I-F, dump-confirmed at
+// `tHn()` (~276873): claude drops ONLY the coding-instructions section of its base prompt and keeps
+// the rest of it as static text; the style's own body goes into a DYNAMIC section, never into the
+// static half in its place. `keepCodingInstructions` (renamed from the pre-fix-round-4
+// `keepBasePrompt`, which had become actively misleading -- it no longer controls whether the WHOLE
+// base prompt survives) is claude's own field name (dump-confirmed at the same site) and this
+// module's resolution logic for it is UNCHANGED by I-F; only `assembler.ts`'s interpretation of a
+// `false` value changed, from "swap the whole authored region for the style" to "cut the one section
+// out of it". See `assembler.ts`'s own fix-round-4 note for the mechanics and `winter-code-preset.ts`
+// for why "Task execution" alone is the cut section and "Careful actions" (safety floor: credentials
+// are radioactive, ask before the irreversible, name the exact destructive target) is not.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -61,15 +76,19 @@ export interface ResolvedOutputStyle {
   description: string;
   /** Injection-safe and capped for file styles; a trusted constant for built-ins. */
   body: string;
-  /** `true` (the default) appends the body after the authored prompt; `false` replaces the authored prompt. */
-  keepBasePrompt: boolean;
+  /**
+   * `true` (the default) keeps the base prompt's coding-instructions section; `false` drops it. The
+   * style's body always lands in a dynamic section, in either case (fix round 4/I-F) -- this field
+   * never decides whether the body is added, only whether the ONE base section is cut.
+   */
+  keepCodingInstructions: boolean;
   source: "project" | "user" | "builtin" | "plugin";
-  /** True when the file asked to REPLACE the prompt and the project-tier trust rule downgraded it to an append. */
+  /** True when the file asked to DROP the coding-instructions section and the project-tier trust rule downgraded it to keeping it. */
   replacementDowngraded: boolean;
 }
 
 // The bodies below ASSUME the authored prompt is still present (they augment it), which is why all
-// three ship with `keepBasePrompt: true`. They are Winter's own wording of Norma's shipped three.
+// three ship with `keepCodingInstructions: true`. They are Winter's own wording of Norma's shipped three.
 const PROACTIVE_BODY = [
   "Operate proactively. When the user's intent is clear, take the action instead of asking whether to take it, and carry on through the obvious follow-up steps without pausing for confirmation on reversible work.",
   "Still stop for the genuinely irreversible and the genuinely ambiguous — this changes how eagerly you act, not what counts as safe.",
@@ -90,10 +109,10 @@ const LEARNING_BODY = [
  * is byte-identical to selecting nothing.
  */
 export const BUILTIN_OUTPUT_STYLES: readonly ResolvedOutputStyle[] = [
-  { name: "default", description: "Winter's standard behaviour.", body: "", keepBasePrompt: true, source: "builtin", replacementDowngraded: false },
-  { name: "proactive", description: "Act immediately and autonomously; ask less.", body: PROACTIVE_BODY, keepBasePrompt: true, source: "builtin", replacementDowngraded: false },
-  { name: "explanatory", description: "Explain reasoning and tradeoffs while working.", body: EXPLANATORY_BODY, keepBasePrompt: true, source: "builtin", replacementDowngraded: false },
-  { name: "learning", description: "Leave labelled TODO(human) gaps for you to complete.", body: LEARNING_BODY, keepBasePrompt: true, source: "builtin", replacementDowngraded: false },
+  { name: "default", description: "Winter's standard behaviour.", body: "", keepCodingInstructions: true, source: "builtin", replacementDowngraded: false },
+  { name: "proactive", description: "Act immediately and autonomously; ask less.", body: PROACTIVE_BODY, keepCodingInstructions: true, source: "builtin", replacementDowngraded: false },
+  { name: "explanatory", description: "Explain reasoning and tradeoffs while working.", body: EXPLANATORY_BODY, keepCodingInstructions: true, source: "builtin", replacementDowngraded: false },
+  { name: "learning", description: "Leave labelled TODO(human) gaps for you to complete.", body: LEARNING_BODY, keepCodingInstructions: true, source: "builtin", replacementDowngraded: false },
 ] as const;
 
 export const BUILTIN_OUTPUT_STYLE_NAMES: readonly string[] = BUILTIN_OUTPUT_STYLES.map((s) => s.name);
@@ -110,7 +129,7 @@ const STYLE_NAME = /^[A-Za-z0-9_-]+$/;
 // string/number is lower-cased and checked against TWO explicit vocabularies (its own `De`/`To`,
 // dump-confirmed at adjacent offsets): `["1","true","yes","on"]` -> true, `["0","false","no","off"]`
 // -> false; anything else (including `undefined`/`null`/an object/array) is UNRESOLVED, never
-// coerced to a default here -- the caller decides what "unresolved" means (see `keepBasePrompt`'s
+// coerced to a default here -- the caller decides what "unresolved" means (see `keepCodingInstructions`'s
 // own callers below, where it means `false`, not `true`).
 function claudeBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
@@ -161,7 +180,7 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
   // (`M===null||M.keepCodingInstructions===!0`): a style is expected to REPLACE unless it explicitly
   // asks to be layered on top, the inverse of this module's pre-fix-round-3 default. See this
   // module's header for the disclosed behaviour-change note.
-  let keepBasePrompt = false;
+  let keepCodingInstructions = false;
   for (const rawLine of raw.slice(3, end).split(/\r?\n/)) {
     // A CRLF file's LAST frontmatter line keeps its own `\r`: `end` lands on the `\n` of the
     // closing fence's `\r\n`, so nothing is left for the split to consume. Strip it, or the
@@ -173,11 +192,11 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
     const value = m[2]!.trim();
     if (key === "description") description = value;
     // The frontmatter key keeps Norma's shipped spelling so a style file ports across unchanged.
-    else if (key === "keep-coding-instructions") keepBasePrompt = claudeBoolean(value) === true;
+    else if (key === "keep-coding-instructions") keepCodingInstructions = claudeBoolean(value) === true;
   }
 
   const body = raw.slice(end + 4).replace(/^\r?\n/, "");
-  return { name: fallbackName, description, body: capBytes(neutralizeReminderTags(body), OUTPUT_STYLE_MAX_BYTES).text, keepBasePrompt, source, replacementDowngraded: false };
+  return { name: fallbackName, description, body: capBytes(neutralizeReminderTags(body), OUTPUT_STYLE_MAX_BYTES).text, keepCodingInstructions, source, replacementDowngraded: false };
 }
 
 // WS-21 §6.3 item 1 (fix round 2, corrected in the batch-2 fix round): a plugin-contributed output
@@ -230,13 +249,13 @@ function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName
   // Fix round 3 (M-4): pinned `s4`'s own vocabulary via `claudeBoolean`, and the SAME default flip
   // as `parseStyleFile` above -- unresolved (absent, or an unrecognized string) means FALSE, not
   // TRUE. See this module's header for the disclosed behaviour-change note.
-  const keepBasePrompt = claudeBoolean(attrs["keep-coding-instructions"]) === true;
+  const keepCodingInstructions = claudeBoolean(attrs["keep-coding-instructions"]) === true;
 
   return {
     name: `${pluginName}:${baseName}`,
     description,
     body: capBytes(neutralizeReminderTags(parsedBody.trim()), OUTPUT_STYLE_MAX_BYTES).text,
-    keepBasePrompt,
+    keepCodingInstructions,
     source: "plugin",
     replacementDowngraded: false,
   };
@@ -256,7 +275,7 @@ export interface OutputStyleLookup {
   brand?: Pick<BrandProfile, "projectDirName">;
   /** Omitted means all three tiers (the pinned default). */
   settingSources?: readonly SettingSource[];
-  /** RULING P5-A's host-declared trust bit. Only `true` lets a PROJECT-tier style replace the prompt. */
+  /** RULING P5-A's host-declared trust bit. Only `true` lets a PROJECT-tier style drop the coding-instructions section. */
   trustedWorkspace?: boolean;
   /**
    * WS-21 §6.3 item 1 (fix round 2): the session's ENABLED plugins, projected to just the two
@@ -309,8 +328,8 @@ export function resolveOutputStyle(name: string, lookup: OutputStyleLookup): Res
   if (sources.includes("project")) {
     const found = parseStyleFile(join(lookup.cwd, (lookup.brand ?? WINTER_BRAND).projectDirName, "output-styles", `${name}.md`), name, "project");
     if (found !== null) {
-      if (!found.keepBasePrompt && lookup.trustedWorkspace !== true) {
-        return { ...found, keepBasePrompt: true, replacementDowngraded: true };
+      if (!found.keepCodingInstructions && lookup.trustedWorkspace !== true) {
+        return { ...found, keepCodingInstructions: true, replacementDowngraded: true };
       }
       return found;
     }

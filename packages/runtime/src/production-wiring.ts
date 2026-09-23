@@ -1048,7 +1048,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   });
   if (styleForWarning?.replacementDowngraded === true) {
     warnings.push(
-      `output style "${initOutputStyle}" is a PROJECT-tier style asking to replace the base system prompt (\`keep-coding-instructions: false\`); this workspace is not host-trusted, so it has been applied as an ADDITION instead (RULING P5-G)`,
+      // Fix round 4 (I-F): the refused power is narrower than it used to be -- dropping the base
+      // prompt's coding-instructions section, not swapping out the whole system prompt -- so the
+      // warning now says which. "ADDITION" stays verbatim (production-wiring.test.ts's own P5-G
+      // describe block asserts the substring).
+      `output style "${initOutputStyle}" is a PROJECT-tier style asking to drop the base prompt's coding-instructions section (\`keep-coding-instructions: false\`); this workspace is not host-trusted, so it has been applied as an ADDITION instead and the section has been kept (RULING P5-G)`,
     );
   }
 

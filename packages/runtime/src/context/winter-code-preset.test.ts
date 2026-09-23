@@ -5,6 +5,7 @@
 // any vendor text, which this lane is forbidden to read, quote or paraphrase.
 import { test, expect, describe } from "bun:test";
 import {
+  dropCodingInstructionsSection,
   isWinterCodePreset,
   resolvePresetSystemPrompt,
   WINTER_CODE_PRESET,
@@ -81,6 +82,47 @@ describe("context/winter-code-preset.ts -- the preset arm's own resolution", () 
 
   test("a whitespace-only append adds nothing", () => {
     expect(resolvePresetSystemPrompt({ type: "preset", preset: "claude_code", append: "   \n " })).toBe(WINTER_CODE_PRESET.trim());
+  });
+});
+
+// Fix round 4 (I-F): `dropCodingInstructionsSection` in isolation, at the unit level -- the
+// assembler-level behaviour (which style states trigger it, how the result reaches `system`) is
+// covered in `assembler.test.ts`; this describe block is the primitive's own contract.
+describe("context/winter-code-preset.ts -- dropCodingInstructionsSection (I-F)", () => {
+  test("removes exactly the 'Task execution' section and nothing else", () => {
+    const out = dropCodingInstructionsSection(WINTER_CODE_PRESET);
+    expect(out).not.toContain("## Task execution");
+    for (const category of WINTER_CODE_PRESET_CATEGORIES) {
+      if (category === "Task execution") continue;
+      expect(out).toContain(`## ${category}`);
+    }
+  });
+
+  test("the opening line and every non-cut section's body text survive verbatim", () => {
+    const out = dropCodingInstructionsSection(WINTER_CODE_PRESET);
+    expect(out.startsWith(WINTER_CODE_PRESET.split("\n")[0]!)).toBe(true);
+    expect(out).toContain("Treat credentials as radioactive");
+  });
+
+  test("does not leave a run of blank lines where the section used to be", () => {
+    const out = dropCodingInstructionsSection(WINTER_CODE_PRESET);
+    expect(out).not.toMatch(/\n{3,}/);
+  });
+
+  test("a safe no-op when the start heading is absent (MINIMAL_PROMPT has no coding-instructions section)", () => {
+    expect(dropCodingInstructionsSection(MINIMAL_PROMPT)).toBe(MINIMAL_PROMPT);
+  });
+
+  test("a safe no-op when the start heading is present but the end heading never follows it (a malformed/future shape)", () => {
+    const truncated = "## Task execution\n\nDo the task.";
+    expect(dropCodingInstructionsSection(truncated)).toBe(truncated);
+  });
+
+  test("applying it to the resolved preset+append form leaves `append` untouched", () => {
+    const resolved = resolvePresetSystemPrompt({ type: "preset", preset: "claude_code", append: "HOUSE RULE" });
+    const out = dropCodingInstructionsSection(resolved);
+    expect(out).not.toContain("## Task execution");
+    expect(out.endsWith("HOUSE RULE")).toBe(true);
   });
 });
 

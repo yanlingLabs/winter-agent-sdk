@@ -18,8 +18,9 @@
 //
 // WHAT GOES WHERE (SDK 0.0.16, P16-5 -- claude 0.3.250's request layout):
 //
-//   system (static half)   the authored prompt (minimal / caller string / caller blocks / preset), or
-//                          a replacing output style.
+//   system (static half)   the authored prompt (minimal / caller string / caller blocks / preset) --
+//                          fix round 4 (I-F): minus its coding-instructions section when a style asks
+//                          to drop it (`dropCodingInstructionsSection`); never the whole region.
 //   system (dynamic half)  the caller's post-boundary blocks, the output style, the child persona,
 //                          the plan-mode block, `# auto memory`, `# Environment`. The engine appends
 //                          the systemContext `gitStatus` after these (`systemContextPlacement`).
@@ -39,7 +40,7 @@ import { join } from "node:path";
 import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./seam.ts";
 import { renderEnvironmentContextValue, renderEnvironmentSection, renderStaticEnvironmentSection, type EnvironmentInput } from "./dynamic-sections.ts";
 import { MINIMAL_PROMPT, MINIMAL_PROMPT_VERSION } from "./minimal-prompt.ts";
-import { resolvePresetSystemPrompt, WINTER_CODE_PRESET_VERSION } from "./winter-code-preset.ts";
+import { dropCodingInstructionsSection, resolvePresetSystemPrompt, WINTER_CODE_PRESET_VERSION } from "./winter-code-preset.ts";
 import { discoverWinterMd, projectInstructionRoot, renderInstructionsContext, type InstructionsContextFile } from "./winter-md.ts";
 import { loadRules } from "./rules.ts";
 import { autoMemoryEnabled, loadMemoryIndex, MEMORY_INDEX_BASENAME, renderAutoMemoryContextValue, renderAutoMemorySection } from "./memory.ts";
@@ -255,9 +256,15 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         });
       }
       const styleBody = style !== null && style.body.trim().length > 0 ? style.body : undefined;
-      // A replacing style substitutes for the AUTHORED region only -- never for a caller's blocks
-      // (they cannot reach here) and never for the mechanics below it.
-      const replaceRegion = styleBody !== undefined && style !== null && !style.keepBasePrompt;
+      // Fix round 4 (I-F), CORRECTING M-4's mis-port: claude drops ONLY the base prompt's
+      // coding-instructions section when a style exists and does not ask to keep it
+      // (`M===null||M.keepCodingInstructions===!0`, dump ~276873) -- it never swaps the WHOLE
+      // authored region for the style. The gate is the STYLE OBJECT existing, not whether its body is
+      // non-empty (claude's own condition does not test the body at all): an empty-bodied keyless
+      // style still drops the section even though it then contributes nothing to the dynamic half.
+      // The style's body -- for EVERY style, dropping or not -- always lands in the dynamic half now;
+      // pre-fix-round-4 code put it in the static half on the (now-retired) full-replace branch.
+      const dropCodingInstructions = style !== null && !style.keepCodingInstructions;
 
       // --- assembly ---------------------------------------------------------------------------
       //
@@ -266,12 +273,12 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // machine-specific half of both moves into the index-0 userContext (`userContext()` below) and
       // only the model/product half of the environment stays, in the STATIC half (claude's `MGn`).
       const staticHalf: (string | undefined)[] = [
-        ...(replaceRegion ? [styleBody] : region.staticBlocks),
+        ...region.staticBlocks.map((block) => (dropCodingInstructions ? dropCodingInstructionsSection(block) : block)),
         region.excludeDynamicSections ? renderStaticEnvironmentSection(environment) : undefined,
       ];
       const dynamicHalf: (string | undefined)[] = [
         ...region.callerDynamicBlocks,
-        replaceRegion ? undefined : styleBody,
+        styleBody,
         input.agentPrompt,
         // P7a (D19): the plans-directory default follows the session's OWN project dot-dir, not the
         // module-level `DEFAULT_PLANS_DIRECTORY` (which is Winter's). Byte-identical under
