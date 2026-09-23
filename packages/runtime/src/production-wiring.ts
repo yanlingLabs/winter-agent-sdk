@@ -1019,14 +1019,19 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // `slash_commands` comes from `slashCommandNames(resolver, cwd)` -- which ALREADY includes the
   // engine's own `/compact`, so the engine must not prepend it a second time. The construction cwd
   // and the live cwd are the same value at startup, which is when the init frame is emitted.
-  // SV-5: a workflow's qualified/bare name is APPENDED, matching claude's own `getWorkflowCommands`
-  // fold -- ordering evidence for "relative to skills" was not found in the pinned dump (disclosed
-  // in the lane report), so workflows are appended AFTER the resolver's own names, a disclosed
-  // default rather than an invented pin. `commandResolver` itself is NOT (yet) wired to EXECUTE a
-  // `/<workflow>` slash command -- fix round 4 (I-E)'s own scope is the Skill tool path
-  // (`workflowSyntheticSkills`, registered into `skillIndex` above); this listing splice is
-  // unchanged from SV-5 and is disclosed as a deferred gap in the lane report.
-  const initSlashCommands = [...slashCommandNames(commandResolver, config.cwd), ...workflowListing.map((w) => w.name)];
+  //
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): the SV-5-era workflow splice
+  // below this comment is GONE -- it was a same-view-class DOUBLE-LIST bug this round's own re-review
+  // caught, not merely stale. `commandResolver` is built with `skills: skillIndex`
+  // (`FilesystemCommandResolver.build`, above) and its own enumeration walks `skills.list()` FIRST
+  // ("skills first, the overlap rule" -- `commands/resolver.ts`'s own header); since fix round 4
+  // (I-E) registered every workflow as a REAL entry in that SAME `skillIndex`
+  // (`workflowSyntheticSkills`), `slashCommandNames(commandResolver, config.cwd)` ALREADY lists every
+  // workflow's qualified/bare name -- appending `workflowListing.map((w) => w.name)` a second time
+  // listed each one TWICE. `commandResolver` still does not EXECUTE a `/<workflow>` slash command
+  // (I-E's own scope was the Skill tool path); that remains a disclosed gap in the lane report, but
+  // it is a gap in EXECUTION, not in this LISTING, which is what the splice's own removal fixes.
+  const initSlashCommands = slashCommandNames(commandResolver, config.cwd);
   // `skills` reflects the session FILTER, not the whole index: a session configured with
   // `skills: ["review"]` should not advertise every skill on disk as available. `validateSkillsOption`
   // returns `index.names()` for `undefined`/`"all"` (capture (4): omission is not "skills off") and

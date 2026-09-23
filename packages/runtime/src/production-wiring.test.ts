@@ -1886,6 +1886,32 @@ describe("SV-5: plugin/project/user workflows are listed in all three init surfa
     }
   });
 
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): initSlashCommands used to list
+  // every workflow TWICE -- once because commandResolver's own enumeration walks the skillIndex
+  // (I-E registered the workflow there), and again from a redundant SV-5-era splice appending
+  // workflowListing directly. `.toContain` (the test above) cannot catch a double-list; this one
+  // counts occurrences.
+  test("fix round 5: initSlashCommands lists a plugin workflow's name exactly ONCE, not twice", async () => {
+    const pluginDir = join(home, "plugin-src", "sv-plugin-dedup");
+    writeSvPluginWorkflow(pluginDir);
+    const pluginsRoot = join(home, "plugins");
+    mkdirSync(pluginsRoot, { recursive: true });
+    writeFileSync(join(pluginsRoot, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "sv-plugin-dedup@m": [{ scope: "user", installPath: pluginDir }] } }));
+    writeSettings(home, { enabledPlugins: { "sv-plugin-dedup@m": true } });
+
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv5-dedup", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const occurrences = wiring.engineOptions.initSlashCommands.filter((n) => n === "sv-plugin-dedup:sv-flow");
+      expect(occurrences).toHaveLength(1);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   // Fix round 4 (I-E, the router same-view test): the coordinator's own required test -- proves the
   // FULL chain through the real production wiring, not just the listing: Skill("sv-plugin:sv-flow")
   // resolves through the REAL Skill tool executor and its body instructs the model to invoke the
