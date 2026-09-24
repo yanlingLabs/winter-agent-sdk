@@ -88,6 +88,31 @@ function userContentParts(blocks: ReturnType<typeof asBlocks>, decoration?: stri
   return sawImage ? { content: parts, hasParts: true } : { content: text, hasParts: false };
 }
 
+/** An assistant message as `mapChatMessages` writes it. */
+interface ChatAssistantWire {
+  role: "assistant";
+  content: string;
+  tool_calls?: unknown[];
+  reasoning_content?: string;
+}
+
+/** Two non-empty parts joined on a newline; an empty part adds nothing (a call-only message has no text). */
+function joinParts(a: string, b: string): string {
+  return a.length === 0 ? b : b.length === 0 ? a : `${a}\n${b}`;
+}
+
+/** `previous` with the next consecutive assistant message's text, calls and replayed reasoning appended (fix round 24). */
+function mergeChatAssistant(previous: ChatAssistantWire, text: string, toolCalls: unknown[], exposed: string): ChatAssistantWire {
+  const calls = [...(previous.tool_calls ?? []), ...toolCalls];
+  const reasoning = joinParts(previous.reasoning_content ?? "", exposed);
+  return {
+    role: "assistant",
+    content: joinParts(previous.content, text),
+    ...(calls.length > 0 ? { tool_calls: calls } : {}),
+    ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+  };
+}
+
 /**
  * `ProviderMessageLike[]` -> chat `messages`.
  *
@@ -149,6 +174,25 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
       // records it as `toolLoopRequirement: "hard-error"`. The renderer has already removed native
       // state from a foreign domain, so anything reaching here is replayable by construction.
       const exposed = replayExposedReasoning ? (message.nativeState?.items ?? []).filter(isExposedReasoningItem).map((i) => i.text).join("") : "";
+      // WS-21 fix round 24: CONSECUTIVE assistant messages become ONE wire message. claude writes a
+      // parallel tool batch as one transcript entry per call, so a history rebuilt from its
+      // transcript carries the batch as N one-call assistant messages followed by N results. This
+      // wire requires every assistant `tool_calls` message to be followed DIRECTLY by its `tool`
+      // replies, so the unmerged batch was refused outright on the first turn after a claude ->
+      // Winter switch (and every later turn resent it). claude merges the same entries back into one
+      // API message before sending: its normaliser's `case"assistant"` (claude 2.1.250 dump offset
+      // 19882077) folds an assistant into the earlier output message of the same `message.id`
+      // through `mergeAssistantMessages` (19884969). This history carries no message id; adjacency --
+      // nothing, not a tool reply and not a user message, between the two -- is what marks one
+      // response's entries here, and it is the same rule every other serializer in this package
+      // already applies (adjacent same-role messages merge). Text, calls and replayed reasoning are
+      // concatenated in message order, so nothing is lost and a batch already written as one
+      // message maps exactly as before.
+      const previous = out.at(-1) as ChatAssistantWire | undefined;
+      if (previous !== undefined && previous.role === "assistant") {
+        out[out.length - 1] = mergeChatAssistant(previous, text, toolCalls, exposed);
+        continue;
+      }
       out.push({
         role: "assistant",
         content: text,

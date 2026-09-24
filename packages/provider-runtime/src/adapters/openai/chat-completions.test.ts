@@ -265,6 +265,140 @@ describe("ChatStreamMapper usage: normalized to the seam's convention", () => {
 });
 
 // R-S4: the OpenAI family has no error field on a tool reply -- the error TEXT is what carries it.
+// WS-21 fix round 24: claude writes a PARALLEL batch as one assistant transcript entry per call, and
+// Winter's rebuild (runtime `store/resume.ts`, fix round 23) hands it over as consecutive one-call
+// assistant messages followed by the results. On this wire every assistant `tool_calls` message must
+// be followed directly by its `tool` replies, so an unmerged batch is refused on the first Winter
+// turn after a claude -> Winter switch. This is that rebuilt history, as the rebuild produces it.
+function rebuiltClaudeParallelBatch(): ProviderMessageLike[] {
+  return [
+    { role: "user", content: "run the F2 batch" },
+    { role: "assistant", content: [{ type: "tool_use", id: "toolu_f2_skill", name: "Skill", input: { skill: "gate-user" } }], uuid: "69c00c59" },
+    { role: "assistant", content: [{ type: "tool_use", id: "toolu_f2_search", name: "ToolSearch", input: { query: "select:mcp__sv-user-mcp__echo" } }], uuid: "8552ed72" },
+    { role: "assistant", content: [{ type: "tool_use", id: "toolu_f2_mcp", name: "mcp__sv-user-mcp__echo", input: { text: "f2" } }], uuid: "54487711" },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "toolu_f2_skill", content: "Launching skill: gate-user" }] },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "toolu_f2_search", content: "mcp__sv-user-mcp__echo" }] },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "toolu_f2_mcp", content: "echo: f2" }] },
+    { role: "assistant", content: "F2-DONE", uuid: "ba33ce5b" },
+    { role: "user", content: "and the next question" },
+  ];
+}
+
+/** Every assistant `tool_calls` message is followed DIRECTLY by one `tool` reply per call -- the rule this wire enforces. */
+function toolRepliesFollowTheirCalls(wire: unknown[]): boolean {
+  for (let i = 0; i < wire.length; i++) {
+    const m = wire[i] as { role: string; tool_calls?: Array<{ id: string }> };
+    if (m.role !== "assistant" || m.tool_calls === undefined) continue;
+    const replies = wire.slice(i + 1, i + 1 + m.tool_calls.length) as Array<{ role: string; tool_call_id?: string }>;
+    if (replies.length !== m.tool_calls.length || replies.some((r) => r.role !== "tool")) return false;
+    if (new Set(replies.map((r) => r.tool_call_id)).size !== m.tool_calls.length || !m.tool_calls.every((c) => replies.some((r) => r.tool_call_id === c.id))) return false;
+  }
+  return true;
+}
+
+describe("mapChatMessages: consecutive assistant messages merge into one (fix round 24, a claude parallel batch)", () => {
+  test("a rebuilt claude batch goes out as ONE assistant message carrying every call, then its tool replies", () => {
+    const wire = mapChatMessages(rebuiltClaudeParallelBatch(), false);
+    expect(wire).toEqual([
+      { role: "user", content: "run the F2 batch" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "toolu_f2_skill", type: "function", function: { name: "Skill", arguments: '{"skill":"gate-user"}' } },
+          { id: "toolu_f2_search", type: "function", function: { name: "ToolSearch", arguments: '{"query":"select:mcp__sv-user-mcp__echo"}' } },
+          { id: "toolu_f2_mcp", type: "function", function: { name: "mcp__sv-user-mcp__echo", arguments: '{"text":"f2"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "toolu_f2_skill", content: "Launching skill: gate-user" },
+      { role: "tool", tool_call_id: "toolu_f2_search", content: "mcp__sv-user-mcp__echo" },
+      { role: "tool", tool_call_id: "toolu_f2_mcp", content: "echo: f2" },
+      { role: "assistant", content: "F2-DONE" },
+      { role: "user", content: "and the next question" },
+    ]);
+    expect(toolRepliesFollowTheirCalls(wire)).toBe(true);
+  });
+
+  test("a batch already written as one assistant message maps exactly as it did", () => {
+    const merged: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "three at once" },
+          { type: "tool_use", id: "c1", name: "A", input: {} },
+          { type: "tool_use", id: "c2", name: "B", input: {} },
+          { type: "tool_use", id: "c3", name: "C", input: {} },
+        ],
+      },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "1" }, { type: "tool_result", tool_use_id: "c2", content: "2" }, { type: "tool_result", tool_use_id: "c3", content: "3" }] },
+      { role: "assistant", content: "done" },
+    ];
+    expect(mapChatMessages(merged, false)).toEqual([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "three at once",
+        tool_calls: [
+          { id: "c1", type: "function", function: { name: "A", arguments: "{}" } },
+          { id: "c2", type: "function", function: { name: "B", arguments: "{}" } },
+          { id: "c3", type: "function", function: { name: "C", arguments: "{}" } },
+        ],
+      },
+      { role: "tool", tool_call_id: "c1", content: "1" },
+      { role: "tool", tool_call_id: "c2", content: "2" },
+      { role: "tool", tool_call_id: "c3", content: "3" },
+      { role: "assistant", content: "done" },
+    ]);
+  });
+
+  test("text and exposed reasoning from every merged message survive, in order", () => {
+    const deepseekState = (text: string) => ({ family: "openai", continuationDomain: "deepseek/deepseek-reasoner", items: [{ type: "winter.exposed_reasoning", text }] });
+    const wire = mapChatMessages(
+      [
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "text", text: "first" }, { type: "tool_use", id: "c1", name: "A", input: {} }], nativeState: deepseekState("reason one") },
+        { role: "assistant", content: [{ type: "tool_use", id: "c2", name: "B", input: {} }] },
+        { role: "assistant", content: [{ type: "text", text: "third" }, { type: "tool_use", id: "c3", name: "C", input: {} }], nativeState: deepseekState("reason three") },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "1" }] },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "c2", content: "2" }] },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "c3", content: "3" }] },
+      ],
+      true,
+    );
+    expect(wire[1]).toEqual({
+      role: "assistant",
+      content: "first\nthird",
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "A", arguments: "{}" } },
+        { id: "c2", type: "function", function: { name: "B", arguments: "{}" } },
+        { id: "c3", type: "function", function: { name: "C", arguments: "{}" } },
+      ],
+      reasoning_content: "reason one\nreason three",
+    });
+    expect(wire).toHaveLength(5);
+    expect(toolRepliesFollowTheirCalls(wire)).toBe(true);
+  });
+
+  test("assistant messages with a tool reply or a user message between them stay separate", () => {
+    const wire = mapChatMessages(
+      [
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "A", input: {} }] },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "1" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "c2", name: "B", input: {} }] },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "c2", content: "2" }] },
+        { role: "assistant", content: "answer" },
+        { role: "user", content: "again" },
+        { role: "assistant", content: "second answer" },
+      ],
+      false,
+    );
+    expect((wire as Array<{ role: string }>).map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant", "user", "assistant"]);
+    expect(toolRepliesFollowTheirCalls(wire)).toBe(true);
+  });
+});
+
 describe("mapChatMessages: an is_error tool result keeps its text (no wire field to map it to)", () => {
   test("the content is sent verbatim", () => {
     const out = mapChatMessages([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "Agent type 'x' not found.", is_error: true }] }], false);
