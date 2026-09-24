@@ -3525,6 +3525,101 @@ describe("evaluate() -- fix round 12 (minor): mL also runs on a symlink's RESOLV
   });
 });
 
+// Fix round 14 (CRITICAL item 2, claude's own `Ii`): claude threads its FULL `Ii`-derived candidate
+// set into `f_` (the working-directory bounds check, this file's own `isWithinBounds`) and every
+// rule lookup (`Ma`/`cqe`, this file's own `findMatchingFileRuleEntry`) -- not just the SAME TWO
+// candidates `suspiciousSymlinkTarget` already used (round 13). Before this fix, both checks still
+// called `resolveRealTarget` alone for their "resolved target" candidate, which falls back to the
+// LINK'S OWN literal path text for a DANGLING symlink (see paths.ts's own header on
+// `resolveRealTarget`) -- so for a dangling link, `target === absPath`, and BOTH candidates a bounds
+// or rule check saw were the identical in-cwd path, never the symlink's real (outside-cwd) stored
+// destination. The controller's own exact scenario: a cloned repo ships `notes.md -> ../../../
+// Library/LaunchAgents/x.plist` (dangling). `resolveSymlinkTargetChain` (paths.ts, round 13) is the
+// THIRD candidate that actually follows the dangling link's own readlink() value.
+describe("evaluate() -- fix round 14 (CRITICAL): Ii's full candidate set (link + resolveRealTarget + resolveSymlinkTargetChain) feeds isWithinBounds and the rule lookups, not just link+resolveRealTarget", () => {
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-r14-ii-")));
+  }
+
+  // Builds the controller's own scenario: `<root>/notes.md` is a DANGLING symlink whose stored
+  // target lands somewhere entirely outside `root` (a stand-in for `../../../Library/LaunchAgents/
+  // x.plist` -- nothing on that path is ever created, matching "dangling").
+  function plantDanglingOutsideLink(root: string): { linkPath: string; outsideDir: string; outsideTarget: string } {
+    const outsideDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-r14-ii-outside-")));
+    const outsideTarget = join(outsideDir, "x.plist"); // deliberately never created
+    const linkPath = join(root, "notes.md");
+    symlinkSync(outsideTarget, linkPath);
+    return { linkPath, outsideDir, outsideTarget };
+  }
+
+  test("isWithinBounds: acceptEdits no longer silently auto-approves Write(notes.md) through a dangling symlink whose real target is outside the working directory -- it asks", async () => {
+    const root = freshRoot();
+    let outsideDir: string | undefined;
+    try {
+      const planted = plantDanglingOutsideLink(root);
+      outsideDir = planted.outsideDir;
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: root,
+        policy: policy({ mode: "acceptEdits" }),
+        specialChecks: REAL_SPECIAL_CHECKS,
+      });
+      const record = await evaluate(call("Write", { file_path: planted.linkPath }), ctx);
+      // Without the fix: resolveRealTarget's ENOENT fallback returns the LINK'S OWN path for both
+      // "candidates" isWithinBounds checked -- both land inside `root` -- so this silently allowed.
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.decision).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      if (outsideDir !== undefined) rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("findMatchingFileRuleEntry (allow): an allow rule scoped to the cwd does NOT auto-allow a dangling symlink whose real target is outside it", async () => {
+    const root = freshRoot();
+    let outsideDir: string | undefined;
+    try {
+      const planted = plantDanglingOutsideLink(root);
+      outsideDir = planted.outsideDir;
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: root,
+        policy: policy({ mode: "default", rules: withRules(rule(`Edit(/${root}/**)`, "allow")) }),
+      });
+      const record = await evaluate(call("Edit", { file_path: planted.linkPath, old_string: "a", new_string: "b" }), ctx);
+      // Without the fix: `target === absPath` for a dangling link (resolveRealTarget's own
+      // literal-fallback), so linkMatch and targetMatch were the SAME match against the SAME
+      // cwd-scoped pattern -- this silently allowed via mechanism "rule" and never asked at all.
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.decision).toBe("deny");
+      expect(record.mechanism).not.toBe("rule");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      if (outsideDir !== undefined) rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("findMatchingFileRuleEntry (deny): a deny rule matching the dangling symlink's REAL (outside) target denies it, even though neither the link path nor resolveRealTarget's fallback ever names that location", async () => {
+    const root = freshRoot();
+    let outsideDir: string | undefined;
+    try {
+      const planted = plantDanglingOutsideLink(root);
+      outsideDir = planted.outsideDir;
+      const ctx = baseCtx({
+        cwd: root,
+        policy: policy({ mode: "default", rules: withRules(rule(`Edit(/${planted.outsideDir}/**)`, "deny")) }),
+      });
+      const record = await evaluate(call("Edit", { file_path: planted.linkPath, old_string: "a", new_string: "b" }), ctx);
+      expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      if (outsideDir !== undefined) rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- Trap 1: compound Bash commands must be split before recognition/matching ----------------------
 
 describe("compound Bash commands — split before recognition/matching (lens item 1)", () => {

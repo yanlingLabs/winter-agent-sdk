@@ -13,6 +13,9 @@
 // Until now the Seatbelt was the only floor for a shell write to these paths, and an escape
 // (`dangerouslyDisableSandbox`) removes the Seatbelt.
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PermissionMode, PermissionRuleValue } from "@yanlinglabs/winter-agent-sdk";
 import {
   evaluate,
@@ -454,6 +457,42 @@ describe("the sweep: every other word a path or a verb is read from goes through
       const { ctx, prompts } = ctxWith("default", []);
       await evaluate(bash(command), ctx);
       expect(prompts).toHaveLength(1);
+    }
+  });
+});
+
+// Fix round 14 (audit beyond the controller's own two named citations, "audit any other path check
+// that still uses resolveRealTarget alone"): isShellTargetInWorkingDirs is what shellWriteNeedsApproval
+// (this floor's own gate) uses to decide whether a shell write target is exempt from the mandatory-
+// approval reason -- the SAME dangling-symlink gap as isWithinBounds/findMatchingFileRuleEntry above,
+// here on the shell side. Needs a REAL symlink (unlike this file's other, pure-string fixtures, whose
+// synthetic non-existent paths never involve an actual symlink at all) -- mirrors evaluator.test.ts's
+// own real-fs regime for the identical reason.
+describe("fix round 14: isShellTargetInWorkingDirs sees a dangling symlink's REAL (outside) destination, not just its own in-bounds literal path", () => {
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-shell-write-floor-r14-")));
+  }
+
+  test("`cat file > link` through a dangling in-cwd symlink whose stored target is OUTSIDE the working directories still asks, even with a matching allow rule", async () => {
+    const root = freshRoot();
+    let outsideDir: string | undefined;
+    try {
+      outsideDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-shell-write-floor-r14-outside-")));
+      const outsideTarget = join(outsideDir, "x.plist"); // deliberately never created -- dangling
+      const linkPath = join(root, "notes.md");
+      symlinkSync(outsideTarget, linkPath);
+
+      const { ctx, prompts } = ctxWith("default", [rule("Bash(cat:*)", "allow")], { cwd: root, sessionRoot: root });
+      const record = await evaluate(bash(`cat file > ${linkPath}`), ctx);
+      // Without the fix: resolveRealTarget's ENOENT fallback reports the link's own (in-root) path as
+      // the "real" target, so isShellTargetInWorkingDirs saw it as inside the working directories and
+      // the matching Bash(cat:*) allow rule silently cleared the write.
+      expect(record.decision).toBe("deny"); // headless -> fail closed
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]!.meta.decisionReason).toContain("outside the allowed working directories");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      if (outsideDir !== undefined) rmSync(outsideDir, { recursive: true, force: true });
     }
   });
 });

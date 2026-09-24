@@ -556,7 +556,22 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
   // of drift round 10 item B introduced. Trimming HERE means a future caller cannot re-open it.
   const absPath = resolve(ctx.cwd, path.trim());
   const target = resolveRealTarget(absPath);
-  return boundedRoots(ctx).some((root) => isPathWithinRoot(absPath, root, { caseFold: false }) && isPathWithinRoot(target, root, { caseFold: false }));
+  // Fix round 14 (CRITICAL item 2, claude's own `Ii`/`f_`): a THIRD candidate, `resolveSymlinkTargetChain`'s
+  // own result -- resolveRealTarget's ENOENT fallback never reads a DANGLING symlink's own stored
+  // target (it falls back to the link's own literal path, so `target === absPath` for a dangling
+  // link), which let a working-directory bounds check see the SAME in-bounds path twice and miss the
+  // symlink's real, possibly out-of-bounds destination entirely. claude's own `f_` runs
+  // `o.every(d => sm(d, root))` over EVERY `Ii`-derived candidate for a winning root, so an
+  // undefined chain target (nothing to resolve, or genuinely unresolvable) must FAIL that root
+  // rather than being skipped -- fail-closed, never a free pass.
+  const chainTarget = resolveSymlinkTargetChain(absPath);
+  return boundedRoots(ctx).some(
+    (root) =>
+      isPathWithinRoot(absPath, root, { caseFold: false }) &&
+      isPathWithinRoot(target, root, { caseFold: false }) &&
+      chainTarget !== undefined &&
+      isPathWithinRoot(chainTarget, root, { caseFold: false }),
+  );
 }
 
 // The whole-call path extraction the SpecialChecks seam contract asks T7 to own (see that
@@ -842,12 +857,23 @@ function outputsCarveOutDirs(ctx: EvaluationContext): string[] | undefined {
 }
 
 function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boolean {
+  const absPath = resolve(ctx.cwd, path);
   let real: string;
   try {
-    real = resolveRealTarget(resolve(ctx.cwd, path));
+    real = resolveRealTarget(absPath);
   } catch {
     return false; // unresolvable (EACCES mid-walk): never assume it is inside
   }
+  // Fix round 14 (audit beyond the controller's own two named citations, "audit any other path check
+  // that still uses resolveRealTarget alone"): same dangling-symlink gap as isWithinBounds above --
+  // resolveRealTarget's own ENOENT fallback returns the LINK'S OWN literal path for a dangling link,
+  // so `real` alone could report "inside the working directories" for a shell write whose stored
+  // symlink target actually escapes them, silently skipping the mandatory-approval floor this
+  // function exists to enforce (shellWriteNeedsApproval, above). Fail-closed like isWithinBounds, for
+  // the identical reason: this gates whether a shell write is EXEMPT from approval, not an
+  // already-authored rule match, so an unresolvable third candidate must never widen the exemption.
+  const chainTarget = resolveSymlinkTargetChain(absPath);
+  if (chainTarget === undefined) return false;
   // The outputs directory is sandbox-writable (the Bash tool's writable roots), which claude counts as
   // an allowed write location for a shell target (its step 3.7) -- not a working directory otherwise.
   const roots = [...boundedRoots(ctx), ...(ctx.outputsDir !== undefined && ctx.outputsDir.length > 0 ? [resolve(ctx.cwd, ctx.outputsDir)] : [])];
@@ -858,7 +884,8 @@ function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boole
     } catch {
       return false;
     }
-    return real === realRoot || real.startsWith(realRoot.endsWith("/") ? realRoot : `${realRoot}/`);
+    const withinRoot = (candidate: string): boolean => candidate === realRoot || candidate.startsWith(realRoot.endsWith("/") ? realRoot : `${realRoot}/`);
+    return withinRoot(real) && withinRoot(chainTarget);
   });
 }
 
@@ -1104,6 +1131,17 @@ function findMatchingFileRuleEntry(
 
   const absPath = resolveTargetPath(path, ctx.cwd);
   const target = resolveRealTarget(absPath);
+  // Fix round 14 (CRITICAL item 2, claude's own `Ii`): a THIRD candidate joins the link and
+  // resolveRealTarget's own target -- every rule lookup (`Ma`/`cqe`) claude runs over the FULL
+  // `Ii`-derived candidate set, not just these two. Without it, a DANGLING symlink (resolveRealTarget's
+  // own ENOENT fallback returns the LINK'S OWN literal path, so `target === absPath`) let an allow
+  // rule scoped to the cwd match the SAME path twice and silently allow, and let a deny rule scoped to
+  // the symlink's real (outside) destination never match at all. `undefined` (chain resolution itself
+  // gives up) is OMITTED from the candidate set exactly as `checkSymlinkBothEnds` (paths.ts, round 13)
+  // already treats it -- the SAME "undefined chain candidate" semantics as that already-shipped
+  // composer, reused here rather than invented fresh: it does not by itself defeat an otherwise-full
+  // allow match, and it cannot by itself manufacture a deny match.
+  const chainTarget = resolveSymlinkTargetChain(absPath);
   const matchAt = (candidatePath: string): SourcedRuleEntry | null => matchFileRulesGrouped(candidates, candidatePath, { cwd: ctx.cwd, home: ctx.home }, direction);
   if (direction === "allow") {
     // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own `ZCt` tries the
@@ -1120,9 +1158,10 @@ function findMatchingFileRuleEntry(
     };
     const linkMatch = matchAtWithAlias(absPath);
     const targetMatch = matchAtWithAlias(target);
-    return linkMatch !== null && targetMatch !== null ? linkMatch : undefined;
+    const chainMatches = chainTarget !== undefined ? matchAtWithAlias(chainTarget) !== null : true;
+    return linkMatch !== null && targetMatch !== null && chainMatches ? linkMatch : undefined;
   }
-  return matchAt(absPath) ?? matchAt(target) ?? undefined;
+  return matchAt(absPath) ?? matchAt(target) ?? (chainTarget !== undefined ? matchAt(chainTarget) : undefined) ?? undefined;
 }
 
 export function findMatchingRuleEntry(
@@ -1431,9 +1470,16 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
     const matchesCandidate = (path: string): boolean => {
       const absPath = resolveTargetPath(path, ctx.cwd);
       const target = resolveRealTarget(absPath);
+      // Fix round 14 (audit beyond the controller's own two named citations): a third candidate,
+      // matching isWithinBounds/findMatchingFileRuleEntry's own new treatment above, for the same
+      // dangling-symlink reason -- widening a DENY-side "any candidate matches" check is always safe
+      // (fail-closed direction only, never narrows what this safety net catches), even though this
+      // function's own header already discloses it has no direct claude analogue.
+      const chainTarget = resolveSymlinkTargetChain(absPath);
       return (
         matchesSingleFileRulePattern(pattern, absPath, { cwd: ctx.cwd, home: ctx.home }, "denyAsk") ||
-        matchesSingleFileRulePattern(pattern, target, { cwd: ctx.cwd, home: ctx.home }, "denyAsk")
+        matchesSingleFileRulePattern(pattern, target, { cwd: ctx.cwd, home: ctx.home }, "denyAsk") ||
+        (chainTarget !== undefined && matchesSingleFileRulePattern(pattern, chainTarget, { cwd: ctx.cwd, home: ctx.home }, "denyAsk"))
       );
     };
     if (candidatePaths.some(matchesCandidate)) {
@@ -1488,14 +1534,25 @@ function crashCheckEditRulesDuringRead(rules: SourcedRuleSet, call: PermissionCa
 
   const absPath = resolveTargetPath(path, ctx.cwd);
   const target = resolveRealTarget(absPath);
+  // Fix round 14 (audit beyond the controller's own two named citations): a third candidate, for
+  // completeness with isWithinBounds/findMatchingFileRuleEntry above -- this function's own return
+  // value is ALWAYS discarded by its caller (only a FileRuleCompileError throw ever escapes, per this
+  // function's own header), so adding it is purely additive crash-detection coverage and can never
+  // change any OBSERVABLE decision.
+  const chainTarget = resolveSymlinkTargetChain(absPath);
 
-  // Evaluates one stage against BOTH the link path and its real target (rider 2's own "deny if
-  // either end" posture, matching every other Edit-rule check in this file) and reports whether a
-  // WELL-FORMED entry matched -- a throw from either call propagates naturally, uncaught here.
+  // Evaluates one stage against the link path, its real target, AND its symlink-chain target (rider
+  // 2's own "deny if either end" posture, matching every other Edit-rule check in this file) and
+  // reports whether a WELL-FORMED entry matched -- a throw from either call propagates naturally,
+  // uncaught here.
   function stageMatched(behavior: PermissionBehavior, direction: "allow" | "denyAsk"): boolean {
     const candidates = candidatesFor(behavior);
     if (candidates.length === 0) return false;
-    return matchFileRulesGrouped(candidates, absPath, opts, direction) !== null || matchFileRulesGrouped(candidates, target, opts, direction) !== null;
+    return (
+      matchFileRulesGrouped(candidates, absPath, opts, direction) !== null ||
+      matchFileRulesGrouped(candidates, target, opts, direction) !== null ||
+      (chainTarget !== undefined && matchFileRulesGrouped(candidates, chainTarget, opts, direction) !== null)
+    );
   }
 
   if (stageMatched("deny", "denyAsk")) return; // zC resolves here; ask/allow are never reached
