@@ -74,6 +74,20 @@ export interface SourcedRuleEntry {
   // re-deriving it. It also gives removeRules a clean structural-identity key independent of
   // ParsedRule's own shape.
   ruleValue: PermissionRuleValue;
+  /**
+   * Fix round 11 ("important" item, claude's own `TFt`/`bl`, dump byte 15441060): the settings
+   * SOURCE's own directory, for a SINGLE-`/`-anchored pattern's root (`resolveFileRuleAnchor`'s own
+   * `/`-branch, file-rules.ts -- already fully wired to consume this, INERT_ANCHOR when absent, a
+   * pre-existing disclosed gap this field closes). Populated ONLY by `buildSettingsRuleSeed`
+   * (production-wiring.ts, the one non-router host with a real settings-file path per tier,
+   * `tier.path`'s own directory) -- every other `sourceRule(...)` call site in this codebase (every
+   * test helper, every Options/canUseTool/plugin-permissions door) omits it, leaving a `/`-anchored
+   * rule from those doors exactly as inert as it always was. Disclosed as low real-world priority
+   * (the controller's own words: "it's inert under the router" -- the router-mediated production
+   * topology this codebase actually ships on does not exercise multiple distinct settings-file
+   * directories the way a bare-CLI/non-router host reading several tiers off disk directly would).
+   */
+  sourceDir?: string;
 }
 
 // Extends the brief's one-line `{ entries: [...] }` sketch with `mode`/`directories` — both are
@@ -274,9 +288,9 @@ function validateNewRule(value: PermissionRuleValue, behavior: PermissionBehavio
 
 // The one construct-and-validate primitive every SourcedRuleEntry producer uses (see module
 // header). Exported: this is the exact seam phase ruling 1 names for P5's future file loader.
-export function sourceRule(value: PermissionRuleValue, behavior: PermissionBehavior, source: RuleSource): SourcedRuleEntry {
+export function sourceRule(value: PermissionRuleValue, behavior: PermissionBehavior, source: RuleSource, sourceDir?: string): SourcedRuleEntry {
   const parsed = validateNewRule(value, behavior);
-  return { rule: parsed, behavior, source, ruleValue: value };
+  return { rule: parsed, behavior, source, ruleValue: value, ...(sourceDir !== undefined ? { sourceDir } : {}) };
 }
 
 // ---------------------------------------------------------------------------------------------

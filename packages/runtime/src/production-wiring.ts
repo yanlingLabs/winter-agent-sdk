@@ -21,7 +21,7 @@
 // is a live GETTER rather than a snapshot, so a host that re-resolves does not have to rebuild the
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { InitPluginInfo, RuntimeConfig, SdkPluginConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, isUnset, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
 import { applyHostManagedSettingsFilter, filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
@@ -266,6 +266,14 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
     const permissions = (tier.values as Record<string, unknown> | undefined)?.["permissions"];
     if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) continue;
     const block = permissions as Record<string, unknown>;
+    // Fix round 11 ("important" item, claude's own TFt, dump byte 15441060): this tier's OWN
+    // settings-file directory, for a SINGLE-`/`-anchored pattern's root (SourcedRuleEntry.sourceDir's
+    // own header has the full rationale + the controller's own "inert under the router" scoping).
+    // `tier.path` is the settings FILE's own path (e.g. `<project>/.winter/settings.json`); `dirname`
+    // is this codebase's own reading of claude's `IDe`/`bl` -- that helper's own exact byte-level
+    // semantics were not independently pinned down in the dump (unlike every other round-11 item),
+    // disclosed here rather than presented as verified.
+    const sourceDir = tier.path !== undefined ? dirname(tier.path) : undefined;
     for (const [key, behavior] of [
       ["deny", "deny"],
       ["ask", "ask"],
@@ -292,7 +300,7 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
           continue;
         }
         try {
-          entries.push(sourceRule(rawToRuleValue(raw), behavior, source));
+          entries.push(sourceRule(rawToRuleValue(raw), behavior, source, sourceDir));
         } catch (err) {
           warnings.push(`settings (${tier.source}${tier.path !== undefined ? ` at ${tier.path}` : ""}): dropping malformed ${key} rule ${JSON.stringify(raw)} -- ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -395,14 +403,17 @@ function deriveSandboxPathsFromRules(entries: readonly SourcedRuleEntry[], opts:
   for (const entry of entries) {
     const specifier = entry.rule.specifier;
     if (specifier?.kind !== "pattern") continue;
+    // Fix round 11 ("important" item, claude's own TFt): a `/`-anchored pattern's own settings-
+    // source root, when `buildSettingsRuleSeed` populated one for this entry.
+    const entryOpts = entry.sourceDir !== undefined ? { ...opts, sourceDir: entry.sourceDir } : opts;
     if (entry.rule.toolName === "Edit" && entry.behavior === "allow") {
-      const path = resolveFileRuleAbsolutePath(specifier.source, opts);
+      const path = resolveFileRuleAbsolutePath(specifier.source, entryOpts);
       if (path !== undefined) allowWrite.add(path);
     } else if (entry.rule.toolName === "Edit" && entry.behavior === "deny") {
-      const path = resolveFileRuleAbsoluteGlobText(specifier.source, opts);
+      const path = resolveFileRuleAbsoluteGlobText(specifier.source, entryOpts);
       if (path !== undefined) denyWrite.add(path);
     } else if (entry.rule.toolName === "Read" && entry.behavior === "deny") {
-      const path = resolveFileRuleAbsoluteGlobText(specifier.source, opts);
+      const path = resolveFileRuleAbsoluteGlobText(specifier.source, entryOpts);
       if (path !== undefined) denyRead.add(path);
     }
   }

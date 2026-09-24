@@ -205,8 +205,8 @@ const RULE_PATH_GLOB_CHARS = /[*?[\]]/;
  * A caller that gets `undefined` back simply does not add this rule to the sandbox's own filesystem
  * lists; the permission-rule layer (`evaluate()`) still enforces it in full, exactly as it always has.
  */
-export function resolveFileRuleAbsolutePath(pattern: string, opts: { cwd: string; home: string }): string | undefined {
-  const anchor = resolveFileRuleAnchor(pattern, { home: opts.home });
+export function resolveFileRuleAbsolutePath(pattern: string, opts: { cwd: string; home: string; sourceDir?: string }): string | undefined {
+  const anchor = resolveFileRuleAnchor(pattern, { home: opts.home, sourceDir: opts.sourceDir });
   if (anchor.root === INERT_ANCHOR) return undefined;
   const rootPath = anchor.root ?? opts.cwd;
   const normalized = normalizeFileRulePattern(anchor.relativePattern);
@@ -235,8 +235,8 @@ export function resolveFileRuleAbsolutePath(pattern: string, opts: { cwd: string
  * entries keep using `resolveFileRuleAbsolutePath` (glob-shaped dropped), per the controller's own
  * explicit ruling: "Dropping glob-shaped ALLOW rules stays as it is, because that's stricter."
  */
-export function resolveFileRuleAbsoluteGlobText(pattern: string, opts: { cwd: string; home: string }): string | undefined {
-  const anchor = resolveFileRuleAnchor(pattern, { home: opts.home });
+export function resolveFileRuleAbsoluteGlobText(pattern: string, opts: { cwd: string; home: string; sourceDir?: string }): string | undefined {
+  const anchor = resolveFileRuleAnchor(pattern, { home: opts.home, sourceDir: opts.sourceDir });
   if (anchor.root === INERT_ANCHOR) return undefined;
   const rootPath = anchor.root ?? opts.cwd;
   const normalized = normalizeFileRulePattern(anchor.relativePattern);

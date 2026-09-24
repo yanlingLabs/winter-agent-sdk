@@ -2372,6 +2372,60 @@ describe("evaluate() -- fix round 11 (item 3 widened): the read crash-check now 
   });
 });
 
+// Fix round 11 ("important" item, claude's own TFt/bl, dump byte 15441060): a SINGLE-`/`-anchored
+// pattern (as opposed to `//`, root-anchored, or `~/`, home-anchored) joins to the settings SOURCE's
+// own directory -- resolveFileRuleAnchor's own `/`-branch (file-rules.ts) was ALREADY fully wired for
+// this (INERT_ANCHOR when `opts.sourceDir` is absent, `opts.sourceDir` itself when present); the gap
+// was purely structural, SourcedRuleEntry carrying no such field at all. Round 11 closes it: a NEW
+// `sourceDir?: string` on SourcedRuleEntry (ruleset.ts), populated ONLY by production-wiring.ts's
+// `buildSettingsRuleSeed` (the one non-router host with a real settings-file path per tier), threaded
+// into `findMatchingFileRuleEntry`'s/`crashCheckEditRulesDuringRead`'s own FileRuleCandidate
+// construction here. Every OTHER sourceRule(...) call site (including this file's own `rule()` test
+// helper) omits it -- a `/`-anchored rule built through THOSE doors is exactly as inert as before.
+describe("evaluate() -- fix round 11: a `/`-anchored pattern anchors to SourcedRuleEntry.sourceDir when the entry carries one", () => {
+  function ruleWithSourceDir(raw: string, behavior: "allow" | "deny" | "ask", sourceDir: string): SourcedRuleEntry {
+    const m = /^([^\s(]+)\((.*)\)$/s.exec(raw.trim());
+    const value = m ? { toolName: m[1]!, ruleContent: m[2]! } : { toolName: raw.trim() };
+    return sourceRule(value, behavior, "sdk", sourceDir);
+  }
+
+  test("Edit(/secrets/**) with sourceDir denies a call under <sourceDir>/secrets", async () => {
+    const ctx = baseCtx({
+      cwd: "/somewhere/else",
+      policy: policy({ mode: "default", rules: withRules(ruleWithSourceDir("Edit(/secrets/**)", "deny", "/project/root")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/project/root/secrets/key.pem" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("control: the IDENTICAL pattern with NO sourceDir on the entry is inert (the pre-existing, unchanged posture for every other rule-construction door)", async () => {
+    const ctx = baseCtx({
+      cwd: "/somewhere/else",
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(/secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/project/root/secrets/key.pem" }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("control: a call OUTSIDE <sourceDir>/secrets is unaffected -- the anchor is real, not a catch-all", async () => {
+    const ctx = baseCtx({
+      cwd: "/somewhere/else",
+      policy: policy({ mode: "default", rules: withRules(ruleWithSourceDir("Edit(/secrets/**)", "deny", "/project/root")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/somewhere/else/secrets/key.pem" }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("the crash-check (item 3) also threads sourceDir: a broken /-anchored Edit(...) rule with a sourceDir crashes a Read under that root", async () => {
+    const ctx = baseCtx({
+      cwd: "/somewhere/else",
+      policy: policy({ mode: "default", rules: withRules(ruleWithSourceDir("Edit(/[bad/baz)", "deny", "/project/root")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/project/root/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+});
+
 // Fix round 10, item B: claude's own `ht` trims a raw path FIRST (dump byte offset 12083670, pinned
 // 2.1.250) -- the permission check (permissions/paths.ts's `resolveTargetPath`, same fix) and the
 // tool's actual write (tools/impl/{read,write,edit,...}.ts, same fix) must never disagree. Before

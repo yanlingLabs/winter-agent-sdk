@@ -2397,6 +2397,25 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
+  // Fix round 11 ("important" item, claude's own TFt/bl): a SINGLE-`/`-anchored pattern now anchors
+  // to the settings FILE's own directory instead of staying inert -- `buildSettingsRuleSeed` (this
+  // module) now populates `SourcedRuleEntry.sourceDir` from `tier.path`'s own `dirname`, and
+  // `deriveSandboxPathsFromRules` threads it through to `resolveFileRuleAbsoluteGlobText`. `home` is
+  // this test's own `writeSettings` target (`<home>/settings.json`), so `dirname(tier.path) === home`.
+  test("a SINGLE-/-anchored Edit(...) deny rule now anchors to the settings file's own directory, instead of being dropped as inert", async () => {
+    writeSettings(home, { permissions: { deny: ["Edit(/secrets/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-slash-anchor", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual([join(home, "secrets")]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("an Edit(...) allow rule contributes its own resolved path to allowWrite", async () => {
     writeSettings(home, { permissions: { allow: ["Edit(//repo/scratch/**)"] } });
     const wiring = await buildProductionWiring({

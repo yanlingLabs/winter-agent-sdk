@@ -1048,7 +1048,9 @@ function findMatchingFileRuleEntry(
     if (behavior === "allow" && entry.source === "project" && !ctx.trustedWorkspace) continue;
     if (entry.rule.specifier?.kind !== "pattern") continue; // a bare/wildcardAll rule for this tool is the OLD per-rule path's job, not this group's
     if (entry.rule.toolName !== authoringToolName) continue;
-    candidates.push({ entry, pattern: entry.rule.specifier.source });
+    // Fix round 11 ("important" item, claude's own TFt): threads a `/`-anchored pattern's own
+    // settings-source root through to matchFileRulesGrouped's per-candidate anchor resolution.
+    candidates.push({ entry, pattern: entry.rule.specifier.source, ...(entry.sourceDir !== undefined ? { sourceDir: entry.sourceDir } : {}) });
   }
   if (candidates.length === 0) return undefined;
 
@@ -1430,7 +1432,8 @@ function crashCheckEditRulesDuringRead(rules: SourcedRuleSet, call: PermissionCa
       if (entry.behavior !== behavior) continue;
       if (entry.rule.toolName !== "Edit") continue;
       if (entry.rule.specifier?.kind !== "pattern") continue;
-      out.push({ entry, pattern: entry.rule.specifier.source });
+      // Fix round 11: same threading as findMatchingFileRuleEntry's own candidate construction, above.
+      out.push({ entry, pattern: entry.rule.specifier.source, ...(entry.sourceDir !== undefined ? { sourceDir: entry.sourceDir } : {}) });
     }
     return out;
   }
