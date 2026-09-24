@@ -622,11 +622,11 @@ export interface ProductionWiring {
   providerWiring: SessionProviderWiring;
   /**
    * WS-21 §3.4.4 step 4 / §6.3 item 6: every settings tier's `env` block, claude's per-tier filters
-   * applied (`settings/env-filter.ts`), merged HIGHEST-PRECEDENCE-WINS. There is still no production
-   * consumer that applies this to a child spawn's own process env (F7's finding -- `Settings.env`
-   * was declared but never consumed -- is only half-closed by this field: the FILTERING is now real,
-   * the APPLICATION is the next consumer's job), so this is exposed for that consumer rather than
-   * applied to `process.env` here, which would be a global mutation no caller asked for.
+   * applied (`settings/env-filter.ts`), merged HIGHEST-PRECEDENCE-WINS. APPLIED by this function
+   * (fix round 1, item 5): `Object.assign(env, settingsEnv)` after every settings read, which reaches a
+   * tool spawn's process env the way claude's own `Object.assign(process.env, filtered)` does -- in
+   * production `env` IS `process.env`, and each test passes its own isolated object. Also exposed here
+   * so a caller (and this file's tests) can see exactly which variables were applied.
    */
   settingsEnv: Record<string, string>;
   /**

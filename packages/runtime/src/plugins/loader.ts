@@ -617,11 +617,11 @@ function mergeHookSources(
 }
 
 /**
- * The remaining default component dirs (WS-21 §6.3 item 5, F15's own list) this build does not yet
- * wire into a consumer -- `output-styles/` and `workflows/` are owned by lane L1a's own subsystems
- * (`context/output-styles.ts`, `workflows/store.ts`), and `bin/` has no consumer of any kind yet.
- * Exposed as resolved ABSOLUTE PATHS only, present iff the directory exists, so a future consumer (in
- * either lane) can read them without this module inventing a wiring shape nothing has asked for yet.
+ * A default component directory (WS-21 §6.3 item 5, F15's own list), resolved to an ABSOLUTE PATH,
+ * present iff the directory exists. `output-styles/` and `workflows/` are consumed downstream
+ * (`context/output-styles.ts`'s plugin source, and `tools/registry.ts`'s `pluginWorkflows`, both reading
+ * `PluginBundle.outputStylesPath(s)`/`workflowsPath(s)`); `bin/` is still exposed only
+ * (`PluginBundle.binPath`), with no consumer yet.
  */
 function componentDirIfPresent(root: string, dir: string): string | undefined {
   const path = join(root, dir);

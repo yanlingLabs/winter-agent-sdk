@@ -54,11 +54,12 @@
 //     keyed by locale/cwd/etc, `EN()`). Correctness over performance at this stage; every call
 //     rebuilds its `ignore()` instances fresh. A future perf pass can add memoization without
 //     changing this module's observable behaviour.
-//   - `bl`/`IDe` (claude's settings-source-directory resolver for a `/`-anchored rule) is not
-//     ported: `SourcedRuleEntry` (ruleset.ts) carries no per-entry settings-source directory today
-//     (a pre-existing, disclosed gap -- see evaluator.ts's own prior note), so a `/`-anchored rule
-//     stays INERT here exactly as it already was before this fix round, on every direction. This
-//     mirrors `MatchFileRuleOptions.sourceDir`'s own conservative "absent = inert" precedent.
+//   - `bl`/`IDe` (claude's settings-source-directory resolver for a `/`-anchored rule): ported in fix
+//     round 11 (claude's `TFt`/`OWe`, `IDe`->`xXn`->`Wyt`). A rule loaded from a settings tier carries
+//     `SourcedRuleEntry.sourceDir` (production-wiring.ts's `buildSettingsRuleSeed`: the user tier ->
+//     the run home, every other tier -> cwd), and a `/`-anchored rule resolves against it. A rule from
+//     any OTHER door (Options, a canUseTool "always allow", a plugin's permissions block) has no settings
+//     source and stays INERT on every direction -- `MatchFileRuleOptions.sourceDir`'s "absent = inert".
 //   - `Ii`'s (claude's own symlink-variant collector) platform-specific branches -- UNC paths,
 //     automount `/net` detection, "collapsed landing" symlink chains -- are not ported. Winter's own
 //     `resolveRealTarget`/`checkSymlinkBothEnds` (paths.ts, unchanged) already cover the two
@@ -160,10 +161,10 @@ export interface FileRuleAnchor {
  * faithfully rather than "fixed", matching this module's own "port what was measured" discipline.
  *
  * `sourceDir` is claude's `bl(source)` -- the settings-source-derived root for a `/`-anchored rule.
- * `SourcedRuleEntry` carries no such value today (a pre-existing, disclosed gap), so every caller in
- * this codebase passes `undefined`, making a `/`-anchored rule inert (`root: undefined` below,
- * treated as "no group to match against" by `matchFileRulesGrouped`) -- unchanged from before this
- * fix round.
+ * Since fix round 11 a settings-tier rule carries it (`SourcedRuleEntry.sourceDir`, set by
+ * production-wiring.ts's `buildSettingsRuleSeed` per claude's `Wyt`), and a `/`-anchored rule resolves
+ * against it. When it is absent -- a rule from Options, canUseTool or a plugin -- the rule is inert
+ * (the `INERT_ANCHOR` root below, treated as "no group to match against" by `matchFileRulesGrouped`).
  */
 export function resolveFileRuleAnchor(pattern: string, opts: { home: string; sourceDir?: string | undefined }): FileRuleAnchor {
   if (pattern.startsWith("//")) {
@@ -764,21 +765,23 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
 // ---------------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------------
-// Fix round 5: claude's trusted-symlink equivalences (`ni`/`QCt`, dump-confirmed) -- shared by the
-// acceptEdits boundary check below and the allow-rule matching fallback in `evaluator.ts`'s
-// `findMatchingFileRuleEntry`.
+// claude's trusted-symlink equivalences (fix round 5; scope corrected in round 6) -- used ONLY by the
+// allow-rule matching fallback in `evaluator.ts`'s `findMatchingFileRuleEntry` (claude's `cqe` scope).
+// Round 6 reverted the acceptEdits boundary (`isPathWithinRoot`, below) to claude's two-pair `sm`
+// regexes; it never consults this six-pair map.
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The SIX real-directory/trusted-alias pairs claude's own `ni()` checks (content-search confirmed
- * against the installed claude CLI binary, 2.1.280 -- the pinned 2.1.250 build was unavailable
- * locally): `/private/tmp`↔`/tmp`, `/private/var`↔`/var`, `/private/etc`↔`/etc`, `/usr/bin`↔`/bin`,
- * `/usr/lib`↔`/lib`, `/usr/sbin`↔`/sbin`. Round 4's own `isPathWithinRoot` only ever hardcoded the
- * first two; this round widens it to all six and, matching `ni()` exactly, VERIFIES each pair
- * dynamically (`realpathSync(alias) === real`) rather than assuming it holds -- macOS maintains
- * these as symlinks, but a pair that does not resolve that way on a given machine is excluded, never
- * assumed. Memoized: these are real, stable OS paths that do not change within one process's
- * lifetime, mirroring `ni()`'s own caching.
+ * The SIX real-directory/trusted-alias pairs claude's own `Sl()` checks -- confirmed in the pinned
+ * 2.1.250 dump (byte 14449612: `t=[["/private/tmp","/tmp"],["/private/var","/var"],["/private/etc",
+ * "/etc"],["/usr/bin","/bin"],["/usr/lib","/lib"],["/usr/sbin","/sbin"]]`, with `Smt` as the
+ * rewrite; round 5 had cited them as `ni`/`QCt` from an installed 2.1.280 binary): `/private/tmp`↔`/tmp`,
+ * `/private/var`↔`/var`, `/private/etc`↔`/etc`, `/usr/bin`↔`/bin`, `/usr/lib`↔`/lib`,
+ * `/usr/sbin`↔`/sbin`. Matching `Sl()` exactly, each pair is VERIFIED dynamically
+ * (`realpathSync(alias) === real`) rather than assumed -- macOS maintains these as symlinks, but a pair
+ * that does not resolve that way on a given machine is excluded. Memoized: these are real, stable OS
+ * paths that do not change within one process's lifetime, mirroring `Sl()`'s own cache
+ * (`e.trustedSymlinkEquivalences`).
  */
 const TRUSTED_SYMLINK_CANDIDATES: readonly (readonly [real: string, alias: string])[] = [
   ["/private/tmp", "/tmp"],
@@ -806,7 +809,7 @@ function trustedSymlinkEquivalences(): Map<string, string> {
 }
 
 /**
- * `QCt`'s own job: rewrite a path through its REAL prefix (e.g. `/private/tmp/x`, what
+ * `Smt`'s own job (round 5's `QCt`): rewrite a path through its REAL prefix (e.g. `/private/tmp/x`, what
  * `realpathSync` actually returns) back to the commonly-typed TRUSTED alias (`/tmp/x`) -- the
  * direction a real, resolved path needs to go to be compared against a rule an author wrote in the
  * short form. A path with no matching real prefix passes through unchanged.
