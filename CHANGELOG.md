@@ -4,6 +4,20 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.22
+
+0.0.21 was tagged but never published either: its release job's `publish` job failed in the
+`bun test` step on `ubuntu-latest`, so nothing reached npm. Four causes, one sentence each:
+`canonicalizeTrustedSymlinkPath`'s three macOS-alias test cases assumed the `/private/tmp`↔`/tmp`
+and `/private/var`↔`/var` real-symlink pairs that only exist on macOS, and the same root cause broke
+an evaluator deny-rule control that resolves through the same alias; the packaging test's raw-text
+`.ts`-specifier scan flagged the provider catalog's own bundled `generated/*.json` diagnostic strings
+(shaped like `from "./x.ts"` but pure data) as if they were unresolved module specifiers; and
+`winter-provider-catalog` turned out to be a genuine, previously undetected carrier of the
+`xai-org/grok-build` Apache-2.0 derivation (`generated/catalog.json` cites the same pinned commit the
+root `NOTICE` already attributes, for a set of xAI model-catalogue rows) but shipped a differently-
+purposed `NOTICE` of its own instead of the root one. 0.0.22 is 0.0.21 plus those four fixes.
+
 ## 0.0.21
 
 WS-21: permission and sandbox parity ported from the pinned claude 2.1.250 dump, the shared
