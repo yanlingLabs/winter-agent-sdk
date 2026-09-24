@@ -4,6 +4,53 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.21
+
+WS-21: permission and sandbox parity ported from the pinned claude 2.1.250 dump, the shared
+`~/.winter/sdk` store home, plugins in claude's own on-disk format, and several MCP/tool-call
+correctness fixes. Includes the 2026-09-19 provider-catalog refresh.
+
+### BREAKING
+
+- **Permission and sandbox parity ported from the pinned claude 2.1.250 build**: the file-rule
+  grammar now matches claude's gitignore-style matcher; claude's default write-protected entries
+  (shell/git/mcp config files, editor/agent dot-dirs, `.git/hooks` and `.git/config`) are added to
+  every write-deny set with no opt-out, anchored at cwd — `allowGitConfig` (wired from settings)
+  narrows that floor to `.git/config` alone; a trailing-whitespace or otherwise suspicious path now
+  fails the same safety check claude runs before a protected-file write; a symlinked candidate is
+  checked through claude's full readlink chain (closing a dangling-symlink bypass of that check) and
+  against claude's six real-directory/trusted-alias pairs (`/private/tmp`↔`/tmp`, `/private/var`↔
+  `/var`, `/private/etc`↔`/etc`, `/usr/bin`↔`/bin`, `/usr/lib`↔`/lib`, `/usr/sbin`↔`/sbin`) for the
+  allow-rule retry. The SDK's own home write-floor now covers both `winterHome` and `storeHome`, and
+  the ancestor-rename-bypass fence (renaming a protected directory's ancestor to write through it) is
+  anchored on the same paths.
+- **`.winter/skills`, `.winter/rules` and `.winter/output-styles` are write-protected by default**
+  (claude's default-protection block, ported verbatim), alongside the existing control-plane and
+  agent-definition floors.
+- **A tool call naming a tool the model was not offered is refused, never executed** (claude parity);
+  Winter's own pinned refusal channels are kept.
+- **The `deepseek/deepseek-reasoner` and `deepseek-anthropic/deepseek-reasoner` catalog rows are
+  gone** (2026-09-19 refresh) and are not renamed to anything: a stored tag now resolves to a typed
+  `unknown-model` refusal instead of a silently-stale row. `deepseek-v4-flash`'s deepseek-owned key
+  also moved to `deepseek/deepseek-flash`.
+
+### Other changes
+
+- **Default home is now `~/.winter/sdk`**, with `WINTER_STORE_HOME` overriding it independently of
+  `WINTER_HOME`; every durable path, floor and sandbox rule (checkpoints, provider state, plugin
+  cache) is anchored on the store home rather than the per-run folder.
+- **Plugins follow claude's own on-disk format**: `hooks/hooks.json` (wrapped, additive with manifest
+  hooks), directory marketplaces, and `resolvesWithinPluginRoot` closes a symlink escape a plugin's
+  own component path could previously take outside its root.
+- **MCP**: the tool list is rebuilt per request rather than once at startup; the first turn waits up
+  to claude's 2 s deadline (or `MCP_TIMEOUT`) for a pending server before building `system/init`; a
+  subagent's own MCP server scope recurses to every descendant, and ToolSearch's pool honours it.
+- **Parallel tool-call batches are rebuilt claude-style**: every call in the batch is paired with its
+  result and merged before replay, fixing store/resume and the lossy-switch warning count for a
+  claude-shaped parallel batch.
+- **chat-completions providers**: consecutive assistant messages are folded into one outgoing message
+  instead of being sent as separate turns.
+
 ## 0.0.20
 
 0.0.19 was tagged but never published either: its release job stopped at the differential gate,
