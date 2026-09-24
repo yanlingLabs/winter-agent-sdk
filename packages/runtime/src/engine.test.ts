@@ -2531,6 +2531,9 @@ test("Phase 4 Task 3: an MCP tool marked requiresUserInteraction is denied under
     ]);
     const done = runEngine({
       config: baseConfig({ permissionMode: "dontAsk", capabilities: ["winter.mcp"] }),
+      // Fix round 20: the server is on this session's board -- the advertised partition keeps a live
+      // server's MCP tools only for servers the run can see (engine.ts's computeAdvertisedPartition).
+      mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: [] }]),
       input: runtime.input,
       output: runtime.output,
       provider,
@@ -2744,6 +2747,9 @@ describe("Phase 4 Task 3: deferral activation end-to-end (MUST 6, RULING P4-A)",
       const { host: hostA, runtime: runtimeA } = createInMemoryChannel();
       const doneA = runEngine({
         config: baseConfig({ toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        // Fix round 20: the server is on this session's board -- the advertised partition keeps a live
+        // server's MCP tools only for servers the run can see (engine.ts's computeAdvertisedPartition).
+        mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: [] }]),
         input: runtimeA.input,
         output: runtimeA.output,
         provider: echoProvider,
@@ -2760,6 +2766,9 @@ describe("Phase 4 Task 3: deferral activation end-to-end (MUST 6, RULING P4-A)",
       const { host: hostB, runtime: runtimeB } = createInMemoryChannel();
       const doneB = runEngine({
         config: baseConfig({ toolSearchEnabled: false, capabilities: ["winter.mcp"] }),
+        // Fix round 20: the server is on this session's board -- the advertised partition keeps a live
+        // server's MCP tools only for servers the run can see (engine.ts's computeAdvertisedPartition).
+        mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: [] }]),
         input: runtimeB.input,
         output: runtimeB.output,
         provider: echoProvider,
@@ -3067,6 +3076,9 @@ describe("Phase 4 Task 3: load-first execution boundary (MUST 6, WS-09 §8.2/§8
       ]);
       const done = runEngine({
         config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false, capabilities: ["winter.mcp"] }),
+        // Fix round 20: the server is on this session's board -- the advertised partition keeps a live
+        // server's MCP tools only for servers the run can see (engine.ts's computeAdvertisedPartition).
+        mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: [] }]),
         input: runtime.input,
         output: runtime.output,
         provider,
@@ -3121,6 +3133,9 @@ describe("Phase 4 Task 3: ctx.emitToolReference (MUST 6, WS-09 §8.2/§8.3)", ()
       ]);
       const done = runEngine({
         config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        // Fix round 20: the server is on this session's board -- the advertised partition keeps a live
+        // server's MCP tools only for servers the run can see (engine.ts's computeAdvertisedPartition).
+        mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: [] }]),
         input: runtime.input,
         output: runtime.output,
         provider,
@@ -3200,6 +3215,9 @@ describe("C2: the unsolicited turn's own system/init reports live state, not the
       });
       const done = runEngine({
         config: baseConfig({ sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        // Fix round 20: the server is on this session's board -- the advertised partition keeps a live
+        // server's MCP tools only for servers the run can see (engine.ts's computeAdvertisedPartition).
+        mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: [] }]),
         input: runtime.input,
         output: runtime.output,
         provider,

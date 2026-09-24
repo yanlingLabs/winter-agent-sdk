@@ -258,6 +258,9 @@ import {
   partitionAdvertisedTools,
   // Fix round 19: the live-registry subscription `system/init.tools` and each request's tools re-derive on.
   onRegistryChange,
+  // Fix round 20: the owning live server of an MCP tool, for the partition's scope filter.
+  mcpServerOwningTool,
+  type ToolDescriptor,
   createLoadedToolSet,
   // Phase 5 Task 3 (R5-4 / WS-09 §8.5): the deferred loaded-set reset a committed compaction fires.
   onCompaction,
@@ -1105,6 +1108,14 @@ export interface EngineOptions {
   // exist -- `mcp_servers` is then omitted from both init frames entirely (conditional presence,
   // never an unconditional `[]`), keeping every pre-existing differential golden byte-identical.
   mcpServerStateSource?: McpServerStateSource;
+  /**
+   * Fix round 20: the PARENT's MCP state board, for a child engine that runs its OWN lifecycle (a
+   * subagent definition with object-form `mcpServers`, child-engine.ts) and therefore does not get the
+   * parent's board as `mcpServerStateSource`. Read ONLY to scope the advertised partition's MCP tools
+   * (`computeAdvertisedPartition`): the child still sees the servers it inherits. Never connected,
+   * never reported on `mcp_servers`/`mcp_status`.
+   */
+  inheritedMcpStateSource?: McpServerStateSource;
   // Phase 4 Task 3 (WS-09 §3): the live MCP server MUTATION seam (reconnect/toggle/setServers) --
   // Lane A's own real implementation; a fake for this task's own contract tests. Absent means the
   // three mutating subtypes answer a structured `mcp_unavailable` error (the subtype IS recognized;
@@ -1926,6 +1937,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     providerSupportsToolSearch,
     deferrableContextShare,
     mcpServerStateSource,
+    inheritedMcpStateSource,
     mcpControlSeam,
     contextAccountant: injectedContextAccountant,
     systemPromptAssembler,
@@ -4555,13 +4567,35 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `advertisedToolNames` below read the first derivation: the registry as it stands after the
   // first-turn MCP wait above (claude's `km`), so a server that connected within it is listed; a slower
   // one is still `pending`, with none of its tools, and joins from a later request.
-  const computeAdvertisedPartition = () =>
-    suppressAliasedDuplicates(
+  //
+  // Fix round 20 (the round-19 re-review): the registry is PROCESS-WIDE, and a subagent's object-form
+  // (child-scoped) MCP server registers its tools there too -- so the live partition offered a parent
+  // the tools of a subagent's own server while that subagent ran, and handed them on to children
+  // spawned later through `currentAdvertisedCanonicalNames`. claude scopes an agent's frontmatter
+  // servers to that agent. An MCP tool registered by a live server (`mcpServerOwningTool`) is kept only
+  // when its server is one this run can see: on its own state board, among its own declared
+  // `config.mcpServers` (the sdk servers this engine registers itself), or -- for a child running its
+  // own lifecycle -- on the parent's board it inherits (`inheritedMcpStateSource`).
+  const visibleMcpServers = (): Set<string> =>
+    new Set([
+      ...(effectiveMcpStateSource?.snapshot() ?? []).map((s) => s.name),
+      ...(inheritedMcpStateSource?.snapshot() ?? []).map((s) => s.name),
+      ...Object.keys(config.mcpServers ?? {}),
+    ]);
+  const computeAdvertisedPartition = () => {
+    const partition = suppressAliasedDuplicates(
       partitionAdvertisedTools({ ...advertisedCfg, capabilities: resolveLiveSessionCapabilities() }, deferralActivation),
       suppressionAliasTable,
       config.disallowedTools,
       sessionBrand,
     );
+    const visible = visibleMcpServers();
+    const ownServerTool = (d: ToolDescriptor): boolean => {
+      const owner = mcpServerOwningTool(d.canonicalName);
+      return owner === undefined || visible.has(owner);
+    };
+    return { eager: partition.eager.filter(ownServerTool), deferred: partition.deferred.filter(ownServerTool), hidden: partition.hidden.filter(ownServerTool) };
+  };
   let advertisedPartition = computeAdvertisedPartition();
   const refreshAdvertisedPartition = (): void => {
     advertisedPartition = computeAdvertisedPartition();

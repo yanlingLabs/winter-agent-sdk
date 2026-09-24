@@ -1050,6 +1050,16 @@ export function registerMcpServerTools(
   notifyRegistryChange(); // once per call, never once per tool
 }
 
+/**
+ * Fix round 20: the live MCP server that registered `canonicalName` through `registerMcpServerTools`,
+ * or `undefined` for any other registration (a static descriptor, a standing-server twin). The
+ * registry is process-wide; a run's advertised partition uses this to keep only the MCP tools of
+ * servers that run can see (engine.ts's `computeAdvertisedPartition`).
+ */
+export function mcpServerOwningTool(canonicalName: string): string | undefined {
+  return mcpToolOwner.get(canonicalName);
+}
+
 export function unregisterMcpServerTools(server: string): void {
   const owned = mcpServerOwnedNames.get(server);
   mcpServerOwnedNames.delete(server);

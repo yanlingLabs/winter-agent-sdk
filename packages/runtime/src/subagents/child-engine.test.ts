@@ -13,7 +13,7 @@ import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } fro
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, createContextAccountant, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
-import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
+import { registerTool, unregisterToolForTest, buildAdvertisedSet, getRegisteredTool, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems, userMessageText } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest, type ChildInheritance, type ChildTaskProgress } from "./child-handle.ts";
 // Phase 5 Task 8: the two child threads with no fixture of their own until now.
@@ -3547,3 +3547,116 @@ describe("child-engine.ts + Agent tool: no task_progress after the task's notifi
     expect(lateProgress).toEqual([]);
   }, 20_000);
 });
+
+// Fix round 20, item 2 (the round-19 re-review): round 19 made the parent's advertised set follow the
+// LIVE, process-wide registry, and a subagent's object-form (child-scoped) MCP server registers its
+// tools in that same registry -- so while such a subagent ran, a parent with any server of its own was
+// offered the subagent's tools (and passed them on to later children). claude scopes an agent's
+// frontmatter servers to that agent. The partition now keeps an MCP tool only for a server this run
+// can see: its own board, its declared servers, and -- for a child running its own lifecycle -- the
+// parent's board it inherits.
+describe("fix round 20, item 2: a subagent's own object-form MCP server stays the subagent's", () => {
+  test("while the child lives with its server registered, the parent's requests never carry the child's tool; the child still sees its own tool and the parent's", async () => {
+    const BG = "r20_spawn_nowait";
+    const WAIT = "r20_wait_child_server";
+    const JOIN = "r20_join_child";
+    const CHILD_TOOL = "mcp__childsrv__shout";
+    const PARENT_TOOL = "mcp__parentsrv__hello";
+    let handle: { result(): Promise<unknown> } | undefined;
+    const probe = (name: string, run: (input: unknown, ctx: ToolExecutionContext) => Promise<string>) =>
+      registerTool({
+        descriptor: {
+          canonicalName: name, advertisedName: name, source: "builtin", inputSchema: { type: "object" },
+          description: "round 20 probe", exposure: "eager", permissionClass: "read",
+          availability: {}, capabilityRequirements: [], disposition: "implement-now",
+        },
+        executor: { async execute(input: unknown, ctx: ToolExecutionContext) { return { output: await run(input, ctx) }; } },
+      });
+    probe(BG, async (input, ctx) => {
+      if (!ctx.session.spawnChild) return "no spawnChild";
+      handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+      return "spawned";
+    });
+    probe(WAIT, async () => {
+      for (let n = 0; n < 500; n++) {
+        if (getRegisteredTool(CHILD_TOOL) !== undefined) return "registered";
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return "timeout";
+    });
+    probe(JOIN, async () => {
+      await handle?.result();
+      return "joined";
+    });
+    cleanupToolNames.push(BG, WAIT, JOIN);
+
+    let releaseChild: () => void = () => {};
+    const childGate = new Promise<void>((resolve) => {
+      releaseChild = resolve;
+    });
+    const childTools: string[][] = [];
+    const childProvider: Provider = {
+      async generate(request) {
+        childTools.push((request.tools ?? []).map((t) => t.name));
+        await childGate;
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const childOnlySpec = {
+      tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "SHOUT" }] }) }],
+      resources: [],
+    };
+    await withHttpFixture(childOnlySpec, async (url) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "p1", prompt: "hold your server", runInBackground: false,
+        definition: { description: "child with its own MCP server", prompt: "persona", mcpServers: [{ childsrv: { type: "http", url: url.href } }] },
+      };
+      const parentTools: string[][] = [];
+      const waitResults: string[] = [];
+      let n = 0;
+      const parentProvider: Provider = {
+        async generate(request) {
+          parentTools.push((request.tools ?? []).map((t) => t.name));
+          for (const m of request.messages) {
+            if (m.role === "tool" && JSON.stringify(m).includes("registered")) waitResults.push("registered");
+          }
+          n++;
+          if (n === 1) return { kind: "tool_use", calls: [{ id: "p1", name: BG, input: req }] };
+          if (n === 2) return { kind: "tool_use", calls: [{ id: "p2", name: WAIT, input: {} }] };
+          if (n === 3) {
+            // Built AFTER the child's server registered its tool in the process-wide registry.
+            releaseChild();
+            return { kind: "tool_use", calls: [{ id: "p3", name: JOIN, input: {} }] };
+          }
+          return { kind: "text", text: "parent done" };
+        },
+      };
+      // MCP_CONNECTION_NONBLOCKING=0: the CHILD's own startup waits for its server (see the I4 test).
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }));
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: baseConfig({
+          sessionId: "r20-parent-scope",
+          toolSearchEnabled: false,
+          mcpServers: { parentsrv: { type: "sdk", name: "parentsrv", tools: [{ name: "hello", inputSchema: { type: "object" } }] } },
+        }),
+        input: runtime.input,
+        output: runtime.output,
+        provider: parentProvider,
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      expect(await done).toBe(0);
+
+      expect(waitResults).toContain("registered");
+      expect(parentTools.length).toBeGreaterThanOrEqual(3);
+      expect(parentTools[0]).toContain(PARENT_TOOL);
+      for (const tools of parentTools) expect(tools).not.toContain(CHILD_TOOL);
+      // The reverse direction: the child is offered its own server's tool AND the parent's.
+      expect(childTools[0]).toContain(CHILD_TOOL);
+      expect(childTools[0]).toContain(PARENT_TOOL);
+    });
+  }, 30_000);
+});
+

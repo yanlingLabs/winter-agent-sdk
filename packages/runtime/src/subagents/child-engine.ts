@@ -600,7 +600,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // one wrong option of the three the review names. `AgentMcpServerSpec` is
     // `string | Record<name, config>`: an OBJECT entry declares a CHILD-SCOPED server (connected by
     // this child's own lifecycle, torn down with it -- its tools are registered while the child
-    // lives and are absent from the parent's own frozen `init.tools`), while a STRING entry NAMES a
+    // lives, in the process-wide registry, and are kept out of the parent's advertised set by the
+    // partition's server scope, engine.ts's `computeAdvertisedPartition`, fix round 20; the parent's
+    // set is no longer frozen at startup), while a STRING entry NAMES a
     // server the session already declares, which the child already reaches through the inherited
     // state above -- so it is satisfied by inheritance when the session declares that name, and a
     // legible warning (never a silent drop) when it does not.
@@ -1111,6 +1113,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // disclosed, not silent.
         ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
         ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
+        // Fix round 20: a child running its OWN lifecycle still inherits the parent's servers -- their
+        // tools stay in its advertised partition, which keeps only servers the run can see (engine.ts's
+        // `computeAdvertisedPartition`). Scope only: never connected, never reported.
+        ...(hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { inheritedMcpStateSource: parentMcp.stateSource } : {}),
         // Phase 5 Task 8: the SAME assembler the parent runs with. Without it a child's system
         // prompt is `agentSystemPrompt` verbatim (the engine's R5-16 fallback) -- a persona with no
         // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
