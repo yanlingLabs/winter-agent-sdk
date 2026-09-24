@@ -124,6 +124,67 @@ describe("parseRule -- fix round 2, Ruling P2-G (file-rule tools are never gener
   });
 });
 
+// Fix round 8 (a rule-content parity item found by the integration run on both real binaries):
+// claude's `Tool(content)` parse step (dump-confirmed, byte offset ~11910950 of the pinned 2.1.250
+// dump; the function itself is `jr`) finds the specifier boundary with an ESCAPE-AWARE search --
+// the first UNESCAPED "(" and the last UNESCAPED ")" (an occurrence is escaped when it is preceded
+// by an ODD run of backslashes, `jr`'s own helpers `l`/`u`) -- and then unescapes the captured
+// content with THREE SEQUENTIAL passes (`jr`'s own `a`, byte offset ~11910950): `\(` -> `(`, then
+// `\)` -> `)`, then `\\` -> `\`, in that exact order. This runs ONCE, before ANY specifier-family
+// parsing (FILE_RULE_TOOLS/Bash/param/etc. below all see the ALREADY-UNESCAPED content). The write
+// side (`Fr`/`c`, the same dump region) is the exact inverse: `c(e)` escapes `\` -> `\\` FIRST, then
+// `(` -> `\(`, then `)` -> `\)` -- so a rule persisted BY claude for a path containing a literal
+// backslash or literal parens is written pre-escaped this way, and Winter must parse it back the
+// same way or silently fail to match a rule claude itself wrote (a shared-home, cross-leg fixture
+// class, not a hypothetical one).
+//
+// Before this fix, `parseRule` extracted the specifier boundary with a plain greedy regex
+// (`/^([^\s(]+)\((.*)\)$/s`) and performed NO unescaping at all -- so it required only ONE literal
+// backslash character to match one in the real path (claude's own two-layer pipeline requires TWO,
+// since its OWN parse-side unescape consumes one layer before the file-rule matcher's OWN,
+// separately-ported, gitignore-style escape grammar ever sees the content) and misread an escaped
+// `\)` mid-content as ordinary text rather than a literal `)`.
+describe("parseRule -- fix round 8, claude's Tool(content) escape-aware extraction and unescape", () => {
+  test("an UNESCAPED literal paren pair in the content is left exactly as authored (the common case: a real directory named 'Project (old)') -- unchanged from before this fix", () => {
+    const rule = parseRule("Read(/repo/Project (old)/**)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "/repo/Project (old)/**" });
+  });
+
+  test("an escaped paren pair, \\( and \\), unescapes to a literal ( and ) in the content -- claude's OWN serializer writes literal parens exactly this way", () => {
+    const rule = parseRule("Read(/repo/Project \\(old\\)/**)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "/repo/Project (old)/**" });
+  });
+
+  test("an escaped closing paren MID-CONTENT does not end the rule early -- the true terminator is the LAST unescaped ')'", () => {
+    const rule = parseRule("Read(foo\\)bar/**)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "foo)bar/**" });
+  });
+
+  test("a DOUBLE backslash in the authored content unescapes to a single literal backslash -- matching one literal backslash in the real path, not two", () => {
+    const rule = parseRule("Read(C:\\\\Users\\\\x)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "C:\\Users\\x" });
+  });
+
+  test("a backslash and parens together, exactly as claude's own serializer (c(e): backslash first, then parens) would write a path containing both", () => {
+    // The real path is `C:\Projects\Old (v1)\file`. claude's Fr/c serializes it backslash-first
+    // then parens: every "\" becomes "\\", then every "(" becomes "\(" and ")" becomes "\)".
+    const rule = parseRule("Read(C:\\\\Projects\\\\Old \\(v1\\)\\\\file)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "C:\\Projects\\Old (v1)\\file" });
+  });
+
+  test("this is the SAME extraction+unescape step for every specifier family, not just file-rule tools -- Bash content unescapes identically", () => {
+    const rule = parseRule("Bash(echo foo\\(bar\\))");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "echo foo(bar)" });
+  });
+
+  test("empty content, Tool(), is NOT folded into the bare-equivalent shortcut -- unlike claude's own jr (s===\"\"), disclosed and deliberate: WebSearch() must stay `invalid`, not bare-equivalent (see the WebSearch describe block)", () => {
+    const rule = parseRule("Bash()");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "" });
+    expect(rule.isBareEquivalent).toBe(false);
+  });
+
+});
+
 describe("Bash command-glob grammar (WS-07 §3)", () => {
   test("Bash(ls *) matches `ls` and `ls -la` but not `lsof`", () => {
     const rule = parseRule("Bash(ls *)");

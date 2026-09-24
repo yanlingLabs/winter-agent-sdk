@@ -23,6 +23,7 @@ import {
   canonicalizeTrustedSymlinkPath,
   type FileRuleCandidate,
 } from "./file-rules.ts";
+import { parseRule } from "./grammar.ts";
 
 const CWD = "/w/proj";
 const HOME = "/h";
@@ -425,5 +426,44 @@ describe("normalizeFileRulePattern -- the xi transform", () => {
   test("a leading BOM before ! or # escapes the directive character instead of stripping it", () => {
     expect(normalizeFileRulePattern("﻿!foo")).toBe("\\!foo");
     expect(normalizeFileRulePattern("﻿#foo")).toBe("\\#foo");
+  });
+});
+
+// Fix round 8 (a rule-content parity item found by the integration run on both real binaries): end
+// to end through the REAL pipeline -- a rule STRING (grammar.ts's parseRule) feeding the real
+// `ignore`-package matcher this module builds (see grammar.ts's own header for the ported
+// Tool(content) grammar, jr/l/u/a, this composes with).
+function matchAuthoredRule(ruleString: string, path: string, behavior: "allow" | "denyAsk", overrides: { cwd?: string; home?: string } = {}): boolean {
+  const rule = parseRule(ruleString);
+  if (rule.specifier?.kind !== "pattern") throw new Error(`expected a pattern specifier, got ${JSON.stringify(rule.specifier)}`);
+  return matchOne(rule.specifier.source, path, behavior, overrides);
+}
+
+describe("end to end -- fix round 8: a rule string parses through grammar.ts and matches through the real ignore pipeline exactly as claude's own would", () => {
+  test("an UNESCAPED literal paren pair (a real directory named 'Project (old)') matches -- unchanged from before this fix", () => {
+    expect(matchAuthoredRule("Read(//repo/Project (old)/**)", "/repo/Project (old)/secret.txt", "denyAsk")).toBe(true);
+  });
+
+  test("the SAME rule authored with claude's OWN escaped spelling (\\( and \\)) matches the identical real path", () => {
+    expect(matchAuthoredRule("Read(//repo/Project \\(old\\)/**)", "/repo/Project (old)/secret.txt", "denyAsk")).toBe(true);
+  });
+
+  test("the escaped-paren rule does NOT match a different, merely similarly-shaped directory", () => {
+    expect(matchAuthoredRule("Read(//repo/Project \\(old\\)/**)", "/repo/Project (new)/secret.txt", "denyAsk")).toBe(false);
+  });
+
+  test("a literal backslash in the real path matches ONLY claude's own two-layer escape spelling, not the pre-fix single layer", () => {
+    // Two INDEPENDENT escape layers stack for a literal backslash: (1) this round's OWN fix --
+    // grammar.ts's Tool(content) unescape (`a`) halves an authored run of backslashes ONCE before
+    // any specifier-family parsing ever sees it; (2) the real `ignore` package's OWN, separate,
+    // already-verified (round 4, 1476 cases, 0 diffs) escape grammar, which ALSO requires a doubled
+    // backslash in the PATTERN TEXT it receives to match one literal backslash in a real path.
+    // A real path with ONE literal backslash therefore needs FOUR backslash characters in the
+    // AUTHORED rule string -- exactly the "double escape" the controller's own finding named,
+    // composed from the two layers, not from either alone. Verified directly against the real
+    // `ignore` package before writing this fixture (not asserted from documentation alone).
+    const path = "/repo/C:\\secrets/key.txt"; // one real backslash
+    expect(matchAuthoredRule("Read(//repo/C:\\\\\\\\secrets/**)", path, "denyAsk")).toBe(true); // 4 authored backslashes
+    expect(matchAuthoredRule("Read(//repo/C:\\\\secrets/**)", path, "denyAsk")).toBe(false); // 2 authored (the pre-fix single-layer spelling) -- does NOT match
   });
 });

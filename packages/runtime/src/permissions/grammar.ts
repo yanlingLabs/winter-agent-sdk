@@ -907,21 +907,110 @@ export function isExactWebFetchDomainRule(rule: ParsedRule, hostname: string): b
 /** The one tool whose specifier is a skill identity + argument prefix (WS-07 §3). */
 const SKILL_RULE_TOOL = "Skill";
 
-const RULE_SHAPE = /^([^\s(]+)\((.*)\)$/s;
 const FIELD_VALUE = /^([A-Za-z_][A-Za-z0-9_]*):(.*)$/s;
+
+// Fix round 8 (a rule-content parity item found by the integration run on both real binaries):
+// claude's `Tool(content)` extraction and unescape, ported exactly from the pinned 2.1.250 dump.
+// This SUPERSEDES the plain greedy regex this module used to use (`/^([^\s(]+)\((.*)\)$/s`), which
+// found the specifier boundary correctly for an UNESCAPED literal paren (a real directory named
+// "Project (old)" already worked) but never unescaped the captured content at all -- so a rule
+// authored (or, cross-leg, PERSISTED BY CLAUDE ITSELF) with claude's own escaped spelling required
+// a literal backslash where claude requires two, and misread an escaped `\)` mid-content as
+// ordinary text rather than the literal `)` it denotes.
+//
+// The exact grammar (dump-confirmed, byte offset ~11910950 of the pinned 2.1.250 dump):
+//   function l(e,r){for(let t=0;t<e.length;t++)if(e[t]===r){let n=0,s=t-1;while(s>=0&&e[s]==="\\")n++,s--;if(n%2===0)return t}return-1}
+//   function u(e,r){for(let t=e.length-1;t>=0;t--)if(e[t]===r){let n=0,s=t-1;while(s>=0&&e[s]==="\\")n++,s--;if(n%2===0)return t}return-1}
+//   function a(e){return e.replaceAll("\\(","(").replaceAll("\\)",")").replaceAll("\\\\","\\")}
+//   function jr(e){
+//     let r=l(e,"(");
+//     if(r===-1)return{toolName:vd(e)};
+//     let t=u(e,")");
+//     if(t===-1||t<=r)return{toolName:vd(e)};
+//     if(t!==e.length-1)return{toolName:vd(e)};
+//     let n=e.substring(0,r),s=e.substring(r+1,t);
+//     if(!n)return{toolName:vd(e)};
+//     if(s===""||s==="*")return{toolName:vd(n)};
+//     let o=a(s);
+//     return{toolName:vd(n),ruleContent:o}
+//   }
+// `l`/`u` are an ESCAPE-AWARE first/last-index-of: an occurrence of `r` at position `t` counts only
+// when it is preceded by an EVEN run of backslashes (an odd run means IT is the one being escaped).
+// `jr` requires the last unescaped ")" to be the string's literal final character (a "stray text
+// after the close" shape falls back to the whole string as a bare tool name, same posture this
+// module already had); `a` then runs, ONCE, as three SEQUENTIAL passes in this exact order -- `\(`
+// -> `(`, then `\)` -> `)`, then `\\` -> `\` -- before any specifier-family parsing ever sees the
+// content. The write side (`Fr`/`c`, same dump region) is the exact inverse, applied in the
+// opposite order: `c(e)` escapes `\` -> `\\` first, then `(` -> `\(`, then `)` -> `\)` -- so a rule
+// claude itself persists for a path with a literal backslash or literal parens is written
+// pre-escaped this way, and this module must read it back identically or silently fail to match a
+// rule the other leg wrote, in a shared home this whole workstream exists to make behave as one.
+//
+// `vd` (claude's tool-name-alias table, e.g. `KillShell`->`TaskStop`) is Winter's OWN separate
+// concern and out of scope here -- Winter's toolName is used as authored, unaliased.
+//
+// ONE DELIBERATE NARROWING, disclosed: `jr` places no shape restriction on the toolName half at all
+// (an embedded space is accepted verbatim, e.g. "Read foo(bar)" parses with toolName "Read foo").
+// This module keeps its own pre-existing, narrower guard -- a toolName containing whitespace falls
+// back to the bare-tool-name treatment, exactly as the superseded regex already gave it (that
+// regex's own `[^\s(]+` never matched a space either) -- because every downstream toolName
+// comparison in this codebase assumes an exact, whitespace-free name, and no fixture past or present
+// needs a whitespace-bearing one to parse as anything else.
+function isEscapedAt(s: string, t: number): boolean {
+  let backslashes = 0;
+  let i = t - 1;
+  while (i >= 0 && s[i] === "\\") {
+    backslashes++;
+    i--;
+  }
+  return backslashes % 2 !== 0;
+}
+
+/** claude's `l` -- the first UNESCAPED occurrence of `ch` in `s`, or -1. */
+function firstUnescaped(s: string, ch: string): number {
+  for (let t = 0; t < s.length; t++) if (s[t] === ch && !isEscapedAt(s, t)) return t;
+  return -1;
+}
+
+/** claude's `u` -- the LAST UNESCAPED occurrence of `ch` in `s`, or -1. */
+function lastUnescaped(s: string, ch: string): number {
+  for (let t = s.length - 1; t >= 0; t--) if (s[t] === ch && !isEscapedAt(s, t)) return t;
+  return -1;
+}
+
+/** claude's `a` -- the Tool(content) parse-side unescape, run once, in this exact sequential order. */
+function unescapeRuleContent(raw: string): string {
+  return raw.replaceAll("\\(", "(").replaceAll("\\)", ")").replaceAll("\\\\", "\\");
+}
 
 export function parseRule(raw: string): ParsedRule {
   const trimmed = raw.trim();
-  const m = RULE_SHAPE.exec(trimmed);
-  if (!m) {
-    // Bare tool name (also the lenient fallback for anything not matching Tool(content) shape,
-    // e.g. stray trailing text after a closing paren -- an unusual input no fixture exercises;
-    // treating the whole string as a literal bare tool name is a safe, inert failure mode since it
-    // won't equal any real toolName).
-    return { toolName: trimmed, isBareEquivalent: true };
+  const bareFallback = (): ParsedRule => ({ toolName: trimmed, isBareEquivalent: true });
+
+  const openIdx = firstUnescaped(trimmed, "(");
+  if (openIdx === -1) return bareFallback();
+  const toolName = trimmed.slice(0, openIdx);
+  if (toolName === "" || /\s/.test(toolName)) return bareFallback();
+  const closeIdx = lastUnescaped(trimmed, ")");
+  // Also refuses stray trailing text after the real close (`closeIdx !== trimmed.length - 1`) --
+  // an unusual input no fixture exercises; treating the whole string as a literal bare tool name is
+  // a safe, inert failure mode since it won't equal any real toolName.
+  if (closeIdx === -1 || closeIdx <= openIdx || closeIdx !== trimmed.length - 1) return bareFallback();
+
+  const rawContent = trimmed.slice(openIdx + 1, closeIdx);
+  // `jr` itself treats an EMPTY parenthetical (`s===""`) exactly like `s==="*"` -- both collapse to
+  // a bare rule with no specifier at all. NOT ported here: Winter's own `WebSearch` ruling
+  // deliberately makes `WebSearch()` `invalid` (a scoped-looking rule that can never match anything
+  // useful), distinct from the bare-equivalent `WebSearch(*)` -- pinned by an existing test
+  // ("a SCOPED WebSearch rule is invalid ... WebSearch()"). Folding "" into the same early,
+  // toolName-agnostic shortcut `*` already gets would make `WebSearch()` bare-equivalent too,
+  // silently overriding that ruling. Kept scoped to `*` alone, byte-identical to this module's
+  // pre-round-8 behaviour for empty content; flagged in the report as a disclosed, deliberately
+  // unported piece of `jr`'s grammar.
+  if (rawContent === "*") {
+    return { toolName, specifier: { kind: "wildcardAll" }, isBareEquivalent: true };
   }
-  const toolName = m[1]!;
-  const content = m[2]!;
+  const content = unescapeRuleContent(rawContent);
 
   if (toolName.startsWith("mcp__")) {
     // WS-07 §3: "parenthetical parameter rules in settings are rejected" for MCP tools -- the
@@ -937,9 +1026,10 @@ export function parseRule(raw: string): ParsedRule {
     };
   }
 
-  if (content === "*") {
-    return { toolName, specifier: { kind: "wildcardAll" }, isBareEquivalent: true };
-  }
+  // NOTE: the `rawContent === "*"` shortcut above already returns before `content` is ever computed,
+  // and `unescapeRuleContent` cannot itself PRODUCE a bare "*" from something that wasn't already
+  // exactly "*" (it only ever touches `\(`, `\)`, `\\`) -- so a second `content === "*"` check here
+  // would be unreachable dead code, not a second real case. Removed rather than kept as a no-op.
 
   if (toolName === "WebFetch") {
     const wf = /^domain:(.*)$/is.exec(content);
