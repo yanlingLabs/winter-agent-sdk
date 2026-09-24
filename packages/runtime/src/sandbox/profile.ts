@@ -658,12 +658,20 @@ function buildHomeSelfGrantFloor(anchors: readonly (string | undefined)[], brand
   const roots = [...new Set(anchors.filter((a): a is string => a !== undefined && a.length > 0).map(canon))];
   const files = ["settings.json", "settings.local.json", globalConfigFileName(brand)];
   const dirs = ["agents", "plugins"];
-  return roots
-    .flatMap((root) => [
-      ...files.map((f) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (literal "${sbplString(join(root, f))}"))`),
-      ...dirs.map((d) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(join(root, d))}"))`),
-    ])
-    .join("\n");
+  const denies = roots.flatMap((root) => [
+    ...files.map((f) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (literal "${sbplString(join(root, f))}"))`),
+    ...dirs.map((d) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(join(root, d))}"))`),
+  ]);
+  // Fix round 18 (the R.3 re-review of round 17): every floor path ALSO feeds `Ch`'s ancestor-rename
+  // fence (`buildAncestorRenameBypassBlock`), exactly as claude's `mR` (dump byte 15369065) hands its
+  // whole deny list to `Ch` (15368116): each path's own subpath, plus every ancestor as a
+  // `(literal …)`, denied `file-write-unlink`/`file-write-create`. Without it the floor named the files
+  // but not the home folder holding them, so `mv <home> <home>2 && echo … > <home>2/settings.json &&
+  // mv <home>2 <home>` rewrote the settings file (measured, the reviewer's `sdkhome-rename.ts`: exit 0).
+  // The consequence, as for any `Ch`-fenced path: a sandboxed command cannot create, remove or rename
+  // `winterHome`/`storeHome` or any of their ancestors; files inside them are unaffected.
+  const fence = buildAncestorRenameBypassBlock(roots.flatMap((root) => [...files, ...dirs].map((name) => join(root, name))), []);
+  return [...denies, fence].filter((s) => s.length > 0).join("\n");
 }
 
 // ---------------------------------------------------------------------------------------------

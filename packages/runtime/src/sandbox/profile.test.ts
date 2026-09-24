@@ -306,6 +306,16 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/.winter.json\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/agents\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/plugins\"))",
+    // fix round 18: the floor's paths feed Ch's ancestor-rename fence (claude's mR -> Ch on its whole list)
+    "(deny file-write-unlink file-write-create",
+    "  (subpath \"/Users/x/custom-root/settings.json\")",
+    "  (literal \"/Users/x/custom-root\")",
+    "  (literal \"/Users/x\")",
+    "  (literal \"/Users\")",
+    "  (subpath \"/Users/x/custom-root/settings.local.json\")",
+    "  (subpath \"/Users/x/custom-root/.winter.json\")",
+    "  (subpath \"/Users/x/custom-root/agents\")",
+    "  (subpath \"/Users/x/custom-root/plugins\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/permissions.local.json\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/settings.json\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/settings.local.json\"))",
@@ -852,6 +862,22 @@ describe("buildSeatbeltProfile: the home self-grant floor on winterHome and stor
     const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home, winterHome: acme, brand: { homeDirName: ".acme", projectDirName: ".acme" } });
     for (const clause of fileDenies(acme, ".acme.json")) expect(p).toContain(clause);
     expect(p).not.toContain(".winter.json");
+  });
+
+  // Fix round 18: the floor's paths feed Ch's ancestor fence, as claude's mR feeds its whole list --
+  // each path's own subpath plus every ancestor as a literal, so the home folder cannot be renamed out
+  // of the way and back.
+  test("fix round 18: the floor's paths feed Ch's ancestor-rename fence -- the home folder and its ancestors become literals", () => {
+    const home = realTmp();
+    const runFolder = join(home, ".winter", "cache", "run", "r1");
+    const store = join(home, ".winter", "sdk");
+    const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home, winterHome: runFolder, storeHome: store });
+    const fence = p.split("\n(deny file-write-unlink file-write-create\n").slice(1).join("\n");
+    for (const root of [runFolder, store]) {
+      expect(fence).toContain(`  (literal "${root}")`);
+      for (const f of ["settings.json", "settings.local.json", ".winter.json", "agents", "plugins"]) expect(fence).toContain(`  (subpath "${join(root, f)}")`);
+    }
+    for (const ancestor of [join(home, ".winter", "cache", "run"), join(home, ".winter", "cache")]) expect(fence).toContain(`  (literal "${ancestor}")`);
   });
 
   test("no winterHome and no storeHome: no home floor at all", () => {

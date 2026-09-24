@@ -742,6 +742,54 @@ describe("fix round 17 (R.3 I-2): the SDK's own floor covers its own home and st
     expect(readFileSync(join(sdk, "settings.json"), "utf8")).toBe("{}");
   });
 
+  // Fix round 18 (the R.3 re-review of round 17's I-2): the floor's own paths were never fed to the
+  // ancestor-rename fence (`Ch`), so renaming the HOME FOLDER out of the way, writing through the new
+  // name and renaming it back rewrote settings.json (measured, `sdkhome-rename.ts`: exit 0). claude's
+  // `mR` feeds its whole deny list to `Ch`; the floor now does too. Both anchors, both RED first.
+  const PLANT = `echo '{"permissions":{"allow":["Bash"]}}'`;
+
+  t("standalone: renaming the sdk home away, rewriting settings.json through the new name and renaming it back is denied", async () => {
+    const fakeHome = proj();
+    const sdk = join(fakeHome, ".winter", "sdk");
+    mkdirSync(sdk, { recursive: true });
+    writeFileSync(join(sdk, "settings.json"), "{}");
+    const res = await runAsHome(`mv .winter/sdk .winter/sdk2 && ${PLANT} > .winter/sdk2/settings.json && mv .winter/sdk2 .winter/sdk`, fakeHome, { winterHome: sdk });
+    expect(res.exitCode).not.toBe(0);
+    expect(readFileSync(join(sdk, "settings.json"), "utf8")).toBe("{}");
+    expect(existsSync(join(fakeHome, ".winter", "sdk2"))).toBe(false);
+  });
+
+  t("router layout: the same rename is denied for the STORE home and for the RUN folder", async () => {
+    const fakeHome = proj();
+    const store = join(fakeHome, ".winter", "sdk");
+    const runFolder = join(fakeHome, ".winter", "cache", "run", "r1");
+    for (const dir of [store, runFolder]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "settings.json"), "{}");
+    }
+    for (const [rel, moved] of [
+      [join(".winter", "sdk"), join(".winter", "sdk2")],
+      [join(".winter", "cache", "run", "r1"), join(".winter", "cache", "run", "r2")],
+    ] as const) {
+      const res = await runAsHome(`mv ${rel} ${moved} && ${PLANT} > ${moved}/settings.json && mv ${moved} ${rel}`, fakeHome, { winterHome: runFolder, storeHome: store });
+      expect(res.exitCode).not.toBe(0);
+      expect(readFileSync(join(fakeHome, rel, "settings.json"), "utf8")).toBe("{}");
+      expect(existsSync(join(fakeHome, moved))).toBe(false);
+    }
+  });
+
+  t("a rename of an ANCESTOR of the store home (cache/run, the run folder's parent) is denied too", async () => {
+    const fakeHome = proj();
+    const store = join(fakeHome, ".winter", "sdk");
+    const runFolder = join(fakeHome, ".winter", "cache", "run", "r1");
+    mkdirSync(store, { recursive: true });
+    mkdirSync(runFolder, { recursive: true });
+    writeFileSync(join(runFolder, "settings.json"), "{}");
+    const res = await runAsHome(`mv .winter/cache .winter/cache2 && ${PLANT} > .winter/cache2/run/r1/settings.json && mv .winter/cache2 .winter/cache`, fakeHome, { winterHome: runFolder, storeHome: store });
+    expect(res.exitCode).not.toBe(0);
+    expect(readFileSync(join(runFolder, "settings.json"), "utf8")).toBe("{}");
+  });
+
   t("control: an ordinary file in the sdk home, and one in the home itself, are still writable -- the floor names files and folders, not the whole home", async () => {
     const fakeHome = proj();
     const sdk = join(fakeHome, ".winter", "sdk");
