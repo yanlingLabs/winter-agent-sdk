@@ -3401,15 +3401,25 @@ describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not ju
   // alias fallback. This is not actually a gap: `target` is already the REAL (long-form) path via
   // `resolveRealTarget`, so a deny rule written in the LONG form already matches it directly with no
   // aliasing needed; this test is the control proving deny still behaves via direct matching alone.
-  test("fix round 5 control: a deny rule written in the LONG form //private/tmp/** still matches directly, no alias fallback needed for deny", async () => {
-    const ctx = baseCtx({
-      cwd: "/work",
-      specialChecks: REAL_SPECIAL_CHECKS,
-      policy: policy({ rules: withRules(rule("Edit(//private/tmp/**)", "deny")) }),
-    });
-    const record = await evaluate(call("Edit", { file_path: "/tmp/winter-fix-round-5-deny-probe-does-not-exist.txt" }), ctx);
-    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
-  });
+  // `target` is `resolveRealTarget`'s own graceful-fallback result, not a raw realpath: for a
+  // non-existent probe it walks up to the nearest EXISTING ancestor and realpaths THAT. On macOS
+  // `/tmp` realpaths to `/private/tmp`, so the resolved target already lands in the LONG form this
+  // rule is written in. On Linux `/tmp` is an ordinary directory (no `/private/tmp` alias to
+  // resolve through -- same root cause as canonicalizeTrustedSymlinkPath's own darwin gate), so the
+  // resolved target stays `/tmp/...` and a rule anchored at `//private/tmp/**` does not match it --
+  // darwin-only.
+  test.skipIf(process.platform !== "darwin")(
+    "fix round 5 control: a deny rule written in the LONG form //private/tmp/** still matches directly, no alias fallback needed for deny",
+    async () => {
+      const ctx = baseCtx({
+        cwd: "/work",
+        specialChecks: REAL_SPECIAL_CHECKS,
+        policy: policy({ rules: withRules(rule("Edit(//private/tmp/**)", "deny")) }),
+      });
+      const record = await evaluate(call("Edit", { file_path: "/tmp/winter-fix-round-5-deny-probe-does-not-exist.txt" }), ctx);
+      expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+    },
+  );
 });
 
 describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-aware too (a live fail-open this task's own matrix would otherwise miss)", () => {
