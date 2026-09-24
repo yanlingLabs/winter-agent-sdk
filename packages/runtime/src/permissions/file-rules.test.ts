@@ -23,6 +23,7 @@ import {
   recursiveGlobToSbplRegexSource,
   splitDenyPathsByGlobShape,
   ancestorDirectoriesOf,
+  globDenyEntriesOf,
   unanchorTrailingDoubleStar,
   normalizeFileRulePattern,
   escapeFileRulePathSegment,
@@ -462,6 +463,37 @@ describe("ancestorDirectoriesOf -- claude's own ed", () => {
 
   test("does not include the root itself", () => {
     expect(ancestorDirectoriesOf("/a/b/c")).not.toContain("/");
+  });
+});
+
+// Fix round 13 ("Important" item 1, claude's own `fR`): the PAIRED form `buildReadDenyKeepInPlaceBlock`
+// (sandbox/profile.ts) needs -- see `GlobDenyEntry`'s own header for why `splitDenyPathsByGlobShape`'s
+// own two flat arrays cannot answer this.
+describe("globDenyEntriesOf -- fix round 13, the paired regex+fixedPrefix form fR needs", () => {
+  test("a non-glob path contributes nothing", () => {
+    expect(globDenyEntriesOf(["/repo/secrets"])).toEqual([]);
+  });
+
+  test("a glob-shaped path is paired: its OWN recursive regex WITH its OWN fixed-prefix directory", () => {
+    const result = globDenyEntriesOf(["/repo/sub/*.secret"]);
+    expect(result).toEqual([{ regex: recursiveGlobToSbplRegexSource("/repo/sub/*.secret"), fixedPrefix: "/repo/sub" }]);
+  });
+
+  test("a glob-shaped path whose fixed prefix resolves to the filesystem root gets the literal string \"/\" -- NEVER dropped, unlike splitDenyPathsByGlobShape's own globFixedPrefixes", () => {
+    const result = globDenyEntriesOf(["/*.secret"]);
+    expect(result).toEqual([{ regex: recursiveGlobToSbplRegexSource("/*.secret"), fixedPrefix: "/" }]);
+  });
+
+  test("a mix of plain and glob-shaped paths only pairs the glob-shaped ones, preserving order", () => {
+    const result = globDenyEntriesOf(["/a/plain", "/b/*.glob", "/c/also-plain", "/d/**/.env"]);
+    expect(result).toEqual([
+      { regex: recursiveGlobToSbplRegexSource("/b/*.glob"), fixedPrefix: "/b" },
+      { regex: recursiveGlobToSbplRegexSource("/d/**/.env"), fixedPrefix: "/d" },
+    ]);
+  });
+
+  test("an empty list produces an empty list", () => {
+    expect(globDenyEntriesOf([])).toEqual([]);
   });
 });
 

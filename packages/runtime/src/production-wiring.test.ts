@@ -22,7 +22,7 @@ import { inMemoryProcess } from "./testing.ts";
 import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermissions } from "./production-wiring.ts";
 import { runCommand } from "./sandbox/spawn.ts";
 import { parseRule } from "./permissions/grammar.ts";
-import { splitDenyPathsByGlobShape } from "./permissions/file-rules.ts";
+import { splitDenyPathsByGlobShape, globDenyEntriesOf } from "./permissions/file-rules.ts";
 // WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
 // rather than letting the production composite reach the developer's real Keychain.
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
@@ -2737,6 +2737,123 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
       } finally {
         wiring.dispose();
       }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // Fix round 13 ("Important" item 1, claude's own fR): the controller's own explicit test shape --
+  // "mv .env x is blocked when .env is read-denied and cwd is writable."
+  //
+  // Investigated empirically (a genuine finding, not assumed): round 12's OWN `Ch`-port, called on
+  // `denyReadPaths` too (mirroring claude's own `pR` calling `Ch` on its read-deny list), ALREADY
+  // adds `.env`'s own recursive clause to the SAME `file-write-unlink`/`file-write-create` deny set
+  // UNCONDITIONALLY -- confirmed by re-running this exact scenario against round 11's own (pre-Ch)
+  // profile.ts (the bypass succeeds, exitCode 0) versus round 12's own committed profile.ts (already
+  // blocked, exitCode 1, BEFORE any round-13 code exists at all). So THIS specific fixture does not,
+  // on its own, discriminate round 13's own new code from round 12's -- it is still the controller's
+  // own named regression test, kept for that reason, and it still needs to keep passing. The fixture
+  // that DOES discriminate round 13's own distinct contribution -- claude's `fR` gates on "is this
+  // ancestor/prefix itself inside a write root" (`Ch` has no such gate, firing unconditionally) and
+  // carves a NESTED write root back out of an outer read-deny's own unlink protection (`Ch` has no
+  // carve-out mechanism at all) -- is the very next test below.
+  test.skipIf(process.platform !== "darwin")("end to end: mv .env x is blocked by a real sandboxed Bash command when .env is read-denied and cwd is writable", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r13-fr-scratch-"));
+    try {
+      writeSettings(home, { permissions: { deny: [`Read(//${scratch.slice(1)}/.env)`] } });
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-r13-fr-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        const fs = wiring.config.sandbox?.filesystem;
+        expect(fs?.denyRead).toEqual([join(scratch, ".env")]);
+        const split = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
+        const globEntries = globDenyEntriesOf(fs?.denyRead ?? []);
+        expect(split.paths).toEqual([join(scratch, ".env")]);
+
+        const envPath = join(scratch, ".env");
+        const movedPath = join(scratch, "x");
+        writeFileSync(envPath, "SECRET=leaked");
+
+        const bypassAttempt = await runCommand({
+          command: `mv ${JSON.stringify(envPath)} ${JSON.stringify(movedPath)} && cat ${JSON.stringify(movedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyReadPaths: split.paths } : {}),
+          ...(globEntries.length > 0 ? { denyReadGlobEntries: globEntries } : {}),
+        });
+        expect(bypassAttempt.posture).toBe("sandboxed");
+        expect(bypassAttempt.exitCode).not.toBe(0);
+        // The mv itself must have failed -- the file never moved, and the secret was never read
+        // through the new name.
+        expect(existsSync(movedPath)).toBe(false);
+        expect(existsSync(envPath)).toBe(true);
+
+        // Control: an unrelated write (and its own later read) elsewhere in the SAME scratch tree
+        // still succeeds -- the fence is not overbroad.
+        const otherPath = join(scratch, "notes.txt");
+        const allowed = await runCommand({
+          command: `echo ok > ${JSON.stringify(otherPath)} && mv ${JSON.stringify(otherPath)} ${JSON.stringify(join(scratch, "notes-renamed.txt"))}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyReadPaths: split.paths } : {}),
+          ...(globEntries.length > 0 ? { denyReadGlobEntries: globEntries } : {}),
+        });
+        expect(allowed.exitCode).toBe(0);
+        expect(existsSync(join(scratch, "notes-renamed.txt"))).toBe(true);
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // A genuine empirical finding, investigated when a first draft of this test asserted the OPPOSITE
+  // outcome and failed against a REAL sandbox-exec (not assumed, not left silently wrong): claude's
+  // own `Ch` (round 12) has NO carve-out mechanism of its own -- called on the SAME `denyReadPaths`
+  // list `fR` (this round) is, it renders an EARLIER, UNCONDITIONAL `(deny file-write-unlink
+  // file-write-create (subpath <deniedDir>) ...)` clause with no exemption for anything nested inside
+  // it, INCLUDING a legitimately nested write root. `fR`'s own carve-out (`require-all`/`require-not`,
+  // `buildReadDenyKeepInPlaceBlock`'s own header) is a real, independently-verified mechanism --
+  // isolated testing (temporarily removing `Ch`'s own read-side block) confirmed fR's carve-out
+  // clause, ALONE, correctly permits the nested write root -- but when BOTH claude functions are
+  // ported faithfully and BOTH fire on the identical denied path (as they do here), `Ch`'s OWN
+  // earlier, carve-out-free deny is the one that actually determines the outcome: a real sandboxed
+  // `mv` inside the nested write root is STILL blocked. This is disclosed as a genuine, observed
+  // interaction between two faithfully-ported claude functions, not a bug in either one considered
+  // alone -- `buildReadDenyKeepInPlaceBlock`'s own header carries the full account. The test below
+  // pins the ACTUAL, verified behavior rather than the behavior this round's own design intent (but
+  // not yet full effect, given Ch's own composition) would suggest.
+  test.skipIf(process.platform !== "darwin")("end to end (disclosed limitation, not the design intent): a write root NESTED inside a read-denied directory is STILL blocked, because Ch's own carve-out-free block (round 12) also covers the same path", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r13-fr-carveout-scratch-"));
+    try {
+      const deniedDir = join(scratch, "denied");
+      const nestedWriteRoot = join(deniedDir, "build");
+      mkdirSync(nestedWriteRoot, { recursive: true });
+      const filePath = join(nestedWriteRoot, "artifact.txt");
+      const movedPath = join(nestedWriteRoot, "artifact-renamed.txt");
+      writeFileSync(filePath, "ordinary build output");
+
+      const result = await runCommand({
+        command: `mv ${JSON.stringify(filePath)} ${JSON.stringify(movedPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+        writableRoots: [nestedWriteRoot],
+        denyReadPaths: [deniedDir],
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(movedPath)).toBe(false);
+      expect(existsSync(filePath)).toBe(true);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }

@@ -451,6 +451,33 @@ export function splitDenyPathsByGlobShape(paths: readonly string[]): { paths: st
   return { paths: plain, regexes, globFixedPrefixes };
 }
 
+/** One glob-shaped deny entry, its recursive SBPL regex source PAIRED with its own fixed-prefix
+ * directory -- `splitDenyPathsByGlobShape`'s own `regexes`/`globFixedPrefixes` are two independently
+ * FILTERED flat arrays (the latter drops a "/" prefix entirely) with no positional correspondence
+ * once any entry is dropped from one but not the other; `fixedPrefix` here is NEVER dropped -- it is
+ * always the literal string `"/"` in that case (claude's own `Rh` returns `"/"` too, and `fR`'s own
+ * skip/ancestor logic reads that value directly rather than treating "no prefix" as a distinct case). */
+export interface GlobDenyEntry {
+  regex: string;
+  fixedPrefix: string;
+}
+
+/**
+ * Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091): the PAIRED form
+ * `buildReadDenyKeepInPlaceBlock` (sandbox/profile.ts) needs -- see `GlobDenyEntry`'s own header for
+ * why `splitDenyPathsByGlobShape`'s own two flat arrays cannot answer this. Scoped to glob-shaped
+ * entries only (a plain entry needs no pairing at all -- its own path IS both its recursive-clause
+ * anchor and its ancestor-walk root, `buildReadDenyKeepInPlaceBlock` uses `paths` directly for that).
+ */
+export function globDenyEntriesOf(paths: readonly string[]): GlobDenyEntry[] {
+  const out: GlobDenyEntry[] = [];
+  for (const p of paths) {
+    if (!isGlobShapedFileRulePattern(p)) continue;
+    out.push({ regex: recursiveGlobToSbplRegexSource(p), fixedPrefix: canonicalizedGlobFixedPrefix(p) ?? "/" });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // `xi`: leading-BOM handling
 // ---------------------------------------------------------------------------------------------

@@ -26,7 +26,7 @@ import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
  */
 export type SandboxBrand = Pick<BrandProfile, "homeDirName" | "projectDirName">;
 import { resolveRealTarget } from "../permissions/paths.ts";
-import { ancestorDirectoriesOf } from "../permissions/file-rules.ts";
+import { ancestorDirectoriesOf, type GlobDenyEntry } from "../permissions/file-rules.ts";
 
 // ---------------------------------------------------------------------------------------------
 // WS-12 §2: the CC-shaped configuration surface, verbatim.
@@ -202,6 +202,80 @@ function buildAncestorRenameBypassBlock(plainDenyPaths: readonly string[], globF
   return [`(deny file-write-unlink file-write-create`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
 }
 
+// A STRICT "is candidate a proper descendant of root" check -- claude's own `Sc` (dump byte 15366000
+// region, ground-truth-verified in round 11's own reading), reduced to its plain-path form: Winter's
+// write roots and glob-fixed-prefix denies are never themselves glob-shaped (round 10's own `Jm`
+// finding -- a glob-shaped ALLOW/writeRoot entry is dropped entirely, never reaches this module), so
+// `Sc`'s own `vh`-neutralized glob-text branch is structurally unreachable here and not ported.
+// Deliberately EXCLUDES equality (`candidate === root`) -- matches `Sc`'s own `r!==t` check exactly;
+// `fR`'s own skip-condition for a glob entry (below) is the one place claude's OWN code ALSO checks
+// equality, ported as its own separate inline condition rather than folded into this helper.
+function isProperDescendantOf(candidate: string, root: string): boolean {
+  return root === "/" ? candidate !== "/" && candidate.startsWith("/") : candidate !== root && candidate.startsWith(root + "/");
+}
+
+/**
+ * Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091, pinned 2.1.250,
+ * ground-truth byte-slice-verified in the SAME chunk as `Ch`/`mR`/`pR`/`dR`/`Li`/`ri` from rounds
+ * 11/12): "keep read-denied paths inside write roots in place" -- see
+ * `SeatbeltProfileInput.denyReadGlobEntries`'s own header for the full rationale. `writableRoots`
+ * here is the SAME canonicalized `roots` array (cwd + writableRoots) `buildSeatbeltProfile`'s own
+ * write-allow block already builds -- reused, not re-derived.
+ *
+ * Scope note (disclosed, not silently narrowed): claude's own `fR` ALSO carves allow-within-deny
+ * ("allowRead") entries out of the resulting deny clause (`A(N)`'s own `[...o,...u]`, `o` being the
+ * allow list) -- Winter has no SBPL rendering for `allowRead` at all yet (round 10's own disclosed
+ * gap, `SeatbeltProfileInput.denyWriteRegexes`'s sibling `allowRead` field, "fails closed: an
+ * unenforced allowRead simply leaves the outer denyRead in effect"). This port carves out only
+ * NESTED WRITE ROOTS (the `u`/`writeRoots` half of claude's own `[...o,...u]`), which Winter DOES
+ * have -- the `allowRead` half stays part of that SAME pre-existing gap, not a new one.
+ *
+ * DISCLOSED FINDING (empirical, found writing this function's own real-sandbox test, production-
+ * wiring.test.ts): the nested-write-root carve-out this function builds is, in the CURRENT combined
+ * profile, shadowed by `Ch` (round 12, `buildAncestorRenameBypassBlock`, called on the SAME
+ * `denyReadPaths` list) whenever both cover the identical denied path -- `Ch` has NO carve-out
+ * mechanism of its own (claude's own `Ch`, dump-verified, never subtracts anything), so its own
+ * EARLIER, unconditional `(deny file-write-unlink file-write-create (subpath <deniedDir>) ...)`
+ * clause covers the nested write root too, with no exemption -- and that clause is what a real
+ * sandbox-exec test observes deciding the outcome, not this function's own LATER, narrower
+ * `require-not` clause (which genuinely does not match a target inside its own carve-out, so it
+ * simply never "wins" anything for that target; it is not overridden so much as it never applies).
+ * Isolated testing (temporarily removing `Ch`'s own read-side block) confirmed THIS function's own
+ * carve-out clause is correctly generated and independently functional -- the interaction above is a
+ * genuine, observed composition of two faithfully-ported claude functions, not a bug in this one.
+ * Whether claude's OWN real, combined profile has the identical interaction (i.e. whether `fR`'s own
+ * carve-out is similarly shadowed there too) was not independently verified against a live claude
+ * binary -- flagged for the controller's own awareness rather than silently smoothed over.
+ */
+function buildReadDenyKeepInPlaceBlock(plainDenyReadPaths: readonly string[], globDenyReadEntries: readonly GlobDenyEntry[], writableRoots: readonly string[]): string {
+  if (writableRoots.length === 0) return "";
+  const isUnderAnyWriteRoot = (path: string): boolean => writableRoots.some((root) => isProperDescendantOf(path, root));
+  const nestedWriteRootCarveOuts = (deniedPath: string): string[] => writableRoots.filter((root) => isProperDescendantOf(root, deniedPath)).map((root) => `(subpath "${sbplString(root)}")`);
+  const withCarveOuts = (base: string, carveOuts: readonly string[]): string => (carveOuts.length === 0 ? base : `(require-all ${base} ${carveOuts.map((c) => `(require-not ${c})`).join(" ")})`);
+  const addAncestorLiterals = (clauses: Set<string>, ancestors: readonly string[]): void => {
+    for (const ancestor of ancestors) if (isUnderAnyWriteRoot(ancestor)) clauses.add(`(literal "${sbplString(ancestor)}")`);
+  };
+
+  const clauses = new Set<string>();
+  for (const rawPath of plainDenyReadPaths) {
+    const path = canon(rawPath);
+    if (!isUnderAnyWriteRoot(path)) continue; // claude's own w(N) -- nothing to "keep in place" outside a write root
+    clauses.add(withCarveOuts(`(subpath "${sbplString(path)}")`, nestedWriteRootCarveOuts(path)));
+    addAncestorLiterals(clauses, ancestorDirectoriesOf(path));
+  }
+  for (const entry of globDenyReadEntries) {
+    // claude's own skip-condition (the ONE place equality is ALSO checked, unlike w() above).
+    const relatesToAWriteRoot = writableRoots.some((root) => entry.fixedPrefix === root || isProperDescendantOf(entry.fixedPrefix, root) || isProperDescendantOf(root, entry.fixedPrefix));
+    if (!relatesToAWriteRoot) continue;
+    const regex = new RegExp(entry.regex);
+    const carveOuts = writableRoots.filter((root) => regex.test(root)).map((root) => `(subpath "${sbplString(root)}")`);
+    clauses.add(withCarveOuts(`(regex #"${escapeSbplRegexDelimiter(entry.regex)}")`, carveOuts));
+    if (entry.fixedPrefix !== "/") addAncestorLiterals(clauses, [entry.fixedPrefix, ...ancestorDirectoriesOf(entry.fixedPrefix)]);
+  }
+  if (clauses.size === 0) return "";
+  return [`(deny file-write-unlink`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
+}
+
 // ---------------------------------------------------------------------------------------------
 // Control-plane file denies (WS-12 §5.2, carried verbatim, Winter-renamed)
 // ---------------------------------------------------------------------------------------------
@@ -321,6 +395,20 @@ export interface SeatbeltProfileInput {
    */
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
+  /**
+   * Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091): "keep read-denied
+   * paths inside write roots in place." Winter's read-deny/write-allow sections previously composed
+   * exactly the way claude's OWN `mR`/`pR` alone would -- last-match-wins, and the write-allow
+   * (`(allow file-write* (subpath <root>))`) is emitted AFTER the read-deny section, so it silently
+   * overrides any read-deny's own implicit protection against being UNLINKED (renamed away): with
+   * `Read(.env)` denied and cwd writable, a sandboxed `mv .env x && cat x` renamed the read-denied
+   * file to a new, non-denied name and read the secret through it. claude closes this with a THIRD
+   * section, `fR`, emitted AFTER the write-allow block: for each read-denied path (or glob-shaped
+   * entry, `denyReadGlobEntries` below) that sits inside a write root, denies `file-write-unlink` on
+   * its own recursive clause (minus any write root nested INSIDE it, carved back out) and on every
+   * one of its ancestor directories that is ALSO inside a write root.
+   */
+  denyReadGlobEntries?: GlobDenyEntry[];
   /** Resolved network posture -- see resolveNetworkPosture's own header for why this is a plain boolean here. */
   allowNetwork: boolean;
   /**
@@ -477,6 +565,10 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const denyWriteAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyWritePaths ?? [], input.denyWriteGlobFixedPrefixes ?? []);
   const denyReadAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyReadPaths ?? [], input.denyReadGlobFixedPrefixes ?? []);
 
+  // Fix round 13 ("Important" item 1, claude's own fR): emitted AFTER the write-allow block (`roots`/
+  // `writeRules`, above) -- see `buildReadDenyKeepInPlaceBlock`'s own header for the full rationale.
+  const denyReadKeepInPlaceBlock = buildReadDenyKeepInPlaceBlock(input.denyReadPaths ?? [], input.denyReadGlobEntries ?? [], roots);
+
   // WS-12 §2: "the sole baseline read denial is <home>/<homeDirName>/run" -- a subpath deny (not a
   // filename literal/regex like the control-plane carve-outs above): the WHOLE directory tree is
   // off-limits, not one specific filename within it. Placed AFTER the user-configured denyReadRules
@@ -590,6 +682,7 @@ ${writeRules})
 ${denyWriteRules}
 ${denyWriteRegexRules}
 ${denyWriteAncestorRenameBlock}
+${denyReadKeepInPlaceBlock}
 (allow file-write-data (path "/dev/null") (path "/dev/stdout") (path "/dev/stderr") (path "/dev/dtracehelper"))
 ${allowDarwinTempFiles}
 ${network}

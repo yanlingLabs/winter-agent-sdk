@@ -25,7 +25,7 @@ import "../descriptors/bash.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
 import { splitCompound, extractRedirectTargets, leadingWord, dequoteShellWord } from "../../permissions/grammar.ts";
-import { splitDenyPathsByGlobShape } from "../../permissions/file-rules.ts";
+import { splitDenyPathsByGlobShape, globDenyEntriesOf, type GlobDenyEntry } from "../../permissions/file-rules.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 import {
   runCommand,
@@ -150,6 +150,7 @@ interface DenyPaths {
   denyReadRegexes?: string[];
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
+  denyReadGlobEntries?: GlobDenyEntry[];
 }
 // Fix round 11: `fs?.denyWrite`/`denyRead` may now contain glob-shaped text too (a user-typed
 // settings.json entry, or a rule-derived deny that `deriveSandboxPathsFromRules`, production-
@@ -159,10 +160,15 @@ interface DenyPaths {
 // `denyReadPaths` output to before this fix; `denyWriteRegexes`/`denyReadRegexes` are simply absent.
 // Fix round 12: `splitDenyPathsByGlobShape`'s own `globFixedPrefixes` (each glob entry's own
 // canonicalized fixed-prefix directory) threads through too, feeding the ancestor-rename-bypass fix.
+// Fix round 13: `globDenyEntriesOf` (file-rules.ts) -- the PAIRED regex+fixedPrefix form the
+// read-deny-keep-in-place fix needs (`GlobDenyEntry`'s own header explains why the unpaired
+// `regexes`/`globFixedPrefixes` arrays above cannot answer this) -- read-side only, claude's own `fR`
+// is a read-deny-specific concern.
 function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
   const fs = ctx.sandboxSettings.filesystem;
   const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
   const read = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
+  const readGlobEntries = globDenyEntriesOf(fs?.denyRead ?? []);
   return {
     ...(write.paths.length > 0 ? { denyWritePaths: write.paths } : {}),
     ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
@@ -170,6 +176,7 @@ function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
     ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
     ...(write.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: write.globFixedPrefixes } : {}),
     ...(read.globFixedPrefixes.length > 0 ? { denyReadGlobFixedPrefixes: read.globFixedPrefixes } : {}),
+    ...(readGlobEntries.length > 0 ? { denyReadGlobEntries: readGlobEntries } : {}),
   };
 }
 
@@ -197,6 +204,8 @@ function buildRunCommandOptions(
   /** Fix round 12: each glob-shaped denyWrite/denyRead entry's own canonicalized fixed-prefix directory -- feeds the ancestor-rename-bypass fix. */
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
+  /** Fix round 13: each glob-shaped denyRead entry, its regex PAIRED with its own fixed prefix -- feeds the read-deny-keep-in-place fix. */
+  denyReadGlobEntries?: GlobDenyEntry[];
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;

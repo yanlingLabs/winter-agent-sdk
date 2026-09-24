@@ -15,6 +15,7 @@ import {
   caseFoldSegment,
 } from "./profile.ts";
 import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { recursiveGlobToSbplRegexSource } from "../permissions/file-rules.ts";
 
 function realTmp(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-sb-")));
@@ -191,6 +192,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "",
     "", // fix round 11: denyWriteRegexRules, always-interpolated and empty here (no glob-shaped denyWrite entries)
     "", // fix round 12: denyWriteAncestorRenameBlock, always-interpolated and empty here (no denyWrite entries at all)
+    "", // fix round 13: denyReadKeepInPlaceBlock, always-interpolated and empty here (no denyRead entries at all)
     "(allow file-write-data (path \"/dev/null\") (path \"/dev/stdout\") (path \"/dev/stderr\") (path \"/dev/dtracehelper\"))",
     "(allow file-write* (regex #\"^/var/folders/xx/T/[^/]+$\"))",
     "(deny network*)",
@@ -355,6 +357,107 @@ describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)"
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
     expect(p).not.toContain("file-write-unlink");
     expect(p).not.toContain("file-write-create");
+  });
+});
+
+// Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091): "keep read-denied paths
+// inside write roots in place" -- a read-denied path sitting inside a writable root previously lost
+// its own protection to the write-allow block (last-match-wins): `mv .env x && cat x` renamed the
+// read-denied file to a non-denied name and read it through there.
+describe("buildSeatbeltProfile: read-deny-keep-in-place (claude's fR)", () => {
+  // Isolates JUST this round's own block from the rest of the profile -- round 12's OWN, DIFFERENT
+  // ancestor-rename-bypass block (`(deny file-write-unlink file-write-create ...)`) also names
+  // ancestor directories as `(literal ...)` entries, unconditionally (it has no "is this ancestor
+  // itself under a write root" gate the way THIS round's block does), so a plain whole-profile
+  // `.toContain('(literal "...")')` can accidentally match round 12's own output instead of this
+  // round's. This round's own block is the ONLY one whose header is exactly "(deny file-write-unlink"
+  // followed immediately by a newline (round 12's own header has " file-write-create" right after
+  // "unlink", never a newline there) -- sliced out precisely for every assertion below.
+  function readDenyKeepInPlaceBlockOf(profile: string): string | undefined {
+    const start = profile.indexOf("(deny file-write-unlink\n");
+    if (start === -1) return undefined;
+    const end = profile.indexOf("(allow file-write-data", start);
+    return profile.slice(start, end === -1 ? undefined : end);
+  }
+
+  test("a read-denied path inside cwd (a write root) gets a dedicated file-write-unlink deny, emitted AFTER the write-allow block", () => {
+    const p = buildSeatbeltProfile({ cwd: "/work/proj", allowNetwork: false, denyReadPaths: ["/work/proj/.env"] });
+    const writeAllowIdx = p.indexOf("(allow file-write*");
+    const unlinkIdx = p.indexOf('(deny file-write-unlink\n  (subpath "/work/proj/.env")');
+    expect(writeAllowIdx).toBeGreaterThanOrEqual(0);
+    expect(unlinkIdx).toBeGreaterThan(writeAllowIdx);
+  });
+
+  test("a read-denied path OUTSIDE every write root gets no such block -- nothing to 'keep in place' where nothing is writable", () => {
+    const p = buildSeatbeltProfile({ cwd: "/work/proj", allowNetwork: false, denyReadPaths: ["/somewhere/else/.env"] });
+    expect(readDenyKeepInPlaceBlockOf(p)).toBeUndefined();
+  });
+
+  // The denied path's own ancestors are `(literal ...)`-listed ONLY when THEY are themselves under a
+  // write root (claude's own `w(N)`, a PROPER-descendant check that excludes equality) -- the denied
+  // path's immediate parent (`/work/proj/sub`) qualifies, but cwd itself (`/work/proj`, the write
+  // root it EQUALS) and anything above it do not, matching claude's own `Ch`/`fR` exactly.
+  test("the denied path's own ancestors are listed as literals, but only the ones that are THEMSELVES properly nested inside a write root", () => {
+    const p = buildSeatbeltProfile({ cwd: "/work/proj", allowNetwork: false, denyReadPaths: ["/work/proj/sub/.env"] });
+    const block = readDenyKeepInPlaceBlockOf(p);
+    expect(block).toBeDefined();
+    expect(block).toContain('(subpath "/work/proj/sub/.env")');
+    expect(block).toContain('(literal "/work/proj/sub")');
+    expect(block).not.toContain('(literal "/work/proj")'); // equals the write root itself -- excluded
+    expect(block).not.toContain('(literal "/work")'); // not under any write root at all -- excluded
+  });
+
+  test("a nested write root INSIDE the denied path is carved back out (require-all/require-not) -- that subtree stays genuinely writable/removable", () => {
+    const p = buildSeatbeltProfile({
+      cwd: "/work/proj",
+      allowNetwork: false,
+      writableRoots: ["/work/proj/denied/build"],
+      denyReadPaths: ["/work/proj/denied"],
+    });
+    const block = readDenyKeepInPlaceBlockOf(p);
+    expect(block).toContain("(require-all");
+    expect(block).toContain('(require-not (subpath "/work/proj/denied/build"))');
+  });
+
+  // The glob's own fixed prefix EQUALS the sole write root here (both "/work/proj") -- per claude's
+  // own w(N), the prefix itself is excluded from the literal set for the identical "equals, not a
+  // proper descendant" reason the plain-path test above documents; the block still renders (the
+  // skip-condition, which DOES include equality, is a separate check from w()).
+  test("a glob-shaped read-deny under a write root ALSO gets the block, via its own recursive regex clause", () => {
+    const p = buildSeatbeltProfile({
+      cwd: "/work/proj",
+      allowNetwork: false,
+      denyReadGlobEntries: [{ regex: recursiveGlobToSbplRegexSource("/work/proj/**/.env"), fixedPrefix: "/work/proj" }],
+    });
+    const block = readDenyKeepInPlaceBlockOf(p);
+    expect(block).toBeDefined();
+    expect(block).toContain(recursiveGlobToSbplRegexSource("/work/proj/**/.env"));
+  });
+
+  // A fixed prefix genuinely NESTED under (not equal to) a write root -- the literal-for-the-prefix-
+  // itself step DOES fire here, the discriminating case the test just above cannot exercise.
+  test("a glob-shaped read-deny whose fixed prefix is NESTED under a write root gets a literal for the prefix itself too", () => {
+    const p = buildSeatbeltProfile({
+      cwd: "/work/proj",
+      allowNetwork: false,
+      denyReadGlobEntries: [{ regex: recursiveGlobToSbplRegexSource("/work/proj/sub/**/.env"), fixedPrefix: "/work/proj/sub" }],
+    });
+    const block = readDenyKeepInPlaceBlockOf(p);
+    expect(block).toContain('(literal "/work/proj/sub")');
+  });
+
+  test("a glob-shaped read-deny whose fixed prefix has NOTHING to do with any write root is skipped", () => {
+    const p = buildSeatbeltProfile({
+      cwd: "/work/proj",
+      allowNetwork: false,
+      denyReadGlobEntries: [{ regex: recursiveGlobToSbplRegexSource("/elsewhere/**/.env"), fixedPrefix: "/elsewhere" }],
+    });
+    expect(readDenyKeepInPlaceBlockOf(p)).toBeUndefined();
+  });
+
+  test("no denyReadPaths/denyReadGlobEntries configured emits no read-deny-keep-in-place block", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
+    expect(readDenyKeepInPlaceBlockOf(p)).toBeUndefined();
   });
 });
 

@@ -17,6 +17,7 @@ import {
   resolveNetworkPosture,
   type SandboxSettings,
 } from "./profile.ts";
+import type { GlobDenyEntry } from "../permissions/file-rules.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -199,6 +200,13 @@ export interface RunCommandOptions {
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
   /**
+   * Fix round 13 ("Important" item 1, claude's own `fR`): the read-deny-keep-in-place fix -- each
+   * glob-shaped `denyReadPaths` entry, PAIRED with its own fixed prefix (see
+   * `SeatbeltProfileInput.denyReadGlobEntries`'s own header). Read-only -- claude's own `fR` is a
+   * read-deny-specific concern.
+   */
+  denyReadGlobEntries?: GlobDenyEntry[];
+  /**
    * WS-12 §2: the caller's `ctx.home`, threaded straight through to `buildSeatbeltProfile`'s own
    * `home` field for the baseline `<home>/<homeDirName>/run` read denial -- see that field's own header
    * for why this module (rather than profile.ts) is where a real `ctx.home` value gets plugged in.
@@ -263,6 +271,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       ...(opts.denyReadRegexes !== undefined ? { denyReadRegexes: opts.denyReadRegexes } : {}),
       ...(opts.denyWriteGlobFixedPrefixes !== undefined ? { denyWriteGlobFixedPrefixes: opts.denyWriteGlobFixedPrefixes } : {}),
       ...(opts.denyReadGlobFixedPrefixes !== undefined ? { denyReadGlobFixedPrefixes: opts.denyReadGlobFixedPrefixes } : {}),
+      ...(opts.denyReadGlobEntries !== undefined ? { denyReadGlobEntries: opts.denyReadGlobEntries } : {}),
       allowNetwork,
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),

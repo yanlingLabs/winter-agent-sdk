@@ -26,7 +26,7 @@ import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailabl
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
 import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
 import { createMonitorEventRelay } from "../../subagents/notification-queue.ts";
-import { splitDenyPathsByGlobShape } from "../../permissions/file-rules.ts";
+import { splitDenyPathsByGlobShape, globDenyEntriesOf, type GlobDenyEntry } from "../../permissions/file-rules.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -144,6 +144,7 @@ interface MonitorDenyPaths {
   denyReadRegexes?: string[];
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
+  denyReadGlobEntries?: GlobDenyEntry[];
 }
 // Fix round 11: mirrors bash.ts's own `computeDenyPaths` -- see that function's own header. The
 // glob-conversion itself (`splitDenyPathsByGlobShape`) is the ONE shared primitive both files call,
@@ -152,10 +153,13 @@ interface MonitorDenyPaths {
 // convention (a cross-tool-file import between bash.ts/monitor.ts specifically, not a shared
 // lower-level permissions primitive both already depend on).
 // Fix round 12: also forwards `globFixedPrefixes`, feeding the ancestor-rename-bypass fix.
+// Fix round 13: also forwards `denyReadGlobEntries` (globDenyEntriesOf, read-only), feeding the
+// read-deny-keep-in-place fix.
 function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
   const fs = ctx.sandboxSettings.filesystem;
   const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
   const read = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
+  const readGlobEntries = globDenyEntriesOf(fs?.denyRead ?? []);
   return {
     ...(write.paths.length > 0 ? { denyWritePaths: write.paths } : {}),
     ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
@@ -163,6 +167,7 @@ function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
     ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
     ...(write.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: write.globFixedPrefixes } : {}),
     ...(read.globFixedPrefixes.length > 0 ? { denyReadGlobFixedPrefixes: read.globFixedPrefixes } : {}),
+    ...(readGlobEntries.length > 0 ? { denyReadGlobEntries: readGlobEntries } : {}),
   };
 }
 
@@ -182,6 +187,8 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   /** Fix round 12: each glob-shaped denyWrite/denyRead entry's own canonicalized fixed-prefix directory -- feeds the ancestor-rename-bypass fix. */
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
+  /** Fix round 13: each glob-shaped denyRead entry, its regex PAIRED with its own fixed prefix -- feeds the read-deny-keep-in-place fix. */
+  denyReadGlobEntries?: GlobDenyEntry[];
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;
