@@ -280,27 +280,34 @@ function ancestryChain(byUuid: Map<string, DialectEntry>, leafUuid: string): Dia
 // claude's own reader has the same walk and splices the orphans back in straight afterwards: `Cer`
 // (claude 2.1.250 dump, offset 20061141), called by its chain builder `hye` (20059033) right after
 // the ancestry walk, logging `tengu_chain_parallel_tr_recovered`. For each group of chain assistant
-// entries it collects the `user` entries with `tool_result` content whose parentUuid is a member of
-// the group and that are not on the chain, and inserts them right after the group's LAST chain
-// member -- so the batch stays contiguous and every result lands after its call.
+// entries it collects the group's off-chain SIBLING assistant entries and the off-chain `user`
+// entries with `tool_result` content parented on any member, and inserts them -- siblings first,
+// then results -- right after the group's LAST chain member, so the batch stays contiguous and every
+// result lands after its call.
 //
-// Winter's pass is that one, with two deliberate differences:
-//   - the group is the RUN of consecutive chain `assistant` entries (one response's entries), not a
-//     `message.id` -- this projection carries no message id, and the router's same-view loopback
-//     answers every turn with one id, so an id group would lump unrelated turns. A recovered entry
-//     must ALSO answer a call of the run that nothing on the chain answers yet (the pairing the
-//     provider enforces), so a stray duplicate result is never replayed.
-//   - claude's pass also recovers off-chain SIBLING assistant entries of the same message id. Not
-//     here: in the batches claude writes, the next turn chains through a result whose call is the
-//     batch's LAST entry, so every call entry is already on the chain; recovering assistant entries
-//     would also resurrect calls a `resumeSessionAt` deliberately cut away.
-// Recovered results come in call order (claude sorts by timestamp, which is its write order: the
-// call order, for the batches measured). Only RESULTS come back: the skill body and attachments that
-// hang off a recovered result's own branch stay out, as they do in claude's pass.
+// Siblings matter because claude yields a concurrency-safe batch's results in COMPLETION order
+// (`getCompletedResults`, 18548003, steps past an executing concurrency-safe tool instead of waiting
+// for it) and chains the next turn onto the last message yielded. When an earlier call finishes
+// last, the walk runs through ITS result, and every later call entry of the batch -- a descendant of
+// that call's entry -- is off the walk together with its result: the call silently vanished from
+// the rebuilt history.
+//
+// Winter's pass is `Cer`, with three deliberate differences:
+//   - the group is the RUN of consecutive chain `assistant` entries (one response's entries), and a
+//     sibling is an off-chain `assistant` entry parented on a member or on another sibling -- never
+//     a `message.id` match. This projection carries no message id, and the router's same-view
+//     loopback answers every turn with one id, so an id group would lump unrelated turns.
+//   - a recovered result must answer a call of the group that nothing on the chain answers yet (the
+//     pairing the provider enforces), so a stray duplicate result is never replayed.
+//   - a sibling comes back only when every call it carries is then answered. One whose result was
+//     never written would reach the provider unpaired -- the very refusal this pass exists to end.
+// Recovered results come in call order (claude sorts by timestamp, its write order). Only calls and
+// results come back: the skill body and attachments hanging off a recovered result's own branch
+// stay out, as they do in claude's pass.
 //
 // A run that ENDS the chain gets nothing spliced after it. That is claude's `--resume-session-at`,
-// which slices its RECOVERED chain at the target: slicing at a batch's last call cuts off the
-// results spliced after it. It is also what keeps the chain's last element the chain's own tail.
+// which slices its RECOVERED chain at the target (34128935): slicing at a batch's last chain entry
+// cuts off everything spliced after it. It is also what keeps the chain's last element its own tail.
 
 function toolUseIdsOf(e: DialectEntry): string[] {
   if (e.type !== "assistant" || !Array.isArray(e.message?.content)) return [];
@@ -313,23 +320,45 @@ function toolResultIdsOf(e: DialectEntry): string[] {
 }
 
 /**
- * `chain` (root-first) with each parallel batch's off-chain results spliced in right after the
- * batch's last call entry. `pool` is where they are looked for (the loaded file, or what of it a
- * truncation keeps in play). Returns `chain` itself when nothing was recovered.
+ * `chain` (root-first) with each parallel batch's off-chain call entries and results spliced in
+ * right after the batch's last chain entry. `pool` is where they are looked for (the loaded file, or
+ * what of it a truncation keeps in play), in file (append) order. Returns a copy of `chain` when
+ * nothing was recovered.
  */
 export function recoverParallelToolResults(chain: readonly DialectEntry[], pool: readonly DialectEntry[]): DialectEntry[] {
   const onChain = new Set(chain.map((e) => e.uuid));
   const resultsByParent = new Map<string, DialectEntry[]>();
+  const offChainAssistants: DialectEntry[] = [];
   for (const e of pool) {
-    if (onChain.has(e.uuid) || e.parentUuid === null || toolResultIdsOf(e).length === 0) continue;
+    if (onChain.has(e.uuid) || e.parentUuid === null) continue;
+    if (e.type === "assistant" && e.isApiErrorMessage !== true) offChainAssistants.push(e);
+    if (toolResultIdsOf(e).length === 0) continue;
     const siblings = resultsByParent.get(e.parentUuid);
     if (siblings !== undefined) siblings.push(e);
     else resultsByParent.set(e.parentUuid, [e]);
   }
-  if (resultsByParent.size === 0) return [...chain];
+  if (resultsByParent.size === 0 && offChainAssistants.length === 0) return [...chain];
 
   const answered = new Set(chain.flatMap(toolResultIdsOf));
   const recovered = new Set<string>();
+  /** The not-yet-recovered results under `parentUuid` that answer one of `open`, and the ids they answer. */
+  const resultsFor = (parentUuid: string, open: readonly string[]): { results: DialectEntry[]; ids: Set<string> } => {
+    const results: DialectEntry[] = [];
+    const ids = new Set<string>();
+    for (const candidate of resultsByParent.get(parentUuid) ?? []) {
+      if (recovered.has(candidate.uuid)) continue;
+      const answers = toolResultIdsOf(candidate);
+      if (!answers.some((id) => open.includes(id) && !ids.has(id))) continue;
+      results.push(candidate);
+      for (const id of answers) ids.add(id);
+    }
+    return { results, ids };
+  };
+  const take = (results: readonly DialectEntry[], ids: ReadonlySet<string>): void => {
+    for (const r of results) recovered.add(r.uuid);
+    for (const id of ids) answered.add(id);
+  };
+
   const inserts = new Map<string, DialectEntry[]>();
   for (let start = 0; start < chain.length; ) {
     if (chain[start]!.type !== "assistant") {
@@ -339,20 +368,30 @@ export function recoverParallelToolResults(chain: readonly DialectEntry[], pool:
     let end = start;
     while (end + 1 < chain.length && chain[end + 1]!.type === "assistant") end++;
     if (end < chain.length - 1) {
-      const found: DialectEntry[] = [];
+      // The run's own calls first, then its siblings (file order: a sibling is written after the
+      // entry it hangs off), so results come back in call order.
+      const memberResults: DialectEntry[] = [];
       for (let k = start; k <= end; k++) {
         const member = chain[k]!;
-        const open = toolUseIdsOf(member).filter((id) => !answered.has(id));
-        if (open.length === 0) continue;
-        for (const candidate of resultsByParent.get(member.uuid) ?? []) {
-          if (recovered.has(candidate.uuid)) continue;
-          const ids = toolResultIdsOf(candidate);
-          if (!ids.some((id) => open.includes(id) && !answered.has(id))) continue;
-          recovered.add(candidate.uuid);
-          for (const id of ids) answered.add(id);
-          found.push(candidate);
-        }
+        const { results, ids } = resultsFor(member.uuid, toolUseIdsOf(member).filter((id) => !answered.has(id)));
+        take(results, ids);
+        memberResults.push(...results);
       }
+      const reachable = new Set(chain.slice(start, end + 1).map((e) => e.uuid));
+      const siblings: DialectEntry[] = [];
+      const siblingResults: DialectEntry[] = [];
+      for (const candidate of offChainAssistants) {
+        if (candidate.parentUuid === null || !reachable.has(candidate.parentUuid) || recovered.has(candidate.uuid)) continue;
+        reachable.add(candidate.uuid);
+        const calls = toolUseIdsOf(candidate);
+        const { results, ids } = resultsFor(candidate.uuid, calls.filter((id) => !answered.has(id)));
+        if (!calls.every((id) => answered.has(id) || ids.has(id))) continue;
+        recovered.add(candidate.uuid);
+        take(results, ids);
+        siblings.push(candidate);
+        siblingResults.push(...results);
+      }
+      const found = [...siblings, ...memberResults, ...siblingResults];
       if (found.length > 0) inserts.set(chain[end]!.uuid, found);
     }
     start = end + 1;

@@ -630,6 +630,50 @@ describe("F2 (fix round 23): a claude parallel tool batch rebuilds with every ca
     ]);
   });
 
+  // claude yields a concurrency-safe batch's results in COMPLETION order (`getCompletedResults`, dump
+  // 18548003, skips an executing concurrency-safe tool instead of waiting for it), and the next turn
+  // chains onto the last message yielded. When the FIRST call finishes last, the next turn chains
+  // through the first call's result, and the later call ENTRIES -- not just their results -- are off
+  // the walk. claude's `Cer` recovers those sibling entries too.
+  function chainedThroughFirstCall(): SessionStoreEntry[] {
+    return claudeParallelBatch().map((e) => (e.uuid === "ba33ce5b" ? { ...e, parentUuid: "f2-att-s2" } : e));
+  }
+
+  test("a batch whose next turn chains through its FIRST call brings back the later call entries and every result", () => {
+    const rebuilt = rebuildProviderMessages(toDialectEntries(chainedThroughFirstCall()));
+    expect(unpairedCalls(rebuilt)).toEqual([]);
+    const shape = shapeOf(rebuilt);
+    expect(shape.slice(0, 7)).toEqual([
+      "user:run the F2 batch",
+      "assistant:use:toolu_f2_skill",
+      // The later call entries come back right after the batch's last entry on the walk...
+      "assistant:use:toolu_f2_search",
+      "assistant:use:toolu_f2_mcp",
+      // ...then their results, ahead of the on-walk result -- claude's `Cer` splice order.
+      "tool:result:toolu_f2_search",
+      "tool:result:toolu_f2_mcp",
+      "tool:result:toolu_f2_skill",
+    ]);
+    // The skill body and its date_change attachment are ON the walk here (the next turn chains
+    // through them), so they are ordinary history, exactly as claude's own walk keeps them.
+    expect(shape[7]).toBe("user:text");
+    expect(shape[8]).toContain("2026-09-25");
+    expect(shape.slice(9)).toEqual(["assistant:F2-DONE", "user:and the next question"]);
+  });
+
+  test("a sibling call entry whose result was never written is not brought back (it would reach the provider unpaired)", () => {
+    const entries = chainedThroughFirstCall().filter((e) => e.uuid !== "568f4afb" && e.uuid !== "f2-att-m1" && e.uuid !== "519bfcd0");
+    const rebuilt = rebuildProviderMessages(toDialectEntries(entries));
+    expect(unpairedCalls(rebuilt)).toEqual([]);
+    expect(shapeOf(rebuilt).slice(0, 5)).toEqual([
+      "user:run the F2 batch",
+      "assistant:use:toolu_f2_skill",
+      "assistant:use:toolu_f2_search",
+      "tool:result:toolu_f2_search",
+      "tool:result:toolu_f2_skill",
+    ]);
+  });
+
   test("a call already answered on the chain is never answered twice, and a Winter-shaped linear batch is unchanged", () => {
     // Winter's own writer: ONE assistant entry with every call, ONE user entry with every result.
     const linear: DialectEntry[] = [
