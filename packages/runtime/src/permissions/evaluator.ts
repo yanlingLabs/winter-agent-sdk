@@ -1394,44 +1394,62 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
 }
 
 /**
- * Fix round 10, item 3: claude's own read decision function, `D0`, unconditionally calls the EDIT
- * decision function, `zC`, for every read (dump-confirmed: `D0` checks its own Read deny/ask rules
- * first, then a network-trust gate, THEN `T=zC(e,t,R,u)` -- an "allow" from `zC` grants the read too
- * ("edit implies read"), which CLAUDE.md's own standing ruling deliberately does NOT port ("Winter's
- * reads are ungated" -- a Read/Glob/Grep call consults only Read-authored rules, never Edit ones).
+ * Fix round 10, item 3 (widened, fix round 11 "minors, promoted"): claude's own read decision
+ * function, `D0`, unconditionally calls the EDIT decision function, `zC`, for every read (dump-
+ * confirmed: `D0` checks its own Read deny/ask rules first, then a network-trust gate, THEN
+ * `T=zC(e,t,R,u)` -- an "allow" from `zC` grants the read too ("edit implies read"), which
+ * CLAUDE.md's own standing ruling deliberately does NOT port ("Winter's reads are ungated" -- a
+ * Read/Glob/Grep call consults only Read-authored rules, never Edit ones).
  *
  * What THIS function exists for is narrower and is what the controller's own item-3 ruling actually
- * asks for: "a broken Edit(...) rule also denies Read/Glob/Grep under its root, via zC's edit check
- * on reads." Since `D0` calls `zC` UNCONDITIONALLY (not merely when an edit rule happens to match),
- * a MALFORMED Edit(...) pattern crashes `zC` itself on every read that reaches this point -- and
- * that crash is what propagates through `D0` to the same per-tool-call catch boundary every other
- * crash reaches. This function reproduces exactly that side effect, and nothing else: it evaluates
- * Edit-authored DENY candidates against the read's own target path SOLELY so that a malformed one's
- * own `FileRuleCompileError` (file-rules.ts) propagates from here -- the return value of
- * `matchFileRulesGrouped` is discarded UNCONDITIONALLY, a real match included, so an ordinary,
- * well-formed `Edit(...)` deny rule has NO effect on a read through this path, preserving the
- * standing "reads are ungated" ruling. Only a crash escapes.
+ * asks for -- round 10's own version only covered deny; round 11's re-review widened it to match
+ * `zC`'s full SEQUENCE, verbatim: "a broken ask rule denies; a broken allow rule denies once it is
+ * reached." `zC` itself is deny -> ask -> allow, each stage short-circuiting the next on a WELL-FORMED
+ * match (claude's own decision resolves there and never even compiles the later stages' patterns) --
+ * so a malformed pattern in a LATER stage only crashes when that stage is actually reached, i.e. no
+ * earlier stage's well-formed rule already matched. This function reproduces exactly that
+ * short-circuit-on-well-formed-match SEQUENCING, and nothing else: every `matchFileRulesGrouped`
+ * return value is still discarded UNCONDITIONALLY for its OWN decision purposes (a well-formed match
+ * at ANY stage has zero effect on the read's outcome, preserving "reads are ungated") -- it is
+ * consulted ONLY to decide whether to proceed to the next stage at all, mirroring `zC`'s own
+ * early-return. Only a `FileRuleCompileError` throw (from a stage that genuinely gets reached) ever
+ * escapes this function, propagating to `evaluate()`'s own catch exactly like round 10's narrower
+ * version did.
  */
-function crashCheckEditDenyDuringRead(rules: SourcedRuleSet, call: PermissionCall, ctx: EvaluationContext, kind: FileRuleKind): void {
+function crashCheckEditRulesDuringRead(rules: SourcedRuleSet, call: PermissionCall, ctx: EvaluationContext, kind: FileRuleKind): void {
   if (kind !== "read") return;
   const rawPath = call.input[fileRulePathField(call.toolName)];
   const path = typeof rawPath === "string" ? rawPath : rawPath === undefined && (call.toolName === "Glob" || call.toolName === "Grep") ? "." : undefined;
   if (path === undefined) return;
   const pool = ctx.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
-  const candidates: FileRuleCandidate<SourcedRuleEntry>[] = [];
-  for (const entry of pool) {
-    if (entry.behavior !== "deny") continue;
-    if (entry.rule.toolName !== "Edit") continue;
-    if (entry.rule.specifier?.kind !== "pattern") continue;
-    candidates.push({ entry, pattern: entry.rule.specifier.source });
+  const opts = { cwd: ctx.cwd, home: ctx.home };
+
+  function candidatesFor(behavior: PermissionBehavior): FileRuleCandidate<SourcedRuleEntry>[] {
+    const out: FileRuleCandidate<SourcedRuleEntry>[] = [];
+    for (const entry of pool) {
+      if (entry.behavior !== behavior) continue;
+      if (entry.rule.toolName !== "Edit") continue;
+      if (entry.rule.specifier?.kind !== "pattern") continue;
+      out.push({ entry, pattern: entry.rule.specifier.source });
+    }
+    return out;
   }
-  if (candidates.length === 0) return;
+
   const absPath = resolveTargetPath(path, ctx.cwd);
   const target = resolveRealTarget(absPath);
-  // Neither call's RETURN VALUE is read -- see this function's own header. A throw from either
-  // propagates naturally, since nothing here catches it.
-  matchFileRulesGrouped(candidates, absPath, { cwd: ctx.cwd, home: ctx.home }, "denyAsk");
-  matchFileRulesGrouped(candidates, target, { cwd: ctx.cwd, home: ctx.home }, "denyAsk");
+
+  // Evaluates one stage against BOTH the link path and its real target (rider 2's own "deny if
+  // either end" posture, matching every other Edit-rule check in this file) and reports whether a
+  // WELL-FORMED entry matched -- a throw from either call propagates naturally, uncaught here.
+  function stageMatched(behavior: PermissionBehavior, direction: "allow" | "denyAsk"): boolean {
+    const candidates = candidatesFor(behavior);
+    if (candidates.length === 0) return false;
+    return matchFileRulesGrouped(candidates, absPath, opts, direction) !== null || matchFileRulesGrouped(candidates, target, opts, direction) !== null;
+  }
+
+  if (stageMatched("deny", "denyAsk")) return; // zC resolves here; ask/allow are never reached
+  if (stageMatched("ask", "denyAsk")) return; // zC resolves here; allow is never reached
+  stageMatched("allow", "allow"); // "once it is reached" -- evaluated (and can crash) only now
 }
 
 function formatRuleRef(entry: SourcedRuleEntry): string {
@@ -2306,11 +2324,12 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     };
   }
 
-  // Fix round 10, item 3: mirrors claude's own D0 unconditionally calling zC for every read -- see
-  // `crashCheckEditDenyDuringRead`'s own header. A THROW here (a malformed Edit(...) deny rule)
+  // Fix round 10, item 3 (widened fix round 11 -- deny/ask/allow, not deny alone): mirrors claude's
+  // own D0 unconditionally calling zC for every read -- see `crashCheckEditRulesDuringRead`'s own
+  // header. A THROW here (a malformed Edit(...) rule, in whichever stage zC would actually reach)
   // propagates to `evaluate()`'s own catch; an ordinary match or non-match has no effect at all.
   const readKind = fileRuleKindFor(effectiveCall.toolName);
-  if (readKind !== undefined) crashCheckEditDenyDuringRead(policy.rules, effectiveCall, ctx, readKind);
+  if (readKind !== undefined) crashCheckEditRulesDuringRead(policy.rules, effectiveCall, ctx, readKind);
 
   // --- WebFetch to a private address: the session's `privateAddressPolicy` ------------------------
   //

@@ -2290,6 +2290,88 @@ describe("evaluate() -- fix round 10, item 3: an uncompilable file-rule pattern 
   });
 });
 
+// Fix round 11 ("minors, promoted", item 3 widened): round 10's own crash-check only ever probed
+// Edit DENY candidates. The controller's re-review pointed out claude's `zC` runs its FULL sequence
+// for a read (deny -> ask -> allow, each short-circuiting the next on a WELL-FORMED match) -- "a
+// broken ask rule denies; a broken allow rule denies once it is reached." Widened
+// (crashCheckEditRulesDuringRead, evaluator.ts) to probe all three behaviors in that order, still
+// discarding every matchFileRulesGrouped return value for its OWN purpose (a well-formed match at ANY
+// stage has zero effect on the read -- "reads are ungated" stays intact) and using it ONLY to decide
+// whether the next stage is reached at all, mirroring zC's own short-circuit.
+describe("evaluate() -- fix round 11 (item 3 widened): the read crash-check now covers Edit ask/allow rules too, in zC's own deny -> ask -> allow sequence", () => {
+  const BROKEN_PATTERN = "[bad/baz";
+
+  test("a broken Edit(...) ASK rule (no deny at all) ALSO denies a Read call under its own root", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Edit(${BROKEN_PATTERN})`, "ask")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+
+  test("a broken Edit(...) ALLOW rule (no deny/ask at all -- 'once it is reached') ALSO denies a Read call under its own root", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Edit(${BROKEN_PATTERN})`, "allow")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+
+  test("control: a WELL-FORMED Edit(...) ask rule matching the SAME path has NO effect on a Read call at all", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(//work/secrets/**)", "ask")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/secrets/key.pem" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("control: a WELL-FORMED Edit(...) allow rule matching the SAME path has NO effect on a Read call at all", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(//work/secrets/**)", "allow")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/secrets/key.pem" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  // The controller's own "once it is reached" edge, named explicitly: a well-formed deny under ONE
+  // root plus a broken allow rule under a DIFFERENT root -- the well-formed deny's own match (when it
+  // fires) stops zC before the broken allow is ever compiled; a call the well-formed deny does NOT
+  // match still reaches (and crashes on) the broken allow stage.
+  test("a well-formed Edit(//w/ok/**) deny + a broken Edit(...) allow: a Read under the well-formed root does NOT crash (deny resolves first, allow never reached)", async () => {
+    const ctx = baseCtx({
+      cwd: "/w",
+      policy: policy({
+        mode: "default",
+        rules: withRules(rule("Edit(//w/ok/**)", "deny"), rule(`Edit(${BROKEN_PATTERN})`, "allow")),
+      }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/w/ok/x" }), ctx);
+    expect(record.mechanism).not.toBe("crash");
+  });
+
+  test("...while a Read OUTSIDE the well-formed deny's root DOES crash -- the broken allow rule is genuinely reached for it", async () => {
+    const ctx = baseCtx({
+      cwd: "/w",
+      policy: policy({
+        mode: "default",
+        rules: withRules(rule("Edit(//w/ok/**)", "deny"), rule(`Edit(${BROKEN_PATTERN})`, "allow")),
+      }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/w/other/y" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+});
+
 // Fix round 10, item B: claude's own `ht` trims a raw path FIRST (dump byte offset 12083670, pinned
 // 2.1.250) -- the permission check (permissions/paths.ts's `resolveTargetPath`, same fix) and the
 // tool's actual write (tools/impl/{read,write,edit,...}.ts, same fix) must never disagree. Before
