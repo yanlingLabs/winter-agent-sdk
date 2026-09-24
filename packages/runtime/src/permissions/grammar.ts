@@ -1351,6 +1351,9 @@ function sueParseMcpName(toolName: string): { serverName: string; toolName?: str
   return { serverName, ...(rest.length > 0 ? { toolName: rest.join("__") } : {}) };
 }
 
+// Fix round 17 (R.3 M-3): claude's `zDe` (dump byte 11968484), text byte for byte -- the dash in the
+// suggestion is `\u2014` (an em dash) in claude's own source; round 10's port had two hyphens. `zDe`
+// also returns an `examples` array, which `io` never reads, so it is not carried.
 function sueAllowWildcardScopeError(toolName: string): PermissionRuleValidation | null {
   if (!toolName.includes("*")) return null;
   const mcp = sueParseMcpName(toolName);
@@ -1359,7 +1362,7 @@ function sueAllowWildcardScopeError(toolName: string): PermissionRuleValidation 
     valid: false,
     error: `Wildcard tool name "${toolName}" is not supported in allow rules`,
     suggestion:
-      "An allow pattern must name the scope it widens -- globs are permitted only in the tool position after a literal mcp__<server>__ prefix. Deny and ask rules accept wildcards anywhere",
+      "An allow pattern must name the scope it widens \u2014 globs are permitted only in the tool position after a literal mcp__<server>__ prefix. Deny and ask rules accept wildcards anywhere",
   };
 }
 

@@ -792,6 +792,17 @@ describe("read-only recognition refuses the find/rg/git forms that write or run 
 // Every rejection class the controller listed, tested with BOTH an allow and a deny where the
 // controller's own list distinguishes them.
 describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exactly", () => {
+  // Fix round 17 (R.3 M-3): `zDe`'s suggestion, byte for byte (dump byte 11968484) -- claude's source
+  // spells the dash as `\u2014`, an em dash, where round 10's port had two hyphens.
+  test("fix round 17: the allow-wildcard suggestion is claude's text byte for byte, em dash included", () => {
+    expect(validatePermissionRuleString("*", "allow")).toMatchObject({
+      valid: false,
+      error: 'Wildcard tool name "*" is not supported in allow rules',
+      suggestion:
+        "An allow pattern must name the scope it widens \u2014 globs are permitted only in the tool position after a literal mcp__<server>__ prefix. Deny and ask rules accept wildcards anywhere",
+    });
+  });
+
   test("an empty rule is rejected", () => {
     expect(validatePermissionRuleString("", "deny")).toEqual({ valid: false, error: "Permission rule cannot be empty" });
     expect(validatePermissionRuleString("   ", "allow")).toEqual({ valid: false, error: "Permission rule cannot be empty" });

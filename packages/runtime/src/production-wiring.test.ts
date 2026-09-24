@@ -1169,6 +1169,26 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
     }
   });
 
+  // Fix round 17 (R.3 M-3): claude's `io` (dump byte 12279316 region) warns on a non-string entry in
+  // `permissions.{allow,deny,ask}` -- `Non-string value in ${s} array was removed`, one warning per
+  // entry -- where Winter dropped it silently.
+  test("fix round 17: a non-string permissions entry is removed WITH claude's io warning, one per entry, and the string siblings survive", async () => {
+    writeSettings(home, { permissions: { allow: ["Read(ok/**)", 42, null], deny: [{ tool: "Bash" }], ask: [true] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-io-nonstring", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w === "Non-string value in allow array was removed")).toHaveLength(2);
+      expect(wiring.warnings.filter((w) => w === "Non-string value in deny array was removed")).toHaveLength(1);
+      expect(wiring.warnings.filter((w) => w === "Non-string value in ask array was removed")).toHaveLength(1);
+      expect(wiring.engineOptions.settingsRules.entries.some((e) => e.rule.toolName === "Read" && e.behavior === "allow")).toBe(true);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("a well-formed rule produces no sue warning at all", async () => {
     writeSettings(home, { permissions: { deny: ["Read(secrets/**)"] } });
     const wiring = await buildProductionWiring({

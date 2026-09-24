@@ -293,7 +293,15 @@ export function buildSettingsRuleSeed(
       ["ask", "ask"],
       ["allow", "allow"],
     ] as const) {
-      for (const raw of stringArray(block[key])) {
+      const rawEntries: unknown[] = Array.isArray(block[key]) ? (block[key] as unknown[]) : [];
+      for (const raw of rawEntries) {
+        // Fix round 17 (R.3 M-3): claude's `io` (dump byte 12279316 region) removes a non-string entry
+        // WITH a warning -- `Non-string value in ${s} array was removed`, one per entry -- before
+        // `sue` ever runs; Winter used to drop it silently (`stringArray`).
+        if (typeof raw !== "string") {
+          warnings.push(`Non-string value in ${key} array was removed`);
+          continue;
+        }
         // Fix round 10, item A: `sue`, ported (grammar.ts's `validatePermissionRuleString`) --
         // claude's OWN settings-load validator, applied here because THIS is Winter's one call
         // site that reads `permissions.{allow,deny,ask}` from a raw settings object, mirroring
