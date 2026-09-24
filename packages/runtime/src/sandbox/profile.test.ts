@@ -179,6 +179,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "  (global-name \"com.apple.bsd.dirhelper\"))",
     "(allow file-read*)",
     "",
+    "", // fix round 11: denyReadRegexRules, always-interpolated and empty here (no glob-shaped denyRead entries)
     "(deny file-read* (subpath \"/Users/x/.winter/run\"))",
     "(deny file-read* (subpath \"/Users/x/custom-root/run\"))",
     "(deny file-read* (regex #\"^/Users/x/\\.winter/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/.*\\.[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]-[Ss][Tt][Aa][Tt][Ee]\\.[Jj][Ss][Oo][Nn][Ll]$\"))",
@@ -187,6 +188,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "  (subpath \"/work\")",
     "  (subpath \"/work/a\"))",
     "",
+    "", // fix round 11: denyWriteRegexRules, always-interpolated and empty here (no glob-shaped denyWrite entries)
     "(allow file-write-data (path \"/dev/null\") (path \"/dev/stdout\") (path \"/dev/stderr\") (path \"/dev/dtracehelper\"))",
     "(allow file-write* (regex #\"^/var/folders/xx/T/[^/]+$\"))",
     "(deny network*)",

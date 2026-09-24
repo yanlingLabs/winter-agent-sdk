@@ -182,6 +182,15 @@ export interface RunCommandOptions {
   denyWritePaths?: string[];
   denyReadPaths?: string[];
   /**
+   * Fix round 11 (claude's `Li`/`Rt`, dump byte 15365905/15282610): glob-shaped `denyWritePaths`/
+   * `denyReadPaths` entries, PRE-CONVERTED to SBPL regex source by the caller (`permissions/
+   * file-rules.ts`'s `splitDenyPathsByGlobShape`) -- this module stays glob-grammar-free, exactly
+   * like `denyWritePaths`/`denyReadPaths` themselves are already resolved, absolute paths by the
+   * time they reach here.
+   */
+  denyWriteRegexes?: string[];
+  denyReadRegexes?: string[];
+  /**
    * WS-12 §2: the caller's `ctx.home`, threaded straight through to `buildSeatbeltProfile`'s own
    * `home` field for the baseline `<home>/<homeDirName>/run` read denial -- see that field's own header
    * for why this module (rather than profile.ts) is where a real `ctx.home` value gets plugged in.
@@ -242,6 +251,8 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       ...(opts.writableRoots !== undefined ? { writableRoots: opts.writableRoots } : {}),
       ...(opts.denyWritePaths !== undefined ? { denyWritePaths: opts.denyWritePaths } : {}),
       ...(opts.denyReadPaths !== undefined ? { denyReadPaths: opts.denyReadPaths } : {}),
+      ...(opts.denyWriteRegexes !== undefined ? { denyWriteRegexes: opts.denyWriteRegexes } : {}),
+      ...(opts.denyReadRegexes !== undefined ? { denyReadRegexes: opts.denyReadRegexes } : {}),
       allowNetwork,
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),

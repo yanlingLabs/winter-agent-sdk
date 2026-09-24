@@ -26,6 +26,7 @@ import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailabl
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
 import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
 import { createMonitorEventRelay } from "../../subagents/notification-queue.ts";
+import { splitDenyPathsByGlobShape } from "../../permissions/file-rules.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -139,12 +140,24 @@ function buildMonitorChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
 interface MonitorDenyPaths {
   denyWritePaths?: string[];
   denyReadPaths?: string[];
+  denyWriteRegexes?: string[];
+  denyReadRegexes?: string[];
 }
+// Fix round 11: mirrors bash.ts's own `computeDenyPaths` -- see that function's own header. The
+// glob-conversion itself (`splitDenyPathsByGlobShape`) is the ONE shared primitive both files call,
+// per file-rules.ts's own header on that function; the small "forward these onto RunCommandOptions"
+// glue stays independently written in each file, matching this file's own pre-existing duplication
+// convention (a cross-tool-file import between bash.ts/monitor.ts specifically, not a shared
+// lower-level permissions primitive both already depend on).
 function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
   const fs = ctx.sandboxSettings.filesystem;
+  const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
+  const read = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
   return {
-    ...(fs?.denyWrite !== undefined ? { denyWritePaths: fs.denyWrite } : {}),
-    ...(fs?.denyRead !== undefined ? { denyReadPaths: fs.denyRead } : {}),
+    ...(write.paths.length > 0 ? { denyWritePaths: write.paths } : {}),
+    ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
+    ...(write.regexes.length > 0 ? { denyWriteRegexes: write.regexes } : {}),
+    ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
   };
 }
 
@@ -158,6 +171,9 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   writableRoots: string[];
   denyWritePaths?: string[];
   denyReadPaths?: string[];
+  /** Fix round 11: glob-shaped denyWrite/denyRead entries, pre-converted to SBPL regex source -- see `splitDenyPathsByGlobShape`'s own header. */
+  denyWriteRegexes?: string[];
+  denyReadRegexes?: string[];
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;

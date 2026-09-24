@@ -128,6 +128,20 @@ function sbplRegexLiteral(p: string): string {
   return p.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&").replace(/"/g, '\\"');
 }
 
+/**
+ * Fix round 11: escapes ONLY the `"` delimiter, for a string that is ALREADY compiled regex source
+ * (`globToSbplRegexSource`/`recursiveGlobToSbplRegexSource`, permissions/file-rules.ts) and must
+ * reach the SBPL `(regex #"...")` literal with its own backslash-escapes UNTOUCHED -- unlike
+ * `sbplString` (which doubles every backslash, correct for a PLAIN string literal's own escaping
+ * rules but wrong here: it would turn this regex's `\.` into `\\.`, changing its meaning) and unlike
+ * `sbplRegexLiteral` (which escapes regex metacharacters too, correct for embedding a literal PATH as
+ * fixed prefix text inside a hand-built regex, but wrong here: this text is already regex syntax, not
+ * a literal to be escaped INTO regex syntax).
+ */
+function escapeSbplRegexDelimiter(r: string): string {
+  return r.replace(/"/g, '\\"');
+}
+
 // realpath a path if it exists (canonicalizes macOS /tmp and /var symlinks); fall through to the
 // raw path otherwise -- WS-12 §5.2 "graceful fall-through" is a MUST, so this catches EVERY error
 // (not just ENOENT: `resolveRealTarget` itself re-throws a non-ENOENT failure encountered mid-walk,
@@ -240,6 +254,20 @@ export interface SeatbeltProfileInput {
   denyWritePaths?: string[];
   /** WS-12 §5.3: filesystem.denyRead, layered AFTER the read-allow block (last-match-wins). */
   denyReadPaths?: string[];
+  /**
+   * Fix round 11 (claude's `Li`/`Rt`, dump byte 15365905/15282610, pinned 2.1.250): glob-shaped
+   * deny entries, PRE-CONVERTED by the caller to SBPL regex SOURCE TEXT (`permissions/file-rules.ts`'s
+   * `globToSbplRegexSource`/`recursiveGlobToSbplRegexSource`/`splitDenyPathsByGlobShape`) -- this
+   * module has no glob grammar of its own (mirrors `denyWritePaths`/`denyReadPaths`'s own "already
+   * resolved by the caller" posture) and only quotes/renders. Claude's own macOS sandbox profile
+   * builder renders a glob-shaped deny as `(regex ...)` and a plain one as `(subpath ...)` (`Li`); a
+   * `subpath` deny alone -- Winter's pre-round-11 posture -- silently drops a glob-shaped Edit deny
+   * (e.g. a globstar-anchored `.env` pattern) or `denyWrite` entry from the sandbox layer entirely
+   * (the PERMISSION-RULE layer still enforced it for a recognized tool call; a bash-invoked
+   * `tee`/`cp` bypassing that layer did not).
+   */
+  denyWriteRegexes?: string[];
+  denyReadRegexes?: string[];
   /** Resolved network posture -- see resolveNetworkPosture's own header for why this is a plain boolean here. */
   allowNetwork: boolean;
   /**
@@ -356,6 +384,34 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const denyWriteRules = (input.denyWritePaths ?? []).map((p) => `(deny file-write* (subpath "${sbplString(canon(p))}"))`).join("\n");
   const denyReadRules = (input.denyReadPaths ?? []).map((p) => `(deny file-read* (subpath "${sbplString(canon(p))}"))`).join("\n");
 
+  // Fix round 11: the GLOB-shaped siblings of the two rules just above (claude's own `Li`/`Rt`,
+  // dump byte 15365905/15282610) -- `(regex #"...")` rather than `(subpath ...)`, since SBPL's
+  // `subpath` operator has no glob grammar of its own and would otherwise treat e.g. `**/.env`
+  // as a LITERAL directory name (matching nothing real). The caller has already converted these to
+  // regex SOURCE TEXT (`permissions/file-rules.ts`'s `splitDenyPathsByGlobShape`, the recursive form
+  // -- "and everything under it," matching `subpath`'s own implicit recursive semantics).
+  //
+  // Deliberately NOT `sbplString()`-quoted -- discovered empirically (a real darwin sandbox-exec
+  // test went GREEN for the `subpath` siblings but silently failed to block for these until this was
+  // fixed): `sbplString` doubles every backslash for a PLAIN `"..."` string literal's own escaping
+  // rules, but an SBPL `(regex #"...")` literal's content is NOT run through that same unescaping --
+  // doubling turns this regex's own `\.` (an escaped literal dot) into `\\.` (a literal backslash
+  // followed by "any character"), which no longer means what the regex intends. This module's OWN
+  // pre-existing regex clauses (`controlPlaneRegexes`/`providerStateReadDenyRegex`, above) already
+  // establish the real convention: a `(regex #"...")` clause's content is embedded WITH NO
+  // backslash-doubling at all -- only the outer `#"..."` quote character itself needs escaping, which
+  // `escapeSbplRegexDelimiter` (below) does and nothing else.
+  //
+  // Deliberately NOT `canon()`-ed either -- unlike the plain-path rules above, there is no real
+  // filesystem path here to canonicalize (the text is already a compiled regex pattern, wildcards
+  // included); a glob-shaped deny whose fixed PREFIX sits behind a symlink (e.g. macOS's `/tmp` ->
+  // `/private/tmp`) is matched only in its as-typed form, a disclosed limitation claude's own
+  // pipeline shares (its `Cv` normalization step, not ported here, does not perform real symlink
+  // resolution either -- see file-rules.ts's own module header for the full list of disclosed
+  // simplifications).
+  const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny file-write* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
+  const denyReadRegexRules = (input.denyReadRegexes ?? []).map((r) => `(deny file-read* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
+
   // WS-12 §2: "the sole baseline read denial is <home>/<homeDirName>/run" -- a subpath deny (not a
   // filename literal/regex like the control-plane carve-outs above): the WHOLE directory tree is
   // off-limits, not one specific filename within it. Placed AFTER the user-configured denyReadRules
@@ -460,11 +516,13 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
 ${machRules})
 (allow file-read*)
 ${denyReadRules}
+${denyReadRegexRules}
 ${denyRunDirRule}
 ${denyProviderStateReadRule}
 (allow file-write*
 ${writeRules})
 ${denyWriteRules}
+${denyWriteRegexRules}
 (allow file-write-data (path "/dev/null") (path "/dev/stdout") (path "/dev/stderr") (path "/dev/dtracehelper"))
 ${allowDarwinTempFiles}
 ${network}

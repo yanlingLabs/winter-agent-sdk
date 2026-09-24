@@ -8,7 +8,7 @@
 // is what paths.test.ts's own (now-superseded) corpus pinned, and claude's answer is the bar this
 // module must clear.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +17,11 @@ import {
   matchFileRulesGrouped,
   resolveFileRuleAnchor,
   resolveFileRuleAbsolutePath,
+  resolveFileRuleAbsoluteGlobText,
+  isGlobShapedFileRulePattern,
+  globToSbplRegexSource,
+  recursiveGlobToSbplRegexSource,
+  splitDenyPathsByGlobShape,
   unanchorTrailingDoubleStar,
   normalizeFileRulePattern,
   escapeFileRulePathSegment,
@@ -264,6 +269,142 @@ describe("resolveFileRuleAbsolutePath -- fix round 10, item C: a rule pattern re
 
   test("a root-anchored bare double-star (//**) resolves to the filesystem root itself", () => {
     expect(resolveFileRuleAbsolutePath("//**", opts)).toBe("/");
+  });
+});
+
+// Fix round 11 (claude's Li/Rt, dump byte 15365905/15282610, pinned 2.1.250): the sibling of
+// resolveFileRuleAbsolutePath that does NOT drop a glob-shaped pattern -- see that function's own
+// header for the full rationale (a glob-shaped DENY becomes an SBPL regex clause instead of being
+// silently unenforced by the sandbox layer; ALLOW keeps resolveFileRuleAbsolutePath's own
+// drop-glob-shaped posture, unchanged).
+describe("resolveFileRuleAbsoluteGlobText -- fix round 11: the DENY-side sibling that keeps glob characters intact", () => {
+  const opts = { cwd: CWD, home: HOME };
+
+  test("a genuinely glob-shaped pattern resolves to the absolute text WITH glob characters intact (not undefined, unlike resolveFileRuleAbsolutePath)", () => {
+    expect(resolveFileRuleAbsoluteGlobText("src/*.ts", opts)).toBe(`${CWD}/src/*.ts`);
+    expect(resolveFileRuleAbsoluteGlobText("//repo/**/.env", opts)).toBe("/repo/**/.env");
+  });
+
+  test("a //-anchored pattern with a REDUNDANT trailing /** still strips it, same as resolveFileRuleAbsolutePath -- subpath's own recursive semantics already cover it, so what remains may no longer be glob-shaped at all", () => {
+    expect(resolveFileRuleAbsoluteGlobText("//repo/secrets/**", opts)).toBe("/repo/secrets");
+  });
+
+  test("a non-glob pattern resolves identically to resolveFileRuleAbsolutePath", () => {
+    expect(resolveFileRuleAbsoluteGlobText("~/secrets", opts)).toBe(`${HOME}/secrets`);
+  });
+
+  test("a single-slash-anchored pattern is still INERT (no sourceDir given) -- undefined, the one case with no absolute form at all", () => {
+    expect(resolveFileRuleAbsoluteGlobText("/repo/secrets/*.ts", opts)).toBeUndefined();
+  });
+});
+
+describe("isGlobShapedFileRulePattern -- claude's own Rt (dump byte 15282610), confirmed byte-equivalent to this module's own RULE_PATH_GLOB_CHARS", () => {
+  test("a plain path is not glob-shaped", () => {
+    expect(isGlobShapedFileRulePattern("/repo/secrets")).toBe(false);
+  });
+  test("*, ?, [, ] each make a path glob-shaped", () => {
+    expect(isGlobShapedFileRulePattern("/repo/*.env")).toBe(true);
+    expect(isGlobShapedFileRulePattern("/repo/a?b")).toBe(true);
+    expect(isGlobShapedFileRulePattern("/repo/[wip]")).toBe(true);
+  });
+});
+
+// Fix round 11: claude's own Po (dump byte 15287939, pinned 2.1.250, ground-truth byte-slice-
+// verified via grep -bo + byte-slice extraction -- the coordinator's own "~272946" does not land
+// there, the same pattern as every prior round's citation). Real RegExp behavior asserted, not just
+// the source string, so a subtly-wrong conversion cannot hide behind a passing string-equality check.
+describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own Po/td", () => {
+  test("a single * matches any run of non-separator characters, never crossing a /", () => {
+    const re = new RegExp(globToSbplRegexSource("/repo/*.ts"));
+    expect(re.test("/repo/foo.ts")).toBe(true);
+    expect(re.test("/repo/sub/foo.ts")).toBe(false);
+  });
+
+  test("a mid-path ** matches zero or more whole path segments, including none", () => {
+    const re = new RegExp(globToSbplRegexSource("/repo/**/.env"));
+    expect(re.test("/repo/.env")).toBe(true);
+    expect(re.test("/repo/a/b/.env")).toBe(true);
+    expect(re.test("/repo/a/b/notenv")).toBe(false);
+  });
+
+  test("a trailing ** matches anything under the prefix but NOT the bare prefix itself (subpath's own 'and itself' semantics is what recursiveGlobToSbplRegexSource adds back)", () => {
+    const re = new RegExp(globToSbplRegexSource("/repo/sub/**"));
+    expect(re.test("/repo/sub/x")).toBe(true);
+    expect(re.test("/repo/sub")).toBe(false);
+  });
+
+  test("? matches exactly one non-separator character", () => {
+    const re = new RegExp(globToSbplRegexSource("/repo/a?c"));
+    expect(re.test("/repo/abc")).toBe(true);
+    expect(re.test("/repo/ac")).toBe(false);
+    expect(re.test("/repo/a/c")).toBe(false);
+  });
+
+  test("a literal regex metacharacter in the path (a dot) is escaped, not treated as regex syntax", () => {
+    const re = new RegExp(globToSbplRegexSource("/repo/v1.2/*.ts"));
+    expect(re.test("/repo/v1.2/x.ts")).toBe(true);
+    expect(re.test("/repoXv1X2/x.ts")).toBe(false); // would match if the dots were NOT escaped
+  });
+
+  test("a [...] character class is left as real regex syntax, untouched", () => {
+    const re = new RegExp(globToSbplRegexSource("/repo/[ab].ts"));
+    expect(re.test("/repo/a.ts")).toBe(true);
+    expect(re.test("/repo/b.ts")).toBe(true);
+    expect(re.test("/repo/c.ts")).toBe(false);
+  });
+
+  test("recursiveGlobToSbplRegexSource additionally matches anything nested under the pattern's own match point", () => {
+    const re = new RegExp(recursiveGlobToSbplRegexSource("/repo/**/.env"));
+    expect(re.test("/repo/.env")).toBe(true);
+    expect(re.test("/repo/.env/nested")).toBe(true);
+    expect(re.test("/repo/.envfile")).toBe(false); // not a path-separator boundary
+  });
+
+  // Fix round 11's own addition beyond claude's Po: the fixed (non-glob) prefix is canonicalized
+  // (resolveRealTarget) before conversion -- Winter's own WS-12 §5.2 MUST, not claude parity (claude's
+  // own Cv does not perform real symlink resolution either -- see globToSbplRegexSource's own header).
+  // Exercised against a REAL symlink here (not a real-fs macOS system symlink, so this runs on any
+  // host/CI, unlike the sandbox-exec e2e tests below which are darwin-gated).
+  test("the fixed prefix is canonicalized through a real symlink before conversion", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "winter-glob-prefix-canon-")));
+    try {
+      const real = join(dir, "real");
+      const link = join(dir, "link");
+      mkdirSync(real, { recursive: true });
+      symlinkSync(real, link);
+      const source = globToSbplRegexSource(join(link, "*.ts"));
+      // The generated regex matches the REAL path, not merely the as-typed symlinked one -- proving
+      // the fixed prefix was actually resolved through the link, not just string-copied. `real`'s own
+      // path text (tmpdir + "real") contains no regex-special characters, so a plain substring check
+      // is a valid proxy for "the canonical prefix, not the symlinked one, made it into the regex."
+      expect(new RegExp(source).test(join(real, "x.ts"))).toBe(true);
+      expect(source).toContain(real);
+      expect(source).not.toContain(link);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("splitDenyPathsByGlobShape -- fix round 11: the one shared split point tools/impl/{bash,monitor}.ts both call", () => {
+  test("a non-glob path stays in `paths`, unconverted", () => {
+    expect(splitDenyPathsByGlobShape(["/repo/secrets"])).toEqual({ paths: ["/repo/secrets"], regexes: [] });
+  });
+
+  test("a glob-shaped path moves to `regexes`, converted via the RECURSIVE form", () => {
+    const result = splitDenyPathsByGlobShape(["/repo/**/.env"]);
+    expect(result.paths).toEqual([]);
+    expect(result.regexes).toEqual([recursiveGlobToSbplRegexSource("/repo/**/.env")]);
+  });
+
+  test("a mix of both is split correctly, preserving each list's own relative order", () => {
+    const result = splitDenyPathsByGlobShape(["/a/plain", "/b/*.glob", "/c/also-plain"]);
+    expect(result.paths).toEqual(["/a/plain", "/c/also-plain"]);
+    expect(result.regexes).toEqual([recursiveGlobToSbplRegexSource("/b/*.glob")]);
+  });
+
+  test("an empty list produces two empty lists", () => {
+    expect(splitDenyPathsByGlobShape([])).toEqual({ paths: [], regexes: [] });
   });
 });
 

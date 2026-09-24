@@ -32,7 +32,7 @@ import { setWinterIdentity } from "@yanlinglabs/winter-provider-runtime";
 import { resolveSettingsDetailed, filterEscalatingDefaultMode, providerSettingsFrom } from "./settings/resolve.ts";
 import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { validatePermissionRuleString } from "./permissions/grammar.ts";
-import { resolveFileRuleAbsolutePath } from "./permissions/file-rules.ts";
+import { resolveFileRuleAbsolutePath, resolveFileRuleAbsoluteGlobText } from "./permissions/file-rules.ts";
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
@@ -367,16 +367,26 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
 }
 
 /**
- * WS-21 fix round 10, item C: the permission-rule paths the controller's own ruling names --
- * `Edit(...)` allow -> `filesystem.allowWrite`, `Edit(...)` deny -> `denyWrite`, `Read(...)` deny ->
- * `denyRead` -- derived from the SAME `settingsRules.entries` `buildSettingsRuleSeed` already built
- * (settings.json's own tiers; an `Options`/`canUseTool`/session-supplied rule is a separate,
- * larger integration point and out of scope here). Each rule's own pattern is resolved to ONE
- * absolute path via `resolveFileRuleAbsolutePath` (file-rules.ts) -- `undefined` for an inert or
- * genuinely glob-shaped pattern is silently skipped from the SANDBOX's own list; the permission-rule
- * layer (`evaluate()`) still enforces that rule in full regardless, unaffected by this function.
- * De-duplicated, but NOT yet unioned with `settings.json`'s own explicit `sandbox.filesystem.*`
- * keys or the host's own config -- the caller does that (`resolvedConfig`'s own construction).
+ * WS-21 fix round 10, item C (widened, fix round 11 "important" item): the permission-rule paths the
+ * controller's own ruling names -- `Edit(...)` allow -> `filesystem.allowWrite`, `Edit(...)` deny ->
+ * `denyWrite`, `Read(...)` deny -> `denyRead` -- derived from the SAME `settingsRules.entries`
+ * `buildSettingsRuleSeed` already built (settings.json's own tiers; an `Options`/`canUseTool`/
+ * session-supplied rule is a separate, larger integration point and out of scope here).
+ *
+ * ALLOW entries: unchanged from round 10 -- `resolveFileRuleAbsolutePath` (file-rules.ts), which
+ * returns `undefined` (silently skipped) for an inert `/`-anchored pattern OR a genuinely glob-shaped
+ * one, matching claude's own `Jm` write-allow-only short-circuit (that function's own header).
+ *
+ * DENY entries (round 11): `resolveFileRuleAbsoluteGlobText` instead -- it does NOT drop a
+ * glob-shaped pattern, returning the absolute text with any remaining glob characters intact. A
+ * glob-shaped result lands in the SAME `denyWrite`/`denyRead` set as a plain one; the caller
+ * (`resolvedConfig`'s own construction, below) splits glob-shaped entries out into a `(regex ...)`
+ * SBPL clause instead of a `(subpath ...)` one, per the controller's own ruling -- "port `Li` and
+ * claude's glob-to-regex conversion for DENY entries." Still `undefined`-skipped for the one
+ * genuinely-inert case (a `/`-anchored pattern with no resolvable settings-source root).
+ *
+ * De-duplicated, but NOT yet unioned with `settings.json`'s own explicit `sandbox.filesystem.*` keys
+ * or the host's own config -- the caller does that (`resolvedConfig`'s own construction).
  */
 function deriveSandboxPathsFromRules(entries: readonly SourcedRuleEntry[], opts: { cwd: string; home: string }): { allowWrite: string[]; denyWrite: string[]; denyRead: string[] } {
   const allowWrite = new Set<string>();
@@ -385,11 +395,16 @@ function deriveSandboxPathsFromRules(entries: readonly SourcedRuleEntry[], opts:
   for (const entry of entries) {
     const specifier = entry.rule.specifier;
     if (specifier?.kind !== "pattern") continue;
-    const path = resolveFileRuleAbsolutePath(specifier.source, opts);
-    if (path === undefined) continue;
-    if (entry.rule.toolName === "Edit" && entry.behavior === "allow") allowWrite.add(path);
-    else if (entry.rule.toolName === "Edit" && entry.behavior === "deny") denyWrite.add(path);
-    else if (entry.rule.toolName === "Read" && entry.behavior === "deny") denyRead.add(path);
+    if (entry.rule.toolName === "Edit" && entry.behavior === "allow") {
+      const path = resolveFileRuleAbsolutePath(specifier.source, opts);
+      if (path !== undefined) allowWrite.add(path);
+    } else if (entry.rule.toolName === "Edit" && entry.behavior === "deny") {
+      const path = resolveFileRuleAbsoluteGlobText(specifier.source, opts);
+      if (path !== undefined) denyWrite.add(path);
+    } else if (entry.rule.toolName === "Read" && entry.behavior === "deny") {
+      const path = resolveFileRuleAbsoluteGlobText(specifier.source, opts);
+      if (path !== undefined) denyRead.add(path);
+    }
   }
   return { allowWrite: [...allowWrite], denyWrite: [...denyWrite], denyRead: [...denyRead] };
 }

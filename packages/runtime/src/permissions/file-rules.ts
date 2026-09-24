@@ -217,6 +217,149 @@ export function resolveFileRuleAbsolutePath(pattern: string, opts: { cwd: string
   return join(rootPath, relativePart);
 }
 
+/**
+ * WS-21 fix round 11 ("important" item): the sibling of `resolveFileRuleAbsolutePath` that does NOT
+ * drop a genuinely glob-shaped pattern -- it resolves the SAME anchor/root as that function but
+ * returns the absolute text WITH any remaining glob characters intact (a redundant trailing `/**` is
+ * still stripped first, identically, since `subpath`'s/the recursive-regex-suffix's own "and
+ * everything under it" semantics already cover it). `undefined` only for the one case that has no
+ * absolute form at all -- an INERT `/`-anchored pattern with no resolvable settings-source root,
+ * unchanged from `resolveFileRuleAbsolutePath`'s own posture.
+ *
+ * Exists because claude's own deny-rendering path (`dR`, dump byte 15365699 region) does NOT drop a
+ * glob-shaped deny the way `Jm`'s write-ALLOW-only short-circuit does (round 10's own `Jm` finding,
+ * `resolveFileRuleAbsolutePath`'s own header) -- a glob-shaped DENY instead becomes an SBPL `(regex
+ * ...)` clause (claude's `Li` (dump byte 15365905) / `Rt` (dump byte 15282610)) rather than being silently
+ * unenforced by the sandbox layer. Callers check `isGlobShapedFileRulePattern` on the result to
+ * decide `subpath` vs a `globToSbplRegexSource`/`recursiveGlobToSbplRegexSource` conversion; ALLOW
+ * entries keep using `resolveFileRuleAbsolutePath` (glob-shaped dropped), per the controller's own
+ * explicit ruling: "Dropping glob-shaped ALLOW rules stays as it is, because that's stricter."
+ */
+export function resolveFileRuleAbsoluteGlobText(pattern: string, opts: { cwd: string; home: string }): string | undefined {
+  const anchor = resolveFileRuleAnchor(pattern, { home: opts.home });
+  if (anchor.root === INERT_ANCHOR) return undefined;
+  const rootPath = anchor.root ?? opts.cwd;
+  const normalized = normalizeFileRulePattern(anchor.relativePattern);
+  const withoutTrailingDoubleStar = normalized.endsWith("/**") ? normalized.slice(0, -3) : normalized;
+  const relativePart = withoutTrailingDoubleStar.startsWith("/") ? withoutTrailingDoubleStar.slice(1) : withoutTrailingDoubleStar;
+  if (relativePart === "" || relativePart === ".") return rootPath;
+  return join(rootPath, relativePart);
+}
+
+/** claude's own `Rt` (dump byte 15282610: `e.includes("*")||e.includes("?")||e.includes("[")||e.includes("]")`), confirmed byte-equivalent to this module's own pre-existing glob-char test. Exported so callers outside this module can classify a `resolveFileRuleAbsoluteGlobText` result without re-deriving the char set. */
+export function isGlobShapedFileRulePattern(text: string): boolean {
+  return RULE_PATH_GLOB_CHARS.test(text);
+}
+
+// Fix round 11: canonicalizes the FIXED (non-glob) prefix of an absolute glob pattern before
+// conversion -- Winter's OWN, pre-existing, independent requirement (WS-12 §5.2: "macOS /tmp and
+// /var are symlinks; un-canonicalized rules silently miss," `canon()`'s own header in
+// sandbox/profile.ts), extended here for CONSISTENCY to the glob-shaped case: `profile.ts`'s
+// plain-path deny/allow rules already `canon()` every path they render, so a glob-shaped deny under
+// the identical symlinked prefix (`/tmp` -> `/private/tmp`, `/var/folders/...` -> `/private/
+// var/folders/...`) must not be the one deny shape that silently misses. NOT a claude-parity item --
+// claude's own `Cv` (the normalization step ahead of `Rt`/`Po` in its pipeline) does not perform real
+// symlink resolution either, and is disclosed as not-ported for exactly that reason (this module's
+// own header) -- this canonicalization is Winter's own §5.2 MUST, not a port of anything in the dump.
+// Best-effort: `resolveRealTarget` already tolerates a not-yet-existing LEAF (walks to the nearest
+// existing ancestor); any error canonicalizing the prefix itself falls back to the UNCANONICALIZED
+// text, matching `canon()`'s own "graceful fall-through... catches EVERY error" contract, so a
+// symlink-canonicalization failure never crashes profile generation.
+function canonicalizeGlobFixedPrefix(absoluteGlob: string): string {
+  const firstGlobCharIndex = absoluteGlob.search(RULE_PATH_GLOB_CHARS);
+  if (firstGlobCharIndex === -1) return absoluteGlob; // not glob-shaped; nothing to canonicalize here
+  // The fixed prefix ends at the last path separator BEFORE the first glob character -- a glob
+  // character can appear mid-segment (`sub*dir/x`), where the "fixed prefix" is only the segments
+  // strictly before `sub*dir`, never a partial segment.
+  const lastSepBeforeGlob = absoluteGlob.lastIndexOf("/", firstGlobCharIndex);
+  if (lastSepBeforeGlob <= 0) return absoluteGlob; // no real prefix (glob starts at/near the root)
+  const prefix = absoluteGlob.slice(0, lastSepBeforeGlob);
+  const suffix = absoluteGlob.slice(lastSepBeforeGlob);
+  try {
+    return resolveRealTarget(prefix) + suffix;
+  } catch {
+    return absoluteGlob;
+  }
+}
+
+/**
+ * claude's own `Po` (dump byte 15287939, pinned 2.1.250, ground-truth byte-slice-verified), converting
+ * a glob pattern (already resolved to one absolute string, glob characters intact) to a POSIX
+ * extended-regex source string suitable for an SBPL `(regex #"...")` clause. Chained `.replace()`
+ * calls, IN THIS EXACT ORDER (order is load-bearing -- swapping steps 3/4 before step 5 would let a
+ * literal `*` inside an already-placeholder-substituted globstar get re-matched by the bare-`*` rule):
+ *   1. escape everything a regex treats specially EXCEPT the four glob metacharacters `* ? [ ]`
+ *      (claude's own `[...]` character-class syntax is already valid regex syntax verbatim, so it is
+ *      deliberately left untouched, not escaped);
+ *   2. escape an UNCLOSED trailing `[` (no matching `]`) too, defensively -- a malformed bracket
+ *      class must not produce an invalid regex;
+ *   3. a globstar segment (two stars followed by a slash) -> a placeholder (BEFORE the bare-`**`/`*`
+ *      rules touch it);
+ *   4. remaining `**` -> a placeholder;
+ *   5. `*` -> `[^/]*` (any run of non-separator characters);
+ *   6. `?` -> `[^/]` (exactly one non-separator character);
+ *   7/8. restore the two placeholders: the globstar-segment placeholder becomes a group matching
+ *      zero or more whole path segments each followed by a separator (or nothing at all); bare `**`
+ *      becomes `.` `*` (anything, separators included).
+ * Wrapped in `^...$` (whole-string anchor) -- callers needing the "and everything under it" semantics
+ * `subpath` has built in use `recursiveGlobToSbplRegexSource` instead, matching claude's own `td`.
+ * The fixed prefix is canonicalized FIRST (`canonicalizeGlobFixedPrefix`, above, this codebase's own
+ * addition, not claude's) -- everything downstream of that call is the verbatim `Po` port.
+ */
+export function globToSbplRegexSource(absoluteGlob: string): string {
+  return (
+    "^" +
+    canonicalizeGlobFixedPrefix(absoluteGlob)
+      .replace(/[.^$+{}()|\\]/g, "\\$&")
+      .replace(/\[([^\]]*?)$/g, "\\[$1")
+      .replace(/\*\*\//g, "__GLOBSTAR_SLASH__")
+      .replace(/\*\*/g, "__GLOBSTAR__")
+      .replace(/\*/g, "[^/]*")
+      .replace(/\?/g, "[^/]")
+      .replace(/__GLOBSTAR_SLASH__/g, "(.*/)?")
+      .replace(/__GLOBSTAR__/g, ".*") +
+    "$"
+  );
+}
+
+/**
+ * claude's own `td` (dump byte 15365977: `Po(e).slice(0,-1)+"(/.*)?$"`) -- `globToSbplRegexSource`'s
+ * own whole-string match, WIDENED to also match "the pattern's own match point, optionally followed
+ * by `/` and anything deeper" -- the regex equivalent of `subpath`'s own implicit recursive semantics
+ * (a plain, non-glob deny already renders as `subpath`, which covers a directory AND everything under
+ * it with no extra syntax). claude's own `dR` (the deny-clause builder, same dump region) always uses
+ * this recursive form for a glob-shaped deny's OWN base clause -- never the bare `Li`/
+ * `globToSbplRegexSource` form, which claude reserves for an ALLOW-carve-out entry nested inside a
+ * deny (a feature this port does not carry -- see `resolveFileRuleAbsoluteGlobText`'s own header).
+ */
+export function recursiveGlobToSbplRegexSource(absoluteGlob: string): string {
+  const base = globToSbplRegexSource(absoluteGlob);
+  return base.slice(0, -1) + "(/.*)?$";
+}
+
+/**
+ * WS-21 fix round 11: the ONE place a plain `sandbox.filesystem.denyWrite`/`denyRead` string list
+ * (settings.json's own, user-typed, and `deriveSandboxPathsFromRules`'s own rule-derived denies,
+ * which now may ALSO contain glob-shaped text -- see `resolveFileRuleAbsoluteGlobText`'s own header)
+ * gets split by glob-shape before reaching `SeatbeltProfileInput`/`RunCommandOptions`: a non-glob
+ * entry stays a plain path (`subpath`, unchanged); a glob-shaped one is converted via
+ * `recursiveGlobToSbplRegexSource` (the recursive form, matching `subpath`'s own implicit
+ * "and everything under it" semantics and claude's own `dR`, which always uses the recursive form for
+ * a deny's own base clause). Called once per caller (tools/impl/bash.ts, tools/impl/monitor.ts) --
+ * kept as one shared, tested primitive rather than two hand-copies, per this codebase's own
+ * "a second copy would be exactly the kind of drift risk this whole phase's review lens exists to
+ * catch" precedent (evaluator.ts's `extractCandidateWritePaths`, verbatim).
+ */
+export function splitDenyPathsByGlobShape(paths: readonly string[]): { paths: string[]; regexes: string[] } {
+  const plain: string[] = [];
+  const regexes: string[] = [];
+  for (const p of paths) {
+    if (isGlobShapedFileRulePattern(p)) regexes.push(recursiveGlobToSbplRegexSource(p));
+    else plain.push(p);
+  }
+  return { paths: plain, regexes };
+}
+
 // ---------------------------------------------------------------------------------------------
 // `xi`: leading-BOM handling
 // ---------------------------------------------------------------------------------------------

@@ -22,6 +22,7 @@ import { inMemoryProcess } from "./testing.ts";
 import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermissions } from "./production-wiring.ts";
 import { runCommand } from "./sandbox/spawn.ts";
 import { parseRule } from "./permissions/grammar.ts";
+import { splitDenyPathsByGlobShape } from "./permissions/file-rules.ts";
 // WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
 // rather than letting the production composite reach the developer's real Keychain.
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
@@ -2452,10 +2453,31 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  test("a genuinely glob-shaped Edit(...) deny rule does NOT contribute to denyWrite -- the permission layer still enforces it in full, independently", async () => {
+  // Fix round 11 (superseding this test's own former title/assertion): a glob-shaped Edit(...) DENY
+  // rule now DOES contribute -- as the raw, absolute glob text (glob characters intact), not dropped
+  // -- see production-wiring.ts's own `deriveSandboxPathsFromRules` header and permissions/
+  // file-rules.ts's `resolveFileRuleAbsoluteGlobText`. `computeDenyPaths` (tools/impl/bash.ts,
+  // monitor.ts) is the point that later splits this into a `(regex ...)` SBPL clause; a glob-shaped
+  // ALLOW rule still gets dropped unchanged (the controller's own explicit ruling, tested separately
+  // below).
+  test("a genuinely glob-shaped Edit(...) deny rule DOES contribute to denyWrite, as raw glob text -- the sandbox layer renders it as a (regex ...) clause instead of silently dropping it", async () => {
     writeSettings(home, { permissions: { deny: ["Edit(src/*.ts)"] } });
     const wiring = await buildProductionWiring({
       config: { sessionId: "s-c-glob", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual([join(cwd, "src/*.ts")]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("...while a genuinely glob-shaped Edit(...) ALLOW rule is still dropped, unchanged -- the controller's own explicit ruling ('dropping glob-shaped ALLOW rules stays as it is, because that's stricter')", async () => {
+    writeSettings(home, { permissions: { allow: ["Edit(src/*.ts)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-glob-allow", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -2493,6 +2515,113 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
         expect(denied.posture).toBe("sandboxed");
         expect(denied.exitCode).not.toBe(0);
         expect(existsSync(deniedPath)).toBe(false);
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // Fix round 11 (claude's Li/Rt, dump byte 15365905/15282610): the controller's own explicit test
+  // shape -- "a real darwin-gated sandbox-exec: an Edit(**/.env) deny blocks tee sub/.env, and a
+  // denyWrite glob blocks a matching write." Two separate scenarios below: a RULE-derived glob deny
+  // (deriveSandboxPathsFromRules no longer drops it), and a settings.json-CONFIGURED glob deny (the
+  // OTHER place a glob-shaped string can arrive, split by computeDenyPaths -- reproduced inline here
+  // exactly like the pre-existing SV-11 e2e test above reproduces bash.ts's own mapping, since
+  // runCommand itself does not derive denyWriteRegexes on its own).
+  test.skipIf(process.platform !== "darwin")("end to end: a RULE-derived Edit(**/.env) deny blocks a real sandboxed Bash tee into a nested .env, while an unrelated file in the same tree still succeeds", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r11-glob-rule-scratch-"));
+    try {
+      writeSettings(home, { permissions: { deny: [`Edit(//${scratch.slice(1)}/**/.env)`] } });
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-r11-glob-rule-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        const fs = wiring.config.sandbox?.filesystem;
+        // The rule-derived deny is the raw, absolute GLOB text (glob characters intact) -- see
+        // production-wiring.ts's own deriveSandboxPathsFromRules header (fix round 11).
+        expect(fs?.denyWrite).toEqual([join(scratch, "**/.env")]);
+        const split = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
+        mkdirSync(join(scratch, "sub"), { recursive: true });
+        const deniedPath = join(scratch, "sub", ".env");
+        const allowedPath = join(scratch, "sub", "notes.txt");
+
+        const denied = await runCommand({
+          command: `echo blocked | tee ${JSON.stringify(deniedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
+          ...(split.regexes.length > 0 ? { denyWriteRegexes: split.regexes } : {}),
+        });
+        expect(denied.posture).toBe("sandboxed");
+        expect(denied.exitCode).not.toBe(0);
+        expect(existsSync(deniedPath)).toBe(false);
+
+        const allowed = await runCommand({
+          command: `echo ok > ${JSON.stringify(allowedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
+          ...(split.regexes.length > 0 ? { denyWriteRegexes: split.regexes } : {}),
+        });
+        expect(allowed.exitCode).toBe(0);
+        expect(existsSync(allowedPath)).toBe(true);
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: a settings.json-CONFIGURED glob denyWrite entry blocks a real sandboxed Bash write to a matching path, while a non-matching one still succeeds", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r11-glob-settings-scratch-"));
+    try {
+      const globPattern = join(scratch, "*.secret");
+      writeSettings(home, { sandbox: { filesystem: { denyWrite: [globPattern] } } });
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-r11-glob-settings-e2e", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+        env: {},
+        winterHome: home,
+      });
+      try {
+        const fs = wiring.config.sandbox?.filesystem;
+        expect(fs?.denyWrite).toEqual([globPattern]);
+        const split = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
+        expect(split.paths).toEqual([]);
+        expect(split.regexes.length).toBe(1);
+        const deniedPath = join(scratch, "api.secret");
+        const allowedPath = join(scratch, "readme.txt");
+
+        const denied = await runCommand({
+          command: `echo blocked > ${JSON.stringify(deniedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          denyWriteRegexes: split.regexes,
+        });
+        expect(denied.posture).toBe("sandboxed");
+        expect(denied.exitCode).not.toBe(0);
+        expect(existsSync(deniedPath)).toBe(false);
+
+        const allowed = await runCommand({
+          command: `echo ok > ${JSON.stringify(allowedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          denyWriteRegexes: split.regexes,
+        });
+        expect(allowed.exitCode).toBe(0);
+        expect(existsSync(allowedPath)).toBe(true);
       } finally {
         wiring.dispose();
       }
