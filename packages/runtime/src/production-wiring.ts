@@ -21,6 +21,7 @@
 // is a live GETTER rather than a snapshot, so a host that re-resolves does not have to rebuild the
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { InitPluginInfo, RuntimeConfig, SdkPluginConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, isUnset, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
@@ -1618,9 +1619,16 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
   // WS-21 fix round 10, item C: the Edit/Read permission-rule paths, unioned into the SAME merged
   // sandbox view -- see `deriveSandboxPathsFromRules`'s own header for the exact rule-to-key mapping
-  // and the glob-shaped-entry disclosure. `home: winterHome` matches every other `~/`-anchored rule
-  // resolution in this codebase (`resolveFileRuleAnchor`'s own contract).
-  const ruleSandboxPaths = deriveSandboxPathsFromRules(settingsRules.entries, { cwd: config.cwd, home: winterHome });
+  // and the glob-shaped-entry disclosure. Fix round 17 (R.3 I-1): `home` is the OS home, never
+  // `winterHome`. A `~/` rule means the user's real home on every other path in this codebase -- the
+  // evaluator resolves `~` against `homedir()` (engine.ts's `permissionHome`) -- and on claude: its
+  // rule-to-path conversion (`OWe`/`TFt`, dump byte 15441060) leaves `~/` alone and its sandbox
+  // normaliser (`Cv`, dump byte 15283956) expands it through `fv` (15283691) to `Za()`, which is
+  // `os.homedir` (`import{homedir as Za}from"os"`, 15282085). Under the router
+  // `winterHome` is the per-run folder, so the old value fenced `<run folder>/.aws` and left `~/.aws`
+  // open. A `/`-anchored rule's user-tier root is a separate value -- `buildSettingsRuleSeed`'s
+  // `sourceDir = winterHome`, claude's `Wyt` `userSettings` case -- and is unchanged.
+  const ruleSandboxPaths = deriveSandboxPathsFromRules(settingsRules.entries, { cwd: config.cwd, home: homedir() });
   const mergedSandboxFilesystem = {
     allowWrite: unionStrings(effective.sandbox?.filesystem?.allowWrite, ruleSandboxPaths.allowWrite),
     denyWrite: unionStrings(effective.sandbox?.filesystem?.denyWrite, ruleSandboxPaths.denyWrite),

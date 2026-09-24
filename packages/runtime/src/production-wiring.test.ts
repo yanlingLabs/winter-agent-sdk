@@ -14,7 +14,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
@@ -2465,6 +2465,43 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     });
     try {
       expect(wiring.config.sandbox?.filesystem?.denyRead).toEqual(["/repo/private"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // Fix round 17 (R.3 I-1, a WS-21 regression): a `~/` rule anchors at the OS home, as the
+  // evaluator's own `~` resolution does (engine.ts's `permissionHome = homedir()`) and as claude does:
+  // its rule-to-path conversion (`OWe`/`TFt`) leaves `~/` alone and its sandbox normaliser (`Cv`, dump
+  // byte 15283956, through `fv`) expands it to the OS home. Under the router `winterHome` is the
+  // per-run folder, so anchoring there fenced `<run folder>/.aws` and left the real `~/.aws` open.
+  // Strings only: nothing here touches the real home.
+  test("fix round 17 (I-1): a ~/-anchored Read(...) or Edit(...) deny resolves under os.homedir(), never under the run folder", async () => {
+    writeSettings(home, { permissions: { deny: ["Read(~/.aws/**)", "Edit(~/.zshrc)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-r17-tilde-deny", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const fs = wiring.config.sandbox?.filesystem;
+      expect(fs?.denyRead).toEqual([join(homedir(), ".aws")]);
+      expect(fs?.denyWrite).toEqual([join(homedir(), ".zshrc")]);
+      expect(JSON.stringify(fs)).not.toContain(home);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("fix round 17 (I-1): a ~/-anchored Edit(...) allow resolves under os.homedir() too, never as an allowWrite of the run folder", async () => {
+    writeSettings(home, { permissions: { allow: ["Edit(~/notes/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-r17-tilde-allow", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.allowWrite).toEqual([join(homedir(), "notes")]);
     } finally {
       wiring.dispose();
     }
