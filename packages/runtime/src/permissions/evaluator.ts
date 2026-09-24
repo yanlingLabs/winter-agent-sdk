@@ -46,6 +46,7 @@ import {
   escapeFileRulePathSegment,
   isPathWithinRoot,
   canonicalizeTrustedSymlinkPath,
+  FileRuleCompileError,
   type FileRuleCandidate,
   type FileRuleKind,
 } from "./file-rules.ts";
@@ -429,7 +430,9 @@ export interface EvaluationContext {
 
 export interface PermissionDecisionRecord {
   decision: "allow" | "deny" | "ask" | "defer";
-  mechanism: "hook" | "rule" | "mode" | "canUseTool" | "autoEngine";
+  // "crash" (fix round 10, item 3): the ONE new mechanism -- a file-rule pattern that failed to
+  // compile (`FileRuleCompileError`, file-rules.ts). See `evaluate()`'s own catch for the full story.
+  mechanism: "hook" | "rule" | "mode" | "canUseTool" | "autoEngine" | "crash";
   source?: RuleSource;
   hookId?: string;
   ruleRef?: string;
@@ -1255,6 +1258,47 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
   return undefined;
 }
 
+/**
+ * Fix round 10, item 3: claude's own read decision function, `D0`, unconditionally calls the EDIT
+ * decision function, `zC`, for every read (dump-confirmed: `D0` checks its own Read deny/ask rules
+ * first, then a network-trust gate, THEN `T=zC(e,t,R,u)` -- an "allow" from `zC` grants the read too
+ * ("edit implies read"), which CLAUDE.md's own standing ruling deliberately does NOT port ("Winter's
+ * reads are ungated" -- a Read/Glob/Grep call consults only Read-authored rules, never Edit ones).
+ *
+ * What THIS function exists for is narrower and is what the controller's own item-3 ruling actually
+ * asks for: "a broken Edit(...) rule also denies Read/Glob/Grep under its root, via zC's edit check
+ * on reads." Since `D0` calls `zC` UNCONDITIONALLY (not merely when an edit rule happens to match),
+ * a MALFORMED Edit(...) pattern crashes `zC` itself on every read that reaches this point -- and
+ * that crash is what propagates through `D0` to the same per-tool-call catch boundary every other
+ * crash reaches. This function reproduces exactly that side effect, and nothing else: it evaluates
+ * Edit-authored DENY candidates against the read's own target path SOLELY so that a malformed one's
+ * own `FileRuleCompileError` (file-rules.ts) propagates from here -- the return value of
+ * `matchFileRulesGrouped` is discarded UNCONDITIONALLY, a real match included, so an ordinary,
+ * well-formed `Edit(...)` deny rule has NO effect on a read through this path, preserving the
+ * standing "reads are ungated" ruling. Only a crash escapes.
+ */
+function crashCheckEditDenyDuringRead(rules: SourcedRuleSet, call: PermissionCall, ctx: EvaluationContext, kind: FileRuleKind): void {
+  if (kind !== "read") return;
+  const rawPath = call.input[fileRulePathField(call.toolName)];
+  const path = typeof rawPath === "string" ? rawPath : rawPath === undefined && (call.toolName === "Glob" || call.toolName === "Grep") ? "." : undefined;
+  if (path === undefined) return;
+  const pool = ctx.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
+  const candidates: FileRuleCandidate<SourcedRuleEntry>[] = [];
+  for (const entry of pool) {
+    if (entry.behavior !== "deny") continue;
+    if (entry.rule.toolName !== "Edit") continue;
+    if (entry.rule.specifier?.kind !== "pattern") continue;
+    candidates.push({ entry, pattern: entry.rule.specifier.source });
+  }
+  if (candidates.length === 0) return;
+  const absPath = resolveTargetPath(path, ctx.cwd);
+  const target = resolveRealTarget(absPath);
+  // Neither call's RETURN VALUE is read -- see this function's own header. A throw from either
+  // propagates naturally, since nothing here catches it.
+  matchFileRulesGrouped(candidates, absPath, { cwd: ctx.cwd, home: ctx.home }, "denyAsk");
+  matchFileRulesGrouped(candidates, target, { cwd: ctx.cwd, home: ctx.home }, "denyAsk");
+}
+
 function formatRuleRef(entry: SourcedRuleEntry): string {
   const { toolName, ruleContent } = entry.ruleValue;
   return ruleContent !== undefined ? `${toolName}(${ruleContent})` : toolName;
@@ -2011,9 +2055,36 @@ async function resolveSandboxEscape(
 }
 
 export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Promise<PermissionDecisionRecord> {
+  // Fix round 10, item 3: the ONE catch site for a `FileRuleCompileError` -- a malformed file-rule
+  // pattern's own compile failure, thrown by `matchFileRulesGrouped` (file-rules.ts) from wherever
+  // among the six stages below happens to reach it first (deny rules are consulted before ask,
+  // which is consulted before allow -- so "a broken ask rule denies; a broken allow rule denies
+  // once it is reached" falls out of stage ORDER, not a special case here). Matches claude's own
+  // architecture exactly: `Ma` (the pattern matcher) has no per-group catch, `D0`/`zC` (the
+  // read/edit decision functions) have none either -- the ONE catch is at the per-TOOL-CALL
+  // boundary far above everything (`aD`/`WKe`'s own try/catch around `e.checkPermissions(...)`,
+  // dump-confirmed), and its fallback (`d8t`, reached when a tool declares no custom
+  // `permissionCheckFailureDecision` -- Read/Edit do not) is a hardcoded deny: "The <name>
+  // permission check failed and its fail-closed posture could not be determined. The call is
+  // denied." `evaluate()` is Winter's own equivalent boundary -- the ONE function every caller asks
+  // "what should happen for this one call" -- so it is the ONE place this is caught, never inside
+  // any of the six stages themselves, and never further up (which would still be a crash of
+  // whatever called `evaluate()`).
+  let staged: PermissionDecisionRecord;
+  try {
+    staged = await evaluateStages(call, ctx);
+  } catch (err) {
+    if (!(err instanceof FileRuleCompileError)) throw err;
+    return {
+      decision: "deny",
+      mechanism: "crash",
+      policyVersion: ctx.policy.version,
+      message: `The ${call.toolName} permission check failed and its fail-closed posture could not be determined. The call is denied.`,
+    };
+  }
   // The six stages decide; the explicit-approval marker is then stamped in this ONE place, so that no
   // return site among the stages' dozens can forget it (see `PermissionDecisionRecord.explicitApproval`).
-  return stampExplicitApproval(await evaluateStages(call, ctx), call, ctx);
+  return stampExplicitApproval(staged, call, ctx);
 }
 
 async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Promise<PermissionDecisionRecord> {
@@ -2096,6 +2167,12 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
   }
+
+  // Fix round 10, item 3: mirrors claude's own D0 unconditionally calling zC for every read -- see
+  // `crashCheckEditDenyDuringRead`'s own header. A THROW here (a malformed Edit(...) deny rule)
+  // propagates to `evaluate()`'s own catch; an ordinary match or non-match has no effect at all.
+  const readKind = fileRuleKindFor(effectiveCall.toolName);
+  if (readKind !== undefined) crashCheckEditDenyDuringRead(policy.rules, effectiveCall, ctx, readKind);
 
   // --- WebFetch to a private address: the session's `privateAddressPolicy` ------------------------
   //

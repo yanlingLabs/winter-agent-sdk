@@ -249,14 +249,25 @@ interface RootGroup<TEntry> {
   /** Keyed by the `ki`-compiled pattern text actually fed to `ignore()` -- see this module's header on why this replaces claude's own `E.has(D+"/**")` reconstruction. */
   byCompiledPattern: Map<string, TEntry>;
   ig: ReturnType<typeof ignoreFactory>;
-  /**
-   * Item 2, fix round 9: the FIRST candidate entry added to this root's group -- kept so a
-   * denyAsk evaluation has something concrete to return as "the blocking rule" if the group's own
-   * `ignore()` instance never became usable (see `matchFileRulesGrouped`'s own header for why this
-   * is the entry claude's own equivalent fail-closed posture would deny the call over, even though
-   * claude's own decision is not attributed to one specific rule entry the way an ordinary match is).
-   */
-  firstEntry: TEntry;
+}
+
+/**
+ * Item 2 (fix round 9), REVISED by round 10's own item-3 ruling: a malformed pattern's own compile
+ * failure is a THROW out of `matchFileRulesGrouped`, not a direction-aware return value. Round 9
+ * tried to resolve the failure INSIDE this function (denyAsk -> the broken group's first entry,
+ * allow -> null); round 10's controller ruling is that this is not what claude does -- claude's own
+ * `Ma` has no per-group catch at all (only the per-TOOL-CALL one far above it, at `d8t`/`ome`'s own
+ * boundary), so ONE throwing group aborts the WHOLE permission check for that call, exactly the same
+ * way regardless of which direction (deny/ask/allow) was being evaluated when it happened. This
+ * class is what makes that propagation typed rather than "any thrown Error" -- caught exactly once,
+ * at `evaluator.ts`'s own `evaluate()` (the "decide this one call" boundary), and turned into the
+ * generic fail-closed deny `d8t`'s own hardcoded fallback produces.
+ */
+export class FileRuleCompileError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "FileRuleCompileError";
+  }
 }
 
 // Fix round 5, N-1 (the re-review of 57e7fef..20b623e, Important): the pre-fix version below
@@ -286,6 +297,11 @@ function isPathValidRelative(rel: string): boolean {
  * mirroring `matchFileRule`'s own existing direction vocabulary (never allow AND denyAsk on the
  * page a caller passed to `ki`, exactly as `ln`'s `r==="allow"` check is exactly `behavior==="allow"`
  * here too).
+ *
+ * THROWS `FileRuleCompileError` (fix round 10, item 3) when any consulted anchor root's own
+ * candidate patterns fail to compile into a real `ignore()` instance -- never resolved to `null`
+ * or a particular entry here; see that class's own header for why, and `evaluator.ts`'s `evaluate()`
+ * for the one place it is caught.
  */
 export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandidate<TEntry>[], path: string, opts: { cwd: string; home: string }, behavior: "allow" | "denyAsk"): TEntry | null {
   if (candidates.length === 0) return null;
@@ -299,7 +315,7 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
     const compiled = unanchorTrailingDoubleStar(normalized, behavior === "allow");
     let group = groups.get(rootKey);
     if (group === undefined) {
-      group = { byCompiledPattern: new Map(), ig: ignoreFactory({ ignorecase: true }), firstEntry: candidate.entry };
+      group = { byCompiledPattern: new Map(), ig: ignoreFactory({ ignorecase: true }) };
       groups.set(rootKey, group);
       groupOrder.push(rootKey);
     }
@@ -313,34 +329,27 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
     const group = groups.get(rootKey)!;
     const rel = relative(rootKey, path);
     if (!isPathValidRelative(rel)) continue;
-    // Item 2, fix round 9: a malformed pattern (e.g. an unterminated `[...]` character class
-    // followed by another path segment) makes the real `ignore` package's own regex construction
-    // throw HERE, at `.test()` -- confirmed empirically, not assumed: `.add()` alone never throws
-    // for the same input; the combined regex is compiled lazily, on first use. An uncaught throw
-    // here would crash this whole evaluation and everything above it, for every OTHER candidate and
-    // every OTHER anchor root too, not just the one rule that is actually broken.
+    // Item 2, fix round 9 (REVISED by round 10 item 3): a malformed pattern (e.g. an unterminated
+    // `[...]` character class followed by another path segment) makes the real `ignore` package's
+    // own regex construction throw HERE, at `.test()` -- confirmed empirically, not assumed:
+    // `.add()` alone never throws for the same input; the combined regex is compiled lazily, on
+    // first use.
     //
-    // Claude's own posture (dump-confirmed, `d8t`'s hardcoded fallback -- Read/Edit declare no
-    // custom `permissionCheckFailureDecision`): a permission check that crashes is caught PER TOOL
-    // CALL and resolved to `{behavior:"deny", message:"...permission check failed and its
-    // fail-closed posture could not be determined. The call is denied.", decisionReason:{type:
-    // "other", reason:"permission check crashed; tool declares a fail-closed posture"}}` -- never a
-    // propagating exception, never a crash. Winter has no equivalent "tool declares a
-    // permissionCheckFailureDecision callback" architecture for this to route through byte-for-byte;
-    // what is ported is the OBSERVABLE, direction-aware outcome: `denyAsk` treats the broken group
-    // as MATCHING (a malformed deny/ask rule still protects, exactly as claude's own fail-closed
-    // fallback denies the call), `allow` treats it as NOT matching (a malformed allow rule must
-    // never auto-grant) -- the identical fail-closed-per-direction posture this module's own
-    // MAX_DOUBLE_STARS/MAX_STARS_PER_SEGMENT caps already use one file up (`paths.ts`) for a
-    // different "too complex to safely evaluate" case. Scoped to THIS root's own group only, exactly
-    // like claude's own per-anchor-root `ignore()` memoization (`ln`'s `getIg`) -- an unrelated
-    // root's candidates are built and tested completely independently and never see this at all.
+    // Round 9 tried to resolve this INSIDE the function, direction-aware. Round 10's controller
+    // ruling: that is not what claude does. Claude's own `Ma` has NO per-group catch at all -- only
+    // the per-TOOL-CALL one far above it (`d8t`'s hardcoded fallback, reached when a tool declares
+    // no custom `permissionCheckFailureDecision`; Read/Edit do not) -- so ONE throwing group aborts
+    // the WHOLE check for that call, deny/ask/allow alike, the same way `Ma` itself would simply
+    // throw and let its own caller's try/catch decide. This function now matches that shape exactly:
+    // it throws a typed `FileRuleCompileError`, uncaught HERE, for `evaluator.ts`'s own `evaluate()`
+    // (the "decide this one call" boundary) to catch exactly once and turn into the generic
+    // fail-closed deny `d8t`'s fallback produces -- never a propagating crash of the whole run,
+    // because THAT catch exists, just one layer higher than round 9 placed it.
     let result: { ignored: boolean; rule?: { pattern: string } };
     try {
       result = group.ig.test(rel);
-    } catch {
-      if (behavior === "denyAsk") return group.firstEntry;
-      continue;
+    } catch (cause) {
+      throw new FileRuleCompileError(`a file-rule pattern under ${JSON.stringify(rootKey)} failed to compile`, { cause });
     }
     if (result.ignored && result.rule) {
       const winner = group.byCompiledPattern.get(result.rule.pattern);

@@ -2180,6 +2180,116 @@ describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced genera
   });
 });
 
+// Fix round 10, item 3: an uncompilable file-rule pattern (a `FileRuleCompileError`,
+// `matchFileRulesGrouped`) is caught at exactly ONE place, `evaluate()` itself, and resolved to the
+// generic fail-closed deny claude's own `d8t` fallback produces -- see evaluator.ts's own header on
+// `evaluate()` for the dump-confirmed shape. A "broken ask rule denies" and "a broken allow rule
+// denies once it is reached" both fall out of ORDINARY STAGE ORDER (deny checked before ask before
+// allow), not a direction-specific special case: whichever stage's own lookup reaches the broken
+// group first is the one whose throw gets caught.
+describe("evaluate() -- fix round 10, item 3: an uncompilable file-rule pattern denies the CALL, never crashes the run", () => {
+  const BROKEN_PATTERN = "[bad/baz"; // an unterminated character class followed by another path segment -- the confirmed multi-segment-throw shape (round 9's own report)
+
+  test("a broken DENY rule denies the call, mechanism 'crash', claude's own fail-closed message", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Read(${BROKEN_PATTERN})`, "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({
+      decision: "deny",
+      mechanism: "crash",
+      message: "The Read permission check failed and its fail-closed posture could not be determined. The call is denied.",
+    });
+  });
+
+  test("a broken ASK rule (no deny at all) ALSO denies the call -- stage order reaches ask before allow", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Read(${BROKEN_PATTERN})`, "ask")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+
+  // A Read call resolves via `mechanism: "mode"` in default mode -- reads are unconditionally
+  // allowed there, never reaching stage 5's allow-rule lookup at all (verified directly: a bare
+  // Read with no rules whatsoever already resolves `{decision:"allow", mechanism:"mode"}`). Edit is
+  // the tool this codebase's OWN existing fixtures use to reach stage 5 (see the fix-round-5 "an
+  // allow rule written //tmp/** matches..." test a few hundred lines below, `mechanism: "rule"` in
+  // plain default mode) -- reused here for the identical reason.
+  test("a broken ALLOW rule denies the call once stage 5 (allow rules) reaches it -- no deny/ask rule intervenes first", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Edit(${BROKEN_PATTERN})`, "allow")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+
+  test("the crash is scoped to the call it actually reaches -- an UNRELATED call under a different, well-formed root is unaffected", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      home: "/synthetic/home/tester",
+      policy: policy({ mode: "default", rules: withRules(rule(`Read(~/${BROKEN_PATTERN})`, "deny"), rule("Read(//work/fine/**)", "deny")) }),
+    });
+    // The broken (home-rooted) rule denies its own path...
+    const broken = await evaluate(call("Read", { file_path: "/synthetic/home/tester/bad/baz/x" }), ctx);
+    expect(broken).toMatchObject({ decision: "deny", mechanism: "crash" });
+    // ...while a call under the well-formed, unrelated rule's own root still resolves ordinarily
+    // (denied by that WELL-FORMED rule, mechanism "rule", never "crash").
+    const unrelated = await evaluate(call("Read", { file_path: "/work/fine/x" }), ctx);
+    expect(unrelated).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  // Mirrors claude's own D0 unconditionally calling zC for every read (crashCheckEditDenyDuringRead,
+  // evaluator.ts) -- see that function's own header for the exact scope: ONLY a crash escapes; an
+  // ordinary, well-formed Edit(...) deny match has NO effect on a read (CLAUDE.md's own standing
+  // "Winter's reads are ungated" ruling stays intact).
+  test("a broken Edit(...) deny rule ALSO denies a Read call under its own root, via the crash-check", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Edit(${BROKEN_PATTERN})`, "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/bad/baz/x" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+
+  test("a broken Edit(...) deny rule ALSO denies a Glob call under its own root", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Edit(${BROKEN_PATTERN})`, "deny")) }),
+    });
+    const record = await evaluate(call("Glob", { path: "/work/bad/baz" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "crash" });
+  });
+
+  test("control: a WELL-FORMED Edit(...) deny rule matching the SAME path has NO effect on a Read call at all -- 'reads are ungated' stays true, only a crash ever escapes this check", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(//work/secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/work/secrets/key.pem" }), ctx);
+    // Byte-identical to a Read with NO Edit rule at all (verified directly: a bare Read with an
+    // empty rule set already resolves `{decision:"allow", mechanism:"mode"}`) -- reads are
+    // unconditionally allowed by MODE, never even reaching the prompt stage, so the well-formed
+    // Edit deny had genuinely zero effect, not merely "didn't crash".
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("a broken rule for a tool OTHER than a file-rule tool (e.g. Bash, which never routes through matchFileRulesGrouped) is unaffected -- this mechanism is scoped to FILE_RULE_TOOLS", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule(`Bash(${BROKEN_PATTERN})`, "deny")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "echo hi" }), ctx);
+    expect(record.mechanism).not.toBe("crash"); // Bash patterns compile through grammar.ts's own compilePattern, never the ignore package
+  });
+});
+
 // Task 8 (P3 close-out, "Baseline read denial" MUST; WS-12 §2 / D6): the exact rule shapes engine.ts
 // seeds into EVERY session (`BASELINE_DENY_RULES`) -- two `~`-anchored deny rules, source "managed".
 // Per engine.ts's own documented testing convention ("tests that need a synthetic home construct an

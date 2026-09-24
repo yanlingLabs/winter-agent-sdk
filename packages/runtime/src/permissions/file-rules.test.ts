@@ -21,6 +21,7 @@ import {
   escapeFileRulePathSegment,
   resolvesWithinPluginRoot,
   canonicalizeTrustedSymlinkPath,
+  FileRuleCompileError,
   type FileRuleCandidate,
 } from "./file-rules.ts";
 import { parseRule } from "./grammar.ts";
@@ -514,54 +515,42 @@ describe("end to end -- fix round 8: a rule string parses through grammar.ts and
   });
 });
 
-// Fix round 9, item 2 (an uncompilable rule): a malformed pattern -- one whose escapes/brackets the
-// real `ignore` package's OWN regex construction cannot compile, e.g. an unterminated `[...]`
-// character class FOLLOWED by another path segment (`foo[bar/baz` -- confirmed empirically: a
-// single-segment `foo[bar` alone does NOT throw, but the package's own multi-segment matching path
-// does, at TEST time, not ADD time) -- must never crash this whole evaluation, let alone the run.
+// Fix round 9, item 2 (an uncompilable rule), REVISED by round 10's own item-3 ruling: a malformed
+// pattern -- one whose escapes/brackets the real `ignore` package's OWN regex construction cannot
+// compile, e.g. an unterminated `[...]` character class FOLLOWED by another path segment
+// (`foo[bar/baz` -- confirmed empirically: a single-segment `foo[bar` alone does NOT throw, but the
+// package's own multi-segment matching path does, at TEST time, not ADD time) -- must never crash
+// the WHOLE RUN.
 //
-// Claude's own posture (dump-confirmed): a crashing permission check is caught per TOOL CALL, never
-// propagated. `d8t`'s own hardcoded fallback, reached when a tool has no custom
-// `permissionCheckFailureDecision` (Read/Edit do not declare one) or that handler itself also
-// throws, is `{behavior:"deny", message:"The <name> permission check failed and its fail-closed
-// posture could not be determined. The call is denied.", decisionReason:{type:"other",
-// reason:"permission check crashed; tool declares a fail-closed posture"}}` -- i.e. DENY, for that
-// one call, with an error-shaped reason. Winter has no equivalent "tool declares a
-// permissionCheckFailureDecision callback" architecture to port byte-for-byte; the OBSERVABLE
-// outcome this ports is: a broken group's own rules are treated as MATCHING on the denyAsk
-// direction (a malformed deny/ask rule still protects, exactly as claude's own fail-closed fallback
-// denies) and as NOT matching on the allow direction (a malformed allow rule must never auto-grant,
-// mirroring this module's own pre-existing MAX_DOUBLE_STARS/MAX_STARS_PER_SEGMENT precedent: an
-// over-complex allow simply never grants, a too-complex denyAsk fails safe). Scoped per ANCHOR ROOT
-// group's own `.test()` call, matching claude's own `ln`/`Ma` structure exactly: ONE `ignore()`
-// instance is memoized per anchor root, built from every candidate that shares it, and a throw
-// during that instance's OWN (lazy, on first `.test()`) regex compilation has no per-rule
-// granularity inside claude's own `Ma` either -- there is no per-group try/catch there, only a
-// per-TOOL-CALL one far above it, so ONE throwing root aborts the WHOLE check for any query that
-// root's group is even consulted for, regardless of what other, unrelated rules might have said. A
-// query whose path falls OUTSIDE a broken root entirely (filtered by `isPathValidRelative` before
-// `.test()` is ever reached) is completely unaffected -- but a "//"-anchored broken rule's own root
-// is "/", which every absolute path is trivially "under", so ITS blast radius is every query, not a
+// Round 9 tried to resolve the failure inside `matchFileRulesGrouped` itself, direction-aware
+// (denyAsk -> the broken group's own entry, allow -> null). Round 10's controller ruling is that
+// this is not what claude does: claude's own `Ma` has no per-group catch at all -- only the
+// per-TOOL-CALL one far above it, `d8t`'s hardcoded fallback (reached when a tool declares no
+// custom `permissionCheckFailureDecision`; Read/Edit do not) -- `{behavior:"deny", message:"The
+// <name> permission check failed and its fail-closed posture could not be determined. The call is
+// denied.", decisionReason:{type:"other", reason:"permission check crashed; tool declares a
+// fail-closed posture"}}`. So `matchFileRulesGrouped` now THROWS a typed `FileRuleCompileError`
+// instead of resolving anything itself -- deny/ask/allow all abort the SAME way, exactly like
+// claude's own `Ma`. `evaluator.test.ts` is where the one catch site (`evaluate()`) and its
+// fail-closed-deny outcome are pinned; THIS file only proves the throw itself, scoped per ANCHOR
+// ROOT group's own `.test()` call, matching claude's own `ln`/`Ma` structure: ONE `ignore()`
+// instance is memoized per anchor root, built from every candidate that shares it. A query whose
+// path falls OUTSIDE a broken root entirely (filtered by `isPathValidRelative` before `.test()` is
+// ever reached) never triggers the throw at all -- but a "//"-anchored broken rule's own root is
+// "/", which every absolute path is trivially "under", so its blast radius is every query, not a
 // narrow one; a `~/`- or cwd-rooted broken rule's blast radius is only queries under THAT root.
-describe("matchFileRulesGrouped -- fix round 9, item 2: an uncompilable rule fails closed per call, never crashes", () => {
-  test("a malformed pattern does not throw at all", () => {
+describe("matchFileRulesGrouped -- fix round 10, item 3: an uncompilable rule THROWS (a typed FileRuleCompileError), for evaluate() to catch once", () => {
+  test("a malformed pattern throws a FileRuleCompileError, on denyAsk", () => {
     const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "bad" }, pattern: "//repo/foo[bar/baz" }];
-    expect(() => matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "denyAsk")).not.toThrow();
+    expect(() => matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "denyAsk")).toThrow(FileRuleCompileError);
   });
 
-  test("on the denyAsk direction, the broken rule's own entry is returned -- fail closed, it still protects", () => {
+  test("a malformed pattern ALSO throws on the allow direction -- claude's own Ma has no direction-aware recovery either", () => {
     const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "bad" }, pattern: "//repo/foo[bar/baz" }];
-    const result = matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "denyAsk");
-    expect(result).toEqual({ id: "bad" });
+    expect(() => matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "allow")).toThrow(FileRuleCompileError);
   });
 
-  test("on the allow direction, a broken rule never grants -- null, not a throw, not a match", () => {
-    const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "bad" }, pattern: "//repo/foo[bar/baz" }];
-    const result = matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "allow");
-    expect(result).toBeNull();
-  });
-
-  test("a broken rule under one anchor root does not disturb a WORKING rule under a genuinely different root", () => {
+  test("a broken rule under one anchor root does not disturb a WORKING rule under a genuinely different root -- the query under the working root neither throws nor matches spuriously", () => {
     // "~/..." anchors to opts.home; a BARE (unanchored) pattern's root is opts.cwd -- HOME and CWD
     // are unrelated absolute paths here (see CWD/HOME above), so a query path under one is never
     // `isPathValidRelative` for the other's root -- unlike a "//"-anchored pattern (root "/"), which
@@ -570,16 +559,16 @@ describe("matchFileRulesGrouped -- fix round 9, item 2: an uncompilable rule fai
       { entry: { id: "bad" }, pattern: "~/broken[bracket/baz" },
       { entry: { id: "good" }, pattern: "secret/**" },
     ];
-    // A query under the broken root (HOME) fails closed for its own path...
-    expect(matchFileRulesGrouped(candidates, `${HOME}/broken[bracket/baz/x`, { cwd: CWD, home: HOME }, "denyAsk")).toEqual({ id: "bad" });
-    // ...while a query under the unrelated, well-formed root (CWD) matches normally: HOME's own
-    // group is filtered out by `isPathValidRelative` before its broken `.test()` is ever reached,
-    // so it never gets a chance to affect this completely separate root's own group.
+    // A query under the broken root (HOME) throws for its own path...
+    expect(() => matchFileRulesGrouped(candidates, `${HOME}/broken[bracket/baz/x`, { cwd: CWD, home: HOME }, "denyAsk")).toThrow(FileRuleCompileError);
+    // ...while a query under the unrelated, well-formed root (CWD) matches normally, no throw at
+    // all: HOME's own group is filtered out by `isPathValidRelative` before its broken `.test()` is
+    // ever reached, so it never gets a chance to affect this completely separate root's own group.
     expect(matchFileRulesGrouped(candidates, `${CWD}/secret/key`, { cwd: CWD, home: HOME }, "denyAsk")).toEqual({ id: "good" });
   });
 
   test("a '//'-anchored broken rule's blast radius is every path (root '/' contains every absolute path) -- disclosed, not a bug: claude's own one-ignore()-per-root architecture has the identical property, since a throw during that root's own combined regex compilation aborts the WHOLE check for any query that root's group is even consulted for", () => {
     const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "bad" }, pattern: "//repo/foo[bar/baz" }];
-    expect(matchFileRulesGrouped(candidates, `${CWD}/completely/unrelated/path`, { cwd: CWD, home: HOME }, "denyAsk")).toEqual({ id: "bad" });
+    expect(() => matchFileRulesGrouped(candidates, `${CWD}/completely/unrelated/path`, { cwd: CWD, home: HOME }, "denyAsk")).toThrow(FileRuleCompileError);
   });
 });
