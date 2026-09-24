@@ -11,6 +11,7 @@ import type {
   ProtocolSdkMessage as SdkMessage,
   PermissionUpdate,
   PermissionResult,
+  PermissionMode,
 } from "@yanlinglabs/winter-agent-sdk";
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
@@ -5180,6 +5181,145 @@ describe("fix round 19: tools an MCP server registers after startup reach the ne
       expect(requestTools[1]).toContain(TOOL);
     } finally {
       unregisterMcpServerTools(SERVER);
+    }
+  });
+});
+
+// Fix round 19, add-on C (from the R.3 live gate; treated as blocking): execution re-checks a tool's
+// exposure instead of trusting that the model only calls what it was offered. claude runs a call only
+// if its name resolves in the tools THIS query was offered (`IQ`, dump byte 18510312: `g=Zr(o.options.
+// tools,p,o.options.toolAliases)`; a miss answers `<tool_use_error>Error: No such tool available: ${p}
+// ${hint}</tool_use_error>` with `is_error:true`). Each case records whether the executor ran.
+// Measured before the fix: (1) EXECUTED; (2) was refused by the permission pipeline ("Denied by
+// permission rule", a `permission_denied` frame); (3) and (4) by the availability check -- neither ran,
+// but neither answered in claude's shape.
+describe("fix round 19 add-on C: a call to a tool the model was not offered is refused, never executed", () => {
+  function probeDescriptor(name: string, extra: { modes?: PermissionMode[]; capabilityRequirements?: string[] } = {}) {
+    return {
+      canonicalName: name,
+      advertisedName: name,
+      source: "sdk" as const,
+      inputSchema: { type: "object" },
+      description: "round 19 exposure probe",
+      exposure: "eager" as const,
+      permissionClass: "read" as const,
+      availability: extra.modes !== undefined ? { modes: extra.modes } : {},
+      capabilityRequirements: extra.capabilityRequirements ?? [],
+      disposition: "implement-now" as const,
+    };
+  }
+
+  async function runOneCall(toolName: string, config: RuntimeConfig, onFirstRequest?: () => void): Promise<{ toolResult: { content?: unknown; is_error?: boolean } | undefined; offered: string[] }> {
+    const offered: string[] = [];
+    let calls = 0;
+    const provider: Provider = {
+      async generate(request) {
+        calls++;
+        if (calls === 1) {
+          offered.push(...(request.tools ?? []).map((t) => t.name));
+          onFirstRequest?.();
+          return { kind: "tool_use", calls: [{ id: "c1", name: toolName, input: {} }] };
+        }
+        return { kind: "text", text: "done" };
+      },
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const userMsgs = dataMessages(frames).filter((m) => m.type === "user") as Array<{ message: { content: Array<{ type: string; tool_use_id?: string; content?: unknown; is_error?: boolean }> } }>;
+    const toolResult = userMsgs.flatMap((m) => m.message.content).find((b) => b.type === "tool_result" && b.tool_use_id === "c1");
+    return { toolResult, offered };
+  }
+
+  test("(1) an MCP tool whose server connected AFTER the request was built: refused with claude's text, not executed", async () => {
+    const SERVER = "r19c";
+    const TOOL = `mcp__${SERVER}__ping`;
+    const stateSource = createFakeMcpServerStateSource([{ name: SERVER, state: "pending", toolNames: [] }]);
+    let executed = false;
+    try {
+      const offered: string[] = [];
+      let calls = 0;
+      const provider: Provider = {
+        async generate(request) {
+          calls++;
+          if (calls === 1) {
+            offered.push(...(request.tools ?? []).map((t) => t.name));
+            // The server connects while the model is answering: its tool registers, with a live executor.
+            registerMcpServerTools(SERVER, [{ name: "ping", inputSchema: { type: "object" } }], { deferredDefault: true });
+            replaceExecutor(TOOL, { async execute() { executed = true; return { output: "EXECUTED" }; } });
+            stateSource.transition(SERVER, "connected", { toolNames: ["ping"] });
+            return { kind: "tool_use", calls: [{ id: "c1", name: TOOL, input: {} }] };
+          }
+          return { kind: "text", text: "done" };
+        },
+      };
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: baseConfig({ sessionId: "r19-addon-c-1", toolSearchEnabled: false, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        mcpServerStateSource: stateSource,
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const userMsgs = dataMessages(frames).filter((m) => m.type === "user") as Array<{ message: { content: Array<{ type: string; tool_use_id?: string; content?: unknown; is_error?: boolean }> } }>;
+      const toolResult = userMsgs.flatMap((m) => m.message.content).find((b) => b.type === "tool_result" && b.tool_use_id === "c1");
+      expect(offered).not.toContain(TOOL);
+      expect(executed).toBe(false);
+      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${TOOL}</tool_use_error>`, is_error: true });
+    } finally {
+      unregisterMcpServerTools(SERVER);
+    }
+  });
+
+  test("(2) a tool in disallowedTools: not offered, and a call to it is refused, not executed (bypassPermissions)", async () => {
+    const NAME = "__r19_disallowed_probe__";
+    let executed = false;
+    registerTool({ descriptor: probeDescriptor(NAME) });
+    replaceExecutor(NAME, { async execute() { executed = true; return { output: "EXECUTED" }; } });
+    try {
+      const { toolResult, offered } = await runOneCall(NAME, baseConfig({ sessionId: "r19-addon-c-2", disallowedTools: [NAME], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }));
+      expect(offered).not.toContain(NAME);
+      expect(executed).toBe(false);
+      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${NAME}</tool_use_error>`, is_error: true });
+    } finally {
+      unregisterToolForTest(NAME);
+    }
+  });
+
+  test("(3) a tool hidden by per-mode exposure (availability.modes excludes the session's mode): refused, not executed", async () => {
+    const NAME = "__r19_plan_only_probe__";
+    let executed = false;
+    registerTool({ descriptor: probeDescriptor(NAME, { modes: ["plan"] }) });
+    replaceExecutor(NAME, { async execute() { executed = true; return { output: "EXECUTED" }; } });
+    try {
+      const { toolResult, offered } = await runOneCall(NAME, baseConfig({ sessionId: "r19-addon-c-3", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }));
+      expect(offered).not.toContain(NAME);
+      expect(executed).toBe(false);
+      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${NAME}</tool_use_error>`, is_error: true });
+    } finally {
+      unregisterToolForTest(NAME);
+    }
+  });
+
+  test("(4) a tool whose availability predicate fails (a capability the session lacks): refused, not executed", async () => {
+    const NAME = "__r19_capability_probe__";
+    let executed = false;
+    registerTool({ descriptor: probeDescriptor(NAME, { capabilityRequirements: ["winter.r19-never-granted"] }) });
+    replaceExecutor(NAME, { async execute() { executed = true; return { output: "EXECUTED" }; } });
+    try {
+      const { toolResult, offered } = await runOneCall(NAME, baseConfig({ sessionId: "r19-addon-c-4", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }));
+      expect(offered).not.toContain(NAME);
+      expect(executed).toBe(false);
+      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${NAME}</tool_use_error>`, is_error: true });
+    } finally {
+      unregisterToolForTest(NAME);
     }
   });
 });

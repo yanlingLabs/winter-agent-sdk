@@ -301,7 +301,7 @@ import { isSandboxAvailable, resolveExecutionPath } from "./sandbox/spawn.ts";
 // resolution for the permission/hook axis, and duplicate suppression over the advertised partition.
 // Both shipped as pure functions with no engine call site (R4-10 forbade Lane B from adding one);
 // this file is that call site.
-import { aliasExclusionReasons, effectiveAliasTable, resolvePermissionIdentity, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
+import { aliasExclusionReasons, aliasPermissionIdentities, effectiveAliasTable, resolvePermissionIdentity, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
 // Phase 4 Task 8 (rider 2, WS-09 §8): Lane B's session-keyed ToolSearch/WaitForMcpServers runtime
 // registry. Both of that lane's executors answer a typed "no session runtime registered" error until
 // a live run registers one -- this file is the one production registrar.
@@ -6510,6 +6510,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return { name: descriptor.advertisedName, description: descriptor.description.replace(AGENT_MODEL_SLOTS_MARKER, render.descriptionLines.join("\n")), inputSchema };
   };
 
+  // Fix round 19, add-on C: the names the LATEST provider request offered the model -- its specs plus
+  // the partition's deferred (searchable) names, which claude also carries in the query's tool list
+  // (with `defer_loading`) -- against which a tool call is checked before anything runs
+  // (`toolNotOfferedRefusal`, below). Undefined until the first request of this run.
+  let offeredThisRequest: ReadonlySet<string> | undefined;
   const providerToolSpecs = (): ProviderToolSpec[] => {
     // SDK 0.0.16 (P16-7): a fork's own exact tool pool -- the PARENT's last advertised specs
     // verbatim (names, order AND schemas), never this run's own `advertisedPartition`/gate render.
@@ -6527,7 +6532,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // has no way to know whether the PARENT would render an identical spec for the same tool anyway
     // (a fork's own `insideFork` gates differ from the parent's). A fork that needs a deferred tool it
     // was not already using at fork time is the disclosed edge of this design.
-    if (exactRequestLayout !== undefined) return exactRequestLayout.tools;
+    if (exactRequestLayout !== undefined) {
+      offeredThisRequest = new Set(exactRequestLayout.tools.map((t) => t.name));
+      return exactRequestLayout.tools;
+    }
     // Fix round 19: every provider request re-derives the partition from the live registry and the
     // live capability set (see `refreshAdvertisedPartition`), so a server that connected since the
     // last request is offered on this one.
@@ -6540,7 +6548,53 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (!loadedToolSet.isLoaded(descriptor.canonicalName)) continue;
       specs.push(toolSpecFor(descriptor));
     }
+    offeredThisRequest = new Set([
+      ...specs.map((spec) => spec.name),
+      ...[...advertisedPartition.eager, ...advertisedPartition.deferred].flatMap((d) => [d.advertisedName, d.canonicalName]),
+    ]);
     return specs;
+  };
+
+  /**
+   * Fix round 19, add-on C (the R.3 live gate): a call is refused unless its tool was OFFERED on the
+   * request that produced it -- claude's rule. claude's tool runner `IQ` (dump byte 18510312) resolves
+   * the call against the query's own tool list, `g=Zr(o.options.tools,p,o.options.toolAliases)`, and
+   * a miss never runs: it answers `{type:"tool_result",content:`<tool_use_error>Error: No such tool
+   * available: ${p}${ke}</tool_use_error>`,is_error:!0}`, where `ke` is `KTe`'s hint (18504953). The
+   * one hint ported is `oMn`'s (18510312 region), for an MCP tool whose server is still connecting
+   * while `WaitForMcpServers` (claude's `U3`, 14054483) is offered; `KTe`'s other hints name claude
+   * surfaces Winter does not have and are not carried.
+   *
+   * Winter used to run any REGISTERED tool by name. At 47d9adc a call to an MCP tool whose server had
+   * connected after the request was built EXECUTED though the model was never offered it. Checked
+   * ahead of the availability check, the load-first boundary and the permission pipeline -- a tool
+   * the model was not offered never reaches any of them, whatever the mode (bypass included).
+   *
+   * Scope: a name the registry knows (other than a static `hidden` one, below), or any `mcp__` name
+   * (claude's MCP namespace). Any other name has no descriptor; it keeps the executor's own answer (the registry's "unknown tool", or a host
+   * `tools` executor that serves names outside the registry). Alias-aware as claude's `Zr` is: a name
+   * whose alias-equivalent was offered (`aliasPermissionIdentities`) resolves. `offeredThisRequest`
+   * includes the deferred names, so a deferred-but-unloaded tool still reaches the load-first
+   * boundary and its "use ToolSearch" answer.
+   */
+  const toolNotOfferedRefusal = (toolName: string): string | undefined => {
+    const offered = offeredThisRequest;
+    if (offered === undefined) return undefined;
+    const descriptor = getRegisteredTool(toolName)?.descriptor;
+    if (descriptor === undefined && !toolName.startsWith("mcp__")) return undefined;
+    // A static `exposure: "hidden"` descriptor is never offered on any request and keeps the
+    // executor's own answer: the registry's correctly-absent path, or testing.ts's equivalence-corpus
+    // stand-ins (`test_tool`/`mystery_tool`/`long_task`), hidden-but-callable by design because the
+    // differential goldens and transport-equivalence scenarios call them by name.
+    if (descriptor?.exposure === "hidden") return undefined;
+    if (aliasPermissionIdentities(toolName, config.toolAliases, sessionBrand).some((name) => offered.has(name))) return undefined;
+    let hint = "";
+    const server = /^mcp__(.+?)__/.exec(toolName)?.[1];
+    if (server !== undefined && offered.has("WaitForMcpServers")) {
+      const pending = effectiveMcpStateSource?.snapshot().find((s) => s.state === "pending" && s.name === server);
+      if (pending !== undefined) hint = `. The MCP server '${pending.name}' is still connecting. Call WaitForMcpServers to wait for it, then try again.`;
+    }
+    return `<tool_use_error>Error: No such tool available: ${toolName}${hint}</tool_use_error>`;
   };
 
   /**
@@ -7285,6 +7339,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // Empirically confirmed while wiring this: with the check only in the adapter, a child
           // calling AskUserQuestion still stalled. Checking here turns it into an immediate typed
           // refusal and the child continues normally.
+          // Fix round 19, add-on C: a tool the model was not offered on this request never runs --
+          // see `toolNotOfferedRefusal`. claude's own shape: an `is_error` tool_result.
+          const notOffered = toolNotOfferedRefusal(call.name);
+          if (notOffered !== undefined) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
+            continue;
+          }
           const availabilityDescriptor = getRegisteredTool(call.name)?.descriptor;
           if (availabilityDescriptor !== undefined && !isToolAvailable(availabilityDescriptor, { ...advertisedCfg, mode: policyStateStore.getState().mode })) {
             resultBlocks.push({

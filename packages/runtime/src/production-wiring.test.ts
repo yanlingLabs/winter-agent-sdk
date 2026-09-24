@@ -687,11 +687,10 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
 
   // The brief's `winter.mcp` check: a session whose ONLY server comes from the global-config loader
   // (the run folder's `.winter.json`) is an MCP session -- the `winter.mcp` family is advertised
-  // (`ListMcpResourcesTool` is that token's probe tool, registry.ts's RUNTIME_DERIVED_CAPABILITIES).
-  // A command that cannot spawn fails within the first-turn wait, so `init.mcp_servers` carries the
-  // post-wait status (`failed`), not the startup `pending` -- the brief's item (3).
+  // (`ListMcpResourcesTool` is that token's probe tool, registry.ts's RUNTIME_DERIVED_CAPABILITIES),
+  // and the server is on `init.mcp_servers` (its status is whatever it is at init time, per the ruling).
   test(
-    "winter.mcp from the global-config loader alone; init.mcp_servers carries the post-wait status",
+    "winter.mcp from the global-config loader alone: the family is advertised and the server is on init.mcp_servers",
     async () => {
       const { runFolder, work } = freshRunFolder({ ghost: { command: "/nonexistent/winter-r19-ghost-server" } });
       try {
@@ -701,7 +700,7 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
         await untilResults(session, 1);
         const init = initOf(await session.finish());
         expect(init.tools).toContain("ListMcpResourcesTool");
-        expect(init.mcp_servers).toEqual([{ name: "ghost", status: "failed" }]);
+        expect((init.mcp_servers ?? []).map((s) => s.name)).toEqual(["ghost"]);
       } finally {
         rmSync(runFolder, { recursive: true, force: true });
         rmSync(work, { recursive: true, force: true });
@@ -710,49 +709,29 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
     30_000,
   );
 
+  // The ruled shape, measured on claude 2.1.250 by the router's same-view row: `system/init` lists the
+  // stdio server `pending` with none of its tools; turn 1's request carries none of them, and a turn-1
+  // call to one is refused as claude refuses a tool it did not offer (`IQ`, dump byte 18510312:
+  // `<tool_use_error>Error: No such tool available: <name></tool_use_error>`); once connected, the next
+  // request carries the tool and the call runs. The fixture delays its handshake by 1 s so "turn 1
+  // precedes the connect" holds on any machine.
   test(
-    "a server that connects within the first-turn wait: init.tools carries its tool, init and mcp_status say connected, turn 1 calls it",
+    "a run-folder stdio server: pending at init, not offered (and refused) on turn 1, offered and callable on the next turn",
     async () => {
-      const { runFolder, work } = freshRunFolder({ ping: pingFixtureCommand({ label: "ping" }) });
+      const { runFolder, work } = freshRunFolder({ ping: pingFixtureCommand({ label: "ping", delayMs: 1000 }) });
       try {
         const config: RuntimeConfig = { sessionId: "44444444-4444-4444-8444-444444444444", cwd: work, model: "winter-test/echo", settingSources: ["user"], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false };
         const session = startSession(config, runFolder, [
-          { kind: "tool_use", calls: [{ id: "p1", name: "mcp__ping__gate_ping", input: {} }] },
-          { kind: "text", text: "done" },
-        ]);
-        expect(await session.mcpStatus("s1")).toEqual([{ name: "ping", status: "connected" }]);
-        session.send({ type: "user", text: "ping it" });
-        await untilResults(session, 1);
-        const msgs = await session.finish();
-        const init = initOf(msgs);
-        expect(init.tools).toContain("mcp__ping__gate_ping");
-        expect(init.mcp_servers).toEqual([{ name: "ping", status: "connected" }]);
-        expect(session.requestTools[0]).toContain("mcp__ping__gate_ping");
-        expect(JSON.stringify(msgs.filter((m) => m.type === "user"))).toContain("PONG-ping");
-      } finally {
-        rmSync(runFolder, { recursive: true, force: true });
-        rmSync(work, { recursive: true, force: true });
-      }
-    },
-    30_000,
-  );
-
-  test(
-    "a server that connects AFTER the first-turn wait: absent from init and turn 1, offered and callable on the next turn",
-    async () => {
-      const { runFolder, work } = freshRunFolder({ late: pingFixtureCommand({ label: "late", delayMs: 3500 }) });
-      try {
-        const config: RuntimeConfig = { sessionId: "55555555-5555-4555-8555-555555555555", cwd: work, model: "winter-test/echo", settingSources: ["user"], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false };
-        const session = startSession(config, runFolder, [
-          { kind: "text", text: "turn one" },
-          { kind: "tool_use", calls: [{ id: "p2", name: "mcp__late__gate_ping", input: {} }] },
+          { kind: "tool_use", calls: [{ id: "early", name: "mcp__ping__gate_ping", input: {} }] },
+          { kind: "text", text: "turn one done" },
+          { kind: "tool_use", calls: [{ id: "late", name: "mcp__ping__gate_ping", input: {} }] },
           { kind: "text", text: "done" },
         ]);
         session.send({ type: "user", text: "turn one" });
         await untilResults(session, 1);
         let connected = false;
-        for (let n = 0; n < 200 && !connected; n++) {
-          connected = (await session.mcpStatus(`late-${n}`)).some((s) => s.name === "late" && s.status === "connected");
+        for (let n = 0; n < 300 && !connected; n++) {
+          connected = (await session.mcpStatus(`s-${n}`)).some((s) => s.name === "ping" && s.status === "connected");
           if (!connected) await new Promise((r) => setTimeout(r, 100));
         }
         expect(connected).toBe(true);
@@ -760,17 +739,20 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
         await untilResults(session, 2);
         const msgs = await session.finish();
         const init = initOf(msgs);
-        expect(init.tools).not.toContain("mcp__late__gate_ping");
-        expect(init.mcp_servers).toEqual([{ name: "late", status: "pending" }]);
-        expect(session.requestTools[0]).not.toContain("mcp__late__gate_ping");
-        expect(session.requestTools[1]).toContain("mcp__late__gate_ping");
-        expect(JSON.stringify(msgs.filter((m) => m.type === "user"))).toContain("PONG-late");
+        expect(init.tools).not.toContain("mcp__ping__gate_ping");
+        expect(init.mcp_servers).toEqual([{ name: "ping", status: "pending" }]);
+        expect(session.requestTools[0]).not.toContain("mcp__ping__gate_ping");
+        const results = JSON.stringify(msgs.filter((m) => m.type === "user"));
+        expect(results).toContain("<tool_use_error>Error: No such tool available: mcp__ping__gate_ping");
+        // Turn 2's first request (the third provider call overall) offers the tool, and the call runs.
+        expect(session.requestTools[2]).toContain("mcp__ping__gate_ping");
+        expect(results).toContain("PONG-ping");
       } finally {
         rmSync(runFolder, { recursive: true, force: true });
         rmSync(work, { recursive: true, force: true });
       }
     },
-    40_000,
+    60_000,
   );
 });
 

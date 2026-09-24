@@ -220,12 +220,15 @@ export function stdioFixtureCommand(): { command: string; args: string[] } {
 }
 
 // Fix round 19: the one-tool `gate_ping` stdio server (transports/__fixtures__/ping-server.ts), for the
-// first-turn MCP wait and live-partition tests. `delayMs` postpones its handshake (a slow starter).
+// live advertised-set tests. `delayMs` postpones its handshake (a slow starter). Launched under `node`
+// when one is on PATH (an absolute path, so no lookup happens in the spawned env) -- the router's
+// same-view row does the same after measuring bun-launched fixture servers at 2.5-4.5 s to start --
+// and under the running bun otherwise. Node runs the `.ts` file directly (type stripping).
 export function pingFixtureCommand(opts: { label?: string; delayMs?: number } = {}): { command: string; args: string[] } {
   const args = [fileURLToPath(new URL("./transports/__fixtures__/ping-server.ts", import.meta.url))];
   if (opts.label !== undefined) args.push("--label", opts.label);
   if (opts.delayMs !== undefined) args.push("--delay-ms", String(opts.delayMs));
-  return { command: process.execPath, args };
+  return { command: Bun.which("node") ?? process.execPath, args };
 }
 
 // Fix round 1 (MAJOR M1): a command that never speaks MCP at all -- `/bin/sh -c "sleep 3600 & wait"`
