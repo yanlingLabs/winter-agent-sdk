@@ -699,14 +699,53 @@ export function isSuspiciousPath(path: string): boolean {
 // trailing space in a redirect target, e.g. `echo x > "foo.bashrc "`, survives real shell
 // tokenization; an UNQUOTED one is a word separator and never reaches here at all -- a real
 // tokenization fact, not a Winter-side trim).
+// Fix round 12 (minor, claude's own `Ii`): `$K` runs `mL` on every candidate from `Ii(e)`, claude's
+// symlink-variant collector -- not merely the raw/as-typed path, ALSO its resolved real target (dump
+// byte 16957904's own `E6`: `let Oe=Ii(Ce.path);for(let we of Oe){...$K(Ce.path,Oe)...}` -- `Oe` is
+// computed BEFORE `$K` is even called, confirming the caller pre-resolves the symlink-variant set
+// rather than relying on `$K`'s own internal `Ii(e)` fallback). An innocuous-looking symlink whose
+// OWN name has no suspicious shape at all can still point AT a suspiciously-named target (e.g. a
+// path containing an NT short-filename tilde, or a component ending in a run of dots/whitespace) --
+// this closes that gap. Best-effort: any resolution failure (the candidate does not exist, an
+// intermediate ancestor is inaccessible, ...) is swallowed, matching this whole file's own
+// established "never let a symlink-resolution failure crash a permission decision" convention
+// (`resolveRealTarget`'s own graceful-fallback contract, `checkSymlinkBothEnds`'s callers, etc.).
+//
+// Disclosed limitation, found empirically while writing this function's own test: `resolveRealTarget`
+// resolves ONE EXACT PATH, walking up ITS OWN ancestors on ENOENT (built for "a not-yet-existing WRITE
+// target," this file's own everyday case) -- it does NOT specially follow a symlink whose ultimate
+// target does not (yet) fully exist on disk. Concretely: `linkPath -> targetDir/leaf` where `leaf`
+// does not exist resolves to `realpath(linkPath's own dirname)/basename(linkPath)` on the ENOENT
+// fallback, which never reads the symlink's OWN stored target text at all. This check therefore
+// reliably catches a PRE-EXISTING symlink pointing at an existing (or partially existing, down to
+// SOME real ancestor of the target) suspicious location -- the realistic "a symlink already sitting
+// in the tree points somewhere suspicious" case -- but can miss a symlink created fresh in the SAME
+// turn whose target chain is entirely not-yet-real. Reusing `resolveRealTarget` (rather than a
+// separate `lstatSync`/`readlinkSync`-based reader) was a deliberate choice: it is the SAME primitive
+// every other symlink-aware check in this file already depends on, so this check degrades exactly the
+// way they do rather than in some third, novel way.
+function suspiciousSymlinkTarget(rawCandidate: string, ctx: EvaluationContext): string | undefined {
+  try {
+    const absPath = resolveTargetPath(rawCandidate, ctx.cwd);
+    const target = resolveRealTarget(absPath);
+    return isSuspiciousPath(target) ? target : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function firstSuspiciousWritePath(call: PermissionCall, ctx: EvaluationContext): string | undefined {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const raw = call.input[fileRulePathField(call.toolName)];
-    return typeof raw === "string" && isSuspiciousPath(raw) ? raw : undefined;
+    if (typeof raw !== "string") return undefined;
+    if (isSuspiciousPath(raw)) return raw;
+    return suspiciousSymlinkTarget(raw, ctx);
   }
   if (isShellCall(call)) {
     for (const candidate of shellWriteTargets(call, ctx)) {
       if (isSuspiciousPath(candidate)) return candidate;
+      const symlinkTarget = suspiciousSymlinkTarget(candidate, ctx);
+      if (symlinkTarget !== undefined) return symlinkTarget;
     }
   }
   return undefined;

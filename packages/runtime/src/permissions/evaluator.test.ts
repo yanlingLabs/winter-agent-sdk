@@ -3442,6 +3442,59 @@ describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-awar
   });
 });
 
+// Fix round 12 (minor, claude's own `Ii`): `$K` runs `mL` on every candidate from `Ii(e)`, not just
+// the raw/as-typed path -- ALSO its resolved real target (`suspiciousSymlinkTarget`, evaluator.ts's
+// own header on `firstSuspiciousWritePath` has the full dump citation). An innocuous-LOOKING symlink
+// whose own name has no suspicious shape at all can still point AT a suspiciously-named target.
+describe("evaluate() -- fix round 12 (minor): mL also runs on a symlink's RESOLVED real target, not just the link's own as-typed name", () => {
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-suspicious-symlink-")));
+  }
+
+  test("a symlink whose own name is innocuous, but whose REAL TARGET contains an NT short-filename tilde (~1), asks -- even though the link's own text never would", async () => {
+    const root = freshRoot();
+    try {
+      const targetDir = join(root, "PROGRA~1");
+      mkdirSync(targetDir);
+      const targetFile = join(targetDir, "secret.txt");
+      // Written (not left to not-yet-exist) so `realpathSync` can walk the WHOLE chain directly --
+      // resolveRealTarget's own graceful ENOENT-fallback (for a not-yet-existing WRITE target)
+      // resolves the SYMLINK'S OWN missing leaf by walking ITS OWN ancestors, which does not follow
+      // the link at all; a genuinely existing target is what exercises real symlink-following here.
+      writeFileSync(targetFile, "");
+      const linkPath = join(root, "innocent-link");
+      symlinkSync(targetFile, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: root, policy: policy({ mode: "bypassPermissions" }) });
+      const record = await evaluate(call("Write", { file_path: linkPath }), ctx);
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.decision).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("control: a symlink whose real target is ALSO ordinary is unaffected", async () => {
+    const root = freshRoot();
+    try {
+      const targetDir = join(root, "real");
+      mkdirSync(targetDir);
+      const targetFile = join(targetDir, "notes.txt");
+      const linkPath = join(root, "innocent-link");
+      symlinkSync(targetFile, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+      const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: root, policy: policy({ mode: "bypassPermissions" }) });
+      const record = await evaluate(call("Write", { file_path: linkPath }), ctx);
+      expect(promptSpy.calls.length).toBe(0);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- Trap 1: compound Bash commands must be split before recognition/matching ----------------------
 
 describe("compound Bash commands — split before recognition/matching (lens item 1)", () => {
