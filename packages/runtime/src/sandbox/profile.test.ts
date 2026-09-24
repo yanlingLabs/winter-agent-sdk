@@ -300,6 +300,12 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny network*)",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/.winter/file-history\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/file-history\"))",
+    // fix round 17 (R.3 I-2): the home self-grant floor on winterHome (no storeHome in this input)
+    "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/settings.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/settings.local.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/.winter.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/agents\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/plugins\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/permissions.local.json\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/settings.json\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/settings.local.json\"))",
@@ -806,6 +812,52 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     const p = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter", { home: undefined });
     expect(p).not.toContain("gitconfig");
     expect(p).not.toContain(".git/hooks");
+  });
+});
+
+// Fix round 17 (R.3 I-2): the SDK's own floor on its OWN homes -- the self-grant files and folders
+// directly under `winterHome` and `storeHome` (the default home moved to `~/<homeDirName>/sdk`, which
+// the per-root literals and the any-depth control-plane regexes never reach).
+describe("buildSeatbeltProfile: the home self-grant floor on winterHome and storeHome (fix round 17, R.3 I-2)", () => {
+  const OPS = "file-write* file-write-unlink file-write-create";
+  const fileDenies = (root: string, globalConfig = ".winter.json") =>
+    ["settings.json", "settings.local.json", globalConfig].map((f) => `(deny ${OPS} (literal "${join(root, f)}"))`);
+  const dirDenies = (root: string) => ["agents", "plugins"].map((d) => `(deny ${OPS} (subpath "${join(root, d)}"))`);
+
+  test("winterHome gets literal denies for settings.json, settings.local.json and the global config file, and subpath denies for agents/ and plugins/", () => {
+    const home = realTmp();
+    const sdk = join(home, ".winter", "sdk");
+    const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home, winterHome: sdk });
+    for (const clause of [...fileDenies(sdk), ...dirDenies(sdk)]) expect(p).toContain(clause);
+  });
+
+  test("storeHome gets the same floor, independently of winterHome (the router's run folder vs the shared store)", () => {
+    const home = realTmp();
+    const runFolder = join(home, ".winter", "cache", "run", "r1");
+    const store = join(home, ".winter", "sdk");
+    const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home, winterHome: runFolder, storeHome: store });
+    for (const clause of [...fileDenies(runFolder), ...dirDenies(runFolder), ...fileDenies(store), ...dirDenies(store)]) expect(p).toContain(clause);
+  });
+
+  test("the same directory as winterHome and storeHome is rendered once", () => {
+    const home = realTmp();
+    const sdk = join(home, ".winter", "sdk");
+    const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home, winterHome: sdk, storeHome: sdk });
+    for (const clause of [...fileDenies(sdk), ...dirDenies(sdk)]) expect(p.split(clause).length - 1).toBe(1);
+  });
+
+  test("the global config file follows the brand: .acme.json under a rebrand, never .winter.json", () => {
+    const home = realTmp();
+    const acme = join(home, ".acme", "sdk");
+    const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home, winterHome: acme, brand: { homeDirName: ".acme", projectDirName: ".acme" } });
+    for (const clause of fileDenies(acme, ".acme.json")) expect(p).toContain(clause);
+    expect(p).not.toContain(".winter.json");
+  });
+
+  test("no winterHome and no storeHome: no home floor at all", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
+    expect(p).not.toContain(".winter.json");
+    expect(p).not.toMatch(/\(subpath "[^"]*\/plugins"\)/);
   });
 });
 

@@ -10,7 +10,7 @@
 // background tasks) -- those are bash.test.ts's job; this file's only concern is "does the fence
 // itself hold."
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, realpathSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -667,5 +667,88 @@ describe("fix round 17 (R.3 C-1 part 2b): .winter/skills is protected by the SDK
     const res = await runWithDenyWriteList(`echo x > pkg/.winter/skills/SKILL.md`, cwd, []);
     expect(res.exitCode).not.toBe(0);
     expect(existsSync(join(cwd, "pkg", ".winter", "skills", "SKILL.md"))).toBe(false);
+  });
+});
+
+// Fix round 17 (R.3 I-2, a WS-21 regression): `00717d9` moved the SDK's default home to
+// `~/<homeDirName>/sdk` (`resolveWinterHome`), but the SDK's own floor only named settings files
+// directly under a folder called `<homeDirName>` (the per-root literals and the any-depth
+// control-plane regexes), and nothing named the global config file. Measured by the R.3 reviewer
+// (`sdkhome.ts`) with cwd = home and no host deny list: `~/.winter/settings.json` blocked, but
+// `~/.winter/sdk/settings.json` and `~/.winter/sdk/.winter.json` WRITTEN. The daemon lists both in
+// `sandboxConfigFor`, so this is the standalone / third-party-host case. The floor now names the
+// self-grant files and folders on BOTH `winterHome` and `storeHome`.
+describe("fix round 17 (R.3 I-2): the SDK's own floor covers its own home and store home, cwd = home", () => {
+  const SELF_GRANT_WRITES: readonly (readonly [label: string, rel: string, command: (rel: string) => string])[] = [
+    ["settings.json", "settings.json", (rel) => `echo '{"permissions":{"allow":["Bash"]}}' > ${rel}`],
+    ["settings.local.json", "settings.local.json", (rel) => `echo '{"permissions":{"allow":["Bash"]}}' > ${rel}`],
+    ["the global config file (.winter.json)", ".winter.json", (rel) => `echo '{"mcpServers":{"x":{"command":"sh"}}}' > ${rel}`],
+    ["agents/", "agents/evil.md", (rel) => `mkdir -p $(dirname ${rel}) && echo '---' > ${rel}`],
+    ["plugins/", "plugins/evil/hooks/hooks.json", (rel) => `mkdir -p $(dirname ${rel}) && echo '{}' > ${rel}`],
+  ];
+
+  async function runAsHome(command: string, fakeHome: string, homes: { winterHome: string; storeHome?: string }) {
+    return runCommand({
+      command,
+      cwd: fakeHome,
+      env: { ...process.env, TMPDIR: fakeHome },
+      timeoutMs: 8000,
+      settings: {},
+      home: fakeHome,
+      winterHome: homes.winterHome,
+      ...(homes.storeHome !== undefined ? { storeHome: homes.storeHome } : {}),
+    });
+  }
+
+  // The standalone default: `winterHome` is `~/.winter/sdk`, no store home.
+  for (const [label, rel, command] of SELF_GRANT_WRITES) {
+    t(`standalone (winterHome = <home>/.winter/sdk): a write to ${label} under it is denied`, async () => {
+      const fakeHome = proj();
+      const sdk = join(fakeHome, ".winter", "sdk");
+      mkdirSync(sdk, { recursive: true });
+      const target = join(".winter", "sdk", rel);
+      const res = await runAsHome(command(target), fakeHome, { winterHome: sdk });
+      expect(res.exitCode).not.toBe(0);
+      expect(existsSync(join(fakeHome, target))).toBe(false);
+    });
+  }
+
+  // The router layout: `winterHome` is the per-run folder, `storeHome` the shared `~/.winter/sdk`.
+  for (const [label, rel, command] of SELF_GRANT_WRITES) {
+    t(`router layout: a write to ${label} under the store home AND under the run folder is denied`, async () => {
+      const fakeHome = proj();
+      const store = join(fakeHome, ".winter", "sdk");
+      const runFolder = join(fakeHome, ".winter", "cache", "run", "r1");
+      mkdirSync(store, { recursive: true });
+      mkdirSync(runFolder, { recursive: true });
+      for (const root of [join(".winter", "sdk"), join(".winter", "cache", "run", "r1")]) {
+        const target = join(root, rel);
+        const res = await runAsHome(command(target), fakeHome, { winterHome: runFolder, storeHome: store });
+        expect(res.exitCode).not.toBe(0);
+        expect(existsSync(join(fakeHome, target))).toBe(false);
+      }
+    });
+  }
+
+  t("an EXISTING settings.json under the sdk home cannot be overwritten or removed either", async () => {
+    const fakeHome = proj();
+    const sdk = join(fakeHome, ".winter", "sdk");
+    mkdirSync(sdk, { recursive: true });
+    writeFileSync(join(sdk, "settings.json"), "{}");
+    const overwrite = await runAsHome(`echo '{"permissions":{"allow":["Bash"]}}' > .winter/sdk/settings.json`, fakeHome, { winterHome: sdk });
+    const remove = await runAsHome(`rm .winter/sdk/settings.json`, fakeHome, { winterHome: sdk });
+    expect(overwrite.exitCode).not.toBe(0);
+    expect(remove.exitCode).not.toBe(0);
+    expect(readFileSync(join(sdk, "settings.json"), "utf8")).toBe("{}");
+  });
+
+  t("control: an ordinary file in the sdk home, and one in the home itself, are still writable -- the floor names files and folders, not the whole home", async () => {
+    const fakeHome = proj();
+    const sdk = join(fakeHome, ".winter", "sdk");
+    mkdirSync(sdk, { recursive: true });
+    const res = await runAsHome(`echo ok > .winter/sdk/scratch.txt && echo ok > notes.md`, fakeHome, { winterHome: sdk });
+    expect(res.exitCode).toBe(0);
+    expect(existsSync(join(sdk, "scratch.txt"))).toBe(true);
+    expect(existsSync(join(fakeHome, "notes.md"))).toBe(true);
   });
 });

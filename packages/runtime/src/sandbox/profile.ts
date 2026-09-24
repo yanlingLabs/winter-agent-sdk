@@ -17,7 +17,7 @@
 // workflow worker to it yet in this phase -- WS-11 is a later phase; this ships the tested
 // mechanism now, exactly as T1 shipped `buildAdvertisedSet` before anything called it.
 import { join } from "node:path";
-import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, globalConfigFileName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
 /**
  * P7a (D19): the two dot-dir names the seatbelt fences. `homeDirName` anchors the winter root under
@@ -631,6 +631,41 @@ const PROJECTS_CF = "[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]";
 const providerStateReadDenyRegex = (winterRootRegexSafe: string): string =>
   String.raw`^${winterRootRegexSafe}/${PROJECTS_CF}/.*\.${PROVIDER_CF}-${STATE_CF}\.${JSONL_CF}$`;
 
+/**
+ * Fix round 17 (R.3 I-2, a WS-21 regression): the SDK's own write floor on its OWN homes.
+ *
+ * `00717d9` moved the default home to `~/<homeDirName>/sdk` (`resolveWinterHome`, WS-21 §6.3 item 8),
+ * and under the router `winterHome` is the per-run folder and `storeHome` the shared home. Neither is
+ * a folder NAMED `<homeDirName>`, so the per-root control-plane literals (`<root>/<projectDir>/<file>`)
+ * and the any-depth control-plane regexes (`/<dot-dir>/settings.json$`) never reach a settings file
+ * directly under them, and nothing named the global config file at all. Measured by the R.3 reviewer
+ * with cwd = home and no host deny list: `<home>/<homeDirName>/settings.json` blocked, but
+ * `<home>/<homeDirName>/sdk/settings.json` and `<home>/<homeDirName>/sdk/<globalConfigFile>` WRITTEN
+ * by a sandboxed command. Under the daemon both are already in its `sandboxConfigFor` deny list; this
+ * is the floor for a standalone run or a third-party host, which have no such list.
+ *
+ * For each of `winterHome` and `storeHome` (canonicalized, deduped when they are the same directory):
+ * `(literal …)` denies on `settings.json`, `settings.local.json` and the global config file
+ * (`globalConfigFileName(brand)`, `<homeDirName>.json`: claude's `.claude.json` in shape, spec §6.3
+ * item 3), and `(subpath …)` denies on `agents/` and `plugins/` -- the self-grant surface spec §7.1's
+ * write table lists for the home. Every clause uses `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`, so round
+ * 14's read-deny re-permit cannot punch through it (that constant's own header). Not a claude port:
+ * claude's own config dir is outside its sandbox's write roots unless a user makes it one; this is
+ * Winter's standing "the seatbelt is the only enforcement point left for a shell-invoked write to the
+ * control plane" floor (WS-12 §5.2), carried onto the homes WS-21 introduced.
+ */
+function buildHomeSelfGrantFloor(anchors: readonly (string | undefined)[], brand: SandboxBrand): string {
+  const roots = [...new Set(anchors.filter((a): a is string => a !== undefined && a.length > 0).map(canon))];
+  const files = ["settings.json", "settings.local.json", globalConfigFileName(brand)];
+  const dirs = ["agents", "plugins"];
+  return roots
+    .flatMap((root) => [
+      ...files.map((f) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (literal "${sbplString(join(root, f))}"))`),
+      ...dirs.map((d) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(join(root, d))}"))`),
+    ])
+    .join("\n");
+}
+
 // ---------------------------------------------------------------------------------------------
 // buildSeatbeltProfile
 // ---------------------------------------------------------------------------------------------
@@ -935,6 +970,9 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
     .filter((r) => r.length > 0)
     .join("\n");
 
+  // Fix round 17 (R.3 I-2): see `buildHomeSelfGrantFloor`'s own header.
+  const denyHomeSelfGrantRules = buildHomeSelfGrantFloor([input.winterHome, input.storeHome], brand);
+
   // WS-12 §5.2 (verbatim carry): macOS `mktemp(1)` (and anything else calling
   // confstr(_CS_DARWIN_USER_TEMP_DIR)) writes to the PER-USER temp dir and ignores $TMPDIR
   // entirely -- without this rule bare `mktemp` dies "Operation not permitted," which is enough to
@@ -992,6 +1030,7 @@ ${denyReadKeepInPlaceBlock}
 ${allowDarwinTempFiles}
 ${network}
 ${denyBackupsDirRule}
+${denyHomeSelfGrantRules}
 ${denyRulesFileRules}
 ${denyRulesFileRegex}
 ${denySettingsFileRegex}
