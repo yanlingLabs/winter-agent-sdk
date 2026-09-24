@@ -469,6 +469,73 @@ describe("substituteArguments -- fix round 7, claude parity restored ($ARGUMENTS
   });
 });
 
+// Fix round 9 (promoted to full parity): claude's own substituter is `zE` (dump-confirmed, byte
+// offset 18048328 of the pinned 2.1.250 dump), not the plain single-token `replaceAll` round 7
+// ported -- see resolver.ts's own header for the full ported source, the `Ren`/`shellWords`
+// divergence disclosure, and why the two sentinel markers exist. Every case here was verified
+// directly against the ported function before being written as a fixture (not asserted from the
+// dump reading alone).
+describe("substituteArguments -- fix round 9, the full zE port ($ARGUMENTS[n], $n, escapes, named args, append)", () => {
+  test("$ARGUMENTS[n] indexes into the shell-word split, 0-based", () => {
+    expect(substituteArguments("first: $ARGUMENTS[0], second: $ARGUMENTS[1]", "a b")).toBe("first: a, second: b");
+  });
+
+  test("an out-of-range $ARGUMENTS[n] is left as literal text -- and is NOT then re-caught by the later plain $ARGUMENTS pass, since $ARGUMENTS[5] contains $ARGUMENTS as a literal prefix", () => {
+    // Also demonstrates the append behaviour (below): nothing substituted anywhere, and args is
+    // non-empty, so it is appended -- exactly as claude's own zE does for a body with no recognized
+    // placeholder ANYWHERE, not merely a body with none AT ALL.
+    expect(substituteArguments("val: $ARGUMENTS[5] end", "a b")).toBe("val: $ARGUMENTS[5] end\nARGUMENTS: a b");
+  });
+
+  test("$0, $1, ... are the SAME 0-based word array -- claude's own indexing, not shell's traditional $1-is-first-arg", () => {
+    expect(substituteArguments("$0 then $1", "x y")).toBe("x then y");
+  });
+
+  test("an out-of-range $n positional is left completely unchanged, no append-blocking sentinel needed", () => {
+    expect(substituteArguments("val $9 end", "a b")).toBe("val $9 end\nARGUMENTS: a b");
+  });
+
+  test("a backslash-escaped \\$ARGUMENTS is neutralized -- the token is NOT substituted, the backslash is consumed, the dollar sign survives literally", () => {
+    expect(substituteArguments("literal \\$ARGUMENTS here", "z")).toBe("literal $ARGUMENTS here\nARGUMENTS: z");
+  });
+
+  test("an ESCAPED backslash before $ARGUMENTS does NOT escape it -- the lookbehind fails, so it substitutes normally and both backslashes survive", () => {
+    expect(substituteArguments("\\\\$ARGUMENTS", "z")).toBe("\\\\z");
+  });
+
+  test("the word-boundary sentinel: $1$ARGUMENTS[0] with args 'a b' gives 'ba', not '$1a' -- without the kW wrap around a substituted value, the earlier-run $n pass's own negative lookahead would misjudge what follows the digit", () => {
+    expect(substituteArguments("$1$ARGUMENTS[0]", "a b")).toBe("ba");
+  });
+
+  test("args with no recognized placeholder anywhere in the body are appended, exactly as claude's own zE does at every real slash-command call site (r is always true there)", () => {
+    expect(substituteArguments("no placeholder here", "some args")).toBe("no placeholder here\nARGUMENTS: some args");
+  });
+
+  test("empty args never appends, even with no placeholder -- args is falsy", () => {
+    expect(substituteArguments("no placeholder here", "")).toBe("no placeholder here");
+  });
+
+  test("a body that DOES substitute something never appends, regardless of args", () => {
+    expect(substituteArguments("has $ARGUMENTS here", "val")).toBe("has val here");
+  });
+
+  test("the controller's own item-2 repro: a replacer FUNCTION, not a plain string, so $$, $&, $` and $' inside the args survive verbatim instead of JavaScript's own string-replacement pattern expansion", () => {
+    expect(substituteArguments("$ARGUMENTS", "cost $$5 and $& x")).toBe("cost $$5 and $& x");
+  });
+
+  test("named args (the namedArgs parameter -- no Winter frontmatter parser populates this yet, see resolver.ts's own header)", () => {
+    expect(substituteArguments("hello $name!", "world", ["name"])).toBe("hello world!");
+  });
+
+  test("named args sort longest-name-first, so a shorter name never pre-empts a longer one it is a prefix of", () => {
+    expect(substituteArguments("$foo $foobar", "a b", ["foo", "foobar"])).toBe("a b");
+  });
+
+  test("round-7 regression: $ARGUMENTS_JSON in an ordinary body is STILL not a recognized token -- only its $ARGUMENTS prefix substitutes (via the plain-$ARGUMENTS pass), leaving the _JSON suffix literal, and this time WITHOUT an append (something DID substitute)", () => {
+    expect(substituteArguments("run $ARGUMENTS_JSON now", "a b")).toBe("run a b_JSON now");
+  });
+});
+
 // Fix round 6 (originally), re-scoped in round 7: `$ARGUMENTS_JSON` substitutes with
 // `JSON.stringify(args)`, matching claude's own `S(e)` escaping (dump-confirmed at
 // `createWorkflowCommand`'s `getPromptForCommand`; controller-confirmed `S` is `JSON.stringify`,

@@ -784,7 +784,12 @@ export function isRecognizedReadOnly(command: string): boolean {
 // Glob/prefix pattern compiler (WS-07 §3's general `*` / trailing `:*` rule)
 // ---------------------------------------------------------------------------------------------
 
-function escapeRegExpLiteral(s: string): string {
+// Exported (WS-21 fix round 9): claude's own `Tu(t){return t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}`
+// (dump-confirmed, byte offset 11028957 of the pinned 2.1.250 dump) is the IDENTICAL regex --
+// `commands/resolver.ts`'s own port of claude's `zE` (the full `$ARGUMENTS`/named-arg substituter)
+// reuses this one implementation rather than duplicating it, since both are literally the same
+// function serving the same "safely embed a literal name inside a dynamically-built RegExp" need.
+export function escapeRegExpLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
