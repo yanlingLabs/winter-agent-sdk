@@ -39,6 +39,8 @@ interface Node {
   toolUseIds: string[];
   /** A `user` entry's `tool_result` ids, in block order (F2). */
   toolResultIds: string[];
+  /** claude's synthetic `isApiErrorMessage` assistant entry -- never a batch sibling (F2). */
+  apiError: boolean;
 }
 
 function blockIds(message: unknown, blockType: "tool_use" | "tool_result", idKey: "id" | "tool_use_id"): string[] {
@@ -64,6 +66,7 @@ function toNodes(entries: SessionStoreEntry[]): Node[] {
       ...(role !== undefined ? { role } : {}),
       toolUseIds: e.type === "assistant" ? blockIds(message, "tool_use", "id") : [],
       toolResultIds: e.type === "user" ? blockIds(message, "tool_result", "tool_use_id") : [],
+      apiError: (e as { isApiErrorMessage?: unknown }).isApiErrorMessage === true,
     });
   }
   return nodes;
@@ -74,29 +77,51 @@ function toNodes(entries: SessionStoreEntry[]): Node[] {
  * (provider-runtime must never import the runtime package -- this file's own rule, above) so the
  * warning's "N completed tool results" counts exactly what the Winter leg's rebuild carries.
  *
- * claude writes a PARALLEL batch as one one-block `assistant` entry per call and parents each call's
- * result on ITS OWN call's entry, so the single parentUuid chain from the leaf holds only the result
- * the next turn was chained onto. claude's own reader splices the others back in after its walk
- * (`Cer`, claude 2.1.250 dump offset 20061141). Here as there: for each run of consecutive chain
- * `assistant` entries that does not end the chain, the off-chain `user` entries parented on a run
- * member whose results answer a call nothing on the chain answers yet are inserted right after the
- * run's last entry, in call order. resume.ts's header comment has the full reasoning and the two
- * deliberate differences from `Cer` (grouped by the run and matched by `tool_use_id`, never by
- * `message.id`; no sibling assistant entries).
+ * claude writes a PARALLEL batch as one one-block `assistant` entry per call, chained one after
+ * another, and parents each call's result on ITS OWN call's entry; it yields a concurrency-safe
+ * batch's results in completion order (`getCompletedResults`, claude 2.1.250 dump offset 18548003)
+ * and chains the next turn onto the last one. So the single parentUuid chain from the leaf holds one
+ * result, and when an earlier call finished last, not even the later call entries. claude's own
+ * reader splices both back in after its walk (`Cer`, 20061141). Here as there: for each run of
+ * consecutive chain `assistant` entries that does not end the chain, the off-chain sibling call
+ * entries (parented on a member or another sibling) and the off-chain results parented on any of
+ * them that answer a call nothing on the chain answers yet are inserted right after the run's last
+ * entry -- siblings first, then results in call order. A sibling comes back only when every call it
+ * carries is then answered. resume.ts's header comment has the full reasoning and the deliberate
+ * differences from `Cer` (grouped by the run and matched by `tool_use_id`, never by `message.id`).
  */
 function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
   const onChain = new Set(chain.map((n) => n.uuid));
   const resultsByParent = new Map<string, Node[]>();
+  const offChainAssistants: Node[] = [];
   for (const n of pool) {
-    if (onChain.has(n.uuid) || n.parentUuid === null || n.toolResultIds.length === 0) continue;
+    if (onChain.has(n.uuid) || n.parentUuid === null) continue;
+    if (n.type === "assistant" && !n.apiError) offChainAssistants.push(n);
+    if (n.toolResultIds.length === 0) continue;
     const siblings = resultsByParent.get(n.parentUuid);
     if (siblings !== undefined) siblings.push(n);
     else resultsByParent.set(n.parentUuid, [n]);
   }
-  if (resultsByParent.size === 0) return chain;
+  if (resultsByParent.size === 0 && offChainAssistants.length === 0) return chain;
 
   const answered = new Set(chain.flatMap((n) => n.toolResultIds));
   const recovered = new Set<string>();
+  const resultsFor = (parentUuid: string, open: readonly string[]): { results: Node[]; ids: Set<string> } => {
+    const results: Node[] = [];
+    const ids = new Set<string>();
+    for (const candidate of resultsByParent.get(parentUuid) ?? []) {
+      if (recovered.has(candidate.uuid)) continue;
+      if (!candidate.toolResultIds.some((id) => open.includes(id) && !ids.has(id))) continue;
+      results.push(candidate);
+      for (const id of candidate.toolResultIds) ids.add(id);
+    }
+    return { results, ids };
+  };
+  const take = (results: readonly Node[], ids: ReadonlySet<string>): void => {
+    for (const r of results) recovered.add(r.uuid);
+    for (const id of ids) answered.add(id);
+  };
+
   const inserts = new Map<string, Node[]>();
   for (let start = 0; start < chain.length; ) {
     if (chain[start]!.type !== "assistant") {
@@ -106,19 +131,27 @@ function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
     let end = start;
     while (end + 1 < chain.length && chain[end + 1]!.type === "assistant") end++;
     if (end < chain.length - 1) {
-      const found: Node[] = [];
+      const memberResults: Node[] = [];
       for (let k = start; k <= end; k++) {
         const member = chain[k]!;
-        const open = member.toolUseIds.filter((id) => !answered.has(id));
-        if (open.length === 0) continue;
-        for (const candidate of resultsByParent.get(member.uuid) ?? []) {
-          if (recovered.has(candidate.uuid)) continue;
-          if (!candidate.toolResultIds.some((id) => open.includes(id) && !answered.has(id))) continue;
-          recovered.add(candidate.uuid);
-          for (const id of candidate.toolResultIds) answered.add(id);
-          found.push(candidate);
-        }
+        const { results, ids } = resultsFor(member.uuid, member.toolUseIds.filter((id) => !answered.has(id)));
+        take(results, ids);
+        memberResults.push(...results);
       }
+      const reachable = new Set(chain.slice(start, end + 1).map((n) => n.uuid));
+      const siblings: Node[] = [];
+      const siblingResults: Node[] = [];
+      for (const candidate of offChainAssistants) {
+        if (candidate.parentUuid === null || !reachable.has(candidate.parentUuid) || recovered.has(candidate.uuid)) continue;
+        reachable.add(candidate.uuid);
+        const { results, ids } = resultsFor(candidate.uuid, candidate.toolUseIds.filter((id) => !answered.has(id)));
+        if (!candidate.toolUseIds.every((id) => answered.has(id) || ids.has(id))) continue;
+        recovered.add(candidate.uuid);
+        take(results, ids);
+        siblings.push(candidate);
+        siblingResults.push(...results);
+      }
+      const found = [...siblings, ...memberResults, ...siblingResults];
       if (found.length > 0) inserts.set(chain[end]!.uuid, found);
     }
     start = end + 1;

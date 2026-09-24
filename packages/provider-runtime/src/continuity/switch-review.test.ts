@@ -252,6 +252,11 @@ describe("switchFactsFor", () => {
     expect(switchFactsFor({ entries: claudeParallelBatch(), sidecarRecords: [], from: CLAUDE }).completedToolResults).toBe(3);
   });
 
+  test("F2: a batch whose next turn chains through its FIRST call (claude yields concurrency-safe results in completion order) still counts all three", () => {
+    const entries = claudeParallelBatch().map((e) => (e.uuid === "ba33ce5b" ? { ...e, parentUuid: "caa5da55" } : e));
+    expect(switchFactsFor({ entries, sidecarRecords: [], from: CLAUDE }).completedToolResults).toBe(3);
+  });
+
   test("F2: a parallel batch before the last compaction boundary still counts nothing", () => {
     const entries: SessionStoreEntry[] = [
       ...claudeParallelBatch(),
