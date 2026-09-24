@@ -220,6 +220,8 @@ export interface RunCommandOptions {
   storeHome?: string;
   /** P7a (D19): the session's brand -- the dot-dir names the profile fences. Omitted = `WINTER_BRAND`. */
   brand?: SandboxBrand;
+  /** Fix round 15: see `SeatbeltProfileInput.allowGitConfigWrites`'s own header. Omitted = `false`. */
+  allowGitConfigWrites?: boolean;
 }
 
 export interface RunCommandResult {
@@ -281,6 +283,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       // WS-21 §3.7: the shared store home, when the router supplied one -- see `SeatbeltProfileInput.storeHome`.
       ...(opts.storeHome !== undefined ? { storeHome: opts.storeHome } : {}),
       ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
+      ...(opts.allowGitConfigWrites !== undefined ? { allowGitConfigWrites: opts.allowGitConfigWrites } : {}),
     });
     spawnFile = REAL_SANDBOX_EXEC_PATH;
     spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];

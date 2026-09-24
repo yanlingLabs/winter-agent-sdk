@@ -2986,3 +2986,180 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 });
+
+// Fix round 15 (CRITICAL, claude's own cR): claude's write profile ALWAYS adds cR(e)'s own
+// default-protected entries to the write denies, with no opt-in flag -- Winter's profile had none of
+// these, so a sandboxed Bash command could plant a git hook, set core.fsmonitor in .git/config, or
+// add an .mcp.json server, all of which run again OUTSIDE the sandbox on the session's next turn. The
+// controller's own explicit test shape: five real, darwin-gated sandbox-exec commands, each blocked,
+// plus a plain file write in the cwd that must still work.
+describe("fix round 15: claude's own cR -- default write protections, unconditional, no opt-in flag", () => {
+  function freshScratch(): string {
+    return mkdtempSync(join(tmpdir(), "winter-r15-cr-scratch-"));
+  }
+
+  test.skipIf(process.platform !== "darwin")("end to end: cp x .git/hooks/pre-commit is blocked -- no git hook can be planted", async () => {
+    const scratch = freshScratch();
+    try {
+      mkdirSync(join(scratch, ".git", "hooks"), { recursive: true });
+      const srcPath = join(scratch, "x");
+      writeFileSync(srcPath, "#!/bin/sh\necho pwned\n");
+      const hookPath = join(scratch, ".git", "hooks", "pre-commit");
+      const result = await runCommand({
+        command: `cp ${JSON.stringify(srcPath)} ${JSON.stringify(hookPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(hookPath)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: echo ... >> .git/config is blocked -- core.fsmonitor cannot be set", async () => {
+    const scratch = freshScratch();
+    try {
+      mkdirSync(join(scratch, ".git"), { recursive: true });
+      const configPath = join(scratch, ".git", "config");
+      writeFileSync(configPath, "[core]\n\trepositoryformatversion = 0\n");
+      const before = readFileSync(configPath, "utf8");
+      const result = await runCommand({
+        command: `echo "fsmonitor = /bin/evil" >> ${JSON.stringify(configPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: echo {} > .mcp.json is blocked -- no MCP server can be added", async () => {
+    const scratch = freshScratch();
+    try {
+      const mcpPath = join(scratch, ".mcp.json");
+      const result = await runCommand({
+        command: `echo {} > ${JSON.stringify(mcpPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(mcpPath)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: echo ... >> .zshrc in the cwd is blocked", async () => {
+    const scratch = freshScratch();
+    try {
+      const zshrcPath = join(scratch, ".zshrc");
+      writeFileSync(zshrcPath, "# ordinary zshrc\n");
+      const before = readFileSync(zshrcPath, "utf8");
+      const result = await runCommand({
+        command: `echo "alias ls='rm -rf /'" >> ${JSON.stringify(zshrcPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(readFileSync(zshrcPath, "utf8")).toBe(before);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: mkdir -p sub/.vscode && echo x > sub/.vscode/tasks.json is blocked -- the unanchored, any-depth reach", async () => {
+    const scratch = freshScratch();
+    try {
+      const tasksPath = join(scratch, "sub", ".vscode", "tasks.json");
+      const result = await runCommand({
+        command: `mkdir -p ${JSON.stringify(join(scratch, "sub", ".vscode"))} && echo x > ${JSON.stringify(tasksPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(tasksPath)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: a plain file write in the cwd still works -- the fence is not overbroad", async () => {
+    const scratch = freshScratch();
+    try {
+      const notesPath = join(scratch, "notes.txt");
+      const result = await runCommand({
+        command: `echo ok > ${JSON.stringify(notesPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(notesPath)).toBe(true);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // The empirically-found, Winter-specific exclusion (buildDefaultWriteProtectionEntries' own
+  // header): Winter's own memory mechanism must stay creatable even though .winter now carries
+  // default write protections for its own commands/agents/mcp.json.
+  test.skipIf(process.platform !== "darwin")("end to end: mkdir -p .winter/memory && write a memory file still works -- Winter's own control-plane dir is NOT ancestor-fenced", async () => {
+    const scratch = freshScratch();
+    try {
+      const memPath = join(scratch, ".winter", "memory", "notes.md");
+      const result = await runCommand({
+        command: `mkdir -p ${JSON.stringify(join(scratch, ".winter", "memory"))} && echo "# notes" > ${JSON.stringify(memPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(memPath)).toBe(true);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: allowGitConfigWrites: true clears the .git/config protection specifically", async () => {
+    const scratch = freshScratch();
+    try {
+      mkdirSync(join(scratch, ".git"), { recursive: true });
+      const configPath = join(scratch, ".git", "config");
+      writeFileSync(configPath, "[core]\n");
+      const result = await runCommand({
+        command: `echo "fsmonitor = true" >> ${JSON.stringify(configPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+        allowGitConfigWrites: true,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(configPath, "utf8")).toContain("fsmonitor = true");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+});
