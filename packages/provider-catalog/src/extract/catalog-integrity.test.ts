@@ -682,18 +682,24 @@ describe("the denominator obligation (WS-13 §3 step 5)", () => {
 });
 
 describe("notices cover copied files (WS-13 §13)", () => {
-  test("the package NOTICE names both copied upstream files and their manifest entry", async () => {
-    const notice = await Bun.file(new URL("../../NOTICE", import.meta.url)).text();
-    expect(notice).toContain("third_party/omniroute-provider-source/LICENSE");
-    expect(notice).toContain("third_party/omniroute-provider-source/NOTICE");
-    expect(notice).toContain("extraction-manifest.json");
-    expect(notice).toContain(PEELED_COMMIT);
-    expect(notice).toContain(TAG_OBJECT);
+  // The register moved from this package's own `NOTICE` into `PROVENANCE.md` (P7a fix wave r3
+  // (I3)): `NOTICE` now ships the root `NOTICE`'s Apache-2.0 `xai-org/grok-build` attribution
+  // byte-for-byte instead, matching `winter-provider-runtime`/`winter-provider-conformance` --
+  // `generated/catalog.json` cites that same repository, at the identical pinned commit, as the
+  // `sourceRef` for several xAI model-catalogue rows, making this package a genuine carrier of that
+  // (unrelated) derivation too. See `PROVENANCE.md`'s "Copied-files register (WS-13 §13)" section.
+  test("PROVENANCE.md's copied-files register names both copied upstream files and their manifest entry", async () => {
+    const doc = await Bun.file(new URL("../../PROVENANCE.md", import.meta.url)).text();
+    expect(doc).toContain("third_party/omniroute-provider-source/LICENSE");
+    expect(doc).toContain("third_party/omniroute-provider-source/NOTICE");
+    expect(doc).toContain("extraction-manifest.json");
+    expect(doc).toContain(PEELED_COMMIT);
+    expect(doc).toContain(TAG_OBJECT);
   });
 
   test("...and states that no third-party SOURCE CODE is in this package", async () => {
-    const notice = await Bun.file(new URL("../../NOTICE", import.meta.url)).text();
-    expect(notice).toContain("NO THIRD-PARTY SOURCE CODE");
+    const doc = await Bun.file(new URL("../../PROVENANCE.md", import.meta.url)).text();
+    expect(doc).toContain("NO THIRD-PARTY SOURCE CODE");
   });
 });
 

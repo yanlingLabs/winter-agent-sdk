@@ -75,13 +75,19 @@ re-drive procedure when one job fails after the other succeeded.
 
 MIT — see [`LICENSE`](./LICENSE). Every published package ships a copy.
 
-Two `NOTICE` files carry third-party attribution, and they say opposite things on purpose:
+The root [`NOTICE`](./NOTICE) records the Apache-2.0 attribution for `xai-org/grok-build`. Every
+publishable package whose source (or, for `winter-provider-catalog`, whose generated catalog data)
+derives from that repository ships an identical copy of it, byte-for-byte (`scripts/release-
+gates.test.ts`'s r3 (I3) derives the carrier set from the source rather than a hand-kept list):
 
-- the root [`NOTICE`](./NOTICE) records the Apache-2.0 attribution for `xai-org/grok-build`, from
-  which Winter's xAI OAuth provider derives its client id, endpoints, scope set and request field
-  names. It ships in the tarballs of the two packages that carry that code —
-  `@yanlinglabs/winter-provider-runtime` and `@yanlinglabs/winter-provider-conformance`;
-- [`packages/provider-catalog/NOTICE`](packages/provider-catalog/NOTICE) attributes the upstream
-  catalog **data**, and states that no file in that package was copied from any upstream project.
-  [`PROVENANCE.md`](packages/provider-catalog/PROVENANCE.md) beside it records where every row came
-  from and under what evidence.
+- `@yanlinglabs/winter-provider-runtime` — the xAI OAuth provider's client id, endpoints, scope set
+  and request field names;
+- `@yanlinglabs/winter-provider-conformance` — its xAI OAuth fake mirrors the same flow;
+- `@yanlinglabs/winter-provider-catalog` — several xAI model-catalogue rows in `generated/
+  catalog.json` cite the same pinned commit as their `sourceRef`.
+
+`winter-provider-catalog`'s OTHER upstream dependency — the OmniRoute corpus its catalog **data** is
+extracted from, with no code copied — is unrelated to `xai-org/grok-build` and is documented
+separately in [`PROVENANCE.md`](packages/provider-catalog/PROVENANCE.md), which records where every
+row came from and under what evidence, and in that same file's "Copied-files register (WS-13 §13)"
+section.

@@ -610,3 +610,34 @@ document (`scanForSecrets`), and the extractor runs the **same** scan over the r
 a debug dump no output-side scan would ever see. Field names carrying credential or identity
 material (`oauth`, `anonymousApiKey`, `headers`, `extraHeaders`, `defaultHeaders`) are rejected on
 sight, whatever their shape. WS-13 §6 is categorical: descriptors never contain secrets.
+
+## Copied-files register (WS-13 §13)
+
+Moved here from this package's own `NOTICE` (P7a fix wave r3 (I3)), which now ships the root
+`NOTICE`'s Apache-2.0 `xai-org/grok-build` attribution byte-for-byte instead — `generated/
+catalog.json` cites that same repository, at the identical pinned commit, as the `sourceRef` for
+several xAI model-catalogue rows (`crates/codegen/xai-grok-models/default_models.json`), so this
+package is a genuine carrier of that derivation alongside `@yanlinglabs/winter-provider-runtime` and
+`@yanlinglabs/winter-provider-conformance`. This register is unrelated to that attribution; it is the
+WS-13 §13 acceptance requirement that "notices cover copied files", for the OmniRoute corpus.
+
+NO THIRD-PARTY SOURCE CODE. As of this section's writing, this package contains no third-party
+source code, and no file in it was copied from any upstream project.
+
+Two upstream files ARE copied into this repository — but into `third_party/`, not here:
+
+  third_party/omniroute-provider-source/LICENSE   <- OmniRoute's root LICENSE (MIT), verbatim
+  third_party/omniroute-provider-source/NOTICE    <- OmniRoute's THIRD_PARTY_NOTICES.md, verbatim
+
+Both are registered with their upstream path, git blob id, sha256 and byte count in
+`third_party/omniroute-provider-source/extraction-manifest.json`, under `copiedFiles`, with
+`modifications: "none"`.
+
+WS-13 §5 permits a narrow, deliberate exception: a *pure helper* may be copied from the OmniRoute
+provider corpus with clean per-file provenance. WS-13 §13's acceptance list then requires "notices
+cover copied files". This register is that register. It is empty of code entries on purpose, and an
+empty register is a stronger statement than a missing one: it says the exception has not been used,
+rather than leaving a reader to guess.
+
+If a future lane copies such a file, it appends an entry here naming the file, the upstream project,
+the exact commit, the upstream path, and the licence — and the copy is not merged without it.

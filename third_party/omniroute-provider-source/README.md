@@ -16,8 +16,11 @@ WS-13 §1/§3/§13 draw the line:
   *code path*. WS-13 §13 states the rule as "no executable upstream URL builders" and "a catalog
   entry alone never causes code download or execution". Adapter behaviour is Winter-authored per
   protocol family (WS-13 §5), proven by the behavioural corpus, never ported row-by-row.
-- Pure helper files may be copied only with clean per-file provenance and a NOTICE entry
-  (`packages/provider-catalog/NOTICE`). No such file exists today; the NOTICE says so explicitly.
+- Pure helper files may be copied only with clean per-file provenance and a copied-files register
+  entry (`packages/provider-catalog/PROVENANCE.md`, "Copied-files register (WS-13 §13)" — moved
+  there from that package's own `NOTICE`, which now ships the root `NOTICE`'s unrelated
+  `xai-org/grok-build` attribution instead, P7a fix wave r3 (I3)). No such file exists today; the
+  register says so explicitly.
 - Browser/private/subscription transports are rejected regardless of feasibility, and Claude.ai
   subscription login is categorically **not** a Winter provider (WS-13 §6, D13/D14).
 

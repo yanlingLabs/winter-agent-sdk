@@ -43,4 +43,10 @@ a patch.
 
 MIT — see [`LICENSE`](./LICENSE), which ships in the published tarball.
 
-Third-party attribution for the upstream catalog data this package derives from is in [`NOTICE`](./NOTICE), which ships in the tarball beside this file.
+This package's generated catalog data cites the Apache-2.0 licensed `xai-org/grok-build` as the
+source for several xAI model-catalogue rows; that attribution is in [`NOTICE`](./NOTICE) — identical
+to the [root `NOTICE`](../../NOTICE) — which ships in the tarball beside this file.
+
+The separate OmniRoute-corpus extraction this package's catalog **data** is built from (no code
+copied, two licence/notice files registered verbatim under `third_party/`) is documented in
+[`PROVENANCE.md`](./PROVENANCE.md), which also ships in the tarball.
