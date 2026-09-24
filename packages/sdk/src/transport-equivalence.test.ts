@@ -30,6 +30,7 @@
 //    kind — R6-13's condition was met by the real permission/hook control-RPC scenarios below.)
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,6 +76,8 @@ import {
   SCENARIO_MODELS,
   SCENARIO_TOOL_NAME,
   startScenarioFake,
+  recordedProviderSystems,
+  resetRecordedProviderSystems,
   type ScenarioFake,
 } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
@@ -280,7 +283,13 @@ function spawnHook(
   return (opts: SpawnRuntimeOptions): SpawnedRuntimeProcess => {
     // WINTER_HOME merged in for every leg (Task 8 HARD CONSTRAINT) — ahead of the
     // WINTER_TEST_PROVIDER merge, which stays conditional exactly as before.
-    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}) };
+    //
+    // WS-21 fix round 22: and the `gitStatus` snapshot's kill switch (claude's
+    // CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS, context/git-status.ts), for every leg. FIXTURE_CWD is the
+    // live checkout, and each leg snapshots its git state when its own session starts: a commit or a
+    // file appearing between two legs' runs changed one leg's prompt and so its scripted `usage`, an
+    // equivalence failure no transport caused. The "fixture hygiene" test pins it.
+    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_DISABLE_GIT_INSTRUCTIONS: "1", ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}) };
     let proc: SpawnedRuntimeProcess;
     if (leg === "inMemory") {
       // The in-memory leg has no real child env to merge into — inMemoryProcess's own 4th `env`
@@ -2909,6 +2918,26 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     }
   });
 }
+
+// WS-21 fix round 22: FIXTURE_CWD is the live checkout, and a session in a git work tree folds a
+// `gitStatus` snapshot of it into its system prompt (context/git-status.ts, claude's `aHe`: branch,
+// `git status --short`, the last five commits). Each leg takes its OWN snapshot when its session
+// starts, so a commit, or a file appearing or vanishing anywhere in the checkout, between leg A and
+// leg B changed leg B's prompt -- and with it the scripted provider's synthetic `usage`
+// (ceil(chars/4)) -- and the two results differed for a reason no transport owns. Every leg's
+// environment carries the snapshot's kill switch (spawnHook's one shared `env`); pinned here on the
+// leg whose live request this process can read.
+describe("fixture hygiene", () => {
+  test("no leg folds the live checkout's git state into its prompt (the gitStatus kill switch rides every leg's env)", async () => {
+    expect(execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: FIXTURE_CWD, encoding: "utf8" }).trim()).toBe("true");
+    resetRecordedProviderSystems();
+    const run = await traceViaQuery("inMemory", { prompt: "hi" });
+    expect(run.thrown).toBeUndefined();
+    const systems = recordedProviderSystems();
+    expect(systems.length).toBeGreaterThan(0);
+    for (const system of systems) expect(system ?? "").not.toContain("gitStatus: ");
+  });
+});
 
 describe("transport equivalence: inMemoryProcess vs the real winter child (main.ts, dev leg)", () => {
   registerEquivalenceScenarios("inMemory", "child");
