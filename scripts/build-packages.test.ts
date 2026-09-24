@@ -104,6 +104,37 @@ describe("build-packages: the plan is DERIVED from each manifest", () => {
   });
 });
 
+/**
+ * True when an emitted `.js` file carries a REAL relative `.ts` import/export/dynamic-import
+ * specifier -- the thing a Node consumer actually cannot resolve.
+ *
+ * Not a text regex: `Bun.Transpiler#scanImports` parses the file and reports only genuine module
+ * specifiers, so a string or template literal that merely CONTAINS `from "./x.ts"`-shaped text
+ * (data, not code) is never mistaken for one. See this file's own "no emitted file" test for why
+ * that distinction is load-bearing here.
+ */
+function jsHasRelativeTsSpecifier(source: string): boolean {
+  return new Bun.Transpiler({ loader: "js" }).scanImports(source).some((i) => i.path.startsWith(".") && i.path.endsWith(".ts"));
+}
+
+describe("jsHasRelativeTsSpecifier -- a parsed check, not a text regex", () => {
+  test("a real import/export/dynamic-import specifier IS reported", () => {
+    expect(jsHasRelativeTsSpecifier('import { a } from "./a.ts";')).toBe(true);
+    expect(jsHasRelativeTsSpecifier('export * from "./b.ts";')).toBe(true);
+    expect(jsHasRelativeTsSpecifier('const p = import("./c.ts");')).toBe(true);
+  });
+
+  test("a DATA string shaped exactly like a specifier is NOT reported -- the provider catalog's own generated rejection-reason text", () => {
+    const bundledJsonData = 'const reason = "references `aihordeProvider` from \\"./registry/aihorde/index.ts\\", which IS materialized";';
+    expect(jsHasRelativeTsSpecifier(bundledJsonData)).toBe(false);
+  });
+
+  test("a bare package specifier and a relative .js specifier are both fine", () => {
+    expect(jsHasRelativeTsSpecifier('import { a } from "@yanlinglabs/winter-provider-catalog";')).toBe(false);
+    expect(jsHasRelativeTsSpecifier('import { a } from "./chunk-abc123.js";')).toBe(false);
+  });
+});
+
 describe("rewriteDeclarationSpecifiers (the step `rewriteRelativeImportExtensions` does NOT do)", () => {
   // MEASURED, not assumed: on TS 5.9.3, with `rewriteRelativeImportExtensions: true` under both
   // `module: esnext`/`bundler` and `nodenext`/`nodenext`, an emitted `.d.ts` keeps
@@ -152,12 +183,31 @@ describe.skipIf(!BUILD_ENABLED)("build-packages: the real build", () => {
   test("no emitted file -- .js or .d.ts -- carries a relative `.ts` specifier", () => {
     // THE WHOLE DEFECT, restated as a property of the output. One `.ts` specifier anywhere in the
     // emit is a module a Node consumer cannot load (or a type a consumer's tsc cannot resolve).
+    //
+    // `.js` is checked with `jsHasRelativeTsSpecifier` (a parse, not a text regex) -- CORRECTED here:
+    // the provider catalog's `generated/rejections.json` / `generated/upstream-layer.json` (refreshed
+    // 2026-09-19, f9c7d6e) bundle in as inlined relative-JSON DATA and carry diagnostic strings
+    // shaped exactly like a specifier (`reason: 'references \`aihordeProvider\` from
+    // "./registry/aihorde/index.ts", which IS materialized …'`), which a raw text regex cannot tell
+    // apart from an actual `from "./x.ts"` import clause. `bun build`'s own splitting output was
+    // already correct -- `dist/index.js` (the provider catalog) and the shared chunks `provider-
+    // runtime`/`provider-conformance` hoist into carry only real `.js` chunk imports and bare package
+    // specifiers (confirmed via `scanImports` on the actual build output); the false positive was
+    // this test's own detector, not the build.
+    //
+    // `.d.ts` keeps the plain regex: `Bun.Transpiler` parses JS/TS source, not ambient declaration
+    // syntax, and a declaration file carries none of the catalog's bundled JSON data for it to
+    // misfire on.
     const offenders: string[] = [];
     for (const pkg of result.packages) {
       for (const relative of walk(join(pkg.dir, "dist"))) {
-        if (!relative.endsWith(".js") && !relative.endsWith(".d.ts")) continue;
-        const text = readFileSync(join(pkg.dir, "dist", relative), "utf8");
-        if (/(?:\bfrom\s*|\bimport\s*\(\s*)(["'])\.[^"']*\.ts\1/.test(text)) offenders.push(`${pkg.name}: dist/${relative}`);
+        const full = join(pkg.dir, "dist", relative);
+        if (relative.endsWith(".js")) {
+          if (jsHasRelativeTsSpecifier(readFileSync(full, "utf8"))) offenders.push(`${pkg.name}: dist/${relative}`);
+        } else if (relative.endsWith(".d.ts")) {
+          const text = readFileSync(full, "utf8");
+          if (/(?:\bfrom\s*|\bimport\s*\(\s*)(["'])\.[^"']*\.ts\1/.test(text)) offenders.push(`${pkg.name}: dist/${relative}`);
+        }
       }
     }
     expect(offenders).toEqual([]);
