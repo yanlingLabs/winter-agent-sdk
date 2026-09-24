@@ -26,7 +26,7 @@ import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
  */
 export type SandboxBrand = Pick<BrandProfile, "homeDirName" | "projectDirName">;
 import { resolveRealTarget } from "../permissions/paths.ts";
-import { ancestorDirectoriesOf, type GlobDenyEntry } from "../permissions/file-rules.ts";
+import { ancestorDirectoriesOf, recursiveGlobToSbplRegexSource, type GlobDenyEntry } from "../permissions/file-rules.ts";
 
 // ---------------------------------------------------------------------------------------------
 // WS-12 §2: the CC-shaped configuration surface, verbatim.
@@ -42,6 +42,18 @@ export interface SandboxFilesystemSettings {
   // rationale (fails closed: an unenforced allowRead simply leaves the outer denyRead in effect).
   allowRead?: string[];
   denyRead?: string[];
+  /**
+   * Fix round 16, item 2 (claude's own `ag()`, dump-verified: `function ag(){return
+   * pe?.filesystem?.allowGitConfig??!1}`): `sandbox.filesystem.allowGitConfig` in settings.json --
+   * the ONE settings-facing door for `SeatbeltProfileInput.allowGitConfigWrites`/
+   * `RunCommandOptions.allowGitConfigWrites`, which this module and spawn.ts already had (round 15)
+   * but nothing set. Wired through `tools/impl/{bash,monitor}.ts`'s own options-builders (each reads
+   * `ctx.sandboxSettings.filesystem?.allowGitConfig` directly) -- `buildSeatbeltProfile` itself never
+   * reads this field; it is CONSUMED at the caller boundary (spawn.ts's own `allowGitConfigWrites`
+   * param), matching every other filesystem key's own "settings shape carries it, a caller resolves
+   * it into the profile-builder's own dedicated param" pattern in this file.
+   */
+  allowGitConfig?: boolean;
 }
 
 // WS-12 §12 open question 1: v1 enforces a boolean network posture only (Seatbelt filters by
@@ -339,19 +351,38 @@ const DEFAULT_PROTECTED_FILES = [".gitconfig", ".gitmodules", ".bashrc", ".bash_
 const DEFAULT_PROTECTED_DIRS = [".vscode", ".idea", ".claude/commands", ".claude/agents"] as const;
 
 /**
- * Renders claude's own globstar-prefixed pattern (two asterisks, a slash, the entry name, and for a
- * directory a trailing slash-globstar too) -- an UNANCHORED, any-depth glob with NO real filesystem
- * prefix at all (the first glob character is the pattern's own first character) --
- * as the SAME "no leading anchor, `$`-terminated" shape this module's own `controlPlaneRegexes`/
- * `providerStateReadDenyRegex` already establish for an identical "match this name at any depth under
- * any writable root" reach. Deliberately NOT `globToSbplRegexSource`/`canonicalizeGlobFixedPrefix`
- * (file-rules.ts): those assume a REAL, absolute filesystem prefix to canonicalize via
- * `resolveRealTarget`/`ko` -- claude's own pattern here has none, and forcing it through that
- * machinery would misuse a primitive built for a structurally different input shape.
+ * Fix round 16 (over-deny correction; supersedes round 15's own `unanchoredEntryRegex`, which was
+ * WRONG -- see below): renders claude's own globstar-prefixed pattern (two asterisks, a slash, the
+ * entry name, for a directory a trailing slash-globstar too) the way claude ACTUALLY does, not the
+ * way its own literal source text looks in isolation. claude's `mR` renders every `cR`-derived entry
+ * via `ri(Cv(w))` (dump-verified, round 12's own `ri`/`Cv` citations): `Cv` (dump byte 15283956)
+ * canonicalizes ANY relative path by unconditionally joining it onto `process.cwd()` FIRST (`let
+ * t=process.cwd();...else if(!In.isAbsolute(e))r=In.resolve(t,e)`) -- the two-asterisk-slash-prefixed
+ * `.git/hooks` pattern is relative (does not start with `/`), so `Cv` turns it into
+ * `<cwd>` + that same two-asterisk-slash prefix + `.git/hooks` BEFORE it is ever treated as a glob at
+ * all. Only THEN does `Cv`'s own glob-fixed-prefix canonicalization run, and by that point the fixed
+ * prefix is `<cwd>` itself (a REAL, canonicalizable filesystem path), not empty. Round 15's own
+ * reading -- "the first glob character is the pattern's own first character, so there is nothing to
+ * canonicalize" -- was wrong: it looked at the pattern in isolation and never accounted for `Cv`'s
+ * own unconditional cwd-join happening BEFORE the glob-shape analysis. The observable consequence,
+ * confirmed against real `sandbox-exec`: Winter's round-15 rendering denied the pattern EVERYWHERE
+ * (every writable root, not just cwd), so `git clone <url> "$TMPDIR/x"` -- writing `.git/hooks` under
+ * a DIFFERENT writable root entirely -- failed on Winter and succeeds on claude.
+ *
+ * The fix: build the SAME absolute glob text `Cv` would (`<cwd>` + the two-asterisk-slash prefix +
+ * `<entry>`, with a trailing slash-globstar too for a directory) and reuse
+ * `recursiveGlobToSbplRegexSource` (file-rules.ts) -- the SAME primitive every OTHER glob-shaped deny
+ * in this module already goes through, which is claude's own `Po`/`td` (dump-verified in
+ * file-rules.ts's own header): it now correctly canonicalizes `<cwd>` as the fixed prefix via
+ * `resolveRealTarget`/`ko`, anchors the regex with `^`, and widens with the SAME `(/.*)?$` recursive
+ * suffix `ri`'s own `td` call always applies -- so `entry`'s own file-vs-directory distinction in the
+ * SOURCE TEXT (whether a trailing slash-globstar is appended before this call) is preserved for
+ * fidelity to claude's own literal `cR` text, even though `recursiveGlobToSbplRegexSource`'s own
+ * unconditional trailing widening makes the two forms render equivalently either way.
  */
-function unanchoredEntryRegex(entry: string, recursive: boolean): string {
-  const escaped = sbplRegexLiteral(entry);
-  return recursive ? `/${escaped}(/.*)?$` : `/${escaped}$`;
+function cwdAnchoredEntryRegex(cwd: string, entry: string, recursive: boolean): string {
+  const absoluteGlob = join(cwd, "**", entry) + (recursive ? "/**" : "");
+  return recursiveGlobToSbplRegexSource(absoluteGlob);
 }
 
 /**
@@ -376,11 +407,23 @@ function unanchoredEntryRegex(entry: string, recursive: boolean): string {
  * claude port: `Ch`'s own ancestor-literal protection denies `file-write-create` on the ANCESTOR
  * itself (not just the protected leaf), and Winter's own `<projectDir>` (`.winter` by default) is
  * NOT claude's `.claude` -- it is Winter's OWN control-plane/memory directory, which a session
- * routinely needs to create FRESH (the first memory-file write, the first checkpoint) unlike
- * `.claude`, which claude itself never needs to create. Feeding `.winter`'s own entries into `Ch`
- * would deny `mkdir -p .winter/memory` in a project that has never had a `.winter` dir before --
- * verified empirically (a real sandbox-exec regression, caught by this round's own darwin suite
- * re-run: `.winter/memory` writes broke). `plainPaths` (the FULL set) still gets the ordinary
+ * routinely needs to create FRESH, unlike `.claude`, which claude itself never needs to create.
+ *
+ * Round 16 follow-up (the reviewer's own question: "if adding `<cwd>/.winter` to `Ch` causes no real
+ * regression, add it for symmetry; if it does, explain the concrete case"): re-tested directly --
+ * feeding `.winter`'s own entries into `Ch` (a temporary patch, reverted after the experiment) breaks
+ * a PRE-EXISTING, already-committed test, unrelated to this lane's own work: `deny.darwin.test.ts`'s
+ * "the carve-out stays filename-specific -- sibling files and the MEMDIR remain writable" (under
+ * "regex arm 2 + control-plane carve-out"), which runs `mkdir -p <freshCwd>/.winter/memory && echo o
+ * > .winter/other.json && echo m > .winter/memory/x.md` in a brand-new project directory and asserts
+ * `exitCode === 0`. Confirmed by direct re-run: with `.winter`'s entries fed into `Ch`, that exact
+ * command's exit code flips from 0 to 1 (`Ch`'s own literal-ancestor deny on `.winter` itself, hit by
+ * the `mkdir -p` needing to CREATE it fresh) -- reverting the patch restores the pass. Whether the
+ * DEFAULT auto-memory mechanism itself lives under `<cwd>/.winter` or under `storeHome`
+ * (`context/memory-key.ts`'s own `memoryDirFor`: `join(storeHome??home,"projects",<key>,"memory")`
+ * absent an `autoMemoryDirectory` override -- it is the LATTER by default) does not change this: the
+ * pinned test fixture uses `<cwd>/.winter/memory` regardless, and it is a real, currently-passing
+ * assertion this lane may not silently regress. `plainPaths` (the FULL set) still gets the ordinary
  * subpath+regex deny either way, so `<projectDir>/mcp.json`/`commands`/`agents` themselves stay
  * protected from create/unlink at their OWN exact path -- only the ANCESTOR-rename-bypass fence on
  * `.winter` ITSELF is what's excluded, a narrow, disclosed gap traded for keeping Winter's own
@@ -395,27 +438,27 @@ function buildDefaultWriteProtectionEntries(cwd: string, brand: SandboxBrand, al
   for (const f of DEFAULT_PROTECTED_FILES) {
     plainPaths.push(join(cwd, f));
     chPlainPaths.push(join(cwd, f));
-    regexes.push(unanchoredEntryRegex(f, false));
+    regexes.push(cwdAnchoredEntryRegex(cwd, f, false));
   }
   const winterMcpJson = join(brand.projectDirName, "mcp.json");
   plainPaths.push(join(cwd, winterMcpJson));
-  regexes.push(unanchoredEntryRegex(winterMcpJson, false));
+  regexes.push(cwdAnchoredEntryRegex(cwd, winterMcpJson, false));
   for (const d of DEFAULT_PROTECTED_DIRS) {
     plainPaths.push(join(cwd, d));
     chPlainPaths.push(join(cwd, d));
-    regexes.push(unanchoredEntryRegex(d, true));
+    regexes.push(cwdAnchoredEntryRegex(cwd, d, true));
   }
   for (const d of [join(brand.projectDirName, "commands"), join(brand.projectDirName, "agents")]) {
     plainPaths.push(join(cwd, d));
-    regexes.push(unanchoredEntryRegex(d, true));
+    regexes.push(cwdAnchoredEntryRegex(cwd, d, true));
   }
   plainPaths.push(join(cwd, ".git", "hooks"));
   chPlainPaths.push(join(cwd, ".git", "hooks"));
-  regexes.push(unanchoredEntryRegex(".git/hooks", true));
+  regexes.push(cwdAnchoredEntryRegex(cwd, ".git/hooks", true));
   if (!allowGitConfigWrites) {
     plainPaths.push(join(cwd, ".git", "config"));
     chPlainPaths.push(join(cwd, ".git", "config"));
-    regexes.push(unanchoredEntryRegex(".git/config", false));
+    regexes.push(cwdAnchoredEntryRegex(cwd, ".git/config", false));
   }
   return { plainPaths, chPlainPaths, regexes };
 }
@@ -435,9 +478,12 @@ function buildDefaultWriteProtectionEntries(cwd: string, brand: SandboxBrand, al
  * matching claude's own `mR`, which calls `Ch(p,t)` on the SAME combined
  * `p=[...denyWithinAllow,...cR(r)]` list. `plainPaths`' own Winter-specific additions are
  * deliberately excluded from THIS call -- see `buildDefaultWriteProtectionEntries`'s own header for
- * why. The unanchored regex half has no single "fixed prefix directory" for `Ch`'s own glob branch
- * to protect (there IS none -- see `unanchoredEntryRegex`'s own header) -- its own survival against
- * the re-permit comes entirely from the widened operation list on its own deny clause, not from `Ch`.
+ * why. `Ch`'s own glob branch is NOT fed the regex half here (`cwdAnchoredEntryRegex`'s own output,
+ * round 16) -- `Ch` wants a canonicalized FIXED-PREFIX DIRECTORY string (`Rh`'s own output on
+ * claude's side), not a compiled regex, and `cwd` itself is already independently protected via the
+ * plain-path half above; the regex clause's own survival against the re-permit comes entirely from
+ * the widened operation list on its own deny clause, exactly like every other glob-shaped deny in
+ * this module.
  */
 function buildDefaultWriteProtectionBlock(cwd: string, brand: SandboxBrand, allowGitConfigWrites: boolean): string {
   const { plainPaths, chPlainPaths, regexes } = buildDefaultWriteProtectionEntries(cwd, brand, allowGitConfigWrites);

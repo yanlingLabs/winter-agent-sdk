@@ -3163,3 +3163,155 @@ describe("fix round 15: claude's own cR -- default write protections, unconditio
     }
   });
 });
+
+// Fix round 16, item 1 (over-deny correction, CRITICAL): claude renders each cR glob entry as
+// `ri(Cv(w))`, and `Cv` unconditionally joins a relative glob onto `process.cwd()` BEFORE treating it
+// as a glob at all -- so claude's own rule for `.git/hooks` is `^/cwd/(.*/)?\.git/hooks/.*(/.*)?$`,
+// ANCHORED at cwd. Round 15's own rendering left it unanchored (no real fixed prefix was ever
+// computed), denying the pattern in EVERY writable root -- `git clone <url> "$TMPDIR/x"`, writing
+// `.git/hooks` under a DIFFERENT writable root entirely, failed on Winter and succeeds on claude.
+describe("fix round 16, item 1: default write protection globs are ANCHORED at cwd, not everywhere", () => {
+  test.skipIf(process.platform !== "darwin")("end to end: a direct write to .git/hooks/h under a SIBLING writable root (not cwd) is allowed", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r16-anchor-cwd-"));
+    const sibling = mkdtempSync(join(tmpdir(), "winter-r16-anchor-sibling-"));
+    try {
+      mkdirSync(join(sibling, ".git", "hooks"), { recursive: true });
+      const hookPath = join(sibling, ".git", "hooks", "h");
+      const result = await runCommand({
+        command: `echo "#!/bin/sh" > ${JSON.stringify(hookPath)}`,
+        cwd,
+        writableRoots: [sibling],
+        env: { ...process.env, TMPDIR: cwd },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(hookPath)).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: the SAME .git/hooks/h path under the cwd itself is still denied", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r16-anchor-cwd2-"));
+    try {
+      mkdirSync(join(cwd, ".git", "hooks"), { recursive: true });
+      const hookPath = join(cwd, ".git", "hooks", "h");
+      const result = await runCommand({
+        command: `echo "#!/bin/sh" > ${JSON.stringify(hookPath)}`,
+        cwd,
+        env: { ...process.env, TMPDIR: cwd },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(hookPath)).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== "darwin")("end to end: git init in a SIBLING writable root (not cwd) succeeds", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r16-anchor-cwd3-"));
+    const sibling = mkdtempSync(join(tmpdir(), "winter-r16-anchor-sibling3-"));
+    try {
+      const result = await runCommand({
+        command: `git init ${JSON.stringify(sibling)}`,
+        cwd,
+        writableRoots: [sibling],
+        env: { ...process.env, TMPDIR: cwd },
+        timeoutMs: 10000,
+        settings: { enabled: true },
+      });
+      expect(result.posture).toBe("sandboxed");
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(join(sibling, ".git"))).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+});
+
+// Fix round 16, item 2 (claude's own `ag()`, dump-verified: `function ag(){return
+// pe?.filesystem?.allowGitConfig??!1}`): `sandbox.filesystem.allowGitConfig` in settings.json is the
+// ONE door for `allowGitConfigWrites` -- round 15 added the plumbing (`SeatbeltProfileInput`/
+// `RunCommandOptions`) but nothing set it. Wired through both `computeDenyPaths` callers
+// (tools/impl/bash.ts, monitor.ts), each reading `ctx.sandboxSettings.filesystem?.allowGitConfig`
+// directly in their own options-builder.
+//
+// SCOPE NOTE: this test proves the SETTINGS-MERGE layer specifically -- that a nested
+// `sandbox.filesystem.allowGitConfig` key in settings.json survives the full settings-resolution
+// pipeline into `RuntimeConfig.sandbox` (which becomes `ctx.sandboxSettings` verbatim, engine.ts's
+// own `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS`) -- it does NOT, on its own, exercise bash.ts's or
+// monitor.ts's own wiring CODE (this test calls `runCommand` directly, reconstructing the same
+// ctx-to-option mapping those files' own `buildRunCommandOptions`/`buildMonitorRunCommandOptions`
+// do). THAT discriminating check -- does bash.ts's/monitor.ts's own code actually read
+// `ctx.sandboxSettings.filesystem?.allowGitConfig` and thread it through -- lives in
+// tools/impl/bash.test.ts's and monitor.test.ts's own unit tests (same name), which compose
+// `buildRunCommandOptions`/`buildMonitorRunCommandOptions` with `buildSeatbeltProfile` directly,
+// matching bash.test.ts's own established "RunCommandResult.profile never leaves runForeground"
+// pattern. Together the two layers cover the full chain: settings.json -> RuntimeConfig.sandbox ->
+// ctx.sandboxSettings -> allowGitConfigWrites -> the rendered profile.
+describe("fix round 16, item 2: sandbox.filesystem.allowGitConfig is wired end to end", () => {
+  test.skipIf(process.platform !== "darwin")("end to end: settings.json's sandbox.filesystem.allowGitConfig: true allows a .git/config write; without it, the write is denied", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r16-allowgitconfig-scratch-"));
+    try {
+      mkdirSync(join(scratch, ".git"), { recursive: true });
+      const configPath = join(scratch, ".git", "config");
+      writeFileSync(configPath, "[core]\n");
+
+      // Without the setting: denied (round 15's own default posture, re-confirmed here end to end
+      // through the real settings-resolution pipeline, not just a direct runCommand call).
+      const wiringDenied = await buildProductionWiring({
+        config: { sessionId: "s-r16-allowgitconfig-denied", cwd: scratch, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        expect(wiringDenied.config.sandbox?.filesystem?.allowGitConfig).toBeUndefined();
+        const denied = await runCommand({
+          command: `echo "fsmonitor = true" >> ${JSON.stringify(configPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiringDenied.config.sandbox ?? {},
+          ...(wiringDenied.config.sandbox?.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: wiringDenied.config.sandbox.filesystem.allowGitConfig } : {}),
+        });
+        expect(denied.posture).toBe("sandboxed");
+        expect(denied.exitCode).not.toBe(0);
+        expect(readFileSync(configPath, "utf8")).not.toContain("fsmonitor");
+      } finally {
+        wiringDenied.dispose();
+      }
+
+      // With the setting: allowed.
+      writeSettings(home, { sandbox: { filesystem: { allowGitConfig: true } } });
+      const wiringAllowed = await buildProductionWiring({
+        config: { sessionId: "s-r16-allowgitconfig-allowed", cwd: scratch, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        expect(wiringAllowed.config.sandbox?.filesystem?.allowGitConfig).toBe(true);
+        const allowed = await runCommand({
+          command: `echo "fsmonitor = true" >> ${JSON.stringify(configPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiringAllowed.config.sandbox ?? {},
+          ...(wiringAllowed.config.sandbox?.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: wiringAllowed.config.sandbox.filesystem.allowGitConfig } : {}),
+        });
+        expect(allowed.exitCode).toBe(0);
+        expect(readFileSync(configPath, "utf8")).toContain("fsmonitor = true");
+      } finally {
+        wiringAllowed.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+});

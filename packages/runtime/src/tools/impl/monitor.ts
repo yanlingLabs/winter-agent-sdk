@@ -194,6 +194,8 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   winterHome?: string;
   /** P7a (D19): the session's brand -- the dot-dir names the seatbelt fences. */
   brand?: SandboxBrand;
+  /** Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` -- see `SandboxFilesystemSettings.allowGitConfig`'s own header. */
+  allowGitConfigWrites?: boolean;
   /**
    * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort, threaded to `runCommand`'s
    * already-existing process-group kill. Monitor's command half shares Bash's spawn mechanism, so it
@@ -217,6 +219,7 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
     home: ctx.home,
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
     ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
+    ...(ctx.sandboxSettings.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: ctx.sandboxSettings.filesystem.allowGitConfig } : {}),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
 }

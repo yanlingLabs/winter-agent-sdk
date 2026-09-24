@@ -213,6 +213,8 @@ function buildRunCommandOptions(
   storeHome?: string;
   /** P7a (D19): the session's brand -- the dot-dir names the seatbelt fences. */
   brand?: SandboxBrand;
+  /** Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` -- see `SandboxFilesystemSettings.allowGitConfig`'s own header. */
+  allowGitConfigWrites?: boolean;
   dangerouslyDisableSandbox?: boolean;
   /**
    * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort.
@@ -240,6 +242,7 @@ function buildRunCommandOptions(
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
     ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
     ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
+    ...(ctx.sandboxSettings.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: ctx.sandboxSettings.filesystem.allowGitConfig } : {}),
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };

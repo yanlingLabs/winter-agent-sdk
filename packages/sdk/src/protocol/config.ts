@@ -166,7 +166,12 @@ export interface SandboxSettingsConfig {
   // own standing rule), so an unenforced `allowRead` FAILS CLOSED (the outer denyRead it would have
   // carved an exception out of simply stays in full effect), never open. Disclosed WS-21 follow-up:
   // building the SBPL "allow re-permit after a deny" rule is a separate, larger change.
-  filesystem?: { allowWrite?: string[]; denyWrite?: string[]; allowRead?: string[]; denyRead?: string[] };
+  // `allowGitConfig` (WS-21 fix round 16, item 2): claude's own `ag()` reads
+  // `sandbox.filesystem.allowGitConfig` (dump-confirmed: `function ag(){return
+  // pe?.filesystem?.allowGitConfig??!1}`) -- gates `.git/config` out of `cR`'s own default write
+  // protection (sandbox/profile.ts's `SeatbeltProfileInput.allowGitConfigWrites`). Must stay in sync
+  // with `sandbox/profile.ts`'s own `SandboxFilesystemSettings`, per this interface's own header.
+  filesystem?: { allowWrite?: string[]; denyWrite?: string[]; allowRead?: string[]; denyRead?: string[]; allowGitConfig?: boolean };
   network?: { allowedDomains?: string[]; deniedDomains?: string[]; [key: string]: unknown };
 }
 

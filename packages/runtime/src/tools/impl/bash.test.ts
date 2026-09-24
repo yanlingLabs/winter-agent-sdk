@@ -159,6 +159,33 @@ describe("buildRunCommandOptions (C1 -- filesystem deny/allow layers actually re
     expect(options.dangerouslyDisableSandbox).toBe(true);
   });
 
+  // Fix round 16, item 2 (claude's own `ag()`, dump-verified: `function ag(){return
+  // pe?.filesystem?.allowGitConfig??!1}`): `sandbox.filesystem.allowGitConfig` is read straight off
+  // `ctx.sandboxSettings.filesystem` and threaded onto `allowGitConfigWrites` -- round 15 added the
+  // field on `RunCommandOptions`/`SeatbeltProfileInput` but nothing ever set it.
+  test("ctx.sandboxSettings.filesystem.allowGitConfig reaches allowGitConfigWrites", () => {
+    const ctx = fakeCtx({ sandboxSettings: { filesystem: { allowGitConfig: true } } });
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    expect(options.allowGitConfigWrites).toBe(true);
+    // Composes with buildSeatbeltProfile exactly as spawn.ts's own runCommand does internally (this
+    // file's own established pattern, above) -- proving the option actually reaches the rendered
+    // profile: .git/config is absent from the deny text when allowed.
+    const profile = buildSeatbeltProfile({ cwd: options.cwd, writableRoots: options.writableRoots, allowNetwork: false, allowGitConfigWrites: options.allowGitConfigWrites === true });
+    expect(profile).not.toContain(".git/config");
+  });
+
+  test("no filesystem settings configured -> no allowGitConfigWrites key at all, and the rendered profile still protects .git/config (byte-identical to before this fix)", () => {
+    const ctx = fakeCtx();
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    expect("allowGitConfigWrites" in options).toBe(false);
+    const profile = buildSeatbeltProfile({ cwd: options.cwd, writableRoots: options.writableRoots, allowNetwork: false });
+    expect(profile).toContain(".git/config");
+  });
+
   // WS-21 fix round 1, item 4: ctx.storeHome must reach buildRunCommandOptions, or the seatbelt
   // profile built from it can never fence durable content anchored on the store home.
   test("ctx.storeHome is read through, distinct from ctx.winterHome", () => {

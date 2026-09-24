@@ -232,24 +232,28 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/agents\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.git/hooks\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.git/config\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.gitconfig$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.gitmodules$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.bashrc$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.bash_profile$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.zshrc$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.zprofile$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.profile$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.ripgreprc$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.mcp\\.json$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.winter/mcp\\.json$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.vscode(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.idea(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.claude/commands(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.claude/agents(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.winter/commands(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.winter/agents(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.git/hooks(/.*)?$\"))",
-    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.git/config$\"))",
+    // Fix round 16 (over-deny correction): each glob-shaped entry is now ANCHORED at cwd (claude's
+    // own Cv unconditionally joins a relative glob onto process.cwd() before treating it as a glob
+    // at all -- see cwdAnchoredEntryRegex's own header), not left as a bare, matches-everywhere
+    // pattern.
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.gitconfig(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.gitmodules(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.bashrc(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.bash_profile(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.zshrc(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.zprofile(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.profile(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.ripgreprc(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.mcp\\.json(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/mcp\\.json(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.vscode/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.idea/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.claude/commands/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.claude/agents/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/commands/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/agents/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.git/hooks/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.git/config(/.*)?$\"))",
     // buildDefaultWriteProtectionEntries deliberately EXCLUDES Winter's own brand-derived additions
     // (.winter/mcp.json, .winter/commands, .winter/agents) from Ch's own ancestor-fence -- see that
     // function's own header (a real sandbox-exec regression, empirically caught: feeding them in
@@ -669,18 +673,25 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     }
   });
 
-  test("every Do filename is ALSO denied at any depth (an unanchored, any-depth regex)", () => {
-    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
-    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex #"/\\.gitconfig$"))');
-    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex #"/\\.zshrc$"))');
+  // Fix round 16 (over-deny correction): claude's own `Cv` unconditionally joins a relative glob onto
+  // `process.cwd()` BEFORE treating it as a glob at all -- see `cwdAnchoredEntryRegex`'s own header.
+  // So the SAME name is ALSO denied at any depth, but ANCHORED at cwd, not everywhere -- a sibling
+  // writable root (e.g. a `git clone` destination under $TMPDIR) is unaffected.
+  test("every Do filename is ALSO denied at any depth, but ANCHORED at cwd -- not everywhere", () => {
+    const cwd = realTmp();
+    const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".gitconfig"))}"))`);
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".zshrc"))}"))`);
+    // Anchored, not unanchored: the bare, cwd-free regex round 15 rendered never appears.
+    expect(p).not.toContain('(regex #"/\\.gitconfig$")');
   });
 
-  test("qa()'s own dot-dirs (.vscode, .idea, .claude/commands, .claude/agents) are denied recursively, both ways", () => {
+  test("qa()'s own dot-dirs (.vscode, .idea, .claude/commands, .claude/agents) are denied recursively, both ways, ANCHORED at cwd", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     for (const d of [".vscode", ".idea", ".claude/commands", ".claude/agents"]) {
       expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, d)}"))`);
-      expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"/${d.replace(/\./g, "\\.")}(/.*)?$"))`);
+      expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", d) + "/**")}"))`);
     }
   });
 
@@ -699,27 +710,36 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).not.toContain(".winter/mcp.json");
   });
 
-  test(".git/hooks is always protected, both ways", () => {
+  test(".git/hooks is always protected, both ways, ANCHORED at cwd", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".git", "hooks")}"))`);
-    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex #"/\\.git/hooks(/.*)?$"))');
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".git", "hooks") + "/**")}"))`);
   });
 
-  test(".git/config is protected by default, both ways", () => {
+  test(".git/config is protected by default, both ways, ANCHORED at cwd", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".git", "config")}"))`);
-    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex #"/\\.git/config$"))');
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".git", "config"))}"))`);
   });
 
   test("allowGitConfigWrites: true (claude's own cR(e=true)) drops the .git/config protection, and ONLY that one", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false, allowGitConfigWrites: true });
     expect(p).not.toContain(join(cwd, ".git", "config") + '"))');
-    expect(p).not.toContain('/\\.git/config$');
+    expect(p).not.toContain(recursiveGlobToSbplRegexSource(join(cwd, "**", ".git", "config")));
     // .git/hooks is unaffected -- the flag only ever gates .git/config, matching cR's own `!e` guard.
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".git", "hooks")}"))`);
+  });
+
+  // Fix round 16, item 1 (CRITICAL over-deny): the discriminating proof at the unit level -- a
+  // SIBLING writable root's own .git/hooks (not cwd's) is NEVER named by any regex this module emits.
+  test("a SIBLING writable root's own .git/hooks is untouched by the default protection's own regex -- only cwd's own is anchored", () => {
+    const cwd = realTmp();
+    const sibling = realTmp();
+    const p = buildSeatbeltProfile({ cwd, writableRoots: [sibling], allowNetwork: false });
+    expect(p).not.toContain(recursiveGlobToSbplRegexSource(join(sibling, "**", ".git", "hooks") + "/**"));
   });
 
   test("the plain, cwd-anchored entries ALSO get Ch's own ancestor-rename-bypass fence", () => {

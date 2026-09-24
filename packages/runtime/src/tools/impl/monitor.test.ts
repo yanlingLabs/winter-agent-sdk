@@ -11,6 +11,7 @@ import { createSessionReadState } from "../read-state.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
 import { resetBackgroundTaskRuntimeForTest, getTask } from "./background-task-runtime.ts";
 import { parseMonitorInput, isDisallowedAddress, validateWsEndpoint, connectMonitorWs, buildMonitorRunCommandOptions } from "./monitor.ts";
+import { buildSeatbeltProfile } from "../../sandbox/profile.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 
 function proj(): string {
@@ -88,6 +89,25 @@ describe("buildMonitorRunCommandOptions (C1 -- filesystem deny/allow layers actu
     const options = buildMonitorRunCommandOptions(ctx);
     expect("denyWritePaths" in options).toBe(false);
     expect("denyReadPaths" in options).toBe(false);
+  });
+
+  // Fix round 16, item 2 (claude's own `ag()`): `sandbox.filesystem.allowGitConfig` is read straight
+  // off `ctx.sandboxSettings.filesystem` and threaded onto `allowGitConfigWrites` -- mirrors
+  // bash.ts's own identical fix; see that file's own test for the full dump citation.
+  test("ctx.sandboxSettings.filesystem.allowGitConfig reaches allowGitConfigWrites", () => {
+    const ctx = fakeCtx({ sandboxSettings: { filesystem: { allowGitConfig: true } } });
+    const options = buildMonitorRunCommandOptions(ctx);
+    expect(options.allowGitConfigWrites).toBe(true);
+    const profile = buildSeatbeltProfile({ cwd: options.cwd, writableRoots: options.writableRoots, allowNetwork: false, allowGitConfigWrites: options.allowGitConfigWrites === true });
+    expect(profile).not.toContain(".git/config");
+  });
+
+  test("no filesystem settings configured -> no allowGitConfigWrites key at all, and the rendered profile still protects .git/config", () => {
+    const ctx = fakeCtx();
+    const options = buildMonitorRunCommandOptions(ctx);
+    expect("allowGitConfigWrites" in options).toBe(false);
+    const profile = buildSeatbeltProfile({ cwd: options.cwd, writableRoots: options.writableRoots, allowNetwork: false });
+    expect(profile).toContain(".git/config");
   });
 });
 
