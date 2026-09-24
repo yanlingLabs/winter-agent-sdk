@@ -21,7 +21,7 @@
 // is a live GETTER rather than a snapshot, so a host that re-resolves does not have to rebuild the
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import type { InitPluginInfo, RuntimeConfig, SdkPluginConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome, WINTER_BRAND, isUnset, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName } from "@yanlinglabs/winter-agent-sdk";
 import { applyHostManagedSettingsFilter, filterSettingsEnv, type EnvFilterTier } from "./settings/env-filter.ts";
@@ -255,7 +255,10 @@ function isPlainSettings(v: unknown): v is Settings {
  * a single bad string in a checked-in project `settings.json` must not make the session unstartable.
  * The bad entry is dropped and named in `warnings`; every other rule in the same file still binds.
  */
-export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?: { allowDangerouslySkipPermissions?: boolean; disableBypassPermissionsMode?: boolean }): SettingsRuleSeed {
+export function buildSettingsRuleSeed(
+  resolved: DetailedResolvedSettings,
+  opts?: { allowDangerouslySkipPermissions?: boolean; disableBypassPermissionsMode?: boolean; cwd?: string; home?: string },
+): SettingsRuleSeed {
   const entries: SourcedRuleEntry[] = [];
   const directories: Array<{ path: string; source: RuleSource }> = [];
   const warnings: string[] = [];
@@ -267,13 +270,23 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
     if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) continue;
     const block = permissions as Record<string, unknown>;
     // Fix round 11 ("important" item, claude's own TFt, dump byte 15441060): this tier's OWN
-    // settings-file directory, for a SINGLE-`/`-anchored pattern's root (SourcedRuleEntry.sourceDir's
+    // settings-SOURCE root, for a SINGLE-`/`-anchored pattern's root (SourcedRuleEntry.sourceDir's
     // own header has the full rationale + the controller's own "inert under the router" scoping).
-    // `tier.path` is the settings FILE's own path (e.g. `<project>/.winter/settings.json`); `dirname`
-    // is this codebase's own reading of claude's `IDe`/`bl` -- that helper's own exact byte-level
-    // semantics were not independently pinned down in the dump (unlike every other round-11 item),
-    // disclosed here rather than presented as verified.
-    const sourceDir = tier.path !== undefined ? dirname(tier.path) : undefined;
+    //
+    // NOT `dirname(tier.path)` -- an advisor-caught correction to a first draft that used exactly
+    // that (byte-verified as wrong once chased down): claude's own `xXn`/`Wyt` (dump byte 12292708/
+    // 12290572, reached from `TFt`'s own caller `OWe(e,t){return TFt(e,IDe(t))}`, `IDe(e){return
+    // xXn(e,v())}`) is:
+    //   `function xXn(e,t){return e==="localSettings"?A(t.cwd):Wyt(e,t)}`
+    //   `function Wyt(e,t){switch(e){case"userSettings":return A(ge());case"policySettings":
+    //   case"projectSettings":return A(t.cwd);case"localSettings":return JB(t.cwd,t.canonicalGitRoot);
+    //   case"flagSettings":return t.flagPath?wo(A(t.flagPath)):A(t.cwd)}}`
+    // i.e. EVERY tier except userSettings resolves to the session's own `cwd` DIRECTLY -- never to
+    // the settings FILE's own containing directory. `dirname(tier.path)` for Winter's own project/
+    // local tier (`<cwd>/.winter/settings.json`) would have anchored `Edit(/src/**)` to
+    // `<cwd>/.winter/src`, not `<cwd>/src` -- wrong on claude and not what a project author means.
+    // `userSettings` resolves to `ge()` (the OS home) -- `opts.home` below.
+    const sourceDir = tier.source === "user" ? opts?.home : opts?.cwd;
     for (const [key, behavior] of [
       ["deny", "deny"],
       ["ask", "ask"],
@@ -1544,6 +1557,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // builder, which sees only settings.
     allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
     disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true,
+    // Fix round 11 ("important" item, claude's own TFt): the two roots a `/`-anchored rule's own
+    // settings-source tier can resolve to (`sourceDir` computation's own header, above, has claude's
+    // xXn/Wyt dump citation) -- cwd for every tier except user, home for user.
+    cwd: config.cwd,
+    home: winterHome,
   });
   for (const warning of settingsRules.warnings) warnings.push(warning);
 

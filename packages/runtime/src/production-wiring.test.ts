@@ -2398,19 +2398,45 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
   });
 
   // Fix round 11 ("important" item, claude's own TFt/bl): a SINGLE-`/`-anchored pattern now anchors
-  // to the settings FILE's own directory instead of staying inert -- `buildSettingsRuleSeed` (this
-  // module) now populates `SourcedRuleEntry.sourceDir` from `tier.path`'s own `dirname`, and
-  // `deriveSandboxPathsFromRules` threads it through to `resolveFileRuleAbsoluteGlobText`. `home` is
-  // this test's own `writeSettings` target (`<home>/settings.json`), so `dirname(tier.path) === home`.
-  test("a SINGLE-/-anchored Edit(...) deny rule now anchors to the settings file's own directory, instead of being dropped as inert", async () => {
+  // to its settings SOURCE's own root instead of staying inert -- `buildSettingsRuleSeed` (this
+  // module) now populates `SourcedRuleEntry.sourceDir` per TIER (`user` -> `winterHome`, every other
+  // tier -> `cwd`, matching claude's own `xXn`/`Wyt`, NOT `dirname(tier.path)` -- see
+  // `buildSettingsRuleSeed`'s own header for the dump citation and why `dirname` was wrong for a
+  // project/local tier specifically), and `deriveSandboxPathsFromRules` threads it through to
+  // `resolveFileRuleAbsoluteGlobText`. `home` here is this test's own `writeSettings` target AND the
+  // `winterHome` passed to `buildProductionWiring`, so this fixture alone cannot distinguish "anchors
+  // to winterHome" from "anchors to dirname(<home>/settings.json)" -- the PROJECT-tier fixture right
+  // after it is the one that does (dirname(<cwd>/.winter/settings.json) is `<cwd>/.winter`, which
+  // must NOT be what a project rule anchors to).
+  test("a SINGLE-/-anchored Edit(...) deny rule in the USER tier anchors to winterHome, instead of being dropped as inert", async () => {
     writeSettings(home, { permissions: { deny: ["Edit(/secrets/**)"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-c-slash-anchor", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      config: { sessionId: "s-c-slash-anchor-user", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
     try {
       expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual([join(home, "secrets")]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // The discriminating fixture: a PROJECT-tier `/`-anchored rule must anchor to `cwd` itself (claude's
+  // own `case"projectSettings":return A(t.cwd)`), never to `<cwd>/.winter` (the project settings
+  // FILE's own containing directory) -- a `dirname(tier.path)`-based first draft got this WRONG
+  // (advisor-caught: it would have anchored `Edit(/src/**)` to `<cwd>/.winter/src`, a directory that
+  // does not exist and that no project author means).
+  test("a SINGLE-/-anchored Edit(...) deny rule in the PROJECT tier anchors to cwd itself, NOT <cwd>/.winter (the settings file's own directory)", async () => {
+    mkdirSync(join(cwd, ".winter"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "settings.json"), JSON.stringify({ permissions: { deny: ["Edit(/src/**)"] } }));
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-slash-anchor-project", cwd, model: "winter-test/echo", settingSources: ["project"], trustedWorkspace: true } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual([join(cwd, "src")]);
     } finally {
       wiring.dispose();
     }
