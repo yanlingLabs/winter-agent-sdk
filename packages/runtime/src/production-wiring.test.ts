@@ -2674,4 +2674,71 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
       rmSync(scratch, { recursive: true, force: true });
     }
   });
+
+  // Fix round 12 ("Important" item, claude's own Ch/ed): the ancestor-rename-bypass fix, the
+  // controller's own explicit test shape -- "a real darwin-gated sandbox-exec spawn in which the mv
+  // sequence is blocked." Renaming a DENIED path's own ancestor out of the way (mv a b), writing
+  // inside where it used to be (now reachable as b/...), then renaming it back (mv b a) is exactly
+  // the class of bypass a plain `(deny file-write* (subpath ...))` alone does not close: the deny
+  // only ever names `<scratch>/a/secrets`, never `<scratch>/a` itself, so the FIRST mv (which needs
+  // file-write-unlink on `<scratch>/a`, not on anything under `secrets/`) was never denied before
+  // this fix.
+  test.skipIf(process.platform !== "darwin")("end to end: the ancestor-rename bypass (mv ancestor away, write, mv it back) is blocked by a real sandboxed Bash command", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r12-ancestor-scratch-"));
+    try {
+      writeSettings(home, { permissions: { deny: [`Edit(//${scratch.slice(1)}/a/secrets/**)`] } });
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-r12-ancestor-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        const fs = wiring.config.sandbox?.filesystem;
+        expect(fs?.denyWrite).toEqual([join(scratch, "a", "secrets")]);
+        const split = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
+        expect(split.paths).toEqual([join(scratch, "a", "secrets")]);
+        mkdirSync(join(scratch, "a", "secrets"), { recursive: true });
+        const bDir = join(scratch, "b");
+        const aDir = join(scratch, "a");
+        const leakedPath = join(bDir, "secrets", "key.txt");
+
+        const bypassAttempt = await runCommand({
+          command: `mv ${JSON.stringify(aDir)} ${JSON.stringify(bDir)} && echo leaked > ${JSON.stringify(leakedPath)} && mv ${JSON.stringify(bDir)} ${JSON.stringify(aDir)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
+          ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
+        });
+        expect(bypassAttempt.posture).toBe("sandboxed");
+        expect(bypassAttempt.exitCode).not.toBe(0);
+        // The FIRST mv itself must have failed -- the rename never happened (in either direction),
+        // and nothing was ever written under the denied tree, restored name or not.
+        expect(existsSync(bDir)).toBe(false);
+        expect(existsSync(aDir)).toBe(true);
+        expect(existsSync(leakedPath)).toBe(false);
+        expect(existsSync(join(aDir, "secrets", "key.txt"))).toBe(false);
+
+        // Control: an unrelated write elsewhere in the SAME scratch tree still succeeds -- the fence
+        // is not overbroad.
+        const allowedPath = join(scratch, "notes.txt");
+        const allowed = await runCommand({
+          command: `echo ok > ${JSON.stringify(allowedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
+          ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
+        });
+        expect(allowed.exitCode).toBe(0);
+        expect(existsSync(allowedPath)).toBe(true);
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 });

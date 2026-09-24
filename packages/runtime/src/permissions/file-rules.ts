@@ -76,7 +76,7 @@
 //     audit message -- never the allow/deny/ask verdict itself, which depends only on whether SOME
 //     rule in the group matched.
 import { realpathSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import ignoreFactory from "ignore";
 import { resolveRealTarget } from "./paths.ts";
 
@@ -251,35 +251,112 @@ export function isGlobShapedFileRulePattern(text: string): boolean {
   return RULE_PATH_GLOB_CHARS.test(text);
 }
 
-// Fix round 11: canonicalizes the FIXED (non-glob) prefix of an absolute glob pattern before
-// conversion -- Winter's OWN, pre-existing, independent requirement (WS-12 §5.2: "macOS /tmp and
-// /var are symlinks; un-canonicalized rules silently miss," `canon()`'s own header in
-// sandbox/profile.ts), extended here for CONSISTENCY to the glob-shaped case: `profile.ts`'s
-// plain-path deny/allow rules already `canon()` every path they render, so a glob-shaped deny under
-// the identical symlinked prefix (`/tmp` -> `/private/tmp`, `/var/folders/...` -> `/private/
-// var/folders/...`) must not be the one deny shape that silently misses. NOT a claude-parity item --
-// claude's own `Cv` (the normalization step ahead of `Rt`/`Po` in its pipeline) does not perform real
-// symlink resolution either, and is disclosed as not-ported for exactly that reason (this module's
-// own header) -- this canonicalization is Winter's own §5.2 MUST, not a port of anything in the dump.
-// Best-effort: `resolveRealTarget` already tolerates a not-yet-existing LEAF (walks to the nearest
-// existing ancestor); any error canonicalizing the prefix itself falls back to the UNCANONICALIZED
-// text, matching `canon()`'s own "graceful fall-through... catches EVERY error" contract, so a
-// symlink-canonicalization failure never crashes profile generation.
-function canonicalizeGlobFixedPrefix(absoluteGlob: string): string {
+// Fix round 12 (correcting round 11's own disclosure): claude's own `ko` (dump byte 15283072, in the
+// SAME chunk as `Cv`, 884 bytes away). `Cv` (claude's glob/path normalizer, ahead of `Rt`/`Po` in its
+// pipeline) DOES perform real symlink resolution on the glob's own fixed prefix -- round 11's own
+// disclosure ("NOT a claude-parity item... Cv does not perform real symlink resolution either") was
+// WRONG, corrected by the controller's own re-review and confirmed by re-reading `Cv`'s FULL body
+// (round 11's own reading was truncated mid-function): `Cv` ends `try{let o=Qs.realpathSync(r);
+// if(ko(r,o));else r=o}catch{}return r` for a non-glob path, and for a glob-shaped one resolves
+// `realpathSync` on the fixed prefix's own dirname the SAME way, both GUARDED by `ko(original,
+// resolved)`. `canonicalizeGlobFixedPrefix` (below) already matched `Cv`'s own prefix-extraction and
+// realpath-then-rejoin shape exactly (verified: `Rh`, claude's own fixed-prefix extractor,
+// `e.split(/[*?[\]]/)[0]` then dirname-or-strip-trailing-slash, is algebraically identical to this
+// function's own `lastIndexOf("/", firstGlobCharIndex)` slice) -- what it LACKED was `ko`'s own guard,
+// ported here. Per the controller: "the missing ko guard only makes Winter deny more" -- a resolution
+// `ko` would have rejected still gets USED without the guard, which can only narrow/redirect a DENY's
+// own anchor, never widen what gets denied into an allow.
+//
+// `ko(e,t)` (`e`=original, `t`=realpath's result): returns `true` ("suspicious -- reject the
+// resolution, keep the original text") UNLESS the resolution is one of three safe shapes: no change;
+// the boring macOS `/tmp`<->`/private/tmp` or `/var`<->`/private/var` alias (either direction, exact
+// match only); or the resolved path is a proper DEEPER descendant of the original (or its
+// private-alias form) -- i.e. realpath only added detail, never collapsed the path upward into
+// something shorter, a top-level directory, or the filesystem root outright.
+function isSuspiciousRealpathResolution(original: string, resolved: string): boolean {
+  const r = normalize(original);
+  const o = normalize(resolved);
+  if (o === r) return false;
+  if (r.startsWith("/tmp/") && o === "/private" + r) return false;
+  if (r.startsWith("/var/") && o === "/private" + r) return false;
+  if (r.startsWith("/private/tmp/") && o === r) return false;
+  if (r.startsWith("/private/var/") && o === r) return false;
+  if (o === "/") return true;
+  if (o.split("/").filter(Boolean).length <= 1) return true;
+  if (r.startsWith(o + "/")) return true;
+  let p = r;
+  if (r.startsWith("/tmp/")) p = "/private" + r;
+  else if (r.startsWith("/var/")) p = "/private" + r;
+  if (p !== r && p.startsWith(o + "/")) return true;
+  const linkUnderOriginal = o.startsWith(r + "/");
+  const linkUnderPrivateAlias = p !== r && o.startsWith(p + "/");
+  if (o !== r && !(p !== r && o === p) && !linkUnderOriginal && !linkUnderPrivateAlias) return true;
+  return false;
+}
+
+/**
+ * Fix round 11 (disclosure corrected round 12 -- see `isSuspiciousRealpathResolution`'s own header):
+ * canonicalizes the FIXED (non-glob) prefix of an absolute glob pattern before conversion, matching
+ * claude's own `Cv`. Winter's own pre-existing, independent requirement (WS-12 §5.2: "macOS /tmp and
+ * /var are symlinks; un-canonicalized rules silently miss," `canon()`'s own header in
+ * sandbox/profile.ts) turns out to ALSO be exactly what claude's `Cv` does here -- not a
+ * Winter-only addition after all. Best-effort: `resolveRealTarget` already tolerates a not-yet-
+ * existing LEAF (walks to the nearest existing ancestor); any error canonicalizing the prefix, OR a
+ * resolution `isSuspiciousRealpathResolution` rejects (claude's own `ko` guard), falls back to the
+ * UNCANONICALIZED text -- matching `canon()`'s own "graceful fall-through... catches EVERY error"
+ * contract, so a symlink-canonicalization failure never crashes profile generation and never silently
+ * redirects a deny's own anchor to somewhere `ko` itself would flag as suspicious.
+ *
+ * Split from `globToSbplRegexSource`'s own inline version (round 11) so the CANONICALIZED PREFIX
+ * ALONE, without the glob suffix rejoined, is available to the fix round 12 ancestor-rename-bypass
+ * port below (`Ch`'s own `Rh(u)` needs exactly this value, separately from the regex-conversion path).
+ */
+function canonicalizedGlobFixedPrefix(absoluteGlob: string): string | undefined {
   const firstGlobCharIndex = absoluteGlob.search(RULE_PATH_GLOB_CHARS);
-  if (firstGlobCharIndex === -1) return absoluteGlob; // not glob-shaped; nothing to canonicalize here
+  if (firstGlobCharIndex === -1) return undefined; // not glob-shaped; nothing to canonicalize here
   // The fixed prefix ends at the last path separator BEFORE the first glob character -- a glob
   // character can appear mid-segment (`sub*dir/x`), where the "fixed prefix" is only the segments
   // strictly before `sub*dir`, never a partial segment.
   const lastSepBeforeGlob = absoluteGlob.lastIndexOf("/", firstGlobCharIndex);
-  if (lastSepBeforeGlob <= 0) return absoluteGlob; // no real prefix (glob starts at/near the root)
+  if (lastSepBeforeGlob <= 0) return undefined; // no real prefix (glob starts at/near the root)
   const prefix = absoluteGlob.slice(0, lastSepBeforeGlob);
-  const suffix = absoluteGlob.slice(lastSepBeforeGlob);
   try {
-    return resolveRealTarget(prefix) + suffix;
+    const resolved = resolveRealTarget(prefix);
+    return isSuspiciousRealpathResolution(prefix, resolved) ? prefix : resolved;
   } catch {
-    return absoluteGlob;
+    return prefix;
   }
+}
+
+function canonicalizeGlobFixedPrefix(absoluteGlob: string): string {
+  const firstGlobCharIndex = absoluteGlob.search(RULE_PATH_GLOB_CHARS);
+  if (firstGlobCharIndex === -1) return absoluteGlob;
+  const lastSepBeforeGlob = absoluteGlob.lastIndexOf("/", firstGlobCharIndex);
+  if (lastSepBeforeGlob <= 0) return absoluteGlob;
+  const suffix = absoluteGlob.slice(lastSepBeforeGlob);
+  const canonicalPrefix = canonicalizedGlobFixedPrefix(absoluteGlob);
+  return canonicalPrefix === undefined ? absoluteGlob : canonicalPrefix + suffix;
+}
+
+/**
+ * Fix round 12 ("Important" item, claude's own `ed`, dump byte 15367994, found in the SAME chunk as
+ * `Ch`/`mR`/`pR` below): every ANCESTOR directory of `path`, walking up via `dirname` until reaching
+ * `/` or a fixed point -- does NOT include `path` itself, nor `/`. Feeds the ancestor-rename-bypass
+ * fix: claude's own write/read sandbox profiles additionally deny `file-write-unlink`/
+ * `file-write-create` on every ancestor of a denied path (and of a glob deny's own fixed prefix), so
+ * a sandboxed `mv <ancestor> <elsewhere> && <write inside where it used to be> && mv <elsewhere>
+ * <ancestor>` cannot rename the ancestor out of the way and back to slip a write past the deny.
+ */
+export function ancestorDirectoriesOf(path: string): string[] {
+  const out: string[] = [];
+  let current = dirname(path);
+  while (current !== "/" && current !== ".") {
+    out.push(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return out;
 }
 
 /**
@@ -349,15 +426,29 @@ export function recursiveGlobToSbplRegexSource(absoluteGlob: string): string {
  * kept as one shared, tested primitive rather than two hand-copies, per this codebase's own
  * "a second copy would be exactly the kind of drift risk this whole phase's review lens exists to
  * catch" precedent (evaluator.ts's `extractCandidateWritePaths`, verbatim).
+ *
+ * Fix round 12: also returns `globFixedPrefixes` -- for each glob-shaped entry, its OWN canonicalized
+ * fixed-prefix directory (claude's own `Rh(u)`, `undefined`/dropped when it resolves to `/`, matching
+ * `Ch`'s own `if(p==="/")continue`). Feeds the ancestor-rename-bypass port
+ * (`SeatbeltProfileInput.denyWriteGlobFixedPrefixes`/`denyReadGlobFixedPrefixes`, sandbox/profile.ts):
+ * the plain `paths` entries need only their OWN ancestors walked (`ed`, `ancestorDirectoriesOf`
+ * above) to close the bypass; a glob-shaped deny ALSO needs its fixed prefix walked, and the prefix
+ * itself added as a literal deny target (claude's own `Ch` adds both).
  */
-export function splitDenyPathsByGlobShape(paths: readonly string[]): { paths: string[]; regexes: string[] } {
+export function splitDenyPathsByGlobShape(paths: readonly string[]): { paths: string[]; regexes: string[]; globFixedPrefixes: string[] } {
   const plain: string[] = [];
   const regexes: string[] = [];
+  const globFixedPrefixes: string[] = [];
   for (const p of paths) {
-    if (isGlobShapedFileRulePattern(p)) regexes.push(recursiveGlobToSbplRegexSource(p));
-    else plain.push(p);
+    if (isGlobShapedFileRulePattern(p)) {
+      regexes.push(recursiveGlobToSbplRegexSource(p));
+      const prefix = canonicalizedGlobFixedPrefix(p);
+      if (prefix !== undefined && prefix !== "/") globFixedPrefixes.push(prefix);
+    } else {
+      plain.push(p);
+    }
   }
-  return { paths: plain, regexes };
+  return { paths: plain, regexes, globFixedPrefixes };
 }
 
 // ---------------------------------------------------------------------------------------------

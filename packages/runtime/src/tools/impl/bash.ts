@@ -148,6 +148,8 @@ interface DenyPaths {
   denyReadPaths?: string[];
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
+  denyWriteGlobFixedPrefixes?: string[];
+  denyReadGlobFixedPrefixes?: string[];
 }
 // Fix round 11: `fs?.denyWrite`/`denyRead` may now contain glob-shaped text too (a user-typed
 // settings.json entry, or a rule-derived deny that `deriveSandboxPathsFromRules`, production-
@@ -155,6 +157,8 @@ interface DenyPaths {
 // `splitDenyPathsByGlobShape` (file-rules.ts) routes each to a `(subpath ...)` or `(regex ...)`
 // clause. A caller with no glob-shaped entries at all sees byte-identical `denyWritePaths`/
 // `denyReadPaths` output to before this fix; `denyWriteRegexes`/`denyReadRegexes` are simply absent.
+// Fix round 12: `splitDenyPathsByGlobShape`'s own `globFixedPrefixes` (each glob entry's own
+// canonicalized fixed-prefix directory) threads through too, feeding the ancestor-rename-bypass fix.
 function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
   const fs = ctx.sandboxSettings.filesystem;
   const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
@@ -164,6 +168,8 @@ function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
     ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
     ...(write.regexes.length > 0 ? { denyWriteRegexes: write.regexes } : {}),
     ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
+    ...(write.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: write.globFixedPrefixes } : {}),
+    ...(read.globFixedPrefixes.length > 0 ? { denyReadGlobFixedPrefixes: read.globFixedPrefixes } : {}),
   };
 }
 
@@ -188,6 +194,9 @@ function buildRunCommandOptions(
   /** Fix round 11: glob-shaped denyWrite/denyRead entries, pre-converted to SBPL regex source -- see `splitDenyPathsByGlobShape`'s own header. */
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
+  /** Fix round 12: each glob-shaped denyWrite/denyRead entry's own canonicalized fixed-prefix directory -- feeds the ancestor-rename-bypass fix. */
+  denyWriteGlobFixedPrefixes?: string[];
+  denyReadGlobFixedPrefixes?: string[];
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;

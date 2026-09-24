@@ -142,6 +142,8 @@ interface MonitorDenyPaths {
   denyReadPaths?: string[];
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
+  denyWriteGlobFixedPrefixes?: string[];
+  denyReadGlobFixedPrefixes?: string[];
 }
 // Fix round 11: mirrors bash.ts's own `computeDenyPaths` -- see that function's own header. The
 // glob-conversion itself (`splitDenyPathsByGlobShape`) is the ONE shared primitive both files call,
@@ -149,6 +151,7 @@ interface MonitorDenyPaths {
 // glue stays independently written in each file, matching this file's own pre-existing duplication
 // convention (a cross-tool-file import between bash.ts/monitor.ts specifically, not a shared
 // lower-level permissions primitive both already depend on).
+// Fix round 12: also forwards `globFixedPrefixes`, feeding the ancestor-rename-bypass fix.
 function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
   const fs = ctx.sandboxSettings.filesystem;
   const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
@@ -158,6 +161,8 @@ function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
     ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
     ...(write.regexes.length > 0 ? { denyWriteRegexes: write.regexes } : {}),
     ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
+    ...(write.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: write.globFixedPrefixes } : {}),
+    ...(read.globFixedPrefixes.length > 0 ? { denyReadGlobFixedPrefixes: read.globFixedPrefixes } : {}),
   };
 }
 
@@ -174,6 +179,9 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   /** Fix round 11: glob-shaped denyWrite/denyRead entries, pre-converted to SBPL regex source -- see `splitDenyPathsByGlobShape`'s own header. */
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
+  /** Fix round 12: each glob-shaped denyWrite/denyRead entry's own canonicalized fixed-prefix directory -- feeds the ancestor-rename-bypass fix. */
+  denyWriteGlobFixedPrefixes?: string[];
+  denyReadGlobFixedPrefixes?: string[];
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;

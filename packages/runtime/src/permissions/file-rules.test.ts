@@ -22,6 +22,7 @@ import {
   globToSbplRegexSource,
   recursiveGlobToSbplRegexSource,
   splitDenyPathsByGlobShape,
+  ancestorDirectoriesOf,
   unanchorTrailingDoubleStar,
   normalizeFileRulePattern,
   escapeFileRulePathSegment,
@@ -360,12 +361,34 @@ describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own
     expect(re.test("/repo/.envfile")).toBe(false); // not a path-separator boundary
   });
 
-  // Fix round 11's own addition beyond claude's Po: the fixed (non-glob) prefix is canonicalized
-  // (resolveRealTarget) before conversion -- Winter's own WS-12 §5.2 MUST, not claude parity (claude's
-  // own Cv does not perform real symlink resolution either -- see globToSbplRegexSource's own header).
-  // Exercised against a REAL symlink here (not a real-fs macOS system symlink, so this runs on any
-  // host/CI, unlike the sandbox-exec e2e tests below which are darwin-gated).
-  test("the fixed prefix is canonicalized through a real symlink before conversion", () => {
+  // Fix round 11's own addition, disclosure CORRECTED round 12: the fixed (non-glob) prefix is
+  // canonicalized (resolveRealTarget) before conversion, GUARDED by claude's own `ko` (`isSuspicious
+  // RealpathResolution`, this module) -- claude's OWN `Cv` does exactly this too (round 11's own
+  // disclosure that `Cv` "does not perform real symlink resolution" was wrong, per the controller's
+  // own re-review; see `isSuspiciousRealpathResolution`'s own header for the corrected dump citation).
+  // The well-known macOS `/tmp` <-> `/private/tmp` alias is `ko`'s own explicitly-safe case -- real,
+  // not a synthetic symlink, so this specific test is darwin-only (guarded below); the SIBLING-symlink
+  // rejection case right after it uses a synthetic symlink and runs on any host/CI.
+  test.skipIf(process.platform !== "darwin")("the fixed prefix IS canonicalized through the well-known macOS /tmp <-> /private/tmp alias (ko's own explicitly-safe case)", () => {
+    const dir = mkdtempSync(join("/tmp", "winter-glob-prefix-canon-"));
+    try {
+      const source = globToSbplRegexSource(join(dir, "*.ts"));
+      const privateDir = "/private" + dir;
+      expect(new RegExp(source).test(join(privateDir, "x.ts"))).toBe(true);
+      expect(source).toContain(privateDir);
+      expect(source).not.toContain(`^${dir}/`); // the as-typed /tmp/... form must NOT be what the regex anchors on
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Fix round 12: a symlink pointing OUTSIDE its own subtree (here, a plain SIBLING under the same
+  // parent -- neither "no change" nor the tmp/var alias nor a proper descendant of the original) is
+  // exactly the shape `ko`/`isSuspiciousRealpathResolution` REJECTS -- the canonicalization is
+  // skipped and the AS-TYPED (symlinked) text is what the regex anchors on. This is a real behavior
+  // change from round 11's own (unguarded) fixture, which asserted the opposite -- ko's own point is
+  // precisely that an ARBITRARY symlink target must not be silently trusted as "the canonical form."
+  test("a symlink pointing to a SIBLING path (not a descendant, not the tmp/var alias) is NOT canonicalized -- ko rejects it, the as-typed text is used", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "winter-glob-prefix-canon-")));
     try {
       const real = join(dir, "real");
@@ -373,13 +396,10 @@ describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own
       mkdirSync(real, { recursive: true });
       symlinkSync(real, link);
       const source = globToSbplRegexSource(join(link, "*.ts"));
-      // The generated regex matches the REAL path, not merely the as-typed symlinked one -- proving
-      // the fixed prefix was actually resolved through the link, not just string-copied. `real`'s own
-      // path text (tmpdir + "real") contains no regex-special characters, so a plain substring check
-      // is a valid proxy for "the canonical prefix, not the symlinked one, made it into the regex."
-      expect(new RegExp(source).test(join(real, "x.ts"))).toBe(true);
-      expect(source).toContain(real);
-      expect(source).not.toContain(link);
+      expect(new RegExp(source).test(join(link, "x.ts"))).toBe(true);
+      expect(new RegExp(source).test(join(real, "x.ts"))).toBe(false);
+      expect(source).toContain(link);
+      expect(source).not.toContain(real);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -388,7 +408,7 @@ describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own
 
 describe("splitDenyPathsByGlobShape -- fix round 11: the one shared split point tools/impl/{bash,monitor}.ts both call", () => {
   test("a non-glob path stays in `paths`, unconverted", () => {
-    expect(splitDenyPathsByGlobShape(["/repo/secrets"])).toEqual({ paths: ["/repo/secrets"], regexes: [] });
+    expect(splitDenyPathsByGlobShape(["/repo/secrets"])).toEqual({ paths: ["/repo/secrets"], regexes: [], globFixedPrefixes: [] });
   });
 
   test("a glob-shaped path moves to `regexes`, converted via the RECURSIVE form", () => {
@@ -403,8 +423,45 @@ describe("splitDenyPathsByGlobShape -- fix round 11: the one shared split point 
     expect(result.regexes).toEqual([recursiveGlobToSbplRegexSource("/b/*.glob")]);
   });
 
-  test("an empty list produces two empty lists", () => {
-    expect(splitDenyPathsByGlobShape([])).toEqual({ paths: [], regexes: [] });
+  test("an empty list produces three empty lists", () => {
+    expect(splitDenyPathsByGlobShape([])).toEqual({ paths: [], regexes: [], globFixedPrefixes: [] });
+  });
+
+  // Fix round 12: `globFixedPrefixes` -- feeds the ancestor-rename-bypass port (SeatbeltProfileInput's
+  // own denyWrite/denyReadGlobFixedPrefixes, sandbox/profile.ts).
+  test("a glob-shaped path also contributes its own fixed-prefix directory to globFixedPrefixes", () => {
+    const result = splitDenyPathsByGlobShape(["/repo/sub/*.secret"]);
+    expect(result.globFixedPrefixes).toEqual(["/repo/sub"]);
+  });
+
+  test("a glob-shaped path whose fixed prefix resolves to the filesystem root contributes NOTHING to globFixedPrefixes -- matching claude's own Ch (`if(p===\"/\")continue`)", () => {
+    const result = splitDenyPathsByGlobShape(["/*.secret"]);
+    expect(result.globFixedPrefixes).toEqual([]);
+  });
+
+  test("a non-glob path contributes nothing to globFixedPrefixes", () => {
+    const result = splitDenyPathsByGlobShape(["/repo/secrets"]);
+    expect(result.globFixedPrefixes).toEqual([]);
+  });
+});
+
+// Fix round 12 ("Important" item, claude's own `ed`, dump byte 15367994): every ancestor directory of
+// a path, walking up until `/` or a fixed point -- feeds the ancestor-rename-bypass port.
+describe("ancestorDirectoriesOf -- claude's own ed", () => {
+  test("a nested path yields every ancestor up to but not including the root", () => {
+    expect(ancestorDirectoriesOf("/a/b/c/d")).toEqual(["/a/b/c", "/a/b", "/a"]);
+  });
+
+  test("a top-level path (one segment under root) yields no ancestors -- its own dirname is /", () => {
+    expect(ancestorDirectoriesOf("/a")).toEqual([]);
+  });
+
+  test("does not include the path itself", () => {
+    expect(ancestorDirectoriesOf("/a/b")).not.toContain("/a/b");
+  });
+
+  test("does not include the root itself", () => {
+    expect(ancestorDirectoriesOf("/a/b/c")).not.toContain("/");
   });
 });
 

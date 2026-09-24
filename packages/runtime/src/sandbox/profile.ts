@@ -26,6 +26,7 @@ import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
  */
 export type SandboxBrand = Pick<BrandProfile, "homeDirName" | "projectDirName">;
 import { resolveRealTarget } from "../permissions/paths.ts";
+import { ancestorDirectoriesOf } from "../permissions/file-rules.ts";
 
 // ---------------------------------------------------------------------------------------------
 // WS-12 §2: the CC-shaped configuration surface, verbatim.
@@ -164,6 +165,43 @@ export function canonicalizePath(p: string): string {
 // canonicalization, rather than a second, independently-maintained copy.
 const canon = canonicalizePath;
 
+/**
+ * Fix round 12 ("Important" item, claude's own `Ch`, dump byte 15368116, pinned 2.1.250,
+ * ground-truth byte-slice-verified against the SAME chunk as `mR`/`pR`/`ed`): the ancestor-rename-
+ * bypass fix, ported as one function both the write-deny call site and the read-deny call site use
+ * (`mR`/`pR` each call claude's own `Ch` with their own deny list; ported here as two call sites
+ * sharing one implementation rather than two hand-copies).
+ *
+ * For every plain denied path: adds `(subpath "<canon(path)>")` (claude's own `ri(u)`, the SAME
+ * recursive clause shape `denyWriteRules`/`denyReadRules` already render for the ORDINARY
+ * `file-write*`/`file-read*` deny -- claude's own `Ch` adds it a SECOND time here, for these two
+ * specific operations, rather than relying on `file-write*`'s own wildcard to already cover them;
+ * ported faithfully rather than "optimized away" on an unverified redundancy assumption) and a
+ * `(literal "<ancestor>")` for every ancestor directory of it (`ancestorDirectoriesOf`, claude's `ed`).
+ *
+ * For every glob-shaped denied path's own fixed prefix (`globFixedPrefixes`, already canonicalized
+ * and already `/`-filtered by `splitDenyPathsByGlobShape`): adds `(literal "<prefix>")` itself (claude's
+ * own `if(p!=="/")r.add(literal p)`) plus a `(literal "<ancestor>")` for every ancestor of THAT.
+ *
+ * Returns `""` (no block at all) when there is nothing to deny -- matching claude's own `Cs`
+ * (`if(r.size===0)return[]`), so a session with no denies emits byte-identical output to before this
+ * fix.
+ */
+function buildAncestorRenameBypassBlock(plainDenyPaths: readonly string[], globFixedPrefixes: readonly string[]): string {
+  const clauses = new Set<string>();
+  for (const path of plainDenyPaths) {
+    const canonical = canon(path);
+    clauses.add(`(subpath "${sbplString(canonical)}")`);
+    for (const ancestor of ancestorDirectoriesOf(canonical)) clauses.add(`(literal "${sbplString(ancestor)}")`);
+  }
+  for (const prefix of globFixedPrefixes) {
+    clauses.add(`(literal "${sbplString(prefix)}")`);
+    for (const ancestor of ancestorDirectoriesOf(prefix)) clauses.add(`(literal "${sbplString(ancestor)}")`);
+  }
+  if (clauses.size === 0) return "";
+  return [`(deny file-write-unlink file-write-create`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
+}
+
 // ---------------------------------------------------------------------------------------------
 // Control-plane file denies (WS-12 §5.2, carried verbatim, Winter-renamed)
 // ---------------------------------------------------------------------------------------------
@@ -268,6 +306,21 @@ export interface SeatbeltProfileInput {
    */
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
+  /**
+   * Fix round 12 ("Important" item, claude's own `Ch`/`ed`/`mR`/`pR`, dump byte 15368116/15367994/
+   * 15369065/15368380, pinned 2.1.250): the ancestor-rename-bypass fix. `denyWriteGlobFixedPrefixes`/
+   * `denyReadGlobFixedPrefixes` are the CANONICALIZED fixed-prefix directory of each glob-shaped
+   * denyWrite/denyRead entry (`permissions/file-rules.ts`'s `splitDenyPathsByGlobShape`, its own
+   * `globFixedPrefixes` output) -- this module has no glob grammar of its own, mirrors the other
+   * caller-pre-resolved fields above. Combined with `denyWritePaths`/`denyReadPaths` (the PLAIN
+   * entries, reused directly -- no new field needed for those), `buildAncestorRenameBypassBlock`
+   * below builds a `(deny file-write-unlink file-write-create ...)` clause naming every ANCESTOR of
+   * each denied path/glob-fixed-prefix, PLUS the fixed prefix itself, so a sandboxed `mv <ancestor>
+   * <elsewhere> && <write inside where it used to be> && mv <elsewhere> <ancestor>` cannot rename an
+   * ancestor of a denied path out of the way (and back) to slip a write past the deny.
+   */
+  denyWriteGlobFixedPrefixes?: string[];
+  denyReadGlobFixedPrefixes?: string[];
   /** Resolved network posture -- see resolveNetworkPosture's own header for why this is a plain boolean here. */
   allowNetwork: boolean;
   /**
@@ -402,15 +455,27 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // backslash-doubling at all -- only the outer `#"..."` quote character itself needs escaping, which
   // `escapeSbplRegexDelimiter` (below) does and nothing else.
   //
-  // Deliberately NOT `canon()`-ed either -- unlike the plain-path rules above, there is no real
-  // filesystem path here to canonicalize (the text is already a compiled regex pattern, wildcards
-  // included); a glob-shaped deny whose fixed PREFIX sits behind a symlink (e.g. macOS's `/tmp` ->
-  // `/private/tmp`) is matched only in its as-typed form, a disclosed limitation claude's own
-  // pipeline shares (its `Cv` normalization step, not ported here, does not perform real symlink
-  // resolution either -- see file-rules.ts's own module header for the full list of disclosed
-  // simplifications).
+  // Deliberately NOT `canon()`-ed HERE -- unlike the plain-path rules above, there is no real
+  // filesystem path in the REGEX TEXT ITSELF to canonicalize (it is already a compiled regex pattern,
+  // wildcards included). The glob's own fixed PREFIX IS canonicalized, through a real symlink, guarded
+  // by claude's own `ko` -- one level upstream, before conversion (`permissions/file-rules.ts`'s
+  // `canonicalizeGlobFixedPrefix`/`isSuspiciousRealpathResolution`; fix round 11 + round 12's own
+  // disclosure correction -- claude's `Cv` DOES perform real, `ko`-guarded symlink resolution here,
+  // this codebase's round-11 disclosure claiming otherwise was wrong, corrected in file-rules.ts's own
+  // header).
   const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny file-write* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
   const denyReadRegexRules = (input.denyReadRegexes ?? []).map((r) => `(deny file-read* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
+
+  // Fix round 12 ("Important" item, claude's own `Ch`/`ed`): the ancestor-rename-bypass fix. For
+  // EVERY write-denied path (plain OR glob-shaped) and EVERY read-denied path, additionally deny
+  // `file-write-unlink`/`file-write-create` on the denied path itself (or a glob's own fixed prefix)
+  // and on every ANCESTOR directory of it -- so a sandboxed `mv <ancestor> <elsewhere> && echo x >
+  // <where the ancestor used to be>/... && mv <elsewhere> <ancestor>` cannot rename an ancestor out
+  // of the way (and back) to slip a write past the deny. claude's own `mR` (write profile) and `pR`
+  // (read profile) each call `Ch` with their OWN deny list -- ported as two independent blocks below,
+  // matching that structure exactly rather than merging them into one.
+  const denyWriteAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyWritePaths ?? [], input.denyWriteGlobFixedPrefixes ?? []);
+  const denyReadAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyReadPaths ?? [], input.denyReadGlobFixedPrefixes ?? []);
 
   // WS-12 §2: "the sole baseline read denial is <home>/<homeDirName>/run" -- a subpath deny (not a
   // filename literal/regex like the control-plane carve-outs above): the WHOLE directory tree is
@@ -517,12 +582,14 @@ ${machRules})
 (allow file-read*)
 ${denyReadRules}
 ${denyReadRegexRules}
+${denyReadAncestorRenameBlock}
 ${denyRunDirRule}
 ${denyProviderStateReadRule}
 (allow file-write*
 ${writeRules})
 ${denyWriteRules}
 ${denyWriteRegexRules}
+${denyWriteAncestorRenameBlock}
 (allow file-write-data (path "/dev/null") (path "/dev/stdout") (path "/dev/stderr") (path "/dev/dtracehelper"))
 ${allowDarwinTempFiles}
 ${network}

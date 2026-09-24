@@ -191,6 +191,14 @@ export interface RunCommandOptions {
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
   /**
+   * Fix round 12 ("Important" item, claude's own `Ch`/`ed`): the ancestor-rename-bypass fix -- each
+   * glob-shaped `denyWritePaths`/`denyReadPaths` entry's OWN canonicalized fixed-prefix directory
+   * (see `SeatbeltProfileInput.denyWriteGlobFixedPrefixes`'s own header). Same "caller pre-resolves,
+   * this module stays glob-grammar-free" posture as `denyWriteRegexes`/`denyReadRegexes` above.
+   */
+  denyWriteGlobFixedPrefixes?: string[];
+  denyReadGlobFixedPrefixes?: string[];
+  /**
    * WS-12 §2: the caller's `ctx.home`, threaded straight through to `buildSeatbeltProfile`'s own
    * `home` field for the baseline `<home>/<homeDirName>/run` read denial -- see that field's own header
    * for why this module (rather than profile.ts) is where a real `ctx.home` value gets plugged in.
@@ -253,6 +261,8 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       ...(opts.denyReadPaths !== undefined ? { denyReadPaths: opts.denyReadPaths } : {}),
       ...(opts.denyWriteRegexes !== undefined ? { denyWriteRegexes: opts.denyWriteRegexes } : {}),
       ...(opts.denyReadRegexes !== undefined ? { denyReadRegexes: opts.denyReadRegexes } : {}),
+      ...(opts.denyWriteGlobFixedPrefixes !== undefined ? { denyWriteGlobFixedPrefixes: opts.denyWriteGlobFixedPrefixes } : {}),
+      ...(opts.denyReadGlobFixedPrefixes !== undefined ? { denyReadGlobFixedPrefixes: opts.denyReadGlobFixedPrefixes } : {}),
       allowNetwork,
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),

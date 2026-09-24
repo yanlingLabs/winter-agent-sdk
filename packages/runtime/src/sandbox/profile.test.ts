@@ -180,6 +180,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(allow file-read*)",
     "",
     "", // fix round 11: denyReadRegexRules, always-interpolated and empty here (no glob-shaped denyRead entries)
+    "", // fix round 12: denyReadAncestorRenameBlock, always-interpolated and empty here (no denyRead entries at all)
     "(deny file-read* (subpath \"/Users/x/.winter/run\"))",
     "(deny file-read* (subpath \"/Users/x/custom-root/run\"))",
     "(deny file-read* (regex #\"^/Users/x/\\.winter/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/.*\\.[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]-[Ss][Tt][Aa][Tt][Ee]\\.[Jj][Ss][Oo][Nn][Ll]$\"))",
@@ -189,6 +190,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "  (subpath \"/work/a\"))",
     "",
     "", // fix round 11: denyWriteRegexRules, always-interpolated and empty here (no glob-shaped denyWrite entries)
+    "", // fix round 12: denyWriteAncestorRenameBlock, always-interpolated and empty here (no denyWrite entries at all)
     "(allow file-write-data (path \"/dev/null\") (path \"/dev/stdout\") (path \"/dev/stderr\") (path \"/dev/dtracehelper\"))",
     "(allow file-write* (regex #\"^/var/folders/xx/T/[^/]+$\"))",
     "(deny network*)",
@@ -303,6 +305,56 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
     expect(p).not.toMatch(/\(deny file-write\* \(subpath/);
     expect(p).not.toMatch(/\(deny file-read\* \(subpath/);
+  });
+});
+
+// Fix round 12 ("Important" item, claude's own `Ch`/`ed`, dump byte 15368116/15367994): the
+// ancestor-rename-bypass fix -- for every write/read-denied path, ALSO deny file-write-unlink/
+// file-write-create on every ancestor directory of it, and on a glob's own fixed prefix.
+describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)", () => {
+  test("a plain denyWritePaths entry denies unlink/create on every one of its own ancestors", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/work/proj/secrets"] });
+    expect(p).toContain("(deny file-write-unlink file-write-create");
+    expect(p).toContain('(literal "/work/proj")');
+    expect(p).toContain('(literal "/work")');
+    expect(p).not.toContain('(literal "/")');
+  });
+
+  test("the block ALSO includes the denied path's own recursive (subpath ...) clause -- claude's own Ch adds it a second time, for these two specific operations", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/work/proj/secrets"] });
+    const idx = p.indexOf("(deny file-write-unlink file-write-create");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    // The very next "(deny file-write*" occurrence (the ORDINARY deny, rendered earlier in the
+    // profile) is a DIFFERENT clause than this one -- searching from `idx` onward stays scoped to
+    // THIS block's own text, which the profile's own trailing content (control-plane denies etc.)
+    // never repeats verbatim.
+    expect(p.indexOf('(subpath "/work/proj/secrets")', idx)).toBeGreaterThan(idx);
+  });
+
+  test("a glob-shaped denyWrite entry's own fixed prefix is denied unlink/create too, plus ITS ancestors", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWriteGlobFixedPrefixes: ["/work/proj/sub"] });
+    expect(p).toContain('(literal "/work/proj/sub")');
+    expect(p).toContain('(literal "/work/proj")');
+    expect(p).toContain('(literal "/work")');
+  });
+
+  test("denyReadPaths get their OWN, separate ancestor-rename-bypass block, unlink/create too (claude's pR calls the SAME Ch on its own read-deny list)", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyReadPaths: ["/secret/data"] });
+    const blocks = [...p.matchAll(/\(deny file-write-unlink file-write-create/g)];
+    expect(blocks.length).toBe(1);
+    expect(p).toContain('(literal "/secret")');
+  });
+
+  test("both write and read denies each get their own block when both are configured", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/w/secret"], denyReadPaths: ["/r/secret"] });
+    const blocks = [...p.matchAll(/\(deny file-write-unlink file-write-create/g)];
+    expect(blocks.length).toBe(2);
+  });
+
+  test("no denyWrite/denyRead configured emits no ancestor-rename-bypass block at all", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
+    expect(p).not.toContain("file-write-unlink");
+    expect(p).not.toContain("file-write-create");
   });
 });
 
