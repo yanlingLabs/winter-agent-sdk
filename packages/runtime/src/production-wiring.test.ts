@@ -3120,12 +3120,15 @@ describe("fix round 15: claude's own cR -- default write protections, unconditio
     }
   });
 
-  // The empirically-found, Winter-specific exclusion (buildDefaultWriteProtectionEntries' own
-  // header): Winter's own memory mechanism must stay creatable even though .winter now carries
-  // default write protections for its own commands/agents/mcp.json.
-  test.skipIf(process.platform !== "darwin")("end to end: mkdir -p .winter/memory && write a memory file still works -- Winter's own control-plane dir is NOT ancestor-fenced", async () => {
+  // Fix round 17 (R.3 C-1 part 2b): `.winter` itself is now IN Ch's ancestor fence (a literal, as
+  // `.claude` is on claude -- buildDefaultWriteProtectionEntries' own header), so the sandbox can no
+  // longer create it fresh; the project's `.winter/` is created before the sandboxed command, as a
+  // real project has it. Inside it, a memory directory and file stay writable -- the protection is
+  // the named folders (commands/agents/skills/rules/output-styles, mcp.json), never the whole dir.
+  test.skipIf(process.platform !== "darwin")("end to end: inside an existing .winter, mkdir -p .winter/memory && write a memory file still works -- only the protected folders are fenced", async () => {
     const scratch = freshScratch();
     try {
+      mkdirSync(join(scratch, ".winter"));
       const memPath = join(scratch, ".winter", "memory", "notes.md");
       const result = await runCommand({
         command: `mkdir -p ${JSON.stringify(join(scratch, ".winter", "memory"))} && echo "# notes" > ${JSON.stringify(memPath)}`,

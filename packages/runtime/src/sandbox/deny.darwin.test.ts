@@ -295,8 +295,15 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
       expect(existsSync(target)).toBe(true);
     });
 
+    // Fix round 17 (R.3 C-1 part 2b): `.winter/` is created BEFORE the sandboxed command runs. The
+    // default protection now feeds `.winter/{skills,rules,output-styles,commands,agents}` to `Ch`, so
+    // `<cwd>/.winter` itself is a `(literal …)` in the ancestor fence -- creating or deleting the
+    // `.winter` directory from inside the sandbox is denied, exactly as `<cwd>/.claude` is on claude.
+    // The point of this fixture is unchanged: inside an existing `.winter`, the carve-out is
+    // FILENAME-specific, so a sibling file and the MEMDIR stay writable.
     t("the carve-out stays filename-specific -- sibling files and the MEMDIR remain writable (profile-validity check: a malformed regex would deny everything)", async () => {
       const cwd = proj();
+      mkdirSync(join(cwd, ".winter"));
       const other = join(cwd, ".winter", "other.json");
       const mem = join(cwd, ".winter", "memory", "x.md");
       const res = await run(`mkdir -p ${join(cwd, ".winter", "memory")} && echo o > ${other} && echo m > ${mem} && echo hi`, cwd);
@@ -576,5 +583,89 @@ describe("fix round 17 (R.3 C-1 part 2a): an ESCAPED bracketed project root is a
     expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
     expect(existsSync(join(cwd, ".w2"))).toBe(false);
     expect(existsSync(join(cwd, ".winter", "skills"))).toBe(true);
+  });
+});
+
+// Fix round 17 (R.3 C-1 part 2b): the SDK's OWN cover for spec §7.2's project folders -- the Winter
+// mapping of claude's `cR` protection of `.claude/{commands,agents}` (dump byte 15365486, `qa()` at
+// 15282484) onto `.winter/{skills,rules,output-styles}`, beside the existing `.winter/{commands,agents}`,
+// and fed to `Ch` as claude feeds its own entries, so `<cwd>/.winter` is a literal in the ancestor
+// fence the way `<cwd>/.claude` is. Proven under three glob-special root names, each with NO host deny
+// list (standalone: only the default protection can deny) and with the host's LITERAL spelling of
+// `<cwd>/.winter/skills` (what the daemon sent before the escaped spelling; under `[wip] app` its class
+// reading misses the real path, the reviewer's `bracket.ts`). Before part 2b, probes (1)-(3) planted
+// the file in every "no host list" cell and in the `[wip] app` literal cell; under `a*b`/`q?r` the
+// literal list's regex already matched the direct writes, but the rename still planted it.
+describe("fix round 17 (R.3 C-1 part 2b): .winter/skills is protected by the SDK itself, under glob-special project roots", () => {
+  for (const name of ["[wip] app", "a*b", "q?r"]) {
+    for (const hostList of ["none", "literal"] as const) {
+      const label = `${name} / host deny list: ${hostList}`;
+      const setUp = (): { cwd: string; deny: string[] } => {
+        const cwd = specialRoot(name);
+        mkdirSync(join(cwd, ".winter", "skills"), { recursive: true });
+        return { cwd, deny: hostList === "none" ? [] : [join(cwd, ".winter", "skills")] };
+      };
+
+      t(`${label}: (1) a redirect write into .winter/skills/x/SKILL.md is denied`, async () => {
+        const { cwd, deny } = setUp();
+        const res = await runWithDenyWriteList(PROBE_REDIRECT, cwd, deny);
+        expect(res.exitCode).not.toBe(0);
+        expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
+      });
+
+      t(`${label}: (2) a python3 write to the same path is denied`, async () => {
+        const { cwd, deny } = setUp();
+        const res = await runWithDenyWriteList(PROBE_PYTHON, cwd, deny);
+        expect(res.exitCode).not.toBe(0);
+        expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
+      });
+
+      t(`${label}: (3) the ancestor rename of .winter is denied and plants nothing`, async () => {
+        const { cwd, deny } = setUp();
+        const res = await runWithDenyWriteList(PROBE_RENAME, cwd, deny);
+        expect(res.exitCode).not.toBe(0);
+        expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
+        expect(existsSync(join(cwd, ".w2"))).toBe(false);
+        expect(existsSync(join(cwd, ".winter", "skills"))).toBe(true);
+      });
+
+      t(`${label}: (4) control -- an ordinary write to notes.md, and a python3 one, still succeed`, async () => {
+        const { cwd, deny } = setUp();
+        expect((await runWithDenyWriteList(`echo ok > notes.md`, cwd, deny)).exitCode).toBe(0);
+        expect((await runWithDenyWriteList(`python3 -c "open('notes2.md','w').write('ok')"`, cwd, deny)).exitCode).toBe(0);
+        expect(existsSync(join(cwd, "notes.md"))).toBe(true);
+        expect(existsSync(join(cwd, "notes2.md"))).toBe(true);
+      });
+    }
+  }
+
+  t("the other two §7.2 folders, .winter/rules and .winter/output-styles, are denied the same way (plain root)", async () => {
+    const cwd = proj();
+    mkdirSync(join(cwd, ".winter", "rules"), { recursive: true });
+    mkdirSync(join(cwd, ".winter", "output-styles"), { recursive: true });
+    const rules = await runWithDenyWriteList(`echo x > .winter/rules/r.md`, cwd, []);
+    const styles = await runWithDenyWriteList(`echo x > .winter/output-styles/s.md`, cwd, []);
+    expect(rules.exitCode).not.toBe(0);
+    expect(styles.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, ".winter", "rules", "r.md"))).toBe(false);
+    expect(existsSync(join(cwd, ".winter", "output-styles", "s.md"))).toBe(false);
+  });
+
+  // The consequence the ruling accepts, pinned: `<cwd>/.winter` is a `(literal …)` in the ancestor
+  // fence, so the sandbox can neither create it fresh nor remove it -- the same as `<cwd>/.claude` on
+  // claude. A file inside an existing `.winter` is unaffected (the carve-out fixture above).
+  t("creating .winter itself from inside the sandbox is denied (the Ch literal), as .claude is on claude", async () => {
+    const cwd = proj();
+    const res = await runWithDenyWriteList(`mkdir .winter`, cwd, []);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, ".winter"))).toBe(false);
+  });
+
+  t("the nested half: a .winter/skills under a subdirectory of cwd is denied too (plain root)", async () => {
+    const cwd = proj();
+    mkdirSync(join(cwd, "pkg", ".winter", "skills"), { recursive: true });
+    const res = await runWithDenyWriteList(`echo x > pkg/.winter/skills/SKILL.md`, cwd, []);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, "pkg", ".winter", "skills", "SKILL.md"))).toBe(false);
   });
 });

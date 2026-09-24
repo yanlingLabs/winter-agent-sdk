@@ -140,12 +140,15 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     ]);
   });
 
-  test("the carve-out stays FILENAME-specific -- .winter itself, .winter/memory (the MEMDIR), and .winter/rules all remain un-denied", () => {
+  // Fix round 17 (R.3 C-1 part 2b): `.winter/rules` is now a protected folder (spec §7.2) and `.winter`
+  // itself sits in Ch's create/unlink fence -- but the CONTROL-PLANE carve-out is still
+  // filename-specific: no `file-write*` literal names `.winter` itself, and nothing names the MEMDIR.
+  test("the carve-out stays FILENAME-specific -- no file-write* literal on .winter itself, nothing at all on .winter/memory (the MEMDIR)", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter")}"))`);
-    expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter", "memory")}"))`);
-    expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter", "rules")}"))`);
+    expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".winter")}"))`);
+    expect(p).not.toContain(join(cwd, ".winter", "memory"));
   });
 
   test("the carve-out path is escaped the same way subpath roots are (quotes/backslashes)", () => {
@@ -210,9 +213,10 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "", // fix round 12: denyWriteAncestorRenameBlock, always-interpolated and empty here (no denyWrite entries at all)
     // fix round 15 (CRITICAL, claude's own cR): buildDefaultWriteProtectionBlock -- unconditional,
     // claude's own Do (9 filenames + Winter's own .winter/mcp.json), qa() (.vscode/.idea/.claude's
-    // commands+agents + Winter's own .winter/commands+agents), and .git/hooks + .git/config (no
-    // allowGitConfigWrites here), each as a plain cwd-anchored subpath deny AND an unanchored,
-    // any-depth regex deny, both with the widened (survives-the-re-permit) operation list, plus the
+    // commands+agents + Winter's own .winter/{commands,agents,skills,rules,output-styles}), and
+    // .git/hooks + .git/config (no allowGitConfigWrites here), each as a plain cwd-anchored subpath
+    // deny AND a cwd-anchored any-depth regex deny (round 16), both with the widened
+    // (survives-the-re-permit) operation list, plus the
     // plain half's own Ch ancestor-rename-bypass fence -- see that function's own header.
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.gitconfig\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.gitmodules\"))",
@@ -230,6 +234,10 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.claude/agents\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/commands\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/agents\"))",
+    // fix round 17 (R.3 C-1 part 2b): spec §7.2's .winter/{skills,rules,output-styles}, beside commands/agents
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/skills\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/rules\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/output-styles\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.git/hooks\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.git/config\"))",
     // Fix round 16 (over-deny correction): each glob-shaped entry is now ANCHORED at cwd (claude's
@@ -252,14 +260,14 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.claude/agents/.*(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/commands/.*(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/agents/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/skills/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/rules/.*(/.*)?$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.winter/output-styles/.*(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.git/hooks/.*(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.git/config(/.*)?$\"))",
-    // buildDefaultWriteProtectionEntries deliberately EXCLUDES Winter's own brand-derived additions
-    // (.winter/mcp.json, .winter/commands, .winter/agents) from Ch's own ancestor-fence -- see that
-    // function's own header (a real sandbox-exec regression, empirically caught: feeding them in
-    // denied `mkdir -p .winter/memory` in a fresh project, since Ch's own literal-ancestor
-    // protection denies file-write-create on ".winter" itself, which Winter routinely needs to
-    // create fresh, unlike claude's own ".claude").
+    // Fix round 17 (R.3 C-1 part 2b): EVERY default-protected entry, Winter's own .winter/* included,
+    // feeds Ch's ancestor fence (claude's mR calls Ch on its whole cR list), so "/work/.winter" is a
+    // literal here, as "/work/.claude" is -- see buildDefaultWriteProtectionEntries' own header.
     "(deny file-write-unlink file-write-create",
     "  (subpath \"/work/.gitconfig\")",
     "  (literal \"/work\")",
@@ -271,11 +279,18 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "  (subpath \"/work/.profile\")",
     "  (subpath \"/work/.ripgreprc\")",
     "  (subpath \"/work/.mcp.json\")",
+    "  (subpath \"/work/.winter/mcp.json\")",
+    "  (literal \"/work/.winter\")",
     "  (subpath \"/work/.vscode\")",
     "  (subpath \"/work/.idea\")",
     "  (subpath \"/work/.claude/commands\")",
     "  (literal \"/work/.claude\")",
     "  (subpath \"/work/.claude/agents\")",
+    "  (subpath \"/work/.winter/commands\")",
+    "  (subpath \"/work/.winter/agents\")",
+    "  (subpath \"/work/.winter/skills\")",
+    "  (subpath \"/work/.winter/rules\")",
+    "  (subpath \"/work/.winter/output-styles\")",
     "  (subpath \"/work/.git/hooks\")",
     "  (literal \"/work/.git\")",
     "  (subpath \"/work/.git/config\"))",
@@ -703,6 +718,26 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".winter", "mcp.json")}"))`);
   });
 
+  // Fix round 17 (R.3 C-1 part 2b): spec §7.2's protected project folders, the Winter mapping of
+  // claude's `.claude/{commands,agents}` (`qa()`), both forms, anchored at cwd like every cR entry.
+  test("fix round 17: .winter/skills, .winter/rules and .winter/output-styles are protected both ways, beside commands/agents", () => {
+    const cwd = realTmp();
+    const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
+    for (const d of ["skills", "rules", "output-styles"]) {
+      expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".winter", d)}"))`);
+      expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".winter", d) + "/**")}"))`);
+    }
+  });
+
+  test("fix round 17: a rebranded product's own dot-dir gets skills/rules/output-styles, not .winter's", () => {
+    const cwd = realTmp();
+    const p = buildSeatbeltProfile({ cwd, allowNetwork: false, brand: { homeDirName: ".acme", projectDirName: ".acme" } });
+    for (const d of ["skills", "rules", "output-styles"]) {
+      expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".acme", d)}"))`);
+      expect(p).not.toContain(join(".winter", d));
+    }
+  });
+
   test("a rebranded product's OWN dot-dir gets its own commands/agents/mcp.json protected, not .winter's", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false, brand: { homeDirName: ".acme", projectDirName: ".acme" } });
@@ -751,22 +786,20 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).toContain(`(literal "${cwdParent}")`);
   });
 
-  // A genuine empirical finding: a first draft fed EVERY default-protected entry (including Winter's
-  // own .winter/mcp.json, .winter/commands, .winter/agents) into Ch's own ancestor-fence, and a real
-  // sandbox-exec run against it regressed `mkdir -p .winter/memory` (Winter's own memory-file
-  // mechanism, CLAUDE.md's own "Memory is file-based") in a project that never had a `.winter` dir
-  // yet -- Ch's own literal-ancestor protection denies file-write-create on the ANCESTOR itself, and
-  // `.winter` unlike claude's own `.claude` is a directory Winter routinely needs to create fresh.
-  test("Winter's OWN .winter dir is deliberately EXCLUDED from Ch's own ancestor-fence, so it stays freely creatable -- .git is NOT excluded, matching claude's own literal cR entry", () => {
+  // Fix round 17 (R.3 C-1 part 2b, supersedes rounds 15/16's exclusion): every default-protected
+  // entry, Winter's own `.winter/*` included, is fed to Ch -- claude's `mR` calls `Ch(p,t)` on its
+  // whole `cR` list, and the ruling maps `.claude/{commands,agents}` onto `.winter/*`. So
+  // `<cwd>/.winter` is a literal in the ancestor fence, as `<cwd>/.claude` is on claude, and the
+  // `mv .winter .w2 && … && mv .w2 .winter` rename cannot plant a skill.
+  test("fix round 17: Winter's OWN .winter dir IS in Ch's ancestor fence now, like .claude and .git", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
-    expect(p).not.toContain(`(literal "${join(cwd, ".winter")}")`);
-    // .winter/mcp.json/commands/agents themselves are still protected from create/unlink at their
-    // OWN exact path -- only the ancestor-rename-bypass fence on .winter itself is excluded.
-    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".winter", "mcp.json")}"))`);
-    // .git DOES get the ancestor fence (claude's own literal cR entry, no Winter-specific need to
-    // keep .git freely creatable inside the sandbox the way .winter needs to be).
-    expect(p).toContain(`(literal "${join(cwd, ".git")}")`);
+    expect(p).toContain(`  (literal "${join(cwd, ".winter")}")`);
+    for (const d of ["skills", "rules", "output-styles", "commands", "agents", "mcp.json"]) {
+      expect(p).toContain(`  (subpath "${join(cwd, ".winter", d)}")`);
+    }
+    expect(p).toContain(`  (literal "${join(cwd, ".claude")}")`);
+    expect(p).toContain(`  (literal "${join(cwd, ".git")}")`);
   });
 
   test("no default protection at all is emitted for the workflow-worker profile (a completely different, stricter mechanism -- deny file-write* wholesale already covers it)", () => {
