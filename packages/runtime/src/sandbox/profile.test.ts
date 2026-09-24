@@ -63,9 +63,12 @@ describe("buildSeatbeltProfile", () => {
   test("empty writableRoots yields exactly cwd as the sole writable root", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, writableRoots: [], allowNetwork: false });
-    const subpaths = [...p.matchAll(/\(subpath "([^"]*)"\)/g)].map((m) => m[1]);
+    // Fix round 14: the SAME root now also appears in the pR-tail re-permit's own `(subpath ...)`
+    // clause (buildReadDenyWritePermitBlock), alongside the pre-existing write-allow block's own --
+    // deduped here since this assertion's own intent ("exactly cwd as the sole writable root") is
+    // about the writable-roots SET, not a literal occurrence count across the whole profile.
+    const subpaths = [...new Set([...p.matchAll(/\(subpath "([^"]*)"\)/g)].map((m) => m[1]))];
     expect(subpaths).toEqual([cwd]);
-    expect(subpaths).toHaveLength(1);
   });
 
   test("the mktemp direct-children allowance is only emitted when darwinUserTempDir is supplied", () => {
@@ -84,7 +87,7 @@ describe("buildSeatbeltProfile", () => {
   test("the mktemp allowance appears BEFORE the control-plane denies (SBPL last-match-wins keeps them overriding)", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, darwinUserTempDir: "/priv/tmp-user" });
     const mktempIdx = p.indexOf("[^/]+$");
-    const controlPlaneIdx = p.indexOf("(deny file-write* (literal");
+    const controlPlaneIdx = p.indexOf("(deny file-write* file-write-unlink file-write-create (literal");
     expect(mktempIdx).toBeGreaterThan(0);
     expect(controlPlaneIdx).toBeGreaterThan(mktempIdx);
   });
@@ -100,7 +103,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     const allowIdx = p.indexOf("(allow file-write*");
     expect(allowIdx).toBeGreaterThanOrEqual(0);
     for (const f of ["permissions.local.json", "settings.json", "settings.local.json"]) {
-      const denyIdx = p.indexOf(`(deny file-write* (literal "${join(cwd, ".winter", f)}"))`);
+      const denyIdx = p.indexOf(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter", f)}"))`);
       expect(denyIdx).toBeGreaterThan(allowIdx);
     }
   });
@@ -112,7 +115,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     const p = buildSeatbeltProfile({ cwd, writableRoots: [extra1, extra2], allowNetwork: false });
     for (const root of [cwd, extra1, extra2]) {
       for (const f of ["permissions.local.json", "settings.json", "settings.local.json"]) {
-        expect(p).toContain(`(deny file-write* (literal "${join(root, ".winter", f)}"))`);
+        expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(root, ".winter", f)}"))`);
       }
     }
   });
@@ -121,7 +124,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     const cwd = realTmp();
     const extra = realTmp();
     const p = buildSeatbeltProfile({ cwd, writableRoots: [extra], allowNetwork: false });
-    const denyLines = [...p.matchAll(/\(deny file-write\* \(literal "([^"]*)"\)\)/g)].map((m) => m[1]);
+    const denyLines = [...p.matchAll(/\(deny file-write\* file-write-unlink file-write-create \(literal "([^"]*)"\)\)/g)].map((m) => m[1]);
     expect(denyLines).toEqual([
       join(cwd, ".winter", "permissions.local.json"),
       join(cwd, ".winter", "settings.json"),
@@ -135,26 +138,26 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
   test("the carve-out stays FILENAME-specific -- .winter itself, .winter/memory (the MEMDIR), and .winter/rules all remain un-denied", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
-    expect(p).not.toContain(`(deny file-write* (literal "${join(cwd, ".winter")}"))`);
-    expect(p).not.toContain(`(deny file-write* (literal "${join(cwd, ".winter", "memory")}"))`);
-    expect(p).not.toContain(`(deny file-write* (literal "${join(cwd, ".winter", "rules")}"))`);
+    expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter")}"))`);
+    expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter", "memory")}"))`);
+    expect(p).not.toContain(`(deny file-write* file-write-unlink file-write-create (literal "${join(cwd, ".winter", "rules")}"))`);
   });
 
   test("the carve-out path is escaped the same way subpath roots are (quotes/backslashes)", () => {
     const cwd = join(realTmp(), 'we"ird');
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     const escapedCwd = cwd.replace(/"/g, '\\"');
-    expect(p).toContain(`(deny file-write* (literal "${escapedCwd}/.winter/permissions.local.json"))`);
-    expect(p).toContain(`(deny file-write* (literal "${escapedCwd}/.winter/settings.json"))`);
-    expect(p).toContain(`(deny file-write* (literal "${escapedCwd}/.winter/settings.local.json"))`);
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (literal "${escapedCwd}/.winter/permissions.local.json"))`);
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (literal "${escapedCwd}/.winter/settings.json"))`);
+    expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (literal "${escapedCwd}/.winter/settings.local.json"))`);
   });
 
   test("three SEPARATE any-depth regex denies, never merged by alternation, case-folded per character", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
-    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
-    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$"))`);
-    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
-    const regexDenyCount = [...p.matchAll(/\(deny file-write\* \(regex/g)].length;
+    expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
+    const regexDenyCount = [...p.matchAll(/\(deny file-write\* file-write-unlink file-write-create \(regex/g)].length;
     expect(regexDenyCount).toBe(3);
     expect(p).not.toContain("|"); // SBPL alternation marker never appears anywhere
   });
@@ -182,6 +185,9 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "",
     "", // fix round 11: denyReadRegexRules, always-interpolated and empty here (no glob-shaped denyRead entries)
     "", // fix round 12: denyReadAncestorRenameBlock, always-interpolated and empty here (no denyRead entries at all)
+    "(allow file-write-unlink file-write-create", // fix round 14: pR's own trailing re-permit -- unconditional, one clause per write root
+    "  (subpath \"/work\")",
+    "  (subpath \"/work/a\"))",
     "(deny file-read* (subpath \"/Users/x/.winter/run\"))",
     "(deny file-read* (subpath \"/Users/x/custom-root/run\"))",
     "(deny file-read* (regex #\"^/Users/x/\\.winter/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]/.*\\.[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]-[Ss][Tt][Aa][Tt][Ee]\\.[Jj][Ss][Oo][Nn][Ll]$\"))",
@@ -196,17 +202,17 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(allow file-write-data (path \"/dev/null\") (path \"/dev/stdout\") (path \"/dev/stderr\") (path \"/dev/dtracehelper\"))",
     "(allow file-write* (regex #\"^/var/folders/xx/T/[^/]+$\"))",
     "(deny network*)",
-    "(deny file-write* (subpath \"/Users/x/.winter/file-history\"))",
-    "(deny file-write* (subpath \"/Users/x/custom-root/file-history\"))",
-    "(deny file-write* (literal \"/work/.winter/permissions.local.json\"))",
-    "(deny file-write* (literal \"/work/.winter/settings.json\"))",
-    "(deny file-write* (literal \"/work/.winter/settings.local.json\"))",
-    "(deny file-write* (literal \"/work/a/.winter/permissions.local.json\"))",
-    "(deny file-write* (literal \"/work/a/.winter/settings.json\"))",
-    "(deny file-write* (literal \"/work/a/.winter/settings.local.json\"))",
-    "(deny file-write* (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\\.[Ll][Oo][Cc][Aa][Ll]\\.[Jj][Ss][Oo][Nn]$\"))",
-    "(deny file-write* (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\\.[Jj][Ss][Oo][Nn]$\"))",
-    "(deny file-write* (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\\.[Ll][Oo][Cc][Aa][Ll]\\.[Jj][Ss][Oo][Nn]$\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/.winter/file-history\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/file-history\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/permissions.local.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/settings.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/work/.winter/settings.local.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/work/a/.winter/permissions.local.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/work/a/.winter/settings.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (literal \"/work/a/.winter/settings.local.json\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\\.[Ll][Oo][Cc][Aa][Ll]\\.[Jj][Ss][Oo][Nn]$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\\.[Jj][Ss][Oo][Nn]$\"))",
+    "(deny file-write* file-write-unlink file-write-create (regex #\"/\\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\\.[Ll][Oo][Cc][Aa][Ll]\\.[Jj][Ss][Oo][Nn]$\"))",
     "",
     ].join("\n");
     const input = { cwd: "/work", writableRoots: ["/work/a"], allowNetwork: false, home: "/Users/x", winterHome: "/Users/x/custom-root", darwinUserTempDir: "/var/folders/xx/T" };
@@ -222,13 +228,13 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
   // became `caseFoldSegment(brand.projectDirName)`. These are the other half.
   test("the any-depth control-plane regexes are DERIVED: under a brand they fence the brand's dot-dir and nothing else", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, brand: { homeDirName: ".acme", projectDirName: ".acme" } });
-    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Aa][Cc][Mm][Ee]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
-    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$"))`);
-    expect(p).toContain(String.raw`(deny file-write* (regex #"/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Aa][Cc][Mm][Ee]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$"))`);
+    expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Aa][Cc][Mm][Ee]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
     // Winter's own token is GONE -- the fence follows the session's product rather than accumulating.
     expect(p).not.toContain("[Ww][Ii][Nn][Tt][Ee][Rr]");
     // Still three, still never merged by alternation (WS-12 §5.2 is categorical).
-    expect([...p.matchAll(/\(deny file-write\* \(regex/g)].length).toBe(3);
+    expect([...p.matchAll(/\(deny file-write\* file-write-unlink file-write-create \(regex/g)].length).toBe(3);
     expect(p).not.toContain("|");
   });
 
@@ -238,7 +244,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     expect(p).toContain(String.raw`/\.[Aa][Cc][Mm][Ee]-[Pp][Rr][Oo][Jj]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$`);
     // Two distinct names -> two sets of three. Winter's own profile makes them one string, which is
     // why the default renders exactly three and is byte-identical.
-    expect([...p.matchAll(/\(deny file-write\* \(regex/g)].length).toBe(6);
+    expect([...p.matchAll(/\(deny file-write\* file-write-unlink file-write-create \(regex/g)].length).toBe(6);
   });
 
   test("caseFoldSegment escapes every regex metacharacter and folds only letters", () => {
@@ -255,7 +261,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
   test("empty writableRoots ([]) carves out cwd's own control-plane files exactly once each", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, writableRoots: [], allowNetwork: false });
-    const denyLines = [...p.matchAll(/\(deny file-write\* \(literal "([^"]*)"\)\)/g)].map((m) => m[1]);
+    const denyLines = [...p.matchAll(/\(deny file-write\* file-write-unlink file-write-create \(literal "([^"]*)"\)\)/g)].map((m) => m[1]);
     expect(denyLines).toEqual([
       join(cwd, ".winter", "permissions.local.json"),
       join(cwd, ".winter", "settings.json"),
@@ -271,13 +277,13 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
     const secret = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false, denyWritePaths: [secret] });
     const allowIdx = p.indexOf("(allow file-write*");
-    const denyIdx = p.indexOf(`(deny file-write* (subpath "${secret}"))`);
+    const denyIdx = p.indexOf(`(deny file-write* file-write-unlink file-write-create (subpath "${secret}"))`);
     expect(denyIdx).toBeGreaterThan(allowIdx);
   });
 
   test("denyWritePaths are a real subpath deny -- unlike the control-plane carve-out, this one IS a blanket subpath rule (scoped to configured denyWrite only)", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/some/secret/dir"] });
-    expect(p).toMatch(/\(deny file-write\* \(subpath "\/some\/secret\/dir"\)\)/);
+    expect(p).toMatch(/\(deny file-write\* file-write-unlink file-write-create \(subpath "\/some\/secret\/dir"\)\)/);
   });
 
   test("denyWritePaths appear BEFORE the mktemp allowance and the control-plane denies (neither carried protection can be shadowed by user config)", () => {
@@ -287,9 +293,9 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
       denyWritePaths: ["/some/secret/dir"],
       darwinUserTempDir: "/priv/tmp-user",
     });
-    const denyWriteIdx = p.indexOf('(deny file-write* (subpath "/some/secret/dir"))');
+    const denyWriteIdx = p.indexOf('(deny file-write* file-write-unlink file-write-create (subpath "/some/secret/dir"))');
     const mktempIdx = p.indexOf("[^/]+$");
-    const controlPlaneIdx = p.indexOf("(deny file-write* (literal");
+    const controlPlaneIdx = p.indexOf("(deny file-write* file-write-unlink file-write-create (literal");
     expect(denyWriteIdx).toBeGreaterThanOrEqual(0);
     expect(mktempIdx).toBeGreaterThan(denyWriteIdx);
     expect(controlPlaneIdx).toBeGreaterThan(mktempIdx);
@@ -305,7 +311,7 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
 
   test("no denyWrite/denyRead configured emits no subpath denies at all (the carried carve-out tests' 'never a blanket subpath deny' invariant, scoped to the default-config case)", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
-    expect(p).not.toMatch(/\(deny file-write\* \(subpath/);
+    expect(p).not.toMatch(/\(deny file-write\* file-write-unlink file-write-create \(subpath/);
     expect(p).not.toMatch(/\(deny file-read\* \(subpath/);
   });
 });
@@ -353,10 +359,46 @@ describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)"
     expect(blocks.length).toBe(2);
   });
 
-  test("no denyWrite/denyRead configured emits no ancestor-rename-bypass block at all", () => {
+  test("no denyWrite/denyRead configured emits no ancestor-rename-bypass DENY block at all", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
-    expect(p).not.toContain("file-write-unlink");
-    expect(p).not.toContain("file-write-create");
+    // Fix round 14: bare "file-write-unlink"/"file-write-create" substrings are no longer absent from
+    // an otherwise-plain profile -- Winter's own port of pR's trailing re-permit
+    // (buildReadDenyWritePermitBlock) is UNCONDITIONAL on the Winter side (fires whenever there is a
+    // write-roots set at all, which is nearly always -- cwd alone qualifies). DISCLOSED, not
+    // dump-confirmed: claude's own call site (dump byte 15376527) gates pR's ENTIRE first argument on
+    // a truthy outer `e` (`let X=e?uR(e,t?.allowOnly):void 0`) whose own producer was not traced --
+    // `uR(e,t)` itself (dump byte 15366505) builds `{denies,allows,writeRoots}` from `e.denyOnly||[]`
+    // etc regardless of whether those arrays are EMPTY, so claude's own gate is "does a read-restriction
+    // config object exist for this session at all," not "are there any actual denyRead entries" -- an
+    // open question left for a future round rather than assumed either way. Scoped to Ch's own DENY
+    // form specifically -- the one thing this test actually means to pin never firing with nothing denied.
+    expect(p).not.toContain("(deny file-write-unlink file-write-create");
+  });
+
+  // Fix round 14 (CRITICAL item 1, claude's own pR's own trailing re-permit): the new block this
+  // block's own header describes -- see buildReadDenyWritePermitBlock's own header for the full
+  // rationale (dump-verified alongside Ch/mR/fR/Li/Cs).
+  describe("the pR trailing re-permit (claude's own pR, round 14)", () => {
+    test("is emitted, unconditionally, one (subpath ...) clause per write root, right after Ch's own read-side block", () => {
+      const p = buildSeatbeltProfile({ cwd: "/work/proj", writableRoots: ["/work/other"], allowNetwork: false });
+      const permitIdx = p.indexOf("(allow file-write-unlink file-write-create");
+      expect(permitIdx).toBeGreaterThanOrEqual(0);
+      expect(p.indexOf('(subpath "/work/proj")', permitIdx)).toBeGreaterThan(permitIdx);
+      expect(p.indexOf('(subpath "/work/other")', permitIdx)).toBeGreaterThan(permitIdx);
+      // Right after Ch's own read-side block (even when that block is empty, as here) and strictly
+      // before the ordinary write-allow block -- the SAME template position `denyReadAncestorRenameBlock`
+      // occupies, one slot earlier.
+      const writeAllowIdx = p.indexOf("(allow file-write*");
+      expect(permitIdx).toBeLessThan(writeAllowIdx);
+    });
+
+    test("still fires when a read-deny is ALSO configured, positioned after Ch's own (non-empty) deny this time", () => {
+      const p = buildSeatbeltProfile({ cwd: "/work/proj", allowNetwork: false, denyReadPaths: ["/work/proj/.env"] });
+      const chIdx = p.indexOf("(deny file-write-unlink file-write-create");
+      const permitIdx = p.indexOf("(allow file-write-unlink file-write-create");
+      expect(chIdx).toBeGreaterThanOrEqual(0);
+      expect(permitIdx).toBeGreaterThan(chIdx);
+    });
   });
 });
 
@@ -498,14 +540,14 @@ describe("buildSeatbeltProfile: baseline <home>/.winter/file-history WRITE denia
     const home = realTmp();
     const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home });
     const allowIdx = p.indexOf("(allow file-write*\n");
-    const denyIdx = p.indexOf(`(deny file-write* (subpath "${join(home, ".winter", "file-history")}"))`);
+    const denyIdx = p.indexOf(`(deny file-write* file-write-unlink file-write-create (subpath "${join(home, ".winter", "file-history")}"))`);
     expect(allowIdx).toBeGreaterThanOrEqual(0);
     expect(denyIdx).toBeGreaterThan(allowIdx);
   });
 
   test("home is canonicalized the same graceful way as every other path this module handles", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, home: "/does/not/exist/home" });
-    expect(p).toContain('(deny file-write* (subpath "/does/not/exist/home/.winter/file-history"))');
+    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (subpath "/does/not/exist/home/.winter/file-history"))');
   });
 
   test("home omitted emits no baseline file-history denial (same omitted-is-still-correct posture)", () => {

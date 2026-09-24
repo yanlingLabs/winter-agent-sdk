@@ -213,14 +213,17 @@ describe("WS-21 fix round 1, item 4: the seatbelt profile a Bash call gets fence
     // WS-21 §6.3 item 6, fix round 1: the checkpoint deny renamed from "backups" to "file-history"
     // (sandbox/profile.ts) -- see that file's own header for why the checkpoint store's on-disk
     // dirname itself (a separate constant, owned by lane L1b) is not part of this rename.
-    expect(profile).toContain(`(deny file-write* (subpath "${canonStoreHome}/file-history"))`);
+    // Fix round 14: the file-history deny now names file-write-unlink/file-write-create explicitly
+    // alongside file-write* (WRITE_OPS_SURVIVING_READ_DENY_REPERMIT, sandbox/profile.ts) -- see that
+    // constant's own header.
+    expect(profile).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${canonStoreHome}/file-history"))`);
     expect(profile).toContain(`${canonStoreHome}/[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]`); // the provider-state read deny's own case-folded regex, anchored on storeHome
     // The run-dir deny is UNCHANGED -- still anchored on winterHome (this lane's own disclosed
     // "run/ is neither the per-run folder nor the store home" limitation, L1a.7's report).
     expect(profile).toContain(`(deny file-read* (subpath "${canonWinterHome}/run"))`);
     // And it must NOT be anchored on winterHome for the durable half -- proving the anchor
     // genuinely moved, not that winterHome happened to also satisfy the assertion.
-    expect(profile).not.toContain(`(deny file-write* (subpath "${canonWinterHome}/file-history"))`);
+    expect(profile).not.toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${canonWinterHome}/file-history"))`);
   });
 });
 

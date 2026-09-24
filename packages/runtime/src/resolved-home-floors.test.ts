@@ -216,8 +216,8 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
     const bash = buildSeatbeltProfile({ cwd, allowNetwork: false, home: homedir(), winterHome: home });
     expect(bash).toContain(`(deny file-read* (subpath "${join(homedir(), ".winter", "run")}"))`);
     expect(bash).toContain(`(deny file-read* (subpath "${join(home, "run")}"))`);
-    expect(bash).toContain(`(deny file-write* (subpath "${join(homedir(), ".winter", "file-history")}"))`);
-    expect(bash).toContain(`(deny file-write* (subpath "${join(home, "file-history")}"))`);
+    expect(bash).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(homedir(), ".winter", "file-history")}"))`);
+    expect(bash).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(home, "file-history")}"))`);
 
     const worker = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter", { home: homedir(), winterHome: home });
     expect(worker).toContain(`(deny file-read* (subpath "${join(homedir(), ".winter", "run")}"))`);
@@ -269,8 +269,8 @@ describe("I1: every home-anchored fence follows the RESOLVED winter home", () =>
 
     test("the seatbelt profile denies reading <storeHome>/projects/<key>/<id>.provider-state.jsonl and writing <storeHome>/file-history, but still denies <winterHome>/run", () => {
       const bash = buildSeatbeltProfile({ cwd, allowNetwork: false, home: homedir(), winterHome: home, storeHome });
-      expect(bash).toContain(`(deny file-write* (subpath "${join(storeHome, "file-history")}"))`);
-      expect(bash).not.toContain(`(deny file-write* (subpath "${join(home, "file-history")}"))`);
+      expect(bash).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(storeHome, "file-history")}"))`);
+      expect(bash).not.toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(home, "file-history")}"))`);
       expect(bash).toContain(`(deny file-read* (subpath "${join(home, "run")}"))`); // unaffected by storeHome
       // The provider-state read deny is a REGEX on the store home's own canonical path, with only
       // "projects" and "provider-state.jsonl" case-folded into bracket classes -- the directory

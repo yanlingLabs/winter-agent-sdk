@@ -2602,6 +2602,24 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
           settings: wiring.config.sandbox ?? {},
           ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
           ...(split.regexes.length > 0 ? { denyWriteRegexes: split.regexes } : {}),
+          // Fix round 14: threaded alongside denyWriteRegexes, matching REAL production callers
+          // (tools/impl/bash.ts, monitor.ts, both of which always pass write.globFixedPrefixes beside
+          // write.regexes) -- this inline reproduction predates round 12's denyWriteGlobFixedPrefixes
+          // field and never threaded it. CORRECTED disclosure (an earlier version of this comment was
+          // WRONG, caught by re-verifying against the actual rendered profile rather than assumed):
+          // `Ch`'s own GLOB branch (buildAncestorRenameBypassBlock) never gave `sub/.env` its own
+          // explicit unlink/create protection at all -- for a glob-shaped entry it emits ONLY a
+          // `(literal <fixedPrefix>)` (protecting the prefix DIRECTORY's own identity against a
+          // rename-shuffle), never a `(subpath ...)` covering the glob-matched files themselves. What
+          // actually makes this fixture pass again is `denyWriteRegexRules` itself now naming
+          // `file-write-unlink`/`file-write-create` EXPLICITLY alongside `file-write*`
+          // (`WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`, profile.ts) -- without THAT, round 14's own
+          // blanket read-side re-permit (buildReadDenyWritePermitBlock, an explicit-named ALLOW) wins
+          // over a plain `file-write*` wildcard DENY regardless of file order, the SAME empirical rule
+          // round 13 established in the other direction. `denyWriteGlobFixedPrefixes` is threaded here
+          // only because real production callers always pass it too, not because it does the actual
+          // protecting for THIS specific scenario.
+          ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
         });
         expect(denied.posture).toBe("sandboxed");
         expect(denied.exitCode).not.toBe(0);
@@ -2615,6 +2633,7 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
           settings: wiring.config.sandbox ?? {},
           ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
           ...(split.regexes.length > 0 ? { denyWriteRegexes: split.regexes } : {}),
+          ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
         });
         expect(allowed.exitCode).toBe(0);
         expect(existsSync(allowedPath)).toBe(true);
@@ -2652,6 +2671,9 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
           timeoutMs: 5000,
           settings: wiring.config.sandbox ?? {},
           denyWriteRegexes: split.regexes,
+          // Fix round 14: see the identical comment on the test just above -- threaded alongside
+          // denyWriteRegexes, matching real production callers.
+          ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
         });
         expect(denied.posture).toBe("sandboxed");
         expect(denied.exitCode).not.toBe(0);
@@ -2664,6 +2686,7 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
           timeoutMs: 5000,
           settings: wiring.config.sandbox ?? {},
           denyWriteRegexes: split.regexes,
+          ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
         });
         expect(allowed.exitCode).toBe(0);
         expect(existsSync(allowedPath)).toBe(true);
@@ -2815,24 +2838,109 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // A genuine empirical finding, investigated when a first draft of this test asserted the OPPOSITE
-  // outcome and failed against a REAL sandbox-exec (not assumed, not left silently wrong): claude's
-  // own `Ch` (round 12) has NO carve-out mechanism of its own -- called on the SAME `denyReadPaths`
-  // list `fR` (this round) is, it renders an EARLIER, UNCONDITIONAL `(deny file-write-unlink
-  // file-write-create (subpath <deniedDir>) ...)` clause with no exemption for anything nested inside
-  // it, INCLUDING a legitimately nested write root. `fR`'s own carve-out (`require-all`/`require-not`,
-  // `buildReadDenyKeepInPlaceBlock`'s own header) is a real, independently-verified mechanism --
-  // isolated testing (temporarily removing `Ch`'s own read-side block) confirmed fR's carve-out
-  // clause, ALONE, correctly permits the nested write root -- but when BOTH claude functions are
-  // ported faithfully and BOTH fire on the identical denied path (as they do here), `Ch`'s OWN
-  // earlier, carve-out-free deny is the one that actually determines the outcome: a real sandboxed
-  // `mv` inside the nested write root is STILL blocked. This is disclosed as a genuine, observed
-  // interaction between two faithfully-ported claude functions, not a bug in either one considered
-  // alone -- `buildReadDenyKeepInPlaceBlock`'s own header carries the full account. The test below
-  // pins the ACTUAL, verified behavior rather than the behavior this round's own design intent (but
-  // not yet full effect, given Ch's own composition) would suggest.
-  test.skipIf(process.platform !== "darwin")("end to end (disclosed limitation, not the design intent): a write root NESTED inside a read-denied directory is STILL blocked, because Ch's own carve-out-free block (round 12) also covers the same path", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "winter-r13-fr-carveout-scratch-"));
+  // Fix round 14 (CRITICAL item 1, claude's own pR's own trailing re-permit): the controller's own
+  // explicit test shape -- "cp .env.example .env is allowed" when .env is read-denied and ABSENT
+  // (creating it, unlike the test above's mv onto an EXISTING .env). Round 12's own Ch-port denied
+  // this too (Ch fires unconditionally, with no distinction between creating a fresh file at a
+  // read-denied path and unlinking/renaming an existing one) -- claude's own pR restores exactly this
+  // distinction via its own trailing re-permit: file-write-create is re-allowed, file-write-unlink
+  // stays denied (via fR, round 13, for an EXISTING read-denied path).
+  //
+  // The DISCRIMINATING proof that file-write-create is genuinely, fully re-allowed uses `printf`, not
+  // `cp` itself -- a genuine, empirically-investigated finding (real sandbox-exec, not assumed): `cp`'s
+  // own libc `copyfile()`/`fcopyfile()` path (BSD `touch`, and ALSO a plain `cat src > dst` redirect --
+  // this is not cp-specific) `fstat()`s the DESTINATION fd after creating it (confirmed directly:
+  // injecting `(allow file-read-metadata (literal ".env"))` into the rendered profile makes both `cp`
+  // and `touch` exit 0 with full content; without it, both leave an EMPTY file and exit nonzero).
+  // `file-read-metadata` is covered by `denyReadRules`'s own blanket `(deny file-read* (subpath
+  // ".env"))` -- unrelated to round 14's OWN write-side fix (unaffected by it: PRE-round-14 the file
+  // was never even CREATED at all, confirmed by re-running this exact command at round 13 HEAD, which
+  // left NOTHING on disk). `printf`/`echo`/`/bin/echo` never probe their destination this way, so they
+  // round-trip fully -- the test below pins BOTH: the discriminating `printf` write succeeds
+  // completely, and `cp` itself is left at its OWN OBSERVED outcome (content created, non-zero exit),
+  // never silently asserted away. Not claude-verified either direction: claude's own `pR` denies
+  // `file-read*` the identical blanket way (`Cs("deny",["file-read*"],u,t)`), so `cp .env.example .env`
+  // "allowed" on claude was very likely a code-reading inference about `file-write-create` alone, not
+  // a measured `cp` invocation -- flagged for the controller rather than assumed either way.
+  test.skipIf(process.platform !== "darwin")("end to end: file-write-create is genuinely re-allowed for a read-denied-but-absent .env -- a printf write round-trips fully; cp's own residual fstat-on-destination gap (pre-existing, unrelated to this fix, not cp-specific) is pinned as observed, not asserted away", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r14-pr-create-scratch-"));
+    try {
+      writeSettings(home, { permissions: { deny: [`Read(//${scratch.slice(1)}/.env)`] } });
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-r14-pr-create-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        const fs = wiring.config.sandbox?.filesystem;
+        expect(fs?.denyRead).toEqual([join(scratch, ".env")]);
+        const split = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
+        const globEntries = globDenyEntriesOf(fs?.denyRead ?? []);
+        const runOpts = {
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(split.paths.length > 0 ? { denyReadPaths: split.paths } : {}),
+          ...(globEntries.length > 0 ? { denyReadGlobEntries: globEntries } : {}),
+        };
+
+        const examplePath = join(scratch, ".env.example");
+        const envPath = join(scratch, ".env");
+        writeFileSync(examplePath, "SECRET=placeholder");
+        expect(existsSync(envPath)).toBe(false);
+
+        // The controller's own literal command, pinned as OBSERVED (not the design intent) -- see
+        // this test's own header. file-write-create demonstrably succeeded (content created on disk
+        // at all is impossible without it -- round 13 HEAD left NOTHING for this exact command, see
+        // the git-stash probe this round's own report cites), but cp's own post-create fstat() on the
+        // destination still fails, for a reason unrelated to round 14's own write-side scope.
+        const cpResult = await runCommand({ ...runOpts, command: `cp ${JSON.stringify(examplePath)} ${JSON.stringify(envPath)}` });
+        expect(cpResult.posture).toBe("sandboxed");
+        expect(cpResult.exitCode).not.toBe(0);
+        expect(existsSync(envPath)).toBe(true); // file-write-create succeeded
+
+        // Control: .env now EXISTS (even though cp itself reported failure) and is still protected
+        // from unlink/rename (fR, round 13) -- creation being allowed never reopened deletion of an
+        // existing read-denied file.
+        const movedPath = join(scratch, "x");
+        const stillDenied = await runCommand({ ...runOpts, command: `mv ${JSON.stringify(envPath)} ${JSON.stringify(movedPath)}` });
+        expect(stillDenied.exitCode).not.toBe(0);
+        expect(existsSync(movedPath)).toBe(false);
+        expect(existsSync(envPath)).toBe(true);
+
+        // The discriminating proof that file-write-create is genuinely, fully re-allowed (not merely
+        // "creates an empty file and reports failure"): `printf`, which never fstats its destination
+        // (unlike `cat`/`cp`, empirically -- `cat src > dst` was ALSO found to leave an empty file and
+        // exit nonzero here, the identical gap, not a cp-specific one), round-trips completely at a
+        // DIFFERENT read-denied-but-absent name in the SAME directory.
+        const worksPath = join(scratch, ".env.works");
+        const worksResult = await runCommand({ ...runOpts, command: `printf '%s' "SECRET=placeholder" > ${JSON.stringify(worksPath)}`, denyReadPaths: [...(runOpts.denyReadPaths ?? []), worksPath] });
+        expect(worksResult.posture).toBe("sandboxed");
+        expect(worksResult.exitCode).toBe(0);
+        expect(existsSync(worksPath)).toBe(true);
+        expect(readFileSync(worksPath, "utf8")).toBe("SECRET=placeholder");
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // RESOLVED (round 14, CRITICAL item 1): round 13's own first draft of this test asserted the
+  // OPPOSITE outcome (nested write root writable) and failed against a REAL sandbox-exec, because
+  // claude's own `Ch` (round 12) has NO carve-out mechanism of its own -- called on the SAME
+  // `denyReadPaths` list `fR` is, it rendered an EARLIER, UNCONDITIONAL `(deny file-write-unlink
+  // file-write-create (subpath <deniedDir>) ...)` clause with no exemption for the nested write root,
+  // and round 12's own port of `pR` never carried `pR`'s OWN trailing re-permit -- so nothing after
+  // `Ch` ever re-opened it. Round 14 ports that missing re-permit (`buildReadDenyWritePermitBlock`,
+  // sandbox/profile.ts), and a real sandbox-exec run now confirms it restores exactly the outcome
+  // `fR`'s own carve-out was always independently correct about: the nested write root is writable
+  // again. Re-verified here, not assumed -- this is the SAME fixture round 13 used to disclose the
+  // limitation, now asserting the opposite, RE-MEASURED outcome.
+  test.skipIf(process.platform !== "darwin")("end to end: a write root NESTED inside a read-denied directory is writable again (round 14's own pR-tail re-permit resolves round 13's disclosed Ch-shadowing finding)", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r14-fr-carveout-scratch-"));
     try {
       const deniedDir = join(scratch, "denied");
       const nestedWriteRoot = join(deniedDir, "build");
@@ -2840,6 +2948,12 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
       const filePath = join(nestedWriteRoot, "artifact.txt");
       const movedPath = join(nestedWriteRoot, "artifact-renamed.txt");
       writeFileSync(filePath, "ordinary build output");
+      // Control: an ordinary file directly inside deniedDir (NOT under the nested write root) --
+      // the outer read-deny's own unlink/rename protection must still bind THERE, unaffected. Proves
+      // the re-permit's scope stays exactly at the write root(s) it names, not the whole deniedDir.
+      const outerPath = join(deniedDir, "outer.txt");
+      const outerMovedPath = join(deniedDir, "outer-renamed.txt");
+      writeFileSync(outerPath, "not inside the nested write root");
 
       const result = await runCommand({
         command: `mv ${JSON.stringify(filePath)} ${JSON.stringify(movedPath)}`,
@@ -2851,9 +2965,22 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
         denyReadPaths: [deniedDir],
       });
       expect(result.posture).toBe("sandboxed");
-      expect(result.exitCode).not.toBe(0);
-      expect(existsSync(movedPath)).toBe(false);
-      expect(existsSync(filePath)).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(movedPath)).toBe(true);
+      expect(existsSync(filePath)).toBe(false);
+
+      const outerResult = await runCommand({
+        command: `mv ${JSON.stringify(outerPath)} ${JSON.stringify(outerMovedPath)}`,
+        cwd: scratch,
+        env: { ...process.env, TMPDIR: scratch },
+        timeoutMs: 5000,
+        settings: { enabled: true },
+        writableRoots: [nestedWriteRoot],
+        denyReadPaths: [deniedDir],
+      });
+      expect(outerResult.exitCode).not.toBe(0);
+      expect(existsSync(outerMovedPath)).toBe(false);
+      expect(existsSync(outerPath)).toBe(true);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }

@@ -202,6 +202,114 @@ function buildAncestorRenameBypassBlock(plainDenyPaths: readonly string[], globF
   return [`(deny file-write-unlink file-write-create`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
 }
 
+/**
+ * Fix round 14 (CRITICAL item 1, claude's own `pR`'s own trailing re-permit -- dump-verified in the
+ * SAME chunk as `Ch`/`mR`/`fR`/`Li`/`Cs` from rounds 11-13, content-search-confirmed against the
+ * pinned 2.1.250 dump, not trusted from any coordinator-cited byte offset alone): `pR` does NOT end
+ * with its own call to `Ch` -- round 12's own port stopped there. `pR`'s own LAST TWO LINES,
+ * immediately following `r.push(...Ch(e.denies.map((A)=>A.path),t))`, are:
+ *   `let w=new Set(e.writeRoots.map((A)=>Li(A.path)));`
+ *   `return r.push(...Cs("allow",["file-write-unlink","file-write-create"],w,t)),r`
+ * -- an EXPLICIT `(allow file-write-unlink file-write-create (subpath <each write root>))` re-permit,
+ * one clause per write root, emitted RIGHT AFTER `Ch`'s own read-side ancestor-rename-bypass deny
+ * (`denyReadAncestorRenameBlock`, above) and BEFORE `mR`/`fR`.
+ *
+ * Without it (round 12's own gap, and what production-wiring.test.ts's real sandbox-exec runs
+ * proved): `Ch`'s own read-side block denies `file-write-unlink`/`file-write-create` on every
+ * read-denied path UNCONDITIONALLY -- it has no carve-out of its own -- and round 13's own empirical
+ * finding (this codebase's own controlled sandbox-exec experiments, `buildReadDenyKeepInPlaceBlock`'s
+ * own header) is that Seatbelt does NOT let a LATER, broader `(allow file-write* (subpath <root>))`
+ * override an EARLIER, narrower, explicitly-named `(deny file-write-unlink file-write-create ...)`
+ * for the SAME target -- only an explicitly-named ALLOW of the identical operations does. So with
+ * `Ch` alone, `cp .env.example .env` (creating `.env`, which the read-deny protects) was blocked even
+ * though claude allows it, and a legitimate write root nested inside a read-denied directory stayed
+ * unwritable even though `fR`'s own carve-out (round 13) is independently correct in isolation.
+ *
+ * This block restores claude's own net result: `Ch` denies unconditionally, THIS re-permit re-allows
+ * `file-write-unlink`/`file-write-create` on every ordinary write root (an EXPLICIT, same-named
+ * allow, so it wins over `Ch`'s own explicit deny under the SAME last-explicit-match-wins rule that
+ * made `Ch` win over the plain `file-write*` allow in the first place), and `fR` (emitted later still,
+ * round 13) narrows it back down for the one case that still needs protection -- an EXISTING
+ * read-denied path's own unlink/rename -- while `fR`'s own `require-not` carve-out leaves a nested
+ * write root's OWN re-permit from this block intact. Net: no delete or rename of a read-denied path,
+ * creation allowed, and a write root nested inside a read-denied directory is writable again -- this
+ * is ALSO the exact fix for round 13's own disclosed "nested write root shadowed by Ch" finding
+ * (`buildReadDenyKeepInPlaceBlock`'s own header, above): `fR`'s carve-out was never broken, `Ch`'s
+ * own missing re-permit was simply what left nothing for it to narrow back down from.
+ *
+ * Reuses the SAME canonicalized `roots` array (cwd + writableRoots) the write-allow block already
+ * builds below -- claude's own `w=new Set(e.writeRoots.map((A)=>Li(A.path)))` is exactly that set.
+ * Returns `""` when there is nothing to permit (`writableRoots.length === 0`), matching claude's own
+ * `Cs`'s `if(r.size===0)return[]` -- structurally unreachable in practice (`roots` always includes
+ * `cwd`), kept for the same "no set, no clause" discipline every other block in this module follows.
+ *
+ * DISCLOSED, NOT dump-confirmed either way: this block fires on the Winter side whenever there is a
+ * write-roots set at all -- i.e. unconditionally in practice. Claude's own call site (dump byte
+ * 15376527) gates `pR`'s ENTIRE first argument on a truthy outer `e` (`let X=e?uR(e,t?.allowOnly):
+ * void 0`, then `B.push(...pR(X,F))`), and `fR` is called only `if(X)` too -- but `uR(e,t)` (dump byte
+ * 15366505: `{denies:(e.denyOnly||[]).map(zu),allows:(e.allowWithinDeny||[]).map(zu),writeRoots:
+ * (t||[]).map(zu)}`) builds a non-null OBJECT from `e` regardless of whether `e.denyOnly`/
+ * `e.allowWithinDeny` are themselves EMPTY arrays -- so `X`'s truthiness turns on whether that OUTER
+ * `e` (a read-restriction config object, one level up, its own producer not traced) exists for this
+ * session at ALL, not on whether there are any ACTUAL denyRead entries. Left an open question for a
+ * future round rather than assumed either way; Winter's own unconditional posture is, AT WORST, wider
+ * than claude's real one in some unmeasured case, never narrower -- and `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`
+ * below means that width costs nothing observable to Winter's OWN write-protection floors either way.
+ */
+function buildReadDenyWritePermitBlock(writableRoots: readonly string[]): string {
+  if (writableRoots.length === 0) return "";
+  const clauses = new Set(writableRoots.map((r) => `(subpath "${sbplString(r)}")`));
+  return [`(allow file-write-unlink file-write-create`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
+}
+
+// DISCLOSED, NOT ported (flagged for a future ruling, out of round 14's own scope): `pR`'s own body
+// (dump byte 15368389, full transcription verified) has a THIRD line this port still does not carry,
+// between the read-allow/deny stages and `Ch`'s own call: `if(e.denies.length>0)r.push("(allow
+// file-read-metadata","  (vnode-type DIRECTORY))")` -- a BLANKET `(allow file-read-metadata (vnode-type
+// DIRECTORY))`, gated only on "are there any denyRead entries at all," never path-scoped. It would not
+// have closed the `touch`/`cp` gap `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`'s own header discloses
+// (that gap is about a denied FILE's own metadata, not directory metadata), so it is unrelated to this
+// round's own fix -- but it IS a real, unported piece of claude's own `pR`, left for a deliberate
+// ruling rather than added unasked: loosening what `file-read-metadata` reaches on a read-denied
+// session is its own security-relevant surface, not implied by "port pR's trailing re-permit."
+
+/**
+ * Fix round 14 (Winter-specific hardening, NOT itself a claude port -- empirically discovered and
+ * verified while implementing `buildReadDenyWritePermitBlock` above, disclosed prominently rather
+ * than smoothed over): `pR`'s own trailing re-permit is a BLANKET, UNCONDITIONAL
+ * `(allow file-write-unlink file-write-create (subpath <every write root>))`, ported faithfully per
+ * the controller's own explicit instruction. Real `sandbox-exec` runs proved this is not merely
+ * "narrower than a later wildcard deny wins" (round 13's own finding, about an EARLIER explicit deny
+ * surviving a LATER broad `file-write*` allow) -- it runs the OTHER direction too: an EARLIER
+ * EXPLICIT `file-write-unlink`/`file-write-create` ALLOW is not overridden by a LATER, broader
+ * `(deny file-write* ...)` for the SAME target either. Seatbelt appears to give a clause naming
+ * `file-write-unlink`/`file-write-create` explicitly priority over one that only reaches those
+ * operations via the `file-write*` wildcard, independent of which clause is textually first or last.
+ *
+ * Every OTHER Winter-owned write-protection floor in this module that used only the `file-write*`
+ * wildcard was therefore silently punched through for CREATE and UNLINK/RENAME specifically (never
+ * for `file-write-data`, `file-write-mode`, etc., which this re-permit never names) by this ONE new
+ * block: the control-plane carve-outs (WS-12 §5.2's own "the seatbelt is the only enforcement point
+ * left" floor -- verified empirically: `mkdir -p .winter && echo '{}' > .winter/permissions.local.json`
+ * and `rm .winter/settings.json` both SUCCEEDED against the unpatched fix), the checkpoint/backup
+ * store write-deny (T8 rider 25's own identical floor), and a GLOB-shaped `denyWrite` entry (a plain
+ * `denyWritePaths` entry was already safe -- `Ch`'s own write-side ancestor-rename block, round 12,
+ * already emits an explicit `(subpath <path>)` deny for it; `Ch`'s own GLOB branch, by contrast, only
+ * ever emits a `(literal <fixedPrefix>)` -- protecting the prefix DIRECTORY's own identity against a
+ * rename-shuffle, never the glob-matched files themselves).
+ *
+ * The fix, verified against real `sandbox-exec` (a `(deny file-write* file-write-unlink
+ * file-write-create (regex ...))` clause DOES win back the CREATE it needs to, confirmed by a direct
+ * before/after run rather than assumed): every one of those floors now names
+ * `file-write-unlink`/`file-write-create` EXPLICITLY, alongside the `file-write*` wildcard it already
+ * carried (for the OTHER write operations the wildcard alone still covers correctly) -- this constant
+ * is that shared operation-name list, applied wherever `file-write*` ALONE previously appeared on a
+ * deny this round's own re-permit could otherwise reach. `fR` (`buildReadDenyKeepInPlaceBlock`) is
+ * deliberately NOT touched here: it already names `file-write-unlink` explicitly (never `create`, by
+ * claude's own design -- see that function's own header), so it was never in the affected set.
+ */
+const WRITE_OPS_SURVIVING_READ_DENY_REPERMIT = "file-write* file-write-unlink file-write-create";
+
 // A STRICT "is candidate a proper descendant of root" check -- claude's own `Sc` (dump byte 15366000
 // region, ground-truth-verified in round 11's own reading), reduced to its plain-path form: Winter's
 // write roots and glob-fixed-prefix denies are never themselves glob-shaped (round 10's own `Jm`
@@ -230,22 +338,21 @@ function isProperDescendantOf(candidate: string, root: string): boolean {
  * NESTED WRITE ROOTS (the `u`/`writeRoots` half of claude's own `[...o,...u]`), which Winter DOES
  * have -- the `allowRead` half stays part of that SAME pre-existing gap, not a new one.
  *
- * DISCLOSED FINDING (empirical, found writing this function's own real-sandbox test, production-
- * wiring.test.ts): the nested-write-root carve-out this function builds is, in the CURRENT combined
- * profile, shadowed by `Ch` (round 12, `buildAncestorRenameBypassBlock`, called on the SAME
+ * RESOLVED (round 14, CRITICAL item 1 -- see `buildReadDenyWritePermitBlock`'s own header): round 13
+ * found, empirically, that the nested-write-root carve-out this function builds was, in the CURRENT
+ * combined profile, shadowed by `Ch` (round 12, `buildAncestorRenameBypassBlock`, called on the SAME
  * `denyReadPaths` list) whenever both cover the identical denied path -- `Ch` has NO carve-out
- * mechanism of its own (claude's own `Ch`, dump-verified, never subtracts anything), so its own
- * EARLIER, unconditional `(deny file-write-unlink file-write-create (subpath <deniedDir>) ...)`
- * clause covers the nested write root too, with no exemption -- and that clause is what a real
- * sandbox-exec test observes deciding the outcome, not this function's own LATER, narrower
- * `require-not` clause (which genuinely does not match a target inside its own carve-out, so it
- * simply never "wins" anything for that target; it is not overridden so much as it never applies).
- * Isolated testing (temporarily removing `Ch`'s own read-side block) confirmed THIS function's own
- * carve-out clause is correctly generated and independently functional -- the interaction above is a
- * genuine, observed composition of two faithfully-ported claude functions, not a bug in this one.
- * Whether claude's OWN real, combined profile has the identical interaction (i.e. whether `fR`'s own
- * carve-out is similarly shadowed there too) was not independently verified against a live claude
- * binary -- flagged for the controller's own awareness rather than silently smoothed over.
+ * mechanism of its own and its own EARLIER, unconditional deny covered the nested write root too,
+ * with no exemption, and THAT clause was what a real sandbox-exec test observed deciding the outcome.
+ * The root cause was never a bug in `fR` (isolated testing, at the time, already confirmed this
+ * function's own carve-out clause was correctly generated and independently functional) -- it was
+ * that Winter's round-12 port of claude's own `pR` stopped at its `Ch` call and never carried `pR`'s
+ * own TRAILING lines, an explicit `(allow file-write-unlink file-write-create <every write root>)`
+ * re-permit emitted right after `Ch`. With that re-permit now in place (`buildReadDenyWritePermitBlock`,
+ * called from `buildSeatbeltProfile` immediately after `Ch`'s own read-side block), a real sandbox-exec
+ * run confirms the nested write root is writable again -- production-wiring.test.ts's own round-13
+ * fixture, once asserting the disclosed-limitation outcome, now asserts the restored one, re-verified
+ * against real `sandbox-exec`, not assumed.
  */
 function buildReadDenyKeepInPlaceBlock(plainDenyReadPaths: readonly string[], globDenyReadEntries: readonly GlobDenyEntry[], writableRoots: readonly string[]): string {
   if (writableRoots.length === 0) return "";
@@ -475,19 +582,26 @@ export interface SeatbeltProfileInput {
  * denyWrite layers), network denied unless explicitly allowed.
  *
  * WS-12 §5.2 (verbatim carry, Winter-renamed): EVERY writable root (cwd + each of `writableRoots`)
- * additionally gets an explicit `(deny file-write* (literal "<root>/<projectDir>/<file>"))` line, for
+ * additionally gets an explicit `(deny <ops> (literal "<root>/<projectDir>/<file>"))` line, for
  * each of `permissions.local.json`/`settings.json`/`settings.local.json`, unconditionally, with no
  * opt-in flag to forget -- a bash-invoked `echo x > <projectDir>/permissions.local.json` never passes
  * through a write/edit TOOL's own permission fence at all, so the seatbelt is the only enforcement
  * point left for a shell-invoked write to the permission/settings control plane. SBPL evaluates a
- * profile's rules for a given operation in FILE ORDER, last-match-wins (verified against real
- * sandbox-exec) -- placing these denies AFTER the `(allow file-write* (subpath ...))` block carves
- * out exactly these files from an otherwise-writable subpath, without touching a sibling file or an
- * entire OTHER subdirectory like the MEMDIR.
+ * profile's rules for a given operation in FILE ORDER, last-match-wins, WITH ONE EMPIRICALLY-VERIFIED
+ * EXCEPTION (fix round 14, `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`'s own header): a clause naming
+ * `file-write-unlink`/`file-write-create` EXPLICITLY beats one that only reaches them via the
+ * `file-write*` wildcard, independent of file order -- which is why `<ops>` here is
+ * `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT` (`file-write* file-write-unlink file-write-create`), not a
+ * bare `file-write*`, since round 14 added an EARLIER, blanket, explicit-named re-permit
+ * (`buildReadDenyWritePermitBlock`) that a bare-wildcard deny here would no longer survive. Ordinary
+ * last-match-wins still governs every OTHER write operation (`file-write-data`, etc.) and governs
+ * `<ops>` vs. `<ops>` ties among explicit-named clauses -- placing these denies AFTER the
+ * `(allow file-write* (subpath ...))` block carves out exactly these files from an otherwise-writable
+ * subpath, without touching a sibling file or an entire OTHER subdirectory like the MEMDIR.
  *
- * A companion `(deny file-write* (regex ...))` per filename, placed after the per-root literals,
- * closes the NESTED-store hole a literal-only deny misses: a broad `writableRoots` entry makes a
- * nested `<root>/projB/<projectDir>/settings.json` writable too, with no literal deny naming that exact
+ * A companion `(deny <ops> (regex ...))` per filename, placed after the per-root literals, closes
+ * the NESTED-store hole a literal-only deny misses: a broad `writableRoots` entry makes a nested
+ * `<root>/projB/<projectDir>/settings.json` writable too, with no literal deny naming that exact
  * path. Case-folded per character (see the module-level regex constants' own comment).
  */
 export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
@@ -500,7 +614,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const writeRules = roots.map((r) => `  (subpath "${sbplString(r)}")`).join("\n");
 
   const denyRulesFileRules = roots
-    .flatMap((r) => CONTROL_PLANE_FILES.map((f) => `(deny file-write* (literal "${sbplString(canon(join(r, brand.projectDirName, f)))}"))`))
+    .flatMap((r) => CONTROL_PLANE_FILES.map((f) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (literal "${sbplString(canon(join(r, brand.projectDirName, f)))}"))`))
     .join("\n");
   // P7a fix r1 (Important-1): the any-depth companions to the per-root literals above, now derived.
   //
@@ -511,9 +625,9 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // same string, so exactly one set is emitted and the default profile is byte-identical.
   const controlPlaneDirs = [...new Set([brand.projectDirName, brand.homeDirName])];
   const controlPlane = controlPlaneDirs.map(controlPlaneRegexes);
-  const denyRulesFileRegex = controlPlane.map((r) => `(deny file-write* (regex #"${r.rules}"))`).join("\n");
-  const denySettingsFileRegex = controlPlane.map((r) => `(deny file-write* (regex #"${r.settings}"))`).join("\n");
-  const denySettingsLocalFileRegex = controlPlane.map((r) => `(deny file-write* (regex #"${r.settingsLocal}"))`).join("\n");
+  const denyRulesFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${r.rules}"))`).join("\n");
+  const denySettingsFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${r.settings}"))`).join("\n");
+  const denySettingsLocalFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${r.settingsLocal}"))`).join("\n");
 
   // WS-12 §5.3 (new at cutover): user-configured filesystem.denyWrite/denyRead, rendered as
   // (subpath ...) denies -- UNLIKE the control-plane carve-outs above (filename-literal/regex
@@ -522,7 +636,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // Placed after the allow blocks (last-match-wins) but BEFORE the mktemp allowance and the
   // control-plane denies, so neither carried protection can be defeated by a user's own denyWrite
   // entry happening to shadow them.
-  const denyWriteRules = (input.denyWritePaths ?? []).map((p) => `(deny file-write* (subpath "${sbplString(canon(p))}"))`).join("\n");
+  const denyWriteRules = (input.denyWritePaths ?? []).map((p) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(p))}"))`).join("\n");
   const denyReadRules = (input.denyReadPaths ?? []).map((p) => `(deny file-read* (subpath "${sbplString(canon(p))}"))`).join("\n");
 
   // Fix round 11: the GLOB-shaped siblings of the two rules just above (claude's own `Li`/`Rt`,
@@ -551,7 +665,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // disclosure correction -- claude's `Cv` DOES perform real, `ko`-guarded symlink resolution here,
   // this codebase's round-11 disclosure claiming otherwise was wrong, corrected in file-rules.ts's own
   // header).
-  const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny file-write* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
+  const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
   const denyReadRegexRules = (input.denyReadRegexes ?? []).map((r) => `(deny file-read* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
 
   // Fix round 12 ("Important" item, claude's own `Ch`/`ed`): the ancestor-rename-bypass fix. For
@@ -564,6 +678,11 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // matching that structure exactly rather than merging them into one.
   const denyWriteAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyWritePaths ?? [], input.denyWriteGlobFixedPrefixes ?? []);
   const denyReadAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyReadPaths ?? [], input.denyReadGlobFixedPrefixes ?? []);
+
+  // Fix round 14 (CRITICAL item 1, claude's own `pR`'s own trailing re-permit): see
+  // `buildReadDenyWritePermitBlock`'s own header for the full rationale. Reuses the SAME
+  // canonicalized `roots` array the write-allow block below builds.
+  const denyReadWritePermitBlock = buildReadDenyWritePermitBlock(roots);
 
   // Fix round 13 ("Important" item 1, claude's own fR): emitted AFTER the write-allow block (`roots`/
   // `writeRules`, above) -- see `buildReadDenyKeepInPlaceBlock`'s own header for the full rationale.
@@ -623,11 +742,11 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // owned by lane L1b, which renames it to match -- until both land the two are momentarily out of
   // step; see this fix round's report.
   const denyBackupsDirRule = [
-    input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "file-history")))}"))` : "",
+    input.home ? `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "file-history")))}"))` : "",
     // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
     // RESOLVED root's `file-history/`, which is what `checkpoint/sink.ts` has always used. WS-21
     // §3.7: `durableRoot` prefers `storeHome`.
-    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-write* (subpath "${sbplString(canon(join(durableRoot, "file-history")))}"))` : "",
+    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(join(durableRoot, "file-history")))}"))` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");
@@ -675,6 +794,7 @@ ${machRules})
 ${denyReadRules}
 ${denyReadRegexRules}
 ${denyReadAncestorRenameBlock}
+${denyReadWritePermitBlock}
 ${denyRunDirRule}
 ${denyProviderStateReadRule}
 (allow file-write*
