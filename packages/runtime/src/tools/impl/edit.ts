@@ -81,7 +81,9 @@ const editExecutor: ToolExecutor = {
     if (parsed.old_string === "") return errorResult("'old_string' must not be empty");
     if (parsed.old_string === parsed.new_string) return errorResult("'old_string' and 'new_string' are identical -- no change to make");
 
-    const resolvedPath = resolve(ctx.cwd, parsed.file_path);
+    // Fix round 10, item B: trim FIRST, matching claude's own `ht` -- see write.ts's identical
+    // comment (the check and the write must never disagree).
+    const resolvedPath = resolve(ctx.cwd, parsed.file_path.trim());
 
     try {
       if (!existsSync(resolvedPath)) return errorResult(`"${resolvedPath}" does not exist -- Edit can only modify an existing file`);

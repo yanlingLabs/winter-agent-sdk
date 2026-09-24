@@ -144,7 +144,8 @@ const notebookEditExecutor: ToolExecutor = {
       return errorResult(`edit_mode:'${parsed.edit_mode}' requires 'cell_id'`);
     }
 
-    const resolvedPath = resolve(ctx.cwd, parsed.notebook_path);
+    // Fix round 10, item B: trim FIRST, matching claude's own `ht` -- see write.ts's identical comment.
+    const resolvedPath = resolve(ctx.cwd, parsed.notebook_path.trim());
 
     try {
       if (!existsSync(resolvedPath)) return errorResult(`"${resolvedPath}" does not exist -- NotebookEdit can only modify an existing notebook`);

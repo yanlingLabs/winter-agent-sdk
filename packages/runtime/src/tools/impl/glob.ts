@@ -76,7 +76,8 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     return { output: `Error: ${(e as Error).message}`, isError: true };
   }
 
-  const scanRoot = input.path !== undefined ? resolve(ctx.cwd, input.path) : ctx.cwd;
+  // Fix round 10, item B: trim FIRST, matching claude's own `ht` -- see write.ts's identical comment.
+  const scanRoot = input.path !== undefined ? resolve(ctx.cwd, input.path.trim()) : ctx.cwd;
   try {
     const rootStat = statSync(scanRoot);
     if (!rootStat.isDirectory()) {

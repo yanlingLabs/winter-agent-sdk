@@ -26,6 +26,7 @@ import {
   exceedsDoubleStarCap,
   MAX_STARS_PER_SEGMENT,
   exceedsStarsPerSegmentCap,
+  resolveTargetPath,
   type FileRuleEntry,
 } from "./paths.ts";
 
@@ -857,5 +858,39 @@ describe("exceedsStarsPerSegmentCap (P2 fix-wave item 3: rule-add-time probe for
     const anchored = `/synthetic/settings-src/${bare}`;
     expect(exceedsStarsPerSegmentCap(bare)).toBe(true);
     expect(exceedsStarsPerSegmentCap(anchored)).toBe(true);
+  });
+});
+
+// Fix round 10, item B: claude's own `ht` (dump byte offset 12083670, pinned 2.1.250 -- the
+// function every path-resolving caller in that codebase shares, dump-confirmed as a shared export
+// alongside `c7e`/`S1`/`uj`/`Ad`) trims its raw input FIRST, before anything else: `let r=t.trim()`.
+// `resolveTargetPath` (Winter's own analogous "make this tool's path argument real") never trimmed
+// at all, so an unescaped trailing-space deny rule (round 9's own escapeFileRulePathSegment fix
+// covers the RULE side; this is the QUERY side) still failed open: the CHECKED path kept its own
+// trailing space while the rule's own pattern text lost it to the real `ignore` package's own
+// line-trimming (round 9's own finding), so the two never converged.
+describe("resolveTargetPath -- fix round 10, item B: trims the raw path first, matching claude's own ht", () => {
+  test("a trailing space is trimmed before resolution", () => {
+    expect(resolveTargetPath("/r/sp ", CWD)).toBe("/r/sp");
+  });
+
+  test("a leading space is trimmed too -- ht's own t.trim() trims BOTH ends, not merely trailing", () => {
+    expect(resolveTargetPath("  /r/sp", CWD)).toBe("/r/sp");
+  });
+
+  test("multiple trailing whitespace characters are all trimmed", () => {
+    expect(resolveTargetPath("/r/sp   ", CWD)).toBe("/r/sp");
+  });
+
+  test("an ordinary path with no surrounding whitespace is unaffected", () => {
+    expect(resolveTargetPath("/r/sp", CWD)).toBe("/r/sp");
+  });
+
+  test("INTERIOR whitespace (a real path segment with a space in the middle) survives untouched -- only the OUTER edges trim", () => {
+    expect(resolveTargetPath("/r/has space/file", CWD)).toBe("/r/has space/file");
+  });
+
+  test("a relative path with trailing whitespace is trimmed before being joined to cwd", () => {
+    expect(resolveTargetPath("sp ", CWD)).toBe(`${CWD}/sp`);
   });
 });

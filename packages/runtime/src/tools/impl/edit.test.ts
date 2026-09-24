@@ -60,6 +60,24 @@ describe("Edit -- input validation", () => {
     }
   });
 
+  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- see
+  // write.test.ts's identical fixture. A model-supplied `file_path` with surrounding whitespace
+  // edits the TRIMMED path, matching what the permission check (resolveTargetPath) sees.
+  test("fix round 10, item B: a file_path with surrounding whitespace is trimmed before resolution", async () => {
+    const { dir, cleanup } = fixtureDir();
+    try {
+      const filePath = join(dir, "a.txt");
+      writeFileSync(filePath, "hello");
+      const state = createSessionReadState();
+      readFully(state, filePath);
+      const result = await editExecutor().execute({ file_path: "  a.txt  ", old_string: "hello", new_string: "world" }, makeCtx(dir, { readState: state }));
+      expect(result.isError).toBeUndefined();
+      expect(readFileSync(filePath, "utf8")).toBe("world");
+    } finally {
+      cleanup();
+    }
+  });
+
   test("rejects an empty old_string", async () => {
     const { dir, cleanup } = fixtureDir();
     try {

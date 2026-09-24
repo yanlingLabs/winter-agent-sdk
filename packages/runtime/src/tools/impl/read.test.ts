@@ -137,6 +137,19 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(ctx.readState.lookup(join(dir, "rel.txt"))?.complete).toBe(true);
     });
 
+    // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- "the
+    // check and the write must never disagree" (permissions/paths.ts's `resolveTargetPath` gets the
+    // identical fix). A model-supplied `file_path` with surrounding whitespace reads the TRIMMED
+    // path, and readState is keyed by that same trimmed, resolved path.
+    test("fix round 10, item B: a file_path with surrounding whitespace is trimmed before resolution", async () => {
+      writeFileSync(join(dir, "rel.txt"), "hello");
+      const ctx = makeCtx(dir);
+      const result = await runRead({ file_path: "  rel.txt  " }, ctx);
+      expect(result.isError).toBeUndefined();
+      expect(result.output).toBe("hello");
+      expect(ctx.readState.lookup(join(dir, "rel.txt"))?.complete).toBe(true);
+    });
+
     test("oversized whole-file read returns a PARTIAL view continuable with offset, and records complete:false", async () => {
       const p = join(dir, "big.txt");
       const lines = Array.from({ length: 2500 }, (_, i) => `line${i + 1}`);

@@ -109,6 +109,17 @@ describe("Glob (Phase 3, Lane A, Task 4)", () => {
     expect(result.output).toBe(join(dir, "sub", "x.txt"));
   });
 
+  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- see
+  // write.test.ts's identical fixture. A model-supplied `path` with surrounding whitespace scopes
+  // the scan to the TRIMMED subdirectory.
+  test("fix round 10, item B: a path with surrounding whitespace is trimmed before resolution", async () => {
+    mkdirSync(join(dir, "sub"));
+    writeFileSync(join(dir, "sub", "x.txt"), "");
+    writeFileSync(join(dir, "top.txt"), "");
+    const result = await runGlob({ pattern: "*.txt", path: "  sub  " }, makeCtx(dir));
+    expect(result.output).toBe(join(dir, "sub", "x.txt"));
+  });
+
   test("an absolute pattern is resolved without double-joining onto the scan root (Bun.Glob quirk)", async () => {
     mkdirSync(join(dir, "nested"));
     writeFileSync(join(dir, "nested", "deep.txt"), "");

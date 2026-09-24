@@ -538,7 +538,8 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     return { output: `Error: ${(e as Error).message}`, isError: true };
   }
 
-  const target = resolve(ctx.cwd, input.file_path);
+  // Fix round 10, item B: trim FIRST, matching claude's own `ht` -- see write.ts's identical comment.
+  const target = resolve(ctx.cwd, input.file_path.trim());
   let st: Stats;
   try {
     st = statSync(target);

@@ -159,8 +159,19 @@ function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
 // Fix round 4: exported so evaluator.ts's file-rules.ts-backed callers normalize a call's raw path
 // field the SAME way this module's own matchFileRule always has, rather than a second, slightly
 // different resolve-and-normalize step drifting in over time.
+// Fix round 10, item B: claude's own `ht` (dump byte offset 12083670, pinned 2.1.250) trims its raw
+// input FIRST, before anything else -- `let r=t.trim()`, both ends, not merely trailing. Without
+// this, an unescaped trailing-space deny rule still failed open: round 9's own
+// `escapeFileRulePathSegment` fix covers the RULE side (a Winter-built rule preserves its own real
+// trailing whitespace); this covers the QUERY side (the path being CHECKED). `join`/`isAbsolute`/
+// `normalize` never trim on their own, so a caller passing `"/r/sp "` straight through kept the
+// space here while the real `ignore` package's own line-trimming (round 9's own finding) silently
+// dropped it from an UNESCAPED rule's own pattern text -- the two sides never converged. Trimming
+// here first means a plain, unescaped `Read(//r/sp )` deny rule protects a call naming `/r/sp `
+// (trailing space and all) exactly as it does on claude, with no escaping required.
 export function resolveTargetPath(path: string, cwd: string): string {
-  const abs = isAbsolute(path) ? path : join(cwd, path);
+  const trimmed = path.trim();
+  const abs = isAbsolute(trimmed) ? trimmed : join(cwd, trimmed);
   return stripTrailingSlash(normalize(abs));
 }
 

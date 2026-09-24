@@ -74,6 +74,22 @@ describe("Write -- new files have no precondition", () => {
     }
   });
 
+  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- "the check
+  // and the write must never disagree" (the permission-check side, permissions/paths.ts's
+  // `resolveTargetPath`, gets the identical fix). A model-supplied `file_path` with surrounding
+  // whitespace now writes to the TRIMMED path, matching what a deny rule checks.
+  test("fix round 10, item B: a file_path with surrounding whitespace is trimmed before resolution -- the file lands at the TRIMMED path", async () => {
+    const { dir, cleanup } = fixtureDir();
+    try {
+      const result = await writeExecutor().execute({ file_path: "  new.txt  ", content: "hello\n" }, makeCtx(dir));
+      expect(result.isError).toBeUndefined();
+      expect(readFileSync(join(dir, "new.txt"), "utf8")).toBe("hello\n");
+      expect(existsSync(join(dir, "  new.txt  "))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("auto-creates missing parent directories for a new file", async () => {
     const { dir, cleanup } = fixtureDir();
     try {

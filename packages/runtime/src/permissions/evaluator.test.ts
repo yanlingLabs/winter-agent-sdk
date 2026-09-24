@@ -2290,6 +2290,58 @@ describe("evaluate() -- fix round 10, item 3: an uncompilable file-rule pattern 
   });
 });
 
+// Fix round 10, item B: claude's own `ht` trims a raw path FIRST (dump byte offset 12083670, pinned
+// 2.1.250) -- the permission check (permissions/paths.ts's `resolveTargetPath`, same fix) and the
+// tool's actual write (tools/impl/{read,write,edit,...}.ts, same fix) must never disagree. Before
+// this fix, an UNESCAPED trailing-space deny rule failed open: the real `ignore` package trims an
+// unescaped trailing whitespace run off the RULE's own pattern text (round 9's own finding), while
+// the CHECKED path kept its own trailing space -- the two never converged. The controller's own test
+// shape: a raw (unescaped) rule for `//r/sp ` against a call naming `/r/sp ` (trailing space and
+// all, exactly as a model would type it).
+describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space deny rule protects the real path, matching claude", () => {
+  test("Read(//r/sp ) (raw, unescaped) denies a call naming /r/sp  (trailing space and all)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(//r/sp )", "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/r/sp " }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("the SAME raw rule denies a call naming the TRIMMED path too -- both sides converge on the identical trimmed target", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(//r/sp )", "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/r/sp" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("control: a rule for a DIFFERENT, unrelated path does not deny /r/sp -- proves the match above is real, not an accidental catch-all", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(//r/other)", "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/r/sp " }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  // Disclosed tension, same as claude's own (I_t escapes trailing whitespace so a rule can PRESERVE
+  // it as literal content; ht trims so no real query/write path this codebase resolves a tool
+  // argument through ever HAS trailing whitespace left to match against) -- an ESCAPED trailing
+  // space (round 9's own escapeFileRulePathSegment output) no longer matches a call whose path gets
+  // trimmed before the check ever sees it. Not a regression to fix: claude has the identical
+  // tension between its own I_t and ht, and this ruling (trim the query/write side) is explicit.
+  test("disclosed tension: an ESCAPED trailing space no longer matches, now that the query path is trimmed before the check -- matching claude's own I_t/ht tension, not a regression", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(//r/sp\\ )", "deny")) }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/r/sp " }), ctx);
+    expect(record.mechanism).not.toBe("rule");
+  });
+});
+
 // Task 8 (P3 close-out, "Baseline read denial" MUST; WS-12 §2 / D6): the exact rule shapes engine.ts
 // seeds into EVERY session (`BASELINE_DENY_RULES`) -- two `~`-anchored deny rules, source "managed".
 // Per engine.ts's own documented testing convention ("tests that need a synthetic home construct an

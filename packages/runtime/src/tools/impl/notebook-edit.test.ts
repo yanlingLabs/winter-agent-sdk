@@ -223,6 +223,24 @@ describe("NotebookEdit -- the read-before-edit ladder gates the target", () => {
     }
   });
 
+  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- see
+  // write.test.ts's identical fixture. A model-supplied `notebook_path` with surrounding whitespace
+  // edits the TRIMMED path.
+  test("fix round 10, item B: a notebook_path with surrounding whitespace is trimmed before resolution", async () => {
+    const { dir, cleanup } = fixtureDir();
+    try {
+      const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
+      const state = createSessionReadState();
+      readFully(state, filePath);
+      const result = await notebookEditExecutor().execute({ notebook_path: "  nb.ipynb  ", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state }));
+      expect(result.isError).toBeUndefined();
+      const saved = JSON.parse(readFileSync(filePath, "utf8")) as { cells: Array<{ source: string }> };
+      expect(saved.cells[0]?.source).toBe("2");
+    } finally {
+      cleanup();
+    }
+  });
+
   test("relaxed + never read + silent probe is NOT enough on its own to test here (profile isn't plumbed in) -- default strict still denies", async () => {
     const { dir, cleanup } = fixtureDir();
     try {
