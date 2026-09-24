@@ -126,7 +126,7 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // integration recipe in its own report, and could not perform the integration itself: the
 // elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
-import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createMcpLifecycle, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
@@ -4003,6 +4003,31 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
     // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
     await mcpLifecycle.start();
+    // Fix round 19/20: claude's FIRST-TURN wait on its SDK path (`km`, dump byte 34109614; the full trail
+    // is on mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` above is claude's nonblocking
+    // connect, so without this every ordinary stdio server is still `pending` when `system/init` and
+    // the first turn are built. claude awaits `km` before its first turn (34017496) and builds that
+    // turn's `system/init` and tools from live state (33881679); Winter writes its startup
+    // `system/init` once, before the first turn, so the wait belongs here, ahead of the capability,
+    // partition and init derivations below -- first turn only, since nothing below waits again.
+    // Settled means not `pending` (connected, cached, failed, needs-auth): a server that cannot spawn
+    // ends the wait at once, and a session with nothing pending does not wait at all. `alwaysLoad` is
+    // unchanged (`start()` already awaited it).
+    //
+    // Scoped as claude scopes it: the TOP-LEVEL run only (claude's is in `runHeadless`; a child engine
+    // shares its parent's board and never builds its own lifecycle), and only this engine's own
+    // lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns its MCP stack, which
+    // this engine did not start and does not wait on.
+    if (config.agentId === undefined) {
+      await mcpLifecycle.stateSource.waitForPending(
+        undefined,
+        firstTurnMcpWaitDeadlineMs({
+          ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
+          ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
+          envConfig: mcpEnvConfig,
+        }),
+      );
+    }
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
@@ -4527,9 +4552,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `resolveLiveSessionCapabilities()` the dispatch-time availability check already reads per call.
   // `advertisedCfg.mode` stays the startup mode: rider 5's recorded init-vs-live-mode posture (above)
   // is unchanged, and the live mode still governs execution. The startup `type:"init"` frame and
-  // `advertisedToolNames` below read the first derivation: the registry as it stands at startup, when
-  // an ordinary stdio server is still `pending` (claude's own `system/init` lists such a server
-  // `pending` with none of its tools, measured against 2.1.250 by the router's same-view row).
+  // `advertisedToolNames` below read the first derivation: the registry as it stands after the
+  // first-turn MCP wait above (claude's `km`), so a server that connected within it is listed; a slower
+  // one is still `pending`, with none of its tools, and joins from a later request.
   const computeAdvertisedPartition = () =>
     suppressAliasedDuplicates(
       partitionAdvertisedTools({ ...advertisedCfg, capabilities: resolveLiveSessionCapabilities() }, deferralActivation),

@@ -444,6 +444,41 @@ function isCacheableTransport(config: McpServerConfigForProcessTransport): boole
   return config.type === "http" || config.type === "sse";
 }
 
+// --- Fix round 19/20: claude's FIRST-TURN wait on its SDK path (WS-09 §2's `-p` path, §12 Q5) -----
+//
+// `start()` below is claude's `zAn`/`da` (dump byte 24253401 / 24256891): nonblocking by default, only
+// `alwaysLoad` servers awaited. But the SDK drives claude's ONE headless runner -- stream-json input
+// requires `--print` (24230915), and the print entry calls `runHeadless` (24425107) -- and that runner
+// waits before its FIRST turn: `sf = km(p, Jl, {waitForDeferrable:true, …})` starts at setup (34005856)
+// and the first command awaits it (34017496). Servers are already `pending` then: `zAn` adds every
+// configured server synchronously, user-scope `.claude.json` servers included (`qk`, 17839163).
+// `km(e,t=2000,o={})` (34109614) polls every pending server until none is pending or the deadline
+// passes, and `e_` (34109559) sets the deadline: `explicitMcpConfigFlag && !sdkUrl ? ic() : undefined`,
+// so `km`'s own 2000 ms unless the explicit MCP config asks for the long wait, `ic()` = MCP_TIMEOUT.
+// `explicitMcpConfigFlag` is `OL(mcpConfigFlagServers, strictMcpConfig)` (exported as
+// `explicitMcpConfigRequestsWait`) = `strictMcpConfig || any --mcp-config server is not "sdk"` (claude's
+// `!isBridgeCarrierChild` clause has no Winter counterpart). The agent SDK passes a host's
+// `mcpServers` as `--mcp-config` and never `--sdk-url` (claude-agent-sdk 0.3.250's sdk.mjs), so
+// `localOnly` is false and every pending server is waited on. `system/init` is built inside each
+// query (33881679), after the wait, so a server that connects within it is in claude's init and its
+// first request. Winter's `--mcp-config` is `RuntimeConfig.mcpServers`; `--strict-mcp-config` is
+// `strictMcpConfig`.
+//
+// Fix round 19 ported this (054344d), then removed it (171dec8) on a ruling from a measurement whose
+// bun-launched fixtures started past 2000 ms; the round-19 re-review overturned that ruling from this
+// dump trail, and round 20 restores it.
+export const FIRST_TURN_MCP_WAIT_DEFAULT_MS = 2000;
+
+export function firstTurnMcpWaitDeadlineMs(opts: {
+  strictMcpConfig?: boolean;
+  explicitServers?: Readonly<Record<string, unknown>>;
+  envConfig: Pick<McpEnvConfig, "timeoutMs">;
+}): number {
+  const explicitAsksForWait =
+    opts.strictMcpConfig === true || Object.values(opts.explicitServers ?? {}).some((server) => (server as { type?: unknown } | undefined)?.type !== "sdk");
+  return explicitAsksForWait ? opts.envConfig.timeoutMs : FIRST_TURN_MCP_WAIT_DEFAULT_MS;
+}
+
 // --- The orchestrator ----------------------------------------------------------------------------
 
 export interface McpLifecycleDeps {

@@ -709,29 +709,56 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
     30_000,
   );
 
-  // The ruled shape, measured on claude 2.1.250 by the router's same-view row: `system/init` lists the
-  // stdio server `pending` with none of its tools; turn 1's request carries none of them, and a turn-1
-  // call to one is refused as claude refuses a tool it did not offer (`IQ`, dump byte 18510312:
-  // `<tool_use_error>Error: No such tool available: <name></tool_use_error>`); once connected, the next
-  // request carries the tool and the call runs. The fixture delays its handshake by 1 s so "turn 1
-  // precedes the connect" holds on any machine.
+  // Fix round 20 (the round-19 re-review): claude's SDK path waits up to 2000 ms for pending servers
+  // before its FIRST turn (`km`, dump byte 34109614, awaited at 34017496) and builds `system/init`
+  // inside the query after that wait (33881679). So a server that connects within the wait is listed
+  // `connected` in init and offered on turn 1; a slower one is `pending` at init, and a turn-1 call to
+  // its tool is refused as claude refuses a tool it did not offer (`IQ`, 18510407:
+  // `<tool_use_error>Error: No such tool available: <name>…</tool_use_error>`), then offered on turn 2.
+  // The fixture runs under node (pingFixtureCommand), which starts in well under a second.
   test(
-    "a run-folder stdio server: pending at init, not offered (and refused) on turn 1, offered and callable on the next turn",
+    "a server that connects within the 2 s first-turn wait (~800 ms): init lists it connected, turn 1 offers and calls it",
     async () => {
-      const { runFolder, work } = freshRunFolder({ ping: pingFixtureCommand({ label: "ping", delayMs: 1000 }) });
+      const { runFolder, work } = freshRunFolder({ quick: pingFixtureCommand({ label: "quick", delayMs: 800 }) });
       try {
         const config: RuntimeConfig = { sessionId: "44444444-4444-4444-8444-444444444444", cwd: work, model: "winter-test/echo", settingSources: ["user"], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false };
         const session = startSession(config, runFolder, [
-          { kind: "tool_use", calls: [{ id: "early", name: "mcp__ping__gate_ping", input: {} }] },
+          { kind: "tool_use", calls: [{ id: "q1", name: "mcp__quick__gate_ping", input: {} }] },
+          { kind: "text", text: "done" },
+        ]);
+        session.send({ type: "user", text: "ping it" });
+        await untilResults(session, 1);
+        const msgs = await session.finish();
+        const init = initOf(msgs);
+        expect(init.mcp_servers).toEqual([{ name: "quick", status: "connected" }]);
+        expect(init.tools).toContain("mcp__quick__gate_ping");
+        expect(session.requestTools[0]).toContain("mcp__quick__gate_ping");
+        expect(JSON.stringify(msgs.filter((m) => m.type === "user"))).toContain("PONG-quick");
+      } finally {
+        rmSync(runFolder, { recursive: true, force: true });
+        rmSync(work, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  test(
+    "a server slower than the wait (~3500 ms): pending at init, not offered and refused with claude's text on turn 1, offered and callable on turn 2",
+    async () => {
+      const { runFolder, work } = freshRunFolder({ slow: pingFixtureCommand({ label: "slow", delayMs: 3500 }) });
+      try {
+        const config: RuntimeConfig = { sessionId: "55555555-5555-4555-8555-555555555555", cwd: work, model: "winter-test/echo", settingSources: ["user"], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false };
+        const session = startSession(config, runFolder, [
+          { kind: "tool_use", calls: [{ id: "early", name: "mcp__slow__gate_ping", input: {} }] },
           { kind: "text", text: "turn one done" },
-          { kind: "tool_use", calls: [{ id: "late", name: "mcp__ping__gate_ping", input: {} }] },
+          { kind: "tool_use", calls: [{ id: "late", name: "mcp__slow__gate_ping", input: {} }] },
           { kind: "text", text: "done" },
         ]);
         session.send({ type: "user", text: "turn one" });
         await untilResults(session, 1);
         let connected = false;
         for (let n = 0; n < 300 && !connected; n++) {
-          connected = (await session.mcpStatus(`s-${n}`)).some((s) => s.name === "ping" && s.status === "connected");
+          connected = (await session.mcpStatus(`s-${n}`)).some((s) => s.name === "slow" && s.status === "connected");
           if (!connected) await new Promise((r) => setTimeout(r, 100));
         }
         expect(connected).toBe(true);
@@ -739,14 +766,14 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
         await untilResults(session, 2);
         const msgs = await session.finish();
         const init = initOf(msgs);
-        expect(init.tools).not.toContain("mcp__ping__gate_ping");
-        expect(init.mcp_servers).toEqual([{ name: "ping", status: "pending" }]);
-        expect(session.requestTools[0]).not.toContain("mcp__ping__gate_ping");
+        expect(init.tools).not.toContain("mcp__slow__gate_ping");
+        expect(init.mcp_servers).toEqual([{ name: "slow", status: "pending" }]);
+        expect(session.requestTools[0]).not.toContain("mcp__slow__gate_ping");
         const results = JSON.stringify(msgs.filter((m) => m.type === "user"));
-        expect(results).toContain("<tool_use_error>Error: No such tool available: mcp__ping__gate_ping");
+        expect(results).toContain("<tool_use_error>Error: No such tool available: mcp__slow__gate_ping");
         // Turn 2's first request (the third provider call overall) offers the tool, and the call runs.
-        expect(session.requestTools[2]).toContain("mcp__ping__gate_ping");
-        expect(results).toContain("PONG-ping");
+        expect(session.requestTools[2]).toContain("mcp__slow__gate_ping");
+        expect(results).toContain("PONG-slow");
       } finally {
         rmSync(runFolder, { recursive: true, force: true });
         rmSync(work, { recursive: true, force: true });
