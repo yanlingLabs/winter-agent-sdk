@@ -2548,18 +2548,18 @@ describe("evaluate() -- fix round 11 (CRITICAL): a trailing space/tab no longer 
     expect(record.decision).toBe("deny");
   });
 
-  // A trailing-space name is, BY CONSTRUCTION, also `Vbe`-shaped -- there is no fixture that exercises
-  // ONLY the trim regression's own bypass cell without also tripping fix round 11's OTHER half (the
-  // `mL` safety check just below, whose own point is that it does NOT exempt bypass). So this proves
-  // the two fixes COMPOSE correctly under bypass, rather than isolating one of them: with BOTH fixes
-  // landed, `.bashrc ` under bypassPermissions still asks (denies, no prompt handler configured) --
-  // `mL`'s own "checked first, never classifier/bypass-approvable" posture wins over protected-write's
-  // OWN, weaker bypass cell (an unconditional allow, WS-07 §6.7 -- see the untrimmed `.git/config`
-  // fixture in the Task 7 matrix above for that cell in isolation, on a NON-suspicious protected path).
-  test("bypassPermissions: the TRIMMED protected write is now ALSO caught by the mL safety check (fix round 11's other half), which does not exempt bypass -- the two fixes compose", async () => {
+  // Fix round 17, add-on A (corrects this block's round-11 bypass fixture): `mL` sees the TRIMMED
+  // path, as claude's `$K` does (claude backfills `file_path=ht(file_path)`, and `ht` trims, before the
+  // permission step -- the add-on A describe block below has the dump trail). So `.bashrc ` under
+  // bypassPermissions is exactly `.bashrc` under bypassPermissions: WS-07 §6.7's protected-write bypass
+  // cell (see the untrimmed `.git/config` fixture in the Task 7 matrix above). The trailing space is
+  // invisible to the permission pipeline, and the tool writes the trimmed name (round 10 item B), so
+  // there is no gap between the checked path and the written one.
+  test("bypassPermissions: the trailing-space protected write gets exactly the trimmed write's outcome (WS-07 §6.7's bypass cell) -- the space is invisible, as on claude", async () => {
     const ctx = baseCtx({ cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
-    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
-    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+    const spaced = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    const plain = await evaluate(call("Write", { file_path: "/w/proj/.bashrc" }), ctx);
+    expect({ decision: spaced.decision, mechanism: spaced.mechanism }).toEqual({ decision: plain.decision, mechanism: plain.mechanism });
   });
 
   test("control: an ordinary path with no trailing whitespace is unaffected (proves the fix didn't widen the protected set, only stopped it failing open)", async () => {
@@ -2581,34 +2581,35 @@ describe("evaluate() -- fix round 11 (CRITICAL): a trailing space/tab no longer 
 // or bypassPermissions -- it is wired at stage 3, strictly before stage 4 (mode baseline) and stage 5
 // (allow rules).
 describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory ask that survives even bypassPermissions", () => {
-  test(".bashrc with a trailing space asks under acceptEdits", async () => {
+  // Fix round 17, add-on A: round 11 pinned the four WHOLE-PATH trailing-whitespace shapes below as
+  // mL asks, reading the raw field. claude's `$K` never sees that whitespace -- its permission step
+  // runs on the backfilled `ht(file_path)`, which is trimmed (the add-on A describe block has the dump
+  // trail) -- so each now gets exactly its trimmed twin's outcome, mode by mode: the protected-file
+  // check (REAL_SPECIAL_CHECKS) still asks under acceptEdits, and WS-07 §6.7's bypass cell applies
+  // under bypassPermissions, as it does for the plain name. `mL` itself is pinned by the shapes a trim
+  // leaves in place (`foo.`, `PROGRA~1`, `...`, `notes.CON`, below; a mid-path space in add-on A).
+  for (const [label, spaced, plain, cwd] of [
+    [".bashrc + a space", "/w/proj/.bashrc ", "/w/proj/.bashrc", "/w/proj"],
+    ["~/.zshrc + a space", "/synthetic/home/tester/.zshrc ", "/synthetic/home/tester/.zshrc", "/work"],
+    [".mcp.json + a tab", "/w/proj/.mcp.json\t", "/w/proj/.mcp.json", "/w/proj"],
+  ] as const) {
+    for (const mode of ["acceptEdits", "bypassPermissions"] as const) {
+      test(`${label} under ${mode}: exactly the trimmed name's outcome (claude's $K sees ht(file_path), trimmed)`, async () => {
+        const run = async (file_path: string) => {
+          const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+          const ctx = baseCtx({ promptStage: promptSpy.stage, cwd, policy: policy({ mode }), specialChecks: REAL_SPECIAL_CHECKS });
+          const record = await evaluate(call("Write", { file_path }), ctx);
+          return { decision: record.decision, mechanism: record.mechanism, asked: promptSpy.calls.length };
+        };
+        expect(await run(spaced)).toEqual(await run(plain));
+      });
+    }
+  }
+
+  test("under acceptEdits the trailing-space protected name still asks -- through the protected-file check, as the plain name does", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
-    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "acceptEdits" }) });
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
-    expect(promptSpy.calls.length).toBe(1);
-    expect(record.decision).toBe("deny");
-  });
-
-  test(".bashrc with a trailing space asks under bypassPermissions (the whole point of this check -- bypass does NOT exempt it, unlike the pre-existing protected-write exception)", async () => {
-    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
-    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
-    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
-    expect(promptSpy.calls.length).toBe(1);
-    expect(record.decision).toBe("deny");
-  });
-
-  test("~/.zshrc with a trailing space asks under bypassPermissions", async () => {
-    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
-    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "bypassPermissions" }) });
-    const record = await evaluate(call("Write", { file_path: "/synthetic/home/tester/.zshrc " }), ctx);
-    expect(promptSpy.calls.length).toBe(1);
-    expect(record.decision).toBe("deny");
-  });
-
-  test(".mcp.json followed by a tab asks under bypassPermissions", async () => {
-    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
-    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
-    const record = await evaluate(call("Write", { file_path: "/w/proj/.mcp.json\t" }), ctx);
     expect(promptSpy.calls.length).toBe(1);
     expect(record.decision).toBe("deny");
   });
@@ -2651,10 +2652,12 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     expect(record.decision).toBe("deny");
   });
 
+  // Fix round 17, add-on A: the two stage-order fixtures below use `foo.` -- a shape `mL` still flags
+  // after the trim -- instead of round 11's `.bashrc `, which no longer reaches `mL` at all.
   test("dontAsk converts this mandatory ask into an immediate denial, mechanism 'mode', canUseTool never called -- matching the isMandatoryPrivateAddressAsk/isMandatoryMcpInteraction precedent", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // even if it WOULD ask-then-allow, dontAsk must never ask at all
     const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "dontAsk" }) });
-    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    const record = await evaluate(call("Write", { file_path: "/w/proj/foo." }), ctx);
     expect(promptSpy.calls.length).toBe(0);
     expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
   });
@@ -2666,7 +2669,7 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
       cwd: "/w/proj",
       policy: policy({ mode: "bypassPermissions", rules: withRules(rule("Write(**)", "allow")) }),
     });
-    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    const record = await evaluate(call("Write", { file_path: "/w/proj/foo." }), ctx);
     expect(promptSpy.calls.length).toBe(1);
     expect(record.mechanism).not.toBe("rule");
   });
@@ -3469,6 +3472,61 @@ describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-awar
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// Fix round 17, add-on A (the R.2 same-view escape-table regression): a trailing-space Write path is
+// checked TRIMMED, the way claude hands it to `zC`/`$K`. claude's tool loop (dump byte 18520374) runs
+// `validateInput` on the parsed input -- Write's does `Ma(ht(file_path),…,"edit","deny")` -- then
+// `Ie={...Oe};e.backfillObservableInput(Ie);Oe=Ie`, where Write's/Edit's backfill is
+// `e.file_path=ht(e.file_path)` (18134024 / 19723975) and `ht` (12083670) begins `let r=t.trim()`. The
+// hooks and `x3` (the permission step, 17080895) then see that TRIMMED input: `zC` (14454832) matches
+// deny rules over `Ii(getPath(input))` and only later runs `$K` (14442946), whose `mL` loop covers the
+// same candidates. So trailing whitespace on the whole path never reaches `mL` on claude; round 11 read
+// the raw field instead, which made an escaped `sp\ ` deny rule (the router's `escapeRulePath` spelling)
+// ASK for a Write to `<root>/sp ` where claude writes `<root>/sp` silently.
+describe("evaluate() -- fix round 17 add-on A: a trailing-space Write path reaches mL TRIMMED, as claude's backfill hands it to zC/$K", () => {
+  const MODES = ["acceptEdits", "bypassPermissions", "default"] as const;
+
+  async function outcome(file_path: string, mode: (typeof MODES)[number], rules: SourcedRuleEntry[]) {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", specialChecks: REAL_SPECIAL_CHECKS, policy: policy({ mode, rules: withRules(...rules) }) });
+    const record = await evaluate(call("Write", { file_path, content: "x" }), ctx);
+    return { decision: record.decision, mechanism: record.mechanism, asked: promptSpy.calls.length };
+  }
+
+  test("an ESCAPED trailing-space deny rule (sp\\ , escapeRulePath's spelling): a raw `sp ` input gets exactly the trimmed `sp` outcome, in every mode", async () => {
+    const escaped = [rule("Edit(//w/proj/sp\\ )", "deny")];
+    for (const mode of MODES) {
+      expect(await outcome("/w/proj/sp ", mode, escaped)).toEqual(await outcome("/w/proj/sp", mode, escaped));
+    }
+  });
+
+  test("the router's row: under acceptEdits the raw `sp ` input is allowed WITHOUT asking (claude writes the trimmed name), never an mL ask", async () => {
+    const escaped = [rule("Edit(//w/proj/sp\\ )", "deny")];
+    expect(await outcome("/w/proj/sp ", "acceptEdits", escaped)).toEqual({ decision: "allow", mechanism: "mode", asked: 0 });
+  });
+
+  test("with no rule at all, a trailing space alone no longer asks under acceptEdits (notes.txt )", async () => {
+    expect(await outcome("/w/proj/notes.txt ", "acceptEdits", [])).toEqual({ decision: "allow", mechanism: "mode", asked: 0 });
+  });
+
+  // The coordinator's literal ask, which holds for the UNESCAPED rule: `ignore` drops the pattern's
+  // unescaped trailing space and `ht` drops the path's, so they meet -- deny, never ask, on the raw and
+  // the trimmed input alike (green before this fix too; kept as the guard).
+  test("an UNESCAPED trailing-space deny rule (sp ) denies without asking on the raw AND the trimmed input, in every mode", async () => {
+    const unescaped = [rule("Edit(//w/proj/sp )", "deny")];
+    for (const mode of MODES) {
+      for (const input of ["/w/proj/sp ", "/w/proj/sp"]) {
+        expect(await outcome(input, mode, unescaped)).toEqual({ decision: "deny", mechanism: "rule", asked: 0 });
+      }
+    }
+  });
+
+  // `ht` trims only the ENDS: a component ending in whitespace MID-path still reaches mL on claude
+  // (`Vbe=/[.\s]+$/` per component), so it still asks, bypass included (a guard).
+  test("a MID-path component ending in a space still asks under bypassPermissions -- trimming the ends does not blunt mL", async () => {
+    expect(await outcome("/w/proj/dir /x.txt", "bypassPermissions", [])).toMatchObject({ asked: 1 });
   });
 });
 

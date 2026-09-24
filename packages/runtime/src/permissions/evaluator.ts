@@ -699,19 +699,15 @@ export function isSuspiciousPath(path: string): boolean {
 // (the SAME shell-target extraction `REAL_SPECIAL_CHECKS.isProtectedWrite`'s own shell half already
 // uses) alongside the structured-field branch.
 //
-// The structured-field branch (Edit/Write/NotebookEdit) deliberately reads the RAW field straight off
-// `call.input` (mirroring `dedicatedReadToolPath`'s own style), NOT the trimmed candidate every OTHER
-// write-shaped check in this file now consumes (fix round 11, item 1): the whole POINT of `Vbe`
-// (`isSuspiciousPath`'s trailing dot/whitespace check) is to notice that the caller's OWN text had a
-// trailing run of dots/spaces AT ALL -- trimming first, the way the protected/critical-removal/bounds
-// checks now correctly do, would erase the very anomaly this check exists to catch, and `foo.bashrc `
-// would never be flagged. Claude's own `mL`/`ht` have the identical division of labour: `ht` trims for
-// MATCHING/resolution, `mL` inspects the untrimmed, as-typed shape -- confirmed empirically here (a
-// first draft built on `extractCandidateWritePaths` made every `Vbe`-shaped fixture below go RED,
-// because round 11's own item-1 fix trims at exactly that source). The SHELL branch below is NOT
-// affected by that same trim fix -- `recognizeEditOperation`'s shell-parsing arm was never touched by
-// it -- so `shellWriteTargets`'s own output is already the as-parsed shape (a genuinely QUOTED
-// trailing space in a redirect target, e.g. `echo x > "foo.bashrc "`, survives real shell
+// The structured-field branch (Edit/Write/NotebookEdit) reads the field straight off `call.input`
+// (mirroring `dedicatedReadToolPath`'s own style) and TRIMS it -- fix round 17, add-on A, which
+// CORRECTS round 11's reading here. Round 11 read the raw field on the theory that claude's `ht` trims
+// for matching while `mL` inspects the as-typed shape; the dump says otherwise: claude backfills
+// `file_path=ht(file_path)` before the permission step ever runs, so `$K`'s `mL` sees the trimmed path
+// (the full trail is on `firstSuspiciousWritePath`, below). Round 11's "confirmed empirically" was its
+// own fixtures, written for the raw reading. The SHELL branch below is unaffected: claude's `E6` is a
+// separate call graph, and `shellWriteTargets`' output is already the as-parsed shape (a genuinely
+// QUOTED trailing space in a redirect target, e.g. `echo x > "foo.bashrc "`, survives real shell
 // tokenization; an UNQUOTED one is a word separator and never reaches here at all -- a real
 // tokenization fact, not a Winter-side trim).
 // Fix round 12 (minor, claude's own `Ii`): `$K` runs `mL` on every candidate from `Ii(e)`, claude's
@@ -758,12 +754,29 @@ function suspiciousSymlinkTarget(rawCandidate: string, ctx: EvaluationContext): 
   }
 }
 
+// Fix round 17, add-on A (the R.2 same-view escape-table regression; corrects round 11's "reads the
+// RAW, untrimmed candidate"): the structured field reaches `mL` TRIMMED, because that is what claude's
+// `$K` sees. claude's tool loop (dump byte 18520374) runs `validateInput`, then
+// `Ie={...Oe};e.backfillObservableInput(Ie);Oe=Ie` BEFORE the hooks and `x3` (the permission step,
+// 17080895); Write's and Edit's backfill is `e.file_path=ht(e.file_path)` (18134024 / 19723975), and
+// `ht` (12083670, the chunk the Write/Edit chunk imports it from) begins `let r=t.trim()`. `zC`
+// (14454832) then matches deny rules over `Ii(getPath(input))` -- the trimmed path -- and only after
+// the allow/ask rules calls `$K(u,d,…)` (14442946), whose `mL` loop covers those SAME candidates. So
+// whole-path trailing whitespace never reaches `mL` on claude, and the Winter tool writes the trimmed
+// path too (round 10, item B): the checked path is the written path. Reading the raw field made an
+// escaped `sp\ ` deny rule (the router's `escapeRulePath` spelling, which misses the trimmed `sp` on
+// both runtimes) ASK for `<root>/sp ` where claude writes `<root>/sp` without asking. `.trim()` strips
+// only the ENDS, so `mL` keeps its teeth: a trailing dot (`foo.`), `PROGRA~1`, `...`, `notes.CON` and a
+// MID-path component ending in whitespace all still fire. The Bash/Monitor branch below is unchanged
+// (claude's `E6` shell-redirect validator is a separate call graph; a quoted trailing space survives
+// shell tokenization there).
 function firstSuspiciousWritePath(call: PermissionCall, ctx: EvaluationContext): string | undefined {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const raw = call.input[fileRulePathField(call.toolName)];
     if (typeof raw !== "string") return undefined;
-    if (isSuspiciousPath(raw)) return raw;
-    return suspiciousSymlinkTarget(raw, ctx);
+    const checked = raw.trim();
+    if (isSuspiciousPath(checked)) return checked;
+    return suspiciousSymlinkTarget(checked, ctx);
   }
   if (isShellCall(call)) {
     for (const candidate of shellWriteTargets(call, ctx)) {

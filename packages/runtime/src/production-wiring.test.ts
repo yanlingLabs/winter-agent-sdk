@@ -560,6 +560,55 @@ describe("WS-21 §6.3 item 3 (durable-write audit, fix round 2): the checkpoint 
   });
 });
 
+// Fix round 17, add-on A: the router's same-view escape-table row, measured the router's way (was a
+// permission asked? did `sp ` get written?) through the REAL engine and the real Write tool -- plus the
+// check that row cannot make: WHERE the write landed. claude's permission step sees `ht(file_path)`
+// (trimmed; evaluator.test.ts's add-on A block has the dump trail), and so does its Write, so an
+// escaped trailing-space deny rule protects a name no Write call can reach: the call is allowed and
+// writes `<root>/sp`. The unescaped rule meets the trimmed path and denies. Neither ever asks.
+describe("fix round 17 add-on A: the escape-table trailing-space row through the real engine", () => {
+  test("acceptEdits: no permission prompt for either row; the escaped rule's write lands at the TRIMMED name, the unescaped rule's is denied", async () => {
+    const winterHome = realpathSync(mkdtempSync(join(tmpdir(), "winter-r17-trailing-home-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "winter-r17-trailing-work-")));
+    try {
+      // `escapeRulePath` (the router): trailing whitespace gitignore-escaped (`\ `), then claude's
+      // rule-content escape doubles the backslash; the rule parser unescapes it once.
+      writeFileSync(join(winterHome, "settings.json"), JSON.stringify({ permissions: { deny: [`Edit(/${work}/sp\\\\ )`, `Edit(/${work}/un )`] } }));
+      const config: RuntimeConfig = { sessionId: "33333333-3333-4333-8333-333333333333", cwd: work, model: "winter-test/echo", permissionMode: "acceptEdits", settingSources: ["user"], allowedTools: ["Write"], sandbox: { enabled: false } };
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "escaped", name: "Write", input: { file_path: join(work, "sp "), content: "escaped\n" } }] },
+        { kind: "tool_use", calls: [{ id: "unescaped", name: "Write", input: { file_path: join(work, "un "), content: "unescaped\n" } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, undefined, { WINTER_HOME: winterHome });
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+      const asked: string[] = [];
+      let carry = "";
+      for await (const chunk of proc.stdout) {
+        const split = splitFrames(chunk, carry);
+        carry = split.carry;
+        for (const frame of split.frames) {
+          const f = frame as { type: string; subtype?: string; requestId?: string; payload?: { input?: { file_path?: string } } };
+          if (f.type === "control_request" && f.subtype === "permission") {
+            asked.push(String(f.payload?.input?.file_path));
+            proc.stdin.write(encodeFrame({ type: "control_response", requestId: f.requestId!, ok: true, payload: { behavior: "deny", message: "the test broker records and denies" } }));
+          }
+        }
+      }
+      await proc.exited;
+      expect(asked).toEqual([]);
+      expect(existsSync(join(work, "sp ")), "the escaped row, router-measured: `sp ` not written").toBe(false);
+      expect(existsSync(join(work, "un ")), "the unescaped row, router-measured: `un ` not written").toBe(false);
+      expect(readFileSync(join(work, "sp"), "utf8"), "the escaped rule protects a name the Write tool cannot reach: the write lands at the trimmed `sp`").toBe("escaped\n");
+      expect(existsSync(join(work, "un")), "the unescaped rule meets the trimmed path: denied, nothing written").toBe(false);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+});
+
 // WS-21 §6.3 item 2, fix round 1 (Critical 1): the `rules/` loader was implemented in L1a.3 but
 // never WIRED -- neither `assembler.ts` nor `production-wiring.ts` called it. These tests drive the
 // REAL engine (through `buildProductionWiring`'s own `inMemoryProcess` consumer, the SAME pattern
