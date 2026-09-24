@@ -2,6 +2,10 @@
 // (fix round 19). Reached through mcp/test-fixtures.ts's `pingFixtureCommand()`, never imported.
 // Zod-free, on the low-level `Server` class, for the reason mcp/test-fixtures.ts's header gives.
 //
+// PLAIN JAVASCRIPT (`.mjs`), fix round 20: it runs under the `node` on PATH, and the release runner's
+// Node 18 (and ubuntu-latest's preinstalled node) cannot strip TypeScript annotations -- a `.ts`
+// fixture died there with ERR_UNKNOWN_FILE_EXTENSION. Bun runs it too.
+//
 // `--delay-ms <n>` postpones the MCP handshake by n milliseconds (the transport does not attach, so
 // the client's `initialize` waits in the pipe): a slow-starting server, for the first-turn wait and
 // the late-connection tests. `--label <s>` is echoed in the tool's answer.
@@ -9,7 +13,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
-function argValue(name: string): string | undefined {
+function argValue(name) {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
