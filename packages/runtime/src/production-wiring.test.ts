@@ -21,6 +21,7 @@ import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "./testing.ts";
 import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermissions } from "./production-wiring.ts";
 import { runCommand } from "./sandbox/spawn.ts";
+import { parseRule } from "./permissions/grammar.ts";
 // WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
 // rather than letting the production composite reach the developer's real Keychain.
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
@@ -1047,6 +1048,100 @@ describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => 
     } finally {
       wiring.dispose();
     }
+  });
+});
+
+// Fix round 10, item A: `sue` (grammar.ts's `validatePermissionRuleString`), applied at settings
+// LOAD, here -- `buildSettingsRuleSeed`'s one call site reading `permissions.{allow,deny,ask}` from
+// a raw settings object, mirroring claude's own `io`. An invalid entry never becomes an active
+// rule; the warning is claude's own text, verbatim (no Winter tier/path prefix, per the
+// controller's own "the same text" ruling).
+describe("SV-... fix round 10, item A: an invalid settings.json permission rule is skipped with claude's own warning text", () => {
+  test("Bash() on allow is skipped -- would otherwise widen to the whole tool", async () => {
+    writeSettings(home, { permissions: { allow: ["Bash()"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sue-allow", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings).toContain('Invalid permission rule "Bash()" was skipped: Empty parentheses. Either specify a pattern or use just "Bash" without parentheses');
+      expect(wiring.engineOptions.settingsRules.entries.some((e) => e.rule.toolName === "Bash")).toBe(false);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("WebSearch() on deny is skipped -- would otherwise deny the whole tool with no scope", async () => {
+    writeSettings(home, { permissions: { deny: ["WebSearch()"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sue-deny", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings).toContain('Invalid permission rule "WebSearch()" was skipped: Empty parentheses. Either specify a pattern or use just "WebSearch" without parentheses');
+      expect(wiring.engineOptions.settingsRules.entries.some((e) => e.rule.toolName === "WebSearch")).toBe(false);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("mcp__s__x() is skipped -- an MCP rule names its scope entirely in the tool-name string, never in parens", async () => {
+    writeSettings(home, { permissions: { allow: ["mcp__s__x()"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sue-mcp", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.some((w) => w.includes('Invalid permission rule "mcp__s__x()" was skipped'))).toBe(true);
+      expect(wiring.engineOptions.settingsRules.entries.some((e) => e.rule.toolName.startsWith("mcp__s"))).toBe(false);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("an invalid rule never poisons its OWN or a SIBLING valid rule in the same file -- only the bad entry is dropped", async () => {
+    writeSettings(home, { permissions: { deny: ["Bash()", "Read(secrets/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sue-sibling", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.some((w) => w.includes('Invalid permission rule "Bash()" was skipped'))).toBe(true);
+      const survivor = wiring.engineOptions.settingsRules.entries.find((e) => e.rule.toolName === "Read");
+      expect(survivor).toBeDefined();
+      expect(survivor?.rule.specifier).toMatchObject({ kind: "pattern", source: "secrets/**" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a well-formed rule produces no sue warning at all", async () => {
+    writeSettings(home, { permissions: { deny: ["Read(secrets/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sue-clean", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.some((w) => w.startsWith("Invalid permission rule"))).toBe(false);
+      expect(wiring.engineOptions.settingsRules.entries.some((e) => e.rule.toolName === "Read")).toBe(true);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // Ruling: `sue` applies ONLY at settings-file load. A rule reaching the runtime through a
+  // DIFFERENT door -- here, an Options-supplied disallowedTools-style string parsed by
+  // `parseRule` directly (round 9's own jr-ported Tool() fold) -- must be UNAFFECTED: `Tool()`
+  // still folds to bare-equivalent there, exactly as round 9 shipped it.
+  test("outside settings.json, parseRule's own jr-ported Tool() fold is untouched -- sue never runs for a non-settings rule string", () => {
+    const rule = parseRule("Bash()");
+    expect(rule.specifier).toEqual({ kind: "wildcardAll" });
+    expect(rule.isBareEquivalent).toBe(true);
   });
 });
 

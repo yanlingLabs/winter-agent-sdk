@@ -31,6 +31,7 @@ import { canonicalAliases, WINTER_CANONICAL_ALIASES } from "./toolsearch/aliases
 import { setWinterIdentity } from "@yanlinglabs/winter-provider-runtime";
 import { resolveSettingsDetailed, filterEscalatingDefaultMode, providerSettingsFrom } from "./settings/resolve.ts";
 import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions/ruleset.ts";
+import { validatePermissionRuleString } from "./permissions/grammar.ts";
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
@@ -270,6 +271,25 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
       ["allow", "allow"],
     ] as const) {
       for (const raw of stringArray(block[key])) {
+        // Fix round 10, item A: `sue`, ported (grammar.ts's `validatePermissionRuleString`) --
+        // claude's OWN settings-load validator, applied here because THIS is Winter's one call
+        // site that reads `permissions.{allow,deny,ask}` from a raw settings object, mirroring
+        // `io` being claude's one call site that does. An invalid entry is DROPPED, never becoming
+        // an active rule at all -- claude's own text, verbatim, no Winter-added tier/path prefix
+        // (the controller's own ruling: "the same text"), so a Winter operator sees the identical
+        // warning a claude user would for the identical settings.json. A rule arriving through any
+        // OTHER door (Options, canUseTool, a plugin's own permissions block) never reaches this
+        // check -- `parseRule`'s own `jr`-ported grammar (round 8/9) is unaffected.
+        const validation = validatePermissionRuleString(raw, behavior);
+        if (!validation.valid) {
+          // Claude's own text is a template literal with `raw` interpolated NAKED between literal
+          // quote marks (`` `Invalid permission rule "${c}" was skipped: ...` ``) -- not
+          // JSON.stringify'd -- so a rule string containing its own `"` embeds verbatim, unescaped,
+          // exactly as it does on claude. Matched here for byte-identical text, not merely the same shape.
+          const message = `Invalid permission rule "${raw}" was skipped: ${validation.error}${validation.suggestion !== undefined ? `. ${validation.suggestion}` : ""}`;
+          warnings.push(message);
+          continue;
+        }
         try {
           entries.push(sourceRule(rawToRuleValue(raw), behavior, source));
         } catch (err) {

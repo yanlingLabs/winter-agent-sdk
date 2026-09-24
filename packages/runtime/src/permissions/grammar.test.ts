@@ -17,6 +17,7 @@ import {
   webFetchHostnameOf,
   webFetchUrlOf,
   isExactWebFetchDomainRule,
+  validatePermissionRuleString,
 } from "./grammar.ts";
 
 function call(toolName: string, input: Record<string, unknown>) {
@@ -781,4 +782,116 @@ describe("read-only recognition refuses the find/rg/git forms that write or run 
   for (const command of ["find . -name '*.ts'", "rg TODO src", "git diff HEAD~1", "git log --oneline", "grep -r x ."]) {
     test(`control: ${JSON.stringify(command)} stays read-only`, () => expect(isRecognizedReadOnly(command)).toBe(true));
   }
+});
+
+// Fix round 10, item A: `sue`, ported exactly (dump byte offset 11968903, pinned 2.1.250) -- the
+// settings-LOAD rule validator claude's own `io` calls for every `permissions.{allow,deny,ask}`
+// string. Applied at settings load ONLY (production-wiring.ts's buildSettingsRuleSeed) -- see
+// grammar.ts's own header on `validatePermissionRuleString` for the full source, the disclosed
+// warning-only omissions, and the content-verified filePatternTools divergence (Grep excluded).
+// Every rejection class the controller listed, tested with BOTH an allow and a deny where the
+// controller's own list distinguishes them.
+describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exactly", () => {
+  test("an empty rule is rejected", () => {
+    expect(validatePermissionRuleString("", "deny")).toEqual({ valid: false, error: "Permission rule cannot be empty" });
+    expect(validatePermissionRuleString("   ", "allow")).toEqual({ valid: false, error: "Permission rule cannot be empty" });
+  });
+
+  test("mismatched unescaped parens are rejected -- an escaped paren does not count toward the balance", () => {
+    for (const dir of ["allow", "deny"] as const) {
+      expect(validatePermissionRuleString("Bash(foo(bar", dir).valid).toBe(false);
+      expect(validatePermissionRuleString("Bash(foo)bar)", dir).valid).toBe(false);
+    }
+    // An escaped paren is NOT counted -- content with one real "(" and one ESCAPED "\(" is balanced
+    // by sue's own escape-aware count (1 unescaped "(" total, 1 unescaped ")" total: the trailing,
+    // real close).
+    expect(validatePermissionRuleString("Read(foo\\(bar)", "deny").valid).toBe(true);
+  });
+
+  test("any unescaped () anywhere in the string is rejected, not merely as the whole rule's own wrapper", () => {
+    expect(validatePermissionRuleString("Bash()", "deny")).toMatchObject({ valid: false, error: "Empty parentheses" });
+    expect(validatePermissionRuleString("Bash()", "allow")).toMatchObject({ valid: false, error: "Empty parentheses" });
+    expect(validatePermissionRuleString("Bash(foo()bar)", "deny")).toMatchObject({ valid: false, error: "Empty parentheses" });
+    expect(validatePermissionRuleString("()", "deny")).toEqual({ valid: false, error: "Empty parentheses with no tool name", suggestion: "Specify a tool name before the parentheses" });
+    // An ESCAPED empty-parens pair is not "empty parentheses" at all -- it is literal text.
+    expect(validatePermissionRuleString("Read(foo\\(\\)bar)", "deny").valid).toBe(true);
+  });
+
+  test("MCP with parens is rejected -- an MCP rule names its scope entirely in the tool-name string", () => {
+    for (const dir of ["allow", "deny"] as const) {
+      expect(validatePermissionRuleString("mcp__server(foo)", dir)).toMatchObject({ valid: false, error: "MCP rules do not support patterns in parentheses" });
+    }
+    expect(validatePermissionRuleString("mcp__server__tool", "deny")).toEqual({ valid: true });
+  });
+
+  // DUMP-VERIFIED, disclosed: `sue`'s own "Tool name cannot be empty" branch reads `r.toolName`
+  // straight from `jr(e)` -- and `jr` itself NEVER returns an empty `toolName`: its own fallback,
+  // `if(!n)return{toolName:vd(e)}`, substitutes the WHOLE ORIGINAL STRING the moment the extracted
+  // prefix would be empty (e.g. "(foo)" -- toolName up to the first "(" is "", so `jr` returns
+  // `{toolName:"(foo)"}`, the untouched original string, not an empty one). Combined with `sue`'s
+  // own leading `!e.trim()===""` guard (which already rejects a genuinely empty/blank string), this
+  // makes the "Tool name cannot be empty" branch UNREACHABLE in claude's own real implementation --
+  // ported here byte-for-byte anyway (dead code copied faithfully, not "fixed" into something that
+  // fires), so a `"(foo)"`-shaped rule is `valid: true` on BOTH legs, verified directly rather than
+  // assumed.
+  test("a rule whose extracted prefix would be empty (e.g. a leading paren) falls back to jr's own whole-string toolName, not an empty one -- 'Tool name cannot be empty' is unreachable, matching claude exactly", () => {
+    expect(validatePermissionRuleString("(foo)", "deny")).toEqual({ valid: true });
+  });
+
+  test("on allow, a tool-name wildcard outside mcp__server__ is rejected; deny/ask accept it anywhere", () => {
+    expect(validatePermissionRuleString("mcp__*", "allow").valid).toBe(false);
+    expect(validatePermissionRuleString("Bash*", "allow").valid).toBe(false);
+    expect(validatePermissionRuleString("*", "allow").valid).toBe(false);
+    // The wildcard in the TOOL position, after a literal mcp__<server>__ prefix, is the one
+    // permitted shape on allow.
+    expect(validatePermissionRuleString("mcp__server__*", "allow")).toEqual({ valid: true });
+    // A wildcard in the SERVER position is still rejected on allow, even though it parses as MCP.
+    expect(validatePermissionRuleString("mcp__*__tool", "allow").valid).toBe(false);
+    // Deny and ask accept a wildcard tool name anywhere.
+    expect(validatePermissionRuleString("mcp__*", "deny")).toEqual({ valid: true });
+    expect(validatePermissionRuleString("Bash*", "ask")).toEqual({ valid: true });
+  });
+
+  test("a lowercase-initial tool name with no underscore is rejected; one WITH an underscore is not (an MCP-shaped or plugin-shaped name)", () => {
+    expect(validatePermissionRuleString("bash(foo)", "deny")).toEqual({ valid: false, error: "Tool names must start with uppercase", suggestion: 'Use "Bash"' });
+    expect(validatePermissionRuleString("bash", "deny")).toEqual({ valid: false, error: "Tool names must start with uppercase", suggestion: 'Use "Bash"' });
+    expect(validatePermissionRuleString("my_tool(foo)", "deny")).toEqual({ valid: true });
+  });
+
+  test("failures of the per-tool validators: WebSearch rejects wildcards, WebFetch rejects anything but domain: form", () => {
+    for (const dir of ["allow", "deny"] as const) {
+      expect(validatePermissionRuleString("WebSearch(foo*)", dir)).toMatchObject({ valid: false, error: "WebSearch does not support wildcards" });
+      expect(validatePermissionRuleString("WebSearch(foo?)", dir)).toMatchObject({ valid: false, error: "WebSearch does not support wildcards" });
+      expect(validatePermissionRuleString("WebFetch(https://example.com)", dir)).toMatchObject({ valid: false, error: "WebFetch permissions use domain format, not URLs" });
+      expect(validatePermissionRuleString("WebFetch(example.com)", dir)).toMatchObject({ valid: false, error: 'WebFetch permissions must use "domain:" prefix' });
+    }
+    expect(validatePermissionRuleString("WebSearch(claude ai)", "deny")).toEqual({ valid: true });
+    expect(validatePermissionRuleString("WebFetch(domain:example.com)", "deny")).toEqual({ valid: true });
+  });
+
+  test("Bash :* placed anywhere but the end is rejected, and :* alone is rejected", () => {
+    expect(validatePermissionRuleString("Bash(npm run:*foo)", "deny")).toMatchObject({ valid: false, error: "The :* pattern must be at the end" });
+    expect(validatePermissionRuleString("Bash(:*)", "deny")).toMatchObject({ valid: false, error: "Prefix cannot be empty before :*" });
+    // :* AT the end (the legacy prefix form) is the one accepted shape.
+    expect(validatePermissionRuleString("Bash(npm run:*)", "deny")).toEqual({ valid: true });
+  });
+
+  test("any :* on a file tool is rejected -- claude's own validator list (Read/Write/Edit/Glob/NotebookRead/NotebookEdit/Cd), content-verified to EXCLUDE Grep", () => {
+    expect(validatePermissionRuleString("Read(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
+    expect(validatePermissionRuleString("Edit(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
+    expect(validatePermissionRuleString("Write(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
+    expect(validatePermissionRuleString("Glob(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
+    expect(validatePermissionRuleString("NotebookEdit(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
+    // Content-verified divergence from Winter's OWN FILE_RULE_TOOLS (grammar.ts, used for actual
+    // rule-matching dispatch, which DOES include Grep): claude's own settings-load validator table
+    // does not, so this specific rejection never fires for Grep.
+    expect(validatePermissionRuleString("Grep(foo:*)", "deny")).toEqual({ valid: true });
+  });
+
+  test("an ordinary, well-formed rule for every family is valid", () => {
+    expect(validatePermissionRuleString("Read(src/**)", "deny")).toEqual({ valid: true });
+    expect(validatePermissionRuleString("Bash(npm test)", "allow")).toEqual({ valid: true });
+    expect(validatePermissionRuleString("Agent(model:opus)", "deny")).toEqual({ valid: true });
+    expect(validatePermissionRuleString("Bash", "deny")).toEqual({ valid: true });
+  });
 });
