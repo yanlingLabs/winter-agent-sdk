@@ -332,7 +332,7 @@ const WRITE_OPS_SURVIVING_READ_DENY_REPERMIT = "file-write* file-write-unlink fi
  *
  * `Do` (dump byte 15282344): `[".gitconfig",".gitmodules",".bashrc",".bash_profile",".zshrc",
  * ".zprofile",".profile",".ripgreprc",".mcp.json"]` -- nine bare shell/git/mcp config filenames, NOT
- * case-folded (unlike this module's own `.winter`/`settings.json` control-plane regexes) -- claude's
+ * case-folded (unlike this module's own `<projectDir>`/`settings.json` control-plane regexes) -- claude's
  * own `Po`/`Cv` never case-fold these either, per the dump; a case-insensitive-volume bypass is a
  * shared, pre-existing property of claude's own design, not a Winter regression or invented laxity.
  */
@@ -410,19 +410,20 @@ function cwdAnchoredEntryRegex(cwd: string, entry: string, recursive: boolean): 
  * `.claude/agents`. Fix round 17 (R.3 C-1 part 2b): `skills`, `rules` and `output-styles` join
  * `commands`/`agents` -- ruled the Winter mapping of claude's `.claude/{commands,agents}` protection
  * (`qa()`, dump byte 15282484) onto Winter's project folder, required by spec §7.2 (the trusted
- * project's `.winter/{skills,commands,rules,output-styles}/**`), not a new feature. Round 3 had parked
- * this ("the SDK seatbelt regex deny for `.winter/<kind>`"); it is unparked here.
+ * project's `<projectDir>/{skills,commands,rules,output-styles}/**`), not a new feature. Round 3 had
+ * parked this ("the SDK seatbelt regex deny for `<projectDir>/<kind>`"); it is unparked here.
  *
  * Fix round 17 also retires rounds 15/16's `chPlainPaths` exclusion: EVERY plain entry, Winter's own
  * included, goes to `Ch` (`buildDefaultWriteProtectionBlock`), exactly as claude's `mR` calls
- * `Ch(p,t)` on its whole `cR` list (dump byte 15369065). `<cwd>/.winter` is therefore a `(literal …)`
- * in the ancestor fence, as `<cwd>/.claude` is on claude, which is what stops
- * `mv .winter .w2 && mkdir -p .w2/skills/x && … && mv .w2 .winter` (the R.3 reviewer's `bracket3.ts`
- * shape). The accepted consequence: a sandboxed command can no longer create or remove `.winter`
- * itself. A file inside an existing `.winter` is unaffected -- `deny.darwin.test.ts`'s carve-out
- * fixture (the one round 16 found this would break) now creates `.winter/` before its sandboxed
- * command, and still proves the carve-out filename-specific. Winter's own memory directory lives under
- * `storeHome` by default (`context/memory-key.ts`'s `memoryDirFor`), not under `<cwd>/.winter`.
+ * `Ch(p,t)` on its whole `cR` list (dump byte 15369065). `<cwd>/<projectDir>` is therefore a
+ * `(literal …)` in the ancestor fence, as `<cwd>/.claude` is on claude, which is what stops renaming
+ * `<projectDir>` away, planting `skills/x/SKILL.md` under the new name and renaming it back (the R.3
+ * reviewer's `bracket3.ts` shape). The accepted consequence: a sandboxed command can no longer create
+ * or remove `<projectDir>` itself. A file inside an existing `<projectDir>` is unaffected --
+ * `deny.darwin.test.ts`'s carve-out fixture (the one round 16 found this would break) now creates the
+ * project folder before its sandboxed command, and still proves the carve-out filename-specific.
+ * Winter's own memory directory lives under `storeHome` by default (`context/memory-key.ts`'s
+ * `memoryDirFor`), not under `<cwd>/<projectDir>`.
  */
 function buildDefaultWriteProtectionEntries(cwd: string, brand: SandboxBrand, allowGitConfigWrites: boolean): { plainPaths: string[]; regexes: string[] } {
   const plainPaths: string[] = [];

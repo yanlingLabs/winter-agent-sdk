@@ -288,9 +288,9 @@ interface DenyPathGlobScan {
  * `Cv`'s identical split for the realpath'd prefix `Li`/`Po` render). A literal project root spelled
  * for that grammar (`[wip] app` -> `[[]wip] app`, the router's `escapeSandboxGlobPath` and the
  * daemon's spelling of the same path) therefore still ends the prefix at the parent of `[[]wip] app`,
- * so `Ch`'s ancestor fence never names `<root>/.winter` and `mv .winter .w2 && … && mv .w2 .winter`
- * plants a file under a denied `.winter/skills` (measured, the R.3 reviewer's `bracket3.ts`; claude's
- * own leg has the same gap).
+ * so `Ch`'s ancestor fence never names `<root>/<projectDir>`, and renaming `<projectDir>` away, writing
+ * through the new name and renaming it back plants a file under a denied `<projectDir>/skills`
+ * (measured, the R.3 reviewer's `bracket3.ts`; claude's own leg has the same gap).
  *
  * The hardening: a bracket class holding exactly ONE character (`[[]`, `[]]`, `[*]`, `[?]`, and in
  * general `[c]` with no range and no negation) IS that character, and a `]` that closes no class is a
