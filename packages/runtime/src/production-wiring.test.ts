@@ -23,6 +23,7 @@ import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermission
 import { runCommand } from "./sandbox/spawn.ts";
 import { parseRule } from "./permissions/grammar.ts";
 import { splitDenyPathsByGlobShape, globDenyEntriesOf } from "./permissions/file-rules.ts";
+import { pingFixtureCommand } from "./mcp/test-fixtures.ts";
 // WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
 // rather than letting the production composite reach the developer's real Keychain.
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
@@ -607,6 +608,170 @@ describe("fix round 17 add-on A: the escape-table trailing-space row through the
       rmSync(work, { recursive: true, force: true });
     }
   });
+});
+
+// Fix round 19 (the R.3 live gate, BLOCKING): a stdio MCP server declared in the RUN FOLDER's
+// `.winter.json` connected, but its tools never reached the model on any turn. Driven end to end --
+// the real `--run` protocol, a real spawned server (mcp/transports/__fixtures__/ping-server.ts), the
+// run folder as WINTER_HOME -- because both halves of the fix live on this path: claude's first-turn
+// MCP wait (`km`, dump byte 34109614) so `system/init` and turn 1 carry a server that connects within
+// the deadline, and a tool list rebuilt from the live registry every turn so a later connect lands on
+// the next one.
+describe("fix round 19: run-folder MCP servers' tools are offered to the model", () => {
+  interface Session {
+    frames: WinterFrame[];
+    requestTools: string[][];
+    send(frame: Record<string, unknown>): void;
+    results(): number;
+    mcpStatus(id: string): Promise<Array<{ name: string; status: string }>>;
+    finish(): Promise<SdkMessage[]>;
+  }
+
+  function startSession(config: RuntimeConfig, winterHome: string, turns: ProviderTurn[]): Session {
+    const requestTools: string[][] = [];
+    let i = 0;
+    const provider: Provider = {
+      async generate(request: ProviderRequest): Promise<ProviderTurn> {
+        requestTools.push((request.tools ?? []).map((t) => t.name));
+        return turns[Math.min(i++, turns.length - 1)]!;
+      },
+    };
+    const proc = inMemoryProcess(["--run", "--config-json", JSON.stringify(config)], provider, undefined, { WINTER_HOME: winterHome });
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      let carry = "";
+      for await (const chunk of proc.stdout) {
+        const split = splitFrames(chunk, carry);
+        carry = split.carry;
+        frames.push(...(split.frames as WinterFrame[]));
+      }
+    })();
+    const dataOf = (): SdkMessage[] => frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message);
+    return {
+      frames,
+      requestTools,
+      send: (frame) => proc.stdin.write(encodeFrame(frame as never)),
+      results: () => dataOf().filter((m) => m.type === "result").length,
+      async mcpStatus(id) {
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: id, subtype: "mcp_status", payload: undefined }));
+        for (let n = 0; n < 2000; n++) {
+          const response = frames.find((f) => f.type === "control_response" && (f as { requestId?: string }).requestId === id) as { payload?: { servers?: Array<{ name: string; status: string }> } } | undefined;
+          if (response) return response.payload?.servers ?? [];
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        throw new Error(`no mcp_status answer for ${id}`);
+      },
+      async finish() {
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined }));
+        await reader;
+        await proc.exited;
+        return dataOf();
+      },
+    };
+  }
+
+  async function untilResults(session: Session, n: number): Promise<void> {
+    for (let k = 0; k < 3000 && session.results() < n; k++) await new Promise((r) => setTimeout(r, 10));
+  }
+
+  function initOf(msgs: SdkMessage[]): { tools?: string[]; mcp_servers?: Array<{ name: string; status: string }> } {
+    return msgs.find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as never;
+  }
+
+  function freshRunFolder(servers: Record<string, unknown>): { runFolder: string; work: string } {
+    const runFolder = realpathSync(mkdtempSync(join(tmpdir(), "winter-r19-run-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "winter-r19-work-")));
+    writeFileSync(join(runFolder, ".winter.json"), JSON.stringify({ mcpServers: servers }));
+    return { runFolder, work };
+  }
+
+  // The brief's `winter.mcp` check: a session whose ONLY server comes from the global-config loader
+  // (the run folder's `.winter.json`) is an MCP session -- the `winter.mcp` family is advertised
+  // (`ListMcpResourcesTool` is that token's probe tool, registry.ts's RUNTIME_DERIVED_CAPABILITIES).
+  // A command that cannot spawn fails within the first-turn wait, so `init.mcp_servers` carries the
+  // post-wait status (`failed`), not the startup `pending` -- the brief's item (3).
+  test(
+    "winter.mcp from the global-config loader alone; init.mcp_servers carries the post-wait status",
+    async () => {
+      const { runFolder, work } = freshRunFolder({ ghost: { command: "/nonexistent/winter-r19-ghost-server" } });
+      try {
+        const config: RuntimeConfig = { sessionId: "66666666-6666-4666-8666-666666666666", cwd: work, model: "winter-test/echo", settingSources: ["user"], toolSearchEnabled: false };
+        const session = startSession(config, runFolder, [{ kind: "text", text: "done" }]);
+        session.send({ type: "user", text: "hi" });
+        await untilResults(session, 1);
+        const init = initOf(await session.finish());
+        expect(init.tools).toContain("ListMcpResourcesTool");
+        expect(init.mcp_servers).toEqual([{ name: "ghost", status: "failed" }]);
+      } finally {
+        rmSync(runFolder, { recursive: true, force: true });
+        rmSync(work, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  test(
+    "a server that connects within the first-turn wait: init.tools carries its tool, init and mcp_status say connected, turn 1 calls it",
+    async () => {
+      const { runFolder, work } = freshRunFolder({ ping: pingFixtureCommand({ label: "ping" }) });
+      try {
+        const config: RuntimeConfig = { sessionId: "44444444-4444-4444-8444-444444444444", cwd: work, model: "winter-test/echo", settingSources: ["user"], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false };
+        const session = startSession(config, runFolder, [
+          { kind: "tool_use", calls: [{ id: "p1", name: "mcp__ping__gate_ping", input: {} }] },
+          { kind: "text", text: "done" },
+        ]);
+        expect(await session.mcpStatus("s1")).toEqual([{ name: "ping", status: "connected" }]);
+        session.send({ type: "user", text: "ping it" });
+        await untilResults(session, 1);
+        const msgs = await session.finish();
+        const init = initOf(msgs);
+        expect(init.tools).toContain("mcp__ping__gate_ping");
+        expect(init.mcp_servers).toEqual([{ name: "ping", status: "connected" }]);
+        expect(session.requestTools[0]).toContain("mcp__ping__gate_ping");
+        expect(JSON.stringify(msgs.filter((m) => m.type === "user"))).toContain("PONG-ping");
+      } finally {
+        rmSync(runFolder, { recursive: true, force: true });
+        rmSync(work, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  test(
+    "a server that connects AFTER the first-turn wait: absent from init and turn 1, offered and callable on the next turn",
+    async () => {
+      const { runFolder, work } = freshRunFolder({ late: pingFixtureCommand({ label: "late", delayMs: 3500 }) });
+      try {
+        const config: RuntimeConfig = { sessionId: "55555555-5555-4555-8555-555555555555", cwd: work, model: "winter-test/echo", settingSources: ["user"], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false };
+        const session = startSession(config, runFolder, [
+          { kind: "text", text: "turn one" },
+          { kind: "tool_use", calls: [{ id: "p2", name: "mcp__late__gate_ping", input: {} }] },
+          { kind: "text", text: "done" },
+        ]);
+        session.send({ type: "user", text: "turn one" });
+        await untilResults(session, 1);
+        let connected = false;
+        for (let n = 0; n < 200 && !connected; n++) {
+          connected = (await session.mcpStatus(`late-${n}`)).some((s) => s.name === "late" && s.status === "connected");
+          if (!connected) await new Promise((r) => setTimeout(r, 100));
+        }
+        expect(connected).toBe(true);
+        session.send({ type: "user", text: "turn two" });
+        await untilResults(session, 2);
+        const msgs = await session.finish();
+        const init = initOf(msgs);
+        expect(init.tools).not.toContain("mcp__late__gate_ping");
+        expect(init.mcp_servers).toEqual([{ name: "late", status: "pending" }]);
+        expect(session.requestTools[0]).not.toContain("mcp__late__gate_ping");
+        expect(session.requestTools[1]).toContain("mcp__late__gate_ping");
+        expect(JSON.stringify(msgs.filter((m) => m.type === "user"))).toContain("PONG-late");
+      } finally {
+        rmSync(runFolder, { recursive: true, force: true });
+        rmSync(work, { recursive: true, force: true });
+      }
+    },
+    40_000,
+  );
 });
 
 // WS-21 §6.3 item 2, fix round 1 (Critical 1): the `rules/` loader was implemented in L1a.3 but

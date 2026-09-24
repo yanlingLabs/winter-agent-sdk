@@ -5129,3 +5129,57 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
     }
   });
 });
+
+// Fix round 19 (the R.3 live gate, BLOCKING): an MCP server's tools that register AFTER startup
+// never reached the model -- `providerToolSpecs()` read a partition frozen at startup, before any
+// stdio server had connected. claude rebuilds each turn's tools from live state (`runHeadless`,
+// dump byte 34017501: `let Dr=p(),…` read fresh per dequeued command; `system/init` built per query
+// from that turn's tools, `zi` 33869605). The partition is now re-derived from the live registry.
+describe("fix round 19: tools an MCP server registers after startup reach the next turn's request", () => {
+  test("a server that connects between turns: turn 1's request lacks its tool, turn 2's carries it", async () => {
+    const SERVER = "r19late";
+    const TOOL = `mcp__${SERVER}__ping`;
+    const stateSource = createFakeMcpServerStateSource([{ name: SERVER, state: "pending", toolNames: [] }]);
+    const requestTools: string[][] = [];
+    const provider: Provider = {
+      async generate(request) {
+        requestTools.push((request.tools ?? []).map((t) => t.name));
+        return { kind: "text", text: `reply ${requestTools.length}` };
+      },
+    };
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: baseConfig({ sessionId: "r19-late-register", toolSearchEnabled: false, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        mcpServerStateSource: stateSource,
+      });
+      const seen: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) seen.push(f);
+      })();
+      const results = (): number => seen.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+
+      host.output.write({ type: "user", text: "turn one" });
+      for (let n = 0; n < 600 && results() < 1; n++) await new Promise((r) => setTimeout(r, 5));
+
+      // The server connects between turns: its tools register in the live registry, its slot flips.
+      registerMcpServerTools(SERVER, [{ name: "ping", description: "answers pong", inputSchema: { type: "object" } }], { deferredDefault: true });
+      stateSource.transition(SERVER, "connected", { toolNames: ["ping"] });
+
+      host.output.write({ type: "user", text: "turn two" });
+      for (let n = 0; n < 600 && results() < 2; n++) await new Promise((r) => setTimeout(r, 5));
+      host.output.write({ type: "control_request", requestId: "end-r19", subtype: "end_input", payload: undefined });
+      await done;
+      await reader;
+
+      expect(requestTools).toHaveLength(2);
+      expect(requestTools[0]).not.toContain(TOOL);
+      expect(requestTools[1]).toContain(TOOL);
+    } finally {
+      unregisterMcpServerTools(SERVER);
+    }
+  });
+});

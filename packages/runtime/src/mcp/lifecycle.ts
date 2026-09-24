@@ -444,6 +444,33 @@ function isCacheableTransport(config: McpServerConfigForProcessTransport): boole
   return config.type === "http" || config.type === "sse";
 }
 
+// --- Fix round 19: claude's headless FIRST-TURN wait (WS-09 §2's `-p` path, §12 Q5) --------------
+//
+// `start()` below is claude's `zAn`/`da` (dump byte 24253298 / 24256891): with the nonblocking
+// default, an ordinary server connects in the background and startup does not wait. WS-09 modelled
+// that and left the `-p` first-turn wait capture-pending (mcp/p-flag-first-turn.test.ts). The pinned
+// binary has it: `runHeadless` starts `km(getState, deadlineMs, {waitForDeferrable:true,…})` at entry
+// and awaits it before the FIRST turn (34005858 / 34017501). `km(e,t=2000,o={})` (34109614) polls until
+// no pending client is left or the deadline passes, and `e_` (34109559) sets the deadline:
+// `explicitMcpConfigFlag && !sdkUrl ? ic() : undefined`, i.e. `km`'s own 2000 ms unless the explicit
+// MCP config asks for the long wait, which is `ic()` = MCP_TIMEOUT. `explicitMcpConfigFlag` is
+// `OL(mcpConfigFlagServers, strictMcpConfig)` = `strictMcpConfig || any --mcp-config server is not
+// "sdk"` (claude's `!isBridgeCarrierChild` clause has no Winter counterpart). The agent SDK passes a
+// host's `mcpServers` as `--mcp-config` and never `--sdk-url` (claude-agent-sdk 0.3.250's sdk.mjs), so
+// `localOnly` is false for an SDK-driven session and every pending server is waited on. Winter's
+// `--mcp-config` is `RuntimeConfig.mcpServers`; its `--strict-mcp-config` is `strictMcpConfig`.
+export const FIRST_TURN_MCP_WAIT_DEFAULT_MS = 2000;
+
+export function firstTurnMcpWaitDeadlineMs(opts: {
+  strictMcpConfig?: boolean;
+  explicitServers?: Readonly<Record<string, unknown>>;
+  envConfig: Pick<McpEnvConfig, "timeoutMs">;
+}): number {
+  const explicitAsksForWait =
+    opts.strictMcpConfig === true || Object.values(opts.explicitServers ?? {}).some((server) => (server as { type?: unknown } | undefined)?.type !== "sdk");
+  return explicitAsksForWait ? opts.envConfig.timeoutMs : FIRST_TURN_MCP_WAIT_DEFAULT_MS;
+}
+
 // --- The orchestrator ----------------------------------------------------------------------------
 
 export interface McpLifecycleDeps {

@@ -219,6 +219,15 @@ export function stdioFixtureCommand(): { command: string; args: string[] } {
   return { command: process.execPath, args: [fileURLToPath(new URL("./transports/__fixtures__/stdio-server.ts", import.meta.url))] };
 }
 
+// Fix round 19: the one-tool `gate_ping` stdio server (transports/__fixtures__/ping-server.ts), for the
+// first-turn MCP wait and live-partition tests. `delayMs` postpones its handshake (a slow starter).
+export function pingFixtureCommand(opts: { label?: string; delayMs?: number } = {}): { command: string; args: string[] } {
+  const args = [fileURLToPath(new URL("./transports/__fixtures__/ping-server.ts", import.meta.url))];
+  if (opts.label !== undefined) args.push("--label", opts.label);
+  if (opts.delayMs !== undefined) args.push("--delay-ms", String(opts.delayMs));
+  return { command: process.execPath, args };
+}
+
 // Fix round 1 (MAJOR M1): a command that never speaks MCP at all -- `/bin/sh -c "sleep 3600 & wait"`
 // forks a genuine GRANDCHILD (the backgrounded `sleep`) under a `sh` parent that then blocks on
 // `wait`, rather than exec-optimizing into a single process the way a bare `sh -c "sleep 3600"`

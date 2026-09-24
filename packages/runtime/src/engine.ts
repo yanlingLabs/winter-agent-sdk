@@ -126,7 +126,7 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // integration recipe in its own report, and could not perform the integration itself: the
 // elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
-import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createMcpLifecycle, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
@@ -256,6 +256,8 @@ import {
   // eager/deferred/hidden partition wired on top of buildAdvertisedSet's own output.
   isDeferralActive,
   partitionAdvertisedTools,
+  // Fix round 19: the live-registry subscription `system/init.tools` and each request's tools re-derive on.
+  onRegistryChange,
   createLoadedToolSet,
   // Phase 5 Task 3 (R5-4 / WS-09 §8.5): the deferred loaded-set reset a committed compaction fires.
   onCompaction,
@@ -4001,6 +4003,30 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
     // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
     await mcpLifecycle.start();
+    // Fix round 19 (the R.3 live gate, BLOCKING): claude's headless FIRST-TURN wait (`km`, dump byte
+    // 34109614; mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs` has the full trail). `start()` above
+    // is claude's nonblocking connect, so without this every stdio server was still `pending` when
+    // `system/init` and the first turn were built: init reported `pending`, and turn 1 carried none of
+    // its tools. claude awaits `km` before the first turn, then builds that turn's `system/init` and
+    // tool list from live state (`zi`, 33869605); Winter writes its startup `system/init` once, before
+    // the first turn, so the wait belongs here, ahead of the capability/partition/init derivations
+    // below. Settled means not `pending` (connected, cached, failed, needs-auth), so a server that
+    // cannot spawn ends the wait at once, and a session with nothing pending does not wait at all.
+    //
+    // Scoped as claude scopes it: the TOP-LEVEL run only (claude's is in `runHeadless`; a child engine
+    // shares its parent's board and never builds its own lifecycle), and only this engine's own
+    // lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns its MCP stack, which
+    // this engine did not start and does not wait on.
+    if (config.agentId === undefined) {
+      await mcpLifecycle.stateSource.waitForPending(
+        undefined,
+        firstTurnMcpWaitDeadlineMs({
+          ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
+          ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
+          envConfig: mcpEnvConfig,
+        }),
+      );
+    }
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
@@ -4508,13 +4534,39 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // alias-EXCLUSION pass -- a twin whose native spelling this session denied/excluded is moved to
   // `hidden` (never eager, never searchable) rather than left to surface because suppression's own
   // "is the source advertised?" precondition failed. See hideAliasExcludedTwins for both directions.
-  const advertisedPartition = suppressAliasedDuplicates(
-    partitionAdvertisedTools(advertisedCfg, deferralActivation),
-    suppressionAliasTable,
-    config.disallowedTools,
-    sessionBrand,
-  );
+  //
+  // Fix round 19 (the R.3 live gate, BLOCKING): the partition is RE-DERIVED FROM THE LIVE REGISTRY,
+  // never frozen at startup. A stdio server's `registerMcpServerTools` lands whenever it connects --
+  // usually after this point -- and a partition built once here left its tools out of every request
+  // for the whole session (measured: servers `connected`, zero `mcp__` tools on any turn). claude
+  // rebuilds each turn's tools from live state (`runHeadless`, dump byte 34017501: `let Dr=p(),…` per
+  // dequeued command). Recomputed (1) on every live-registry mutation (`onRegistryChange`, registry.ts:
+  // whose own header names "re-derive system/init.tools" as the obligation -- never wired until now),
+  // i.e. a server connecting, reconnecting, refreshing its tools or going away; (2) at every provider
+  // request (`providerToolSpecs`), which also picks up a capability fact that changed without a
+  // registry event (a reviewer that became resolvable, `winter.mcp` after the session's first
+  // `mcp_set_servers`); and (3) at every `system/init` build. Capabilities are the LIVE set -- the same
+  // `resolveLiveSessionCapabilities()` the dispatch-time availability check already reads per call.
+  // `advertisedCfg.mode` stays the startup mode: rider 5's recorded init-vs-live-mode posture (above)
+  // is unchanged, and the live mode still governs execution. The startup `type:"init"` frame and
+  // `advertisedToolNames` below read the first derivation, which already includes every server that
+  // connected within the first-turn MCP wait (the `firstTurnMcpWaitDeadlineMs` call above).
+  const computeAdvertisedPartition = () =>
+    suppressAliasedDuplicates(
+      partitionAdvertisedTools({ ...advertisedCfg, capabilities: resolveLiveSessionCapabilities() }, deferralActivation),
+      suppressionAliasTable,
+      config.disallowedTools,
+      sessionBrand,
+    );
+  let advertisedPartition = computeAdvertisedPartition();
+  const refreshAdvertisedPartition = (): void => {
+    advertisedPartition = computeAdvertisedPartition();
+    currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
+  };
   currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
+  // A process-wide listener set: unsubscribed in this run's teardown (`facetDisposers`), or it would
+  // outlive the run and fire on every later session's registrations.
+  facetDisposers.push(onRegistryChange(refreshAdvertisedPartition));
   // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the execution-boundary "load ≠ permission" check --
   // registry.ts's own exported isLoadFirstBlocked (re-derived from the LIVE registry per call, never
   // a frozen startup snapshot, so a server registered/reconnected mid-session is covered too;
@@ -4589,6 +4641,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // it goes stale the moment a `ToolSearch` selection loads a deferred tool mid-session.
   // `buildSdkInitMessage`'s own `tools` field calls this, never the frozen constant.
   const liveAdvertisedToolNames = (): string[] => {
+    // Fix round 19: re-derived from the live registry at each call (see `refreshAdvertisedPartition`).
+    refreshAdvertisedPartition();
     const loaded = new Set(loadedToolSet.snapshot());
     return [...advertisedPartition.eager.map((d) => d.advertisedName), ...advertisedPartition.deferred.filter((d) => loaded.has(d.canonicalName)).map((d) => d.advertisedName)];
   };
@@ -6495,6 +6549,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // (a fork's own `insideFork` gates differ from the parent's). A fork that needs a deferred tool it
     // was not already using at fork time is the disclosed edge of this design.
     if (exactRequestLayout !== undefined) return exactRequestLayout.tools;
+    // Fix round 19: every provider request re-derives the partition from the live registry and the
+    // live capability set (see `refreshAdvertisedPartition`), so a server that connected since the
+    // last request is offered on this one.
+    refreshAdvertisedPartition();
     const specs: ProviderToolSpec[] = [];
     for (const descriptor of advertisedPartition.eager) {
       specs.push(toolSpecFor(descriptor));
