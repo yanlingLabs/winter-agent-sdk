@@ -18,6 +18,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { spawnSync } from "node:child_process";
 import { runCommand } from "./spawn.ts";
 import { buildWorkflowWorkerSeatbeltProfile } from "./profile.ts";
+import { splitDenyPathsByGlobShape } from "../permissions/file-rules.ts";
 
 function proj(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-deny-")));
@@ -468,5 +469,112 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
       expect(readStatus(outside), "a sibling read must still succeed -- the profile is read-anywhere apart from this subtree").toBe(0);
       expect(readStatus("/nope/nope/nope"), "control: the probe reports a non-EPERM failure distinctly, so 'denied' cannot be confused with 'broken probe'").toBe(4);
     });
+  });
+});
+
+/**
+ * Fix round 17 (R.3 C-1): a run whose `sandbox.filesystem.denyWrite` list is split EXACTLY the way
+ * `tools/impl/bash.ts`'s `computeDenyPaths` splits it (the same one shared primitive,
+ * `splitDenyPathsByGlobShape`), so these tests drive the production classification rather than a
+ * hand-built `denyWritePaths`/`denyWriteRegexes` pair. Commands use cwd-relative paths so no
+ * bracketed/spaced path has to survive shell quoting.
+ */
+async function runWithDenyWriteList(command: string, cwd: string, denyWrite: readonly string[]) {
+  const split = splitDenyPathsByGlobShape(denyWrite);
+  return runCommand({
+    command,
+    cwd,
+    env: { ...process.env, TMPDIR: cwd },
+    timeoutMs: 8000,
+    settings: {},
+    ...(split.paths.length > 0 ? { denyWritePaths: split.paths } : {}),
+    ...(split.regexes.length > 0 ? { denyWriteRegexes: split.regexes } : {}),
+    ...(split.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: split.globFixedPrefixes } : {}),
+  });
+}
+
+/** A fresh project root with a glob-special NAME (`[wip] app`, `a*b`, `q?r`) under a canonical temp dir. */
+function specialRoot(name: string): string {
+  const root = join(proj(), name);
+  mkdirSync(root);
+  return root;
+}
+
+/** The router's `escapeSandboxGlobPath` spelling (`[` -> `[[]`, everything else as written), which the daemon now sends too. */
+function escapeForGlobGrammar(path: string): string {
+  return path.replace(/\[/g, "[[]");
+}
+
+const WINTER_SKILL = join(".winter", "skills", "x", "SKILL.md");
+const PROBE_REDIRECT = `mkdir -p .winter/skills/x && echo planted > ${WINTER_SKILL}`;
+const PROBE_PYTHON = `python3 -c "import os; os.makedirs('.winter/skills/x', exist_ok=True); open('${WINTER_SKILL}','w').write('planted')"`;
+const PROBE_RENAME = `mv .winter .w2 && mkdir -p .w2/skills/x && echo planted > .w2/skills/x/SKILL.md && mv .w2 .winter`;
+
+// Fix round 17 (R.3 C-1 part 2a -- Winter-only hardening, `scanDenyPathGlob`'s own header): the
+// ESCAPED spelling of a bracketed project root is a literal path to the sandbox, so its deny renders
+// `(subpath …)` and the ancestor-rename fence names the real directories. Measured before the fix
+// (the R.3 reviewer's `bracket2.ts`/`bracket3.ts`): the escaped spelling already denied a DIRECT write
+// (its regex matched), but the fixed prefix stopped at the first `[`, so a rename of `.winter` (or of
+// any other ancestor inside the project) planted the file.
+describe("fix round 17 (R.3 C-1 part 2a): an ESCAPED bracketed project root is a literal path to the sandbox", () => {
+  // The discriminating shape, independent of the default `.winter/*` protections part 2b adds: only
+  // the extended prefix fences `vault` here.
+  t("an ancestor rename cannot plant a file under an escaped deny on an ordinary folder (vault/inner)", async () => {
+    const cwd = specialRoot("[wip] app");
+    mkdirSync(join(cwd, "vault", "inner"), { recursive: true });
+    const res = await runWithDenyWriteList(`mv vault v2 && mkdir -p v2/inner && echo x > v2/inner/f && mv v2 vault`, cwd, [escapeForGlobGrammar(join(cwd, "vault", "inner"))]);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, "vault", "inner", "f"))).toBe(false);
+    expect(existsSync(join(cwd, "v2"))).toBe(false);
+    expect(existsSync(join(cwd, "vault", "inner"))).toBe(true);
+  });
+
+  // A regression guard, green before the fix too (the escaped regex already matched): the literal
+  // rendering must keep denying the direct write it replaced.
+  t("a direct write under the escaped deny (vault/inner) stays denied", async () => {
+    const cwd = specialRoot("[wip] app");
+    mkdirSync(join(cwd, "vault", "inner"), { recursive: true });
+    const res = await runWithDenyWriteList(`echo x > vault/inner/f`, cwd, [escapeForGlobGrammar(join(cwd, "vault", "inner"))]);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, "vault", "inner", "f"))).toBe(false);
+  });
+
+  t("control: an ordinary write and an ordinary python3 write in the same bracketed cwd succeed", async () => {
+    const cwd = specialRoot("[wip] app");
+    mkdirSync(join(cwd, "vault", "inner"), { recursive: true });
+    const deny = [escapeForGlobGrammar(join(cwd, "vault", "inner"))];
+    expect((await runWithDenyWriteList(`echo ok > notes.md`, cwd, deny)).exitCode).toBe(0);
+    expect((await runWithDenyWriteList(`python3 -c "open('notes2.md','w').write('ok')"`, cwd, deny)).exitCode).toBe(0);
+    expect(existsSync(join(cwd, "notes.md"))).toBe(true);
+    expect(existsSync(join(cwd, "notes2.md"))).toBe(true);
+  });
+
+  // The brief's item (5): the three probes against the escaped spelling of `<cwd>/.winter/skills`,
+  // the spelling the daemon now sends. (1) and (2) were green before the fix (measured, `bracket2.ts`)
+  // and are kept as guards; (3) planted the file before the fix (`bracket3.ts`).
+  t("(5) escaped spelling: a redirect write into .winter/skills is denied", async () => {
+    const cwd = specialRoot("[wip] app");
+    mkdirSync(join(cwd, ".winter", "skills"), { recursive: true });
+    const res = await runWithDenyWriteList(PROBE_REDIRECT, cwd, [escapeForGlobGrammar(join(cwd, ".winter", "skills"))]);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
+  });
+
+  t("(5) escaped spelling: a python3 write into .winter/skills is denied", async () => {
+    const cwd = specialRoot("[wip] app");
+    mkdirSync(join(cwd, ".winter", "skills"), { recursive: true });
+    const res = await runWithDenyWriteList(PROBE_PYTHON, cwd, [escapeForGlobGrammar(join(cwd, ".winter", "skills"))]);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
+  });
+
+  t("(5) escaped spelling: the .winter ancestor rename is denied and plants nothing", async () => {
+    const cwd = specialRoot("[wip] app");
+    mkdirSync(join(cwd, ".winter", "skills"), { recursive: true });
+    const res = await runWithDenyWriteList(PROBE_RENAME, cwd, [escapeForGlobGrammar(join(cwd, ".winter", "skills"))]);
+    expect(res.exitCode).not.toBe(0);
+    expect(existsSync(join(cwd, WINTER_SKILL))).toBe(false);
+    expect(existsSync(join(cwd, ".w2"))).toBe(false);
+    expect(existsSync(join(cwd, ".winter", "skills"))).toBe(true);
   });
 });

@@ -246,9 +246,89 @@ export function resolveFileRuleAbsoluteGlobText(pattern: string, opts: { cwd: st
   return join(rootPath, relativePart);
 }
 
-/** claude's own `Rt` (dump byte 15282610: `e.includes("*")||e.includes("?")||e.includes("[")||e.includes("]")`), confirmed byte-equivalent to this module's own pre-existing glob-char test. Exported so callers outside this module can classify a `resolveFileRuleAbsoluteGlobText` result without re-deriving the char set. */
+/**
+ * claude's own `Rt` (dump byte 15282610: `e.includes("*")||e.includes("?")||e.includes("[")||e.includes("]")`),
+ * confirmed byte-equivalent to this module's own pre-existing glob-char test. Kept as the pure claude
+ * primitive; the sandbox DENY split (`splitDenyPathsByGlobShape`/`globDenyEntriesOf`) classifies with
+ * `scanDenyPathGlob` below instead (fix round 17, R.3 C-1).
+ */
 export function isGlobShapedFileRulePattern(text: string): boolean {
   return RULE_PATH_GLOB_CHARS.test(text);
+}
+
+/** The member of a one-character bracket class starting at `text[i]` (`[c]`), or `undefined` when `text[i]` does not open one. */
+function singleCharClassMemberAt(text: string, i: number): string | undefined {
+  if (text[i] !== "[" || text[i + 2] !== "]") return undefined;
+  const member = text[i + 1];
+  // `!`/`^` open a NEGATED class, and `/` never belongs to a path segment: all three stay glob syntax.
+  if (member === undefined || member === "!" || member === "^" || member === "/") return undefined;
+  return member;
+}
+
+interface DenyPathGlobScan {
+  /** True when a REAL glob token (`*`, `?`, or a `[` that does not open a one-character class) is present. */
+  glob: boolean;
+  /**
+   * The unescaped literal text read before the first real glob token (the whole path when `glob` is
+   * false): each one-character class contributes its one character, a stray `]` stays `]`.
+   */
+  literal: string;
+  /** Raw index in the input of the last `/` before the first real glob token, or -1. */
+  lastSepRaw: number;
+  /** `literal`'s length at that `/`, so `literal.slice(0, lastSepLiteralLength)` is the unescaped fixed prefix. */
+  lastSepLiteralLength: number;
+}
+
+/**
+ * Fix round 17 (R.3 C-1, part 2a): the deny pipeline's glob-shape classifier and fixed-prefix scan.
+ *
+ * **Winter-only hardening (R.3 C-1); claude's `Rt`/`Li` stop at the first `[`.** claude classifies
+ * any entry holding `* ? [ ]` as a glob (`Rt`, dump byte 15282610) and cuts the fixed prefix at the
+ * first of them (`Rh`, dump byte 15366972: `e.split(/[*?[\]]/)[0]`, then dirname-or-strip; and
+ * `Cv`'s identical split for the realpath'd prefix `Li`/`Po` render). A literal project root spelled
+ * for that grammar (`[wip] app` -> `[[]wip] app`, the router's `escapeSandboxGlobPath` and the
+ * daemon's spelling of the same path) therefore still ends the prefix at the parent of `[[]wip] app`,
+ * so `Ch`'s ancestor fence never names `<root>/.winter` and `mv .winter .w2 && … && mv .w2 .winter`
+ * plants a file under a denied `.winter/skills` (measured, the R.3 reviewer's `bracket3.ts`; claude's
+ * own leg has the same gap).
+ *
+ * The hardening: a bracket class holding exactly ONE character (`[[]`, `[]]`, `[*]`, `[?]`, and in
+ * general `[c]` with no range and no negation) IS that character, and a `]` that closes no class is a
+ * plain `]` (glob grammar; `Po` already renders it as a regex literal). An entry whose only glob
+ * syntax is such classes is a LITERAL path (`(subpath …)`, brackets unescaped); an entry that also
+ * carries a real glob keeps its regex but gets a fixed prefix running through those classes. Accepted
+ * as a disclosed deviation because it only ever denies more: a one-character class matches exactly
+ * the character it names, so the rendered clause matches the same paths, and the ancestor fence now
+ * names directories claude's leaves out. `isGlobShapedFileRulePattern` (claude's `Rt`, above) and the
+ * ALLOW side's glob-drop (`resolveFileRuleAbsolutePath`, round 10's `Jm` ruling) are untouched.
+ */
+function scanDenyPathGlob(text: string): DenyPathGlobScan {
+  let literal = "";
+  let lastSepRaw = -1;
+  let lastSepLiteralLength = -1;
+  for (let i = 0; i < text.length; ) {
+    const ch = text[i]!;
+    if (ch === "[") {
+      const member = singleCharClassMemberAt(text, i);
+      if (member === undefined) return { glob: true, literal, lastSepRaw, lastSepLiteralLength };
+      literal += member;
+      i += 3;
+      continue;
+    }
+    if (ch === "*" || ch === "?") return { glob: true, literal, lastSepRaw, lastSepLiteralLength };
+    if (ch === "/") {
+      lastSepRaw = i;
+      lastSepLiteralLength = literal.length;
+    }
+    literal += ch;
+    i += 1;
+  }
+  return { glob: false, literal, lastSepRaw, lastSepLiteralLength };
+}
+
+/** A path's characters escaped for a POSIX/SBPL regex as LITERAL text -- `Po`'s own step-1 set plus the four glob characters, so an unescaped real path (a canonicalized fixed prefix that may contain `[wip]`) cannot become regex syntax. */
+function escapeRegexLiteralPath(path: string): string {
+  return path.replace(/[.^$+{}()|\\[\]*?]/g, "\\$&");
 }
 
 // Fix round 12 (correcting round 11's own disclosure): claude's own `ko` (dump byte 15283072, in the
@@ -311,31 +391,29 @@ function isSuspiciousRealpathResolution(original: string, resolved: string): boo
  * ALONE, without the glob suffix rejoined, is available to the fix round 12 ancestor-rename-bypass
  * port below (`Ch`'s own `Rh(u)` needs exactly this value, separately from the regex-conversion path).
  */
-function canonicalizedGlobFixedPrefix(absoluteGlob: string): string | undefined {
-  const firstGlobCharIndex = absoluteGlob.search(RULE_PATH_GLOB_CHARS);
-  if (firstGlobCharIndex === -1) return undefined; // not glob-shaped; nothing to canonicalize here
-  // The fixed prefix ends at the last path separator BEFORE the first glob character -- a glob
-  // character can appear mid-segment (`sub*dir/x`), where the "fixed prefix" is only the segments
-  // strictly before `sub*dir`, never a partial segment.
-  const lastSepBeforeGlob = absoluteGlob.lastIndexOf("/", firstGlobCharIndex);
-  if (lastSepBeforeGlob <= 0) return undefined; // no real prefix (glob starts at/near the root)
-  const prefix = absoluteGlob.slice(0, lastSepBeforeGlob);
+function guardedCanonicalize(path: string): string {
   try {
-    const resolved = resolveRealTarget(prefix);
-    return isSuspiciousRealpathResolution(prefix, resolved) ? prefix : resolved;
+    const resolved = resolveRealTarget(path);
+    return isSuspiciousRealpathResolution(path, resolved) ? path : resolved;
   } catch {
-    return prefix;
+    return path;
   }
 }
 
-function canonicalizeGlobFixedPrefix(absoluteGlob: string): string {
-  const firstGlobCharIndex = absoluteGlob.search(RULE_PATH_GLOB_CHARS);
-  if (firstGlobCharIndex === -1) return absoluteGlob;
-  const lastSepBeforeGlob = absoluteGlob.lastIndexOf("/", firstGlobCharIndex);
-  if (lastSepBeforeGlob <= 0) return absoluteGlob;
-  const suffix = absoluteGlob.slice(lastSepBeforeGlob);
-  const canonicalPrefix = canonicalizedGlobFixedPrefix(absoluteGlob);
-  return canonicalPrefix === undefined ? absoluteGlob : canonicalPrefix + suffix;
+/**
+ * Fix round 17 (R.3 C-1): the fixed prefix is `scanDenyPathGlob`'s, so it runs THROUGH a
+ * one-character bracket class and comes back UNESCAPED (`/x/[[]wip] app/**` -> `/x/[wip] app`) -- the
+ * real directory `Ch`'s `(literal …)` and `fR`'s write-root comparisons need. The Winter-only
+ * hardening is disclosed in `scanDenyPathGlob`'s own header.
+ */
+function canonicalizedGlobFixedPrefix(absoluteGlob: string): string | undefined {
+  const scan = scanDenyPathGlob(absoluteGlob);
+  if (!scan.glob) return undefined; // not glob-shaped; nothing to canonicalize here
+  // The fixed prefix ends at the last path separator BEFORE the first glob token -- a glob can
+  // appear mid-segment (`sub*dir/x`), where the "fixed prefix" is only the segments strictly before
+  // `sub*dir`, never a partial segment.
+  if (scan.lastSepLiteralLength <= 0) return undefined; // no real prefix (glob starts at/near the root)
+  return guardedCanonicalize(scan.literal.slice(0, scan.lastSepLiteralLength));
 }
 
 /**
@@ -380,13 +458,22 @@ export function ancestorDirectoriesOf(path: string): string[] {
  *      becomes `.` `*` (anything, separators included).
  * Wrapped in `^...$` (whole-string anchor) -- callers needing the "and everything under it" semantics
  * `subpath` has built in use `recursiveGlobToSbplRegexSource` instead, matching claude's own `td`.
- * The fixed prefix is canonicalized FIRST (`canonicalizeGlobFixedPrefix`, above, this codebase's own
- * addition, not claude's) -- everything downstream of that call is the verbatim `Po` port.
+ * The fixed prefix is canonicalized FIRST (`canonicalizedGlobFixedPrefix`, above -- claude's own `Cv`
+ * does the same, round 12's corrected disclosure) -- everything after the prefix is the verbatim `Po`
+ * port (`poVerbatim`).
+ *
+ * Fix round 17 (R.3 C-1): the canonicalized prefix is spliced back as ESCAPED LITERAL text
+ * (`escapeRegexLiteralPath`) and only the suffix goes through `Po`. The prefix may now hold `[`/`]`
+ * (it runs through one-character classes, `scanDenyPathGlob`'s Winter-only hardening), and `Po` leaves
+ * brackets alone, so re-running the whole string through it would turn `[wip]` back into a class. For
+ * a prefix holding none of `[ ] * ?` the output is byte-identical to before (`Po`'s own step 1 escapes
+ * exactly the rest of `escapeRegexLiteralPath`'s set). A glob-free text (only reachable by a direct
+ * call; the deny split sends it to `(subpath …)`) renders as the whole escaped, canonicalized literal.
  */
-export function globToSbplRegexSource(absoluteGlob: string): string {
+function poVerbatim(glob: string): string {
   return (
     "^" +
-    canonicalizeGlobFixedPrefix(absoluteGlob)
+    glob
       .replace(/[.^$+{}()|\\]/g, "\\$&")
       .replace(/\[([^\]]*?)$/g, "\\[$1")
       .replace(/\*\*\//g, "__GLOBSTAR_SLASH__")
@@ -397,6 +484,14 @@ export function globToSbplRegexSource(absoluteGlob: string): string {
       .replace(/__GLOBSTAR__/g, ".*") +
     "$"
   );
+}
+
+export function globToSbplRegexSource(absoluteGlob: string): string {
+  const scan = scanDenyPathGlob(absoluteGlob);
+  if (!scan.glob) return "^" + escapeRegexLiteralPath(guardedCanonicalize(scan.literal)) + "$";
+  const canonicalPrefix = canonicalizedGlobFixedPrefix(absoluteGlob);
+  if (canonicalPrefix === undefined) return poVerbatim(absoluteGlob);
+  return "^" + escapeRegexLiteralPath(canonicalPrefix) + poVerbatim(absoluteGlob.slice(scan.lastSepRaw)).slice(1);
 }
 
 /**
@@ -434,18 +529,25 @@ export function recursiveGlobToSbplRegexSource(absoluteGlob: string): string {
  * the plain `paths` entries need only their OWN ancestors walked (`ed`, `ancestorDirectoriesOf`
  * above) to close the bypass; a glob-shaped deny ALSO needs its fixed prefix walked, and the prefix
  * itself added as a literal deny target (claude's own `Ch` adds both).
+ *
+ * Fix round 17 (R.3 C-1): classified by `scanDenyPathGlob`, not by claude's `Rt` alone -- an entry
+ * whose only glob syntax is one-character bracket classes (`/x/[[]wip] app/.winter/skills`, a literal
+ * path spelled for the glob grammar) lands in `paths` UNESCAPED (`/x/[wip] app/.winter/skills`), and a
+ * glob entry's fixed prefix runs through such classes. Winter-only hardening (R.3 C-1); claude's
+ * `Rt`/`Li` stop at the first `[` -- see `scanDenyPathGlob`'s own header.
  */
 export function splitDenyPathsByGlobShape(paths: readonly string[]): { paths: string[]; regexes: string[]; globFixedPrefixes: string[] } {
   const plain: string[] = [];
   const regexes: string[] = [];
   const globFixedPrefixes: string[] = [];
   for (const p of paths) {
-    if (isGlobShapedFileRulePattern(p)) {
+    const scan = scanDenyPathGlob(p);
+    if (scan.glob) {
       regexes.push(recursiveGlobToSbplRegexSource(p));
       const prefix = canonicalizedGlobFixedPrefix(p);
       if (prefix !== undefined && prefix !== "/") globFixedPrefixes.push(prefix);
     } else {
-      plain.push(p);
+      plain.push(scan.literal);
     }
   }
   return { paths: plain, regexes, globFixedPrefixes };
@@ -472,7 +574,9 @@ export interface GlobDenyEntry {
 export function globDenyEntriesOf(paths: readonly string[]): GlobDenyEntry[] {
   const out: GlobDenyEntry[] = [];
   for (const p of paths) {
-    if (!isGlobShapedFileRulePattern(p)) continue;
+    // Fix round 17 (R.3 C-1): the SAME classifier `splitDenyPathsByGlobShape` uses, so the two agree
+    // on which entries are literal.
+    if (!scanDenyPathGlob(p).glob) continue;
     out.push({ regex: recursiveGlobToSbplRegexSource(p), fixedPrefix: canonicalizedGlobFixedPrefix(p) ?? "/" });
   }
   return out;

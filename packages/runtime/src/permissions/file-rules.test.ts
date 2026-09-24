@@ -497,6 +497,73 @@ describe("globDenyEntriesOf -- fix round 13, the paired regex+fixedPrefix form f
   });
 });
 
+// Fix round 17 (R.3 C-1, part 2a -- a Winter-only hardening, disclosed in `scanDenyPathGlob`'s own
+// header): a bracket class holding exactly ONE character (`[[]`, `[]]`, `[*]`, `[?]`, `[c]`) is the
+// literal character for the deny pipeline's classification and fixed prefix. The daemon and router
+// spell a literal project root for the glob grammar (`[wip] app` -> `[[]wip] app`); without this the
+// fixed prefix still stopped at the first `[`, so the ancestor-rename fence never named `.winter`.
+describe("fix round 17 (R.3 C-1 part 2a): single-character bracket classes are literal for the deny split and its fixed prefix", () => {
+  test("an escaped bracketed root with no other glob classifies as a LITERAL path, rendered with the brackets unescaped", () => {
+    expect(splitDenyPathsByGlobShape(["/x/[[]wip] app/.winter/skills"])).toEqual({ paths: ["/x/[wip] app/.winter/skills"], regexes: [], globFixedPrefixes: [] });
+  });
+
+  test("an escaped bracketed root followed by a real glob stays a glob, with a fixed prefix that runs THROUGH the escaped class", () => {
+    const result = splitDenyPathsByGlobShape(["/x/[[]wip] app/**/*.md"]);
+    expect(result.paths).toEqual([]);
+    expect(result.globFixedPrefixes).toEqual(["/x/[wip] app"]);
+    expect(result.regexes).toEqual(["^/x/\\[wip\\] app/(.*/)?[^/]*\\.md(/.*)?$"]);
+    const re = new RegExp(result.regexes[0]!);
+    expect(re.test("/x/[wip] app/notes.md")).toBe(true);
+    expect(re.test("/x/[wip] app/a/b/notes.md")).toBe(true);
+    expect(re.test("/x/w app/notes.md")).toBe(false); // what the class reading would have matched
+    expect(re.test("/x/[wip] app/notes.txt")).toBe(false);
+  });
+
+  test("globDenyEntriesOf agrees: the literal entry pairs nothing, the glob entry pairs the extended prefix", () => {
+    expect(globDenyEntriesOf(["/x/[[]wip] app/.winter/skills"])).toEqual([]);
+    expect(globDenyEntriesOf(["/x/[[]wip] app/**/*.md"])).toEqual([{ regex: "^/x/\\[wip\\] app/(.*/)?[^/]*\\.md(/.*)?$", fixedPrefix: "/x/[wip] app" }]);
+  });
+
+  test("every single-character class is its literal character: [[] [ ]] [*] [?] [.]", () => {
+    expect(splitDenyPathsByGlobShape(["/x/[]]y", "/x/a[*]b", "/x/q[?]r", "/x/[.]env", "/x/[[]a[]]"]).paths).toEqual(["/x/]y", "/x/a*b", "/x/q?r", "/x/.env", "/x/[a]"]);
+  });
+
+  test("a STRAY ] (one that closes no class) is literal too -- the router's spelling escapes only [", () => {
+    expect(splitDenyPathsByGlobShape(["/x/a]b/c"]).paths).toEqual(["/x/a]b/c"]);
+  });
+
+  test("a negated class, a range and a multi-member class stay GLOBS -- only exactly-one-character classes are literal", () => {
+    for (const glob of ["/x/[!a]b", "/x/[^a]b", "/x/[a-c]b", "/x/[ab]c", "/x/[/]c"]) {
+      const result = splitDenyPathsByGlobShape([glob]);
+      expect(result.paths).toEqual([]);
+      expect(result.regexes).toHaveLength(1);
+      expect(result.globFixedPrefixes).toEqual(["/x"]);
+    }
+  });
+
+  test("a bare * or ? still makes a glob -- this hardening never reads an unescaped wildcard as literal", () => {
+    expect(splitDenyPathsByGlobShape(["/x/a*b/c"])).toMatchObject({ paths: [], globFixedPrefixes: ["/x"] });
+    expect(splitDenyPathsByGlobShape(["/x/q?r/c"])).toMatchObject({ paths: [], globFixedPrefixes: ["/x"] });
+  });
+
+  test("a real glob in the SAME segment as an escaped class ends the prefix at that segment's own parent", () => {
+    const result = splitDenyPathsByGlobShape(["/x/[[]wip]*/y"]);
+    expect(result.globFixedPrefixes).toEqual(["/x"]);
+    const re = new RegExp(result.regexes[0]!);
+    expect(re.test("/x/[wip]-old/y")).toBe(true);
+    expect(re.test("/x/wip-old/y")).toBe(false);
+  });
+
+  test("a prefix without any bracket, star or question mark renders byte-identically to before", () => {
+    expect(splitDenyPathsByGlobShape(["/repo/v1.2/**/.env"]).regexes).toEqual(["^/repo/v1\\.2/(.*/)?\\.env(/.*)?$"]);
+  });
+
+  test("isGlobShapedFileRulePattern itself stays claude's Rt -- the hardening lives in the deny split only", () => {
+    expect(isGlobShapedFileRulePattern("/x/[[]wip] app/.winter/skills")).toBe(true);
+    expect(isGlobShapedFileRulePattern("/x/a]b")).toBe(true);
+  });
+});
+
 describe("unanchorTrailingDoubleStar -- the ki transform", () => {
   test("deny x/** unanchors to bare x", () => {
     expect(unanchorTrailingDoubleStar("x/**", false)).toBe("x");
