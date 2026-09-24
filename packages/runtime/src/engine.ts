@@ -1109,13 +1109,14 @@ export interface EngineOptions {
   // never an unconditional `[]`), keeping every pre-existing differential golden byte-identical.
   mcpServerStateSource?: McpServerStateSource;
   /**
-   * Fix round 20: the PARENT's MCP state board, for a child engine that runs its OWN lifecycle (a
-   * subagent definition with object-form `mcpServers`, child-engine.ts) and therefore does not get the
-   * parent's board as `mcpServerStateSource`. Read ONLY to scope the advertised partition's MCP tools
-   * (`computeAdvertisedPartition`): the child still sees the servers it inherits. Never connected,
-   * never reported on `mcp_servers`/`mcp_status`.
+   * Fix round 20/21: every MCP server the PARENT run can see (`ParentMcpState.visibleServerNames`,
+   * read at call time), handed to EVERY child engine -- whether or not it owns servers of its own --
+   * so the scope recurses: a grandchild of a subagent that owns a server sees the session's servers
+   * and that subagent's. Read ONLY to scope the advertised partition's MCP tools and ToolSearch's pool
+   * (`computeAdvertisedPartition`); never connected, never reported on `mcp_servers`/`mcp_status`.
+   * Round 20 carried the parent's board only, and only to a child with object-form servers.
    */
-  inheritedMcpStateSource?: McpServerStateSource;
+  inheritedMcpServerNames?: () => readonly string[];
   // Phase 4 Task 3 (WS-09 §3): the live MCP server MUTATION seam (reconnect/toggle/setServers) --
   // Lane A's own real implementation; a fake for this task's own contract tests. Absent means the
   // three mutating subtypes answer a structured `mcp_unavailable` error (the subtype IS recognized;
@@ -1937,7 +1938,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     providerSupportsToolSearch,
     deferrableContextShare,
     mcpServerStateSource,
-    inheritedMcpStateSource,
+    inheritedMcpServerNames,
     mcpControlSeam,
     contextAccountant: injectedContextAccountant,
     systemPromptAssembler,
@@ -3740,6 +3741,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
               ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}),
               ...(config.mcpServers !== undefined ? { declaredServers: config.mcpServers } : {}),
+              // Fix round 21: this run's own visible-server set, so a child's scope recurses (see
+              // `ParentMcpState.visibleServerNames`). Declared later in this function; read at call time.
+              visibleServerNames: () => [...visibleMcpServers()],
             }),
             // Fix wave follow-up (8), whole-branch M7: this session's own programmatic agents map,
             // so a grandchild can resolve a `subagent_type` the host declared (see
@@ -4574,13 +4578,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // spawned later through `currentAdvertisedCanonicalNames`. claude scopes an agent's frontmatter
   // servers to that agent. An MCP tool registered by a live server (`mcpServerOwningTool`) is kept only
   // when its server is one this run can see: on its own state board, among its own declared
-  // `config.mcpServers` (the sdk servers this engine registers itself), or -- for a child running its
-  // own lifecycle -- on the parent's board it inherits (`inheritedMcpStateSource`).
+  // `config.mcpServers` (the sdk servers this engine registers itself), or -- fix round 21, for EVERY
+  // child, recursively -- in its parent's visible set (`inheritedMcpServerNames`). claude offers every
+  // descendant the session's MCP tools plus its caller's own: the Agent tool's pool is
+  // `JP($n, Y2(yr.mcp.tools.concat(pn)))` (dump byte 18016381), `pn = E.options.tools.filter(uy)`
+  // (18011928), and `runAgent` adds the agent's frontmatter tools (`[...Jn, ...fo]`, `zar`, 17889428).
   const visibleMcpServers = (): Set<string> =>
     new Set([
       ...(effectiveMcpStateSource?.snapshot() ?? []).map((s) => s.name),
-      ...(inheritedMcpStateSource?.snapshot() ?? []).map((s) => s.name),
       ...Object.keys(config.mcpServers ?? {}),
+      ...(inheritedMcpServerNames?.() ?? []),
     ]);
   const computeAdvertisedPartition = () => {
     const partition = suppressAliasedDuplicates(

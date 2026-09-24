@@ -3660,3 +3660,89 @@ describe("fix round 20, item 2: a subagent's own object-form MCP server stays th
   }, 30_000);
 });
 
+
+// Fix round 21 (the round-20 re-review): the visible-server scope stopped one level down, and the
+// parent's ToolSearch had no scope at all. claude offers EVERY descendant the session's MCP tools plus
+// its caller's own: the Agent tool builds a spawned agent's pool as `JP($n, Y2(yr.mcp.tools.concat(pn)))`
+// (dump byte 18016381), `yr.mcp.tools` being the session's MCP tools and `pn = E.options.tools.filter(uy)`
+// (18011928) the calling agent's own MCP tools; `runAgent` then adds the agent's frontmatter tools
+// (`[...Jn, ...fo]`, `zar`, 17889428). And claude's ToolSearch searches only the calling agent's own
+// tools (`x = refreshTools?.() ?? tools`, 15619044).
+describe("fix round 21: the MCP server scope reaches every descendant, and ToolSearch honours it", () => {
+  const CHILD_TOOL = "mcp__childsrv__shout";
+  const PARENT_TOOL = "mcp__parentsrv__hello";
+  const zebraSpec = {
+    tools: [{ name: "shout", description: "uppercases zebra words", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "SHOUT" }] }) }],
+    resources: [],
+  };
+  const probeTool = (name: string, run: (input: unknown, ctx: ToolExecutionContext) => Promise<string>) => {
+    registerTool({
+      descriptor: {
+        canonicalName: name, advertisedName: name, source: "builtin", inputSchema: { type: "object" },
+        description: "round 21 probe", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: { async execute(input: unknown, ctx: ToolExecutionContext) { return { output: await run(input, ctx) }; } },
+    });
+    cleanupToolNames.push(name);
+  };
+  const parentServers = { parentsrv: { type: "sdk" as const, name: "parentsrv", tools: [{ name: "hello", inputSchema: { type: "object" } }] } };
+
+  test("R21-1: a grandchild spawned by a subagent that owns a server is offered the session's tools AND that subagent's", async () => {
+    probeTool("r21_spawn", async (input, ctx) => {
+      if (!ctx.session.spawnChild) return "no spawnChild";
+      const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+      await handle.result();
+      return "joined";
+    });
+    const childReqs: string[][] = [];
+    const grandchildReqs: string[][] = [];
+    const childProvider: Provider = {
+      async generate(request) {
+        const first = request.messages.find((m) => m.role === "user");
+        const text = typeof first?.content === "string" ? first.content : JSON.stringify(first?.content ?? "");
+        const names = (request.tools ?? []).map((t) => t.name);
+        if (text.includes("GRANDCHILD-TASK")) {
+          grandchildReqs.push(names);
+          return { kind: "text", text: "grandchild done" };
+        }
+        childReqs.push(names);
+        if (request.messages.filter((m) => m.role === "tool").length === 0) {
+          return { kind: "tool_use", calls: [{ id: "k1", name: "Agent", input: { description: "nested", prompt: "GRANDCHILD-TASK", run_in_background: false } }] };
+        }
+        return { kind: "text", text: "child done" };
+      },
+    };
+    await withHttpFixture(zebraSpec, async (url) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "p1", prompt: "spawn a grandchild", runInBackground: false,
+        definition: { description: "child with its own server", prompt: "persona", mcpServers: [{ childsrv: { type: "http", url: url.href } }] },
+      };
+      let n = 0;
+      const parentProvider: Provider = {
+        async generate() {
+          n++;
+          return n === 1 ? { kind: "tool_use", calls: [{ id: "p1", name: "r21_spawn", input: req }] } : { kind: "text", text: "parent done" };
+        },
+      };
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }));
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: baseConfig({ sessionId: "r21-grandchild", toolSearchEnabled: false, capabilities: ["winter.subagents", "winter.mcp"], mcpServers: parentServers }),
+        input: runtime.input,
+        output: runtime.output,
+        provider: parentProvider,
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      expect(await done).toBe(0);
+    });
+    expect(childReqs[0]).toContain(PARENT_TOOL);
+    expect(childReqs[0]).toContain(CHILD_TOOL);
+    expect(grandchildReqs.length).toBeGreaterThan(0);
+    expect(grandchildReqs[0]).toContain(PARENT_TOOL);
+    expect(grandchildReqs[0]).toContain(CHILD_TOOL);
+  }, 30_000);
+
+});

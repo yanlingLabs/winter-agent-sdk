@@ -430,6 +430,14 @@ export interface ParentMcpState {
   stateSource?: McpServerStateSource;
   controlSeam?: McpControlSeam;
   declaredServers?: Record<string, McpServerConfigForProcessTransport>;
+  /**
+   * Fix round 21: every MCP server the parent run can see -- its own board, its declared servers and,
+   * recursively, what IT inherited -- read at call time. A child's advertised partition keeps a live
+   * server's tools for these servers plus its own (engine.ts's `computeAdvertisedPartition`), so every
+   * descendant is offered the session's servers as claude's are (the Agent tool's pool is
+   * `JP($n, Y2(yr.mcp.tools.concat(pn)))`, dump byte 18016381).
+   */
+  visibleServerNames?: () => readonly string[];
 }
 
 // The three rule buckets a child's own `RuntimeConfig.permissions` carries. `allowedTools`/

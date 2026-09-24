@@ -1113,10 +1113,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // disclosed, not silent.
         ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
         ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
-        // Fix round 20: a child running its OWN lifecycle still inherits the parent's servers -- their
-        // tools stay in its advertised partition, which keeps only servers the run can see (engine.ts's
+        // Fix round 20/21: EVERY child -- with or without servers of its own -- inherits the parent's
+        // visible-server set, so the scope recurses to grandchildren (engine.ts's
         // `computeAdvertisedPartition`). Scope only: never connected, never reported.
-        ...(hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { inheritedMcpStateSource: parentMcp.stateSource } : {}),
+        ...(parentMcp?.visibleServerNames !== undefined ? { inheritedMcpServerNames: parentMcp.visibleServerNames } : {}),
         // Phase 5 Task 8: the SAME assembler the parent runs with. Without it a child's system
         // prompt is `agentSystemPrompt` verbatim (the engine's R5-16 fallback) -- a persona with no
         // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
