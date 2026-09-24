@@ -16,6 +16,7 @@ import {
   canonicalFileRuleAuthoringToolName,
   matchFileRulesGrouped,
   resolveFileRuleAnchor,
+  resolveFileRuleAbsolutePath,
   unanchorTrailingDoubleStar,
   normalizeFileRulePattern,
   escapeFileRulePathSegment,
@@ -225,6 +226,44 @@ describe("resolveFileRuleAnchor -- the four anchor spellings", () => {
   });
   test("a bare ~ (no trailing slash) is a literal filename pattern, ported faithfully from claude's own jOe", () => {
     expect(resolveFileRuleAnchor("~", { home: HOME })).toEqual({ relativePattern: "~", root: null });
+  });
+});
+
+// Fix round 10, item C: a Read/Edit rule's own pattern, resolved to ONE absolute path for the
+// sandbox's own `subpath` rule -- see resolveFileRuleAbsolutePath's own header for the full
+// rationale (the glob-shaped-entries posture is dump-confirmed against claude's own `Jm`).
+describe("resolveFileRuleAbsolutePath -- fix round 10, item C: a rule pattern resolved to ONE path for the sandbox's own subpath rule", () => {
+  const opts = { cwd: CWD, home: HOME };
+
+  test("a //-anchored pattern with a trailing /** strips the double-star -- subpath already means 'and everything under it'", () => {
+    expect(resolveFileRuleAbsolutePath("//repo/secrets/**", opts)).toBe("/repo/secrets");
+  });
+
+  test("a //-anchored pattern with no trailing /** resolves the same way", () => {
+    expect(resolveFileRuleAbsolutePath("//repo/secrets", opts)).toBe("/repo/secrets");
+  });
+
+  test("a ~/-anchored pattern resolves under home", () => {
+    expect(resolveFileRuleAbsolutePath("~/secrets/**", opts)).toBe(`${HOME}/secrets`);
+  });
+
+  test("a bare (unanchored) pattern resolves under cwd", () => {
+    expect(resolveFileRuleAbsolutePath("secrets/**", opts)).toBe(`${CWD}/secrets`);
+    expect(resolveFileRuleAbsolutePath("secrets", opts)).toBe(`${CWD}/secrets`);
+  });
+
+  test("a single-slash-anchored pattern is INERT (no sourceDir given) -- undefined, matching resolveFileRuleAnchor's own pre-existing posture", () => {
+    expect(resolveFileRuleAbsolutePath("/repo/secrets", opts)).toBeUndefined();
+  });
+
+  test("a genuinely glob-shaped pattern (a mid-path *, ?, or a character class) is undefined -- cannot become one exact path", () => {
+    expect(resolveFileRuleAbsolutePath("src/*.ts", opts)).toBeUndefined();
+    expect(resolveFileRuleAbsolutePath("a?b", opts)).toBeUndefined();
+    expect(resolveFileRuleAbsolutePath("[wip]", opts)).toBeUndefined();
+  });
+
+  test("a root-anchored bare double-star (//**) resolves to the filesystem root itself", () => {
+    expect(resolveFileRuleAbsolutePath("//**", opts)).toBe("/");
   });
 });
 

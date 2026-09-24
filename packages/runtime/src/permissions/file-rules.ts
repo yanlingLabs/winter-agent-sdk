@@ -76,7 +76,7 @@
 //     audit message -- never the allow/deny/ask verdict itself, which depends only on whether SOME
 //     rule in the group matched.
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import ignoreFactory from "ignore";
 import { resolveRealTarget } from "./paths.ts";
 
@@ -180,6 +180,41 @@ export function resolveFileRuleAnchor(pattern: string, opts: { home: string; sou
     return { relativePattern: pattern.slice(2), root: null };
   }
   return { relativePattern: pattern, root: null };
+}
+
+const RULE_PATH_GLOB_CHARS = /[*?[\]]/;
+
+/**
+ * WS-21 fix round 10, item C: a Read/Edit rule's own pattern, resolved to ONE absolute filesystem
+ * path -- for the sandbox's own `subpath` rule (sandbox/profile.ts's `denyWritePaths`/
+ * `denyReadPaths`/`writableRoots`), which has no glob grammar of its own to hand a pattern string
+ * to; a real Seatbelt `subpath` already means "this directory and everything under it," so it needs
+ * ONE real path, never a pattern.
+ *
+ * `undefined` in two cases, matching claude's own observable posture (dump-confirmed, `Jm`: `let{
+ * allowOnly:t}=at.getFsWriteConfig();if(t.some(eg))return!0` -- ANY glob-shaped entry in the
+ * write-allow set makes claude's OWN sandbox stop trying to restrict writes via that mechanism at
+ * all, relying on the separate, glob-aware PERMISSION-RULE layer instead, which is unaffected by
+ * this and stays the real enforcement point):
+ *   - the pattern is INERT (a bare `/`-anchored rule with no resolvable settings-source root --
+ *     `resolveFileRuleAnchor`'s own pre-existing posture, unchanged here);
+ *   - the pattern is genuinely GLOB-SHAPED once a single TRAILING `/**` is stripped (redundant with
+ *     `subpath`'s own "and everything under it" semantics, so it is not itself disqualifying --
+ *     `Edit(//repo/secrets/**)` becomes the plain path `/repo/secrets`) -- a glob ANYWHERE else
+ *     (`src/*.ts`, `[wip]`, `a?b`) cannot become one exact path at all.
+ * A caller that gets `undefined` back simply does not add this rule to the sandbox's own filesystem
+ * lists; the permission-rule layer (`evaluate()`) still enforces it in full, exactly as it always has.
+ */
+export function resolveFileRuleAbsolutePath(pattern: string, opts: { cwd: string; home: string }): string | undefined {
+  const anchor = resolveFileRuleAnchor(pattern, { home: opts.home });
+  if (anchor.root === INERT_ANCHOR) return undefined;
+  const rootPath = anchor.root ?? opts.cwd;
+  const normalized = normalizeFileRulePattern(anchor.relativePattern);
+  const withoutTrailingDoubleStar = normalized.endsWith("/**") ? normalized.slice(0, -3) : normalized;
+  if (RULE_PATH_GLOB_CHARS.test(withoutTrailingDoubleStar)) return undefined;
+  const relativePart = withoutTrailingDoubleStar.startsWith("/") ? withoutTrailingDoubleStar.slice(1) : withoutTrailingDoubleStar;
+  if (relativePart === "" || relativePart === ".") return rootPath;
+  return join(rootPath, relativePart);
 }
 
 // ---------------------------------------------------------------------------------------------

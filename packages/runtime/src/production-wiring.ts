@@ -32,6 +32,7 @@ import { setWinterIdentity } from "@yanlinglabs/winter-provider-runtime";
 import { resolveSettingsDetailed, filterEscalatingDefaultMode, providerSettingsFrom } from "./settings/resolve.ts";
 import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { validatePermissionRuleString } from "./permissions/grammar.ts";
+import { resolveFileRuleAbsolutePath } from "./permissions/file-rules.ts";
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
@@ -363,6 +364,46 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
     ...(disableBypassPermissionsMode ? { disableBypassPermissionsMode } : {}),
     warnings,
   };
+}
+
+/**
+ * WS-21 fix round 10, item C: the permission-rule paths the controller's own ruling names --
+ * `Edit(...)` allow -> `filesystem.allowWrite`, `Edit(...)` deny -> `denyWrite`, `Read(...)` deny ->
+ * `denyRead` -- derived from the SAME `settingsRules.entries` `buildSettingsRuleSeed` already built
+ * (settings.json's own tiers; an `Options`/`canUseTool`/session-supplied rule is a separate,
+ * larger integration point and out of scope here). Each rule's own pattern is resolved to ONE
+ * absolute path via `resolveFileRuleAbsolutePath` (file-rules.ts) -- `undefined` for an inert or
+ * genuinely glob-shaped pattern is silently skipped from the SANDBOX's own list; the permission-rule
+ * layer (`evaluate()`) still enforces that rule in full regardless, unaffected by this function.
+ * De-duplicated, but NOT yet unioned with `settings.json`'s own explicit `sandbox.filesystem.*`
+ * keys or the host's own config -- the caller does that (`resolvedConfig`'s own construction).
+ */
+function deriveSandboxPathsFromRules(entries: readonly SourcedRuleEntry[], opts: { cwd: string; home: string }): { allowWrite: string[]; denyWrite: string[]; denyRead: string[] } {
+  const allowWrite = new Set<string>();
+  const denyWrite = new Set<string>();
+  const denyRead = new Set<string>();
+  for (const entry of entries) {
+    const specifier = entry.rule.specifier;
+    if (specifier?.kind !== "pattern") continue;
+    const path = resolveFileRuleAbsolutePath(specifier.source, opts);
+    if (path === undefined) continue;
+    if (entry.rule.toolName === "Edit" && entry.behavior === "allow") allowWrite.add(path);
+    else if (entry.rule.toolName === "Edit" && entry.behavior === "deny") denyWrite.add(path);
+    else if (entry.rule.toolName === "Read" && entry.behavior === "deny") denyRead.add(path);
+  }
+  return { allowWrite: [...allowWrite], denyWrite: [...denyWrite], denyRead: [...denyRead] };
+}
+
+/** Union of two string arrays (either possibly absent), de-duplicated, first-array-first order. `undefined` when the result would be empty. */
+function unionStrings(a: readonly string[] | undefined, b: readonly string[] | undefined): string[] | undefined {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of [...(a ?? []), ...(b ?? [])]) {
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 export interface ProductionWiringOptions {
@@ -1531,6 +1572,36 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const attachmentProducers: AttachmentProducer[] | undefined =
     conditionalRules.length > 0 ? [conditionalRuleAttachmentProducer(conditionalRules, { originalCwd: config.cwd })] : undefined;
 
+  // WS-21 fix round 10, item C: the Edit/Read permission-rule paths, unioned into the SAME merged
+  // sandbox view -- see `deriveSandboxPathsFromRules`'s own header for the exact rule-to-key mapping
+  // and the glob-shaped-entry disclosure. `home: winterHome` matches every other `~/`-anchored rule
+  // resolution in this codebase (`resolveFileRuleAnchor`'s own contract).
+  const ruleSandboxPaths = deriveSandboxPathsFromRules(settingsRules.entries, { cwd: config.cwd, home: winterHome });
+  const mergedSandboxFilesystem = {
+    allowWrite: unionStrings(effective.sandbox?.filesystem?.allowWrite, ruleSandboxPaths.allowWrite),
+    denyWrite: unionStrings(effective.sandbox?.filesystem?.denyWrite, ruleSandboxPaths.denyWrite),
+    allowRead: effective.sandbox?.filesystem?.allowRead,
+    denyRead: unionStrings(effective.sandbox?.filesystem?.denyRead, ruleSandboxPaths.denyRead),
+  };
+  const hasMergedSandboxFilesystem = Object.values(mergedSandboxFilesystem).some((v) => v !== undefined);
+  const mergedSandbox =
+    effective.sandbox !== undefined || hasMergedSandboxFilesystem
+      ? {
+          ...effective.sandbox,
+          ...(hasMergedSandboxFilesystem
+            ? {
+                filesystem: {
+                  ...effective.sandbox?.filesystem,
+                  ...(mergedSandboxFilesystem.allowWrite !== undefined ? { allowWrite: mergedSandboxFilesystem.allowWrite } : {}),
+                  ...(mergedSandboxFilesystem.denyWrite !== undefined ? { denyWrite: mergedSandboxFilesystem.denyWrite } : {}),
+                  ...(mergedSandboxFilesystem.allowRead !== undefined ? { allowRead: mergedSandboxFilesystem.allowRead } : {}),
+                  ...(mergedSandboxFilesystem.denyRead !== undefined ? { denyRead: mergedSandboxFilesystem.denyRead } : {}),
+                },
+              }
+            : {}),
+        }
+      : undefined;
+
   // The provider-derived config defaults, PLUS the resolved store-home/plugin-cache-dir (§3.7/item
   // 11) -- every one of them a DEFAULT: an explicit host value on `config` always wins (already
   // true above, since `storeHome`/`pluginCacheDir` are `config.storeHome ?? env[...]`; this just
@@ -1540,14 +1611,19 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     ...(providerWiring.contextWindowTokens !== undefined ? { contextWindowTokens: providerWiring.contextWindowTokens } : {}),
     ...(storeHome !== undefined ? { storeHome } : {}),
     ...(pluginCacheDir !== undefined ? { pluginCacheDir } : {}),
-    // SV-11 (fix round 9, security): the MERGED view -- the host's own `config.sandbox` (fed in
-    // above as the `flag` tier) unioned with every `settings.json` tier's own `sandbox.filesystem.
-    // denyWrite`/`denyRead` -- replaces the host's raw, unmerged value here, which is what makes
-    // `engine.ts`'s `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS` see settings.json's contribution
-    // at all. Omitted (not set to `undefined`, `exactOptionalPropertyTypes`) exactly when neither
-    // the host nor any settings tier ever set one, which resolves the same way it always did (the
-    // engine's own default).
-    ...(effective.sandbox !== undefined ? { sandbox: effective.sandbox } : {}),
+    // SV-11 (fix round 9, security; EXTENDED in fix round 10, item C): the MERGED view -- the
+    // host's own `config.sandbox` (fed in above as the `flag` tier) unioned with every
+    // `settings.json` tier's own `sandbox.filesystem.{allowWrite,denyWrite,denyRead}` AND with the
+    // Edit/Read permission-rule-derived paths (`deriveSandboxPathsFromRules`, above) -- replaces the
+    // host's raw, unmerged value here, which is what makes `engine.ts`'s `config.sandbox ??
+    // DEFAULT_SANDBOX_SETTINGS` see settings.json's and the rule set's contribution at all.
+    // `allowRead` is carried through unenforced (disclosed gap, `Settings.sandbox`'s own doc
+    // comment) -- there is no rule-derived contribution for it (claude's own `Read(...)` allow rule
+    // has no sandbox-config mapping in the controller's own ruling; only `Edit` allow/deny and
+    // `Read` deny do). Omitted (not set to `undefined`, `exactOptionalPropertyTypes`) exactly when
+    // neither the host, any settings tier, nor any rule ever contributed one, which resolves the
+    // same way it always did (the engine's own default).
+    ...(mergedSandbox !== undefined ? { sandbox: mergedSandbox } : {}),
   };
 
   return {

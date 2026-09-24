@@ -103,12 +103,20 @@ export interface Settings {
    * its SDK `Options` occupies the identical tier position for this same setting), and reads the
    * result back off `effective.sandbox` into the config it actually hands the engine.
    *
-   * `filesystem.denyWrite`/`denyRead` UNION across every tier (deep-merge's ordinary
-   * replace-by-higher-tier would let a higher tier silently drop a lower tier's own restriction --
-   * the identical fail-open shape `permissions.deny`'s own union exists to prevent; see
-   * `unionSandboxFilesystemDenyArrays` below). `allowWrite` is NOT unioned -- it WIDENS the write
-   * surface, so the ordinary replace-by-higher-tier merge is the safe direction for it (a widening
-   * key should never accumulate across tiers the way a narrowing one must).
+   * ALL FOUR `filesystem` arrays -- `allowWrite`, `denyWrite`, `allowRead`, `denyRead` -- UNION
+   * across every tier (deep-merge's ordinary replace-by-higher-tier would let a higher tier
+   * silently drop a lower tier's own restriction -- the identical fail-open shape
+   * `permissions.deny`'s own union exists to prevent; see `unionSandboxFilesystemDenyArrays` below).
+   * CORRECTED in fix round 10, item C: round 9 reasoned `allowWrite` should NOT union (a widening
+   * key should never accumulate) and used the ordinary replace-by-higher-tier merge for it instead
+   * -- the controller's round-10 ruling reverses this, dump-confirmed against claude's own live
+   * sandbox-reconciliation code unioning its OWN rule-derived allowWrite set with the native
+   * sandbox's currently-configured one (`xr=se([...yr,...$r.filter(...)])`, not a replacement).
+   * Claude itself unions the widening array too; ported here to match. `allowRead` (also new this
+   * round) is claude's own read carve-out (`getFsReadConfig`'s `allowWithinDeny`) -- carried and
+   * unioned identically for merge-parity, though `packages/runtime/src/sandbox/profile.ts`'s own
+   * `buildSeatbeltProfile` does not yet enforce it (a disclosed, fails-CLOSED gap: see that file's
+   * own `SandboxFilesystemSettings.allowRead` doc comment).
    */
   sandbox?: SandboxSettingsConfig;
   hooks?: SettingsHooksConfig;

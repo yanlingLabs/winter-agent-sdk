@@ -2376,3 +2376,128 @@ describe("SV-11: settings.json's sandbox.filesystem.denyWrite reaches the wiring
     },
   );
 });
+
+// WS-21 fix round 10, item C ("SV-11 completion"): the permission-rule paths the controller's own
+// ruling names -- Edit(...) allow -> filesystem.allowWrite, Edit(...) deny -> denyWrite, Read(...)
+// deny -> denyRead -- plus the union-not-replace correction for allowWrite/allowRead (round 9 only
+// unioned the two deny arrays). See production-wiring.ts's own `deriveSandboxPathsFromRules` header.
+describe("fix round 10, item C: Edit/Read permission rules contribute to the sandbox's own filesystem lists", () => {
+  test("an Edit(...) deny rule contributes its own resolved path to denyWrite", async () => {
+    writeSettings(home, { permissions: { deny: ["Edit(//repo/secrets/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-edit-deny", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual(["/repo/secrets"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("an Edit(...) allow rule contributes its own resolved path to allowWrite", async () => {
+    writeSettings(home, { permissions: { allow: ["Edit(//repo/scratch/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-edit-allow", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.allowWrite).toEqual(["/repo/scratch"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a Read(...) deny rule contributes its own resolved path to denyRead", async () => {
+    writeSettings(home, { permissions: { deny: ["Read(//repo/private/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-read-deny", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyRead).toEqual(["/repo/private"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a Read(...) ALLOW rule and an Edit(...) ASK rule contribute NOTHING -- only Edit allow/deny and Read deny map to a sandbox list", async () => {
+    writeSettings(home, { permissions: { allow: ["Read(//repo/whatever/**)"], ask: ["Edit(//repo/other/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-no-map", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a rule-derived denyWrite path UNIONS with an explicit sandbox.filesystem.denyWrite entry, not replaces it", async () => {
+    writeSettings(home, { sandbox: { filesystem: { denyWrite: ["/explicit/path"] } }, permissions: { deny: ["Edit(//repo/secrets/**)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-union", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual(["/explicit/path", "/repo/secrets"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a genuinely glob-shaped Edit(...) deny rule does NOT contribute to denyWrite -- the permission layer still enforces it in full, independently", async () => {
+    writeSettings(home, { permissions: { deny: ["Edit(src/*.ts)"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-c-glob", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // Real spawn, darwin only: the controller's own explicit test shape -- a Bash `tee` into a path
+  // covered by an Edit(...) deny is blocked by the real sandbox.
+  test.skipIf(process.platform !== "darwin")("end to end: a Bash tee into a path covered by an Edit(...) deny is blocked by the real sandbox", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-sv11-c-scratch-"));
+    try {
+      writeSettings(home, { permissions: { deny: [`Edit(//${scratch.slice(1)}/secrets/**)`] } });
+      const wiring = await buildProductionWiring({
+        config: { sessionId: "s-c-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        env: {},
+        winterHome: home,
+      });
+      try {
+        const deniedPath = join(scratch, "secrets", "key.txt");
+        mkdirSync(join(scratch, "secrets"), { recursive: true });
+        const fs = wiring.config.sandbox?.filesystem;
+        expect(fs?.denyWrite).toEqual([join(scratch, "secrets")]);
+        const denied = await runCommand({
+          command: `echo blocked | tee ${JSON.stringify(deniedPath)}`,
+          cwd: scratch,
+          env: { ...process.env, TMPDIR: scratch },
+          timeoutMs: 5000,
+          settings: wiring.config.sandbox ?? {},
+          ...(fs?.denyWrite !== undefined ? { denyWritePaths: fs.denyWrite } : {}),
+        });
+        expect(denied.posture).toBe("sandboxed");
+        expect(denied.exitCode).not.toBe(0);
+        expect(existsSync(deniedPath)).toBe(false);
+      } finally {
+        wiring.dispose();
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+});

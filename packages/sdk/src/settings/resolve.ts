@@ -272,7 +272,7 @@ function unionRuleArray(tiersLowestFirst: readonly { values: Settings }[], key: 
 }
 
 /** Union of one `sandbox.filesystem` array key across the given tiers, lowest-precedence first, de-duplicated. */
-function unionSandboxFilesystemArray(tiersLowestFirst: readonly { values: Settings }[], key: "denyWrite" | "denyRead"): string[] | undefined {
+function unionSandboxFilesystemArray(tiersLowestFirst: readonly { values: Settings }[], key: "allowWrite" | "denyWrite" | "allowRead" | "denyRead"): string[] | undefined {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const tier of tiersLowestFirst) {
@@ -290,23 +290,26 @@ function unionSandboxFilesystemArray(tiersLowestFirst: readonly { values: Settin
 }
 
 /**
- * SV-11 (WS-21 fix round 9, security): `sandbox.filesystem.denyWrite`/`denyRead` union across every
- * contributing tier -- the identical reasoning `unionPermissionRuleArrays` (below/`permissions.deny`)
- * already applies, ported to the sandbox surface: these are RESTRICTIVE rule sets, and the ordinary
- * replace-by-higher-tier merge is actively unsafe for one. A user-tier `sandbox.filesystem.denyWrite:
- * ["**\/.env"]` plus a project-tier `denyWrite: ["**\/secrets/**"]` must deny BOTH, not just whichever
- * tier happened to win the plain merge -- under replacement, the LOWER tier's own restriction would
- * silently vanish the moment a higher tier's file declared any `denyWrite` array of its own, even one
- * naming something unrelated. `allowWrite` is deliberately NOT unioned here: it widens the write
- * surface, so `deepMergeInto`'s ordinary "the winning tier's own value" replacement is the safe
- * direction for it, matching `Settings.sandbox`'s own doc comment.
+ * SV-11 (WS-21 fix round 9, security; CORRECTED in fix round 10, item C): ALL FOUR
+ * `sandbox.filesystem` arrays -- `allowWrite`, `denyWrite`, `allowRead`, `denyRead` -- union across
+ * every contributing tier, the identical reasoning `unionPermissionRuleArrays` (below/
+ * `permissions.deny`) already applies. Round 9 unioned only the two deny arrays and left
+ * `allowWrite` to plain replace-by-higher-tier, reasoning that a widening key should never
+ * accumulate. Round 10's controller ruling REVERSES that, dump-confirmed against claude's own live
+ * sandbox-reconciliation code: `xr=se([...yr,...$r.filter((On)=>On!=="/"&&On.length>0)])` -- a
+ * UNION of the rule-derived allowWrite set (`yr`) with the native sandbox's own currently-configured
+ * allowWrite (`$r`), not a replacement. Claude itself unions the widening array too; ported here to
+ * match. A user-tier `sandbox.filesystem.denyWrite:["**\/.env"]` plus a project-tier `denyWrite:
+ * ["**\/secrets/**"]` must deny BOTH, not just whichever tier happened to win the plain merge --
+ * under replacement, the LOWER tier's own restriction would silently vanish the moment a higher
+ * tier's file declared any `denyWrite` array of its own, even one naming something unrelated.
  */
 function unionSandboxFilesystemDenyArrays(effective: Record<string, unknown>, tiersLowestFirst: readonly { values: Settings }[]): void {
   const mergedSandbox = effective["sandbox"];
   const mergedFilesystem = isPlainObject(mergedSandbox) ? mergedSandbox["filesystem"] : undefined;
   const filesystem: Record<string, unknown> = isPlainObject(mergedFilesystem) ? { ...mergedFilesystem } : {};
   let any = isPlainObject(mergedFilesystem);
-  for (const key of ["denyWrite", "denyRead"] as const) {
+  for (const key of ["allowWrite", "denyWrite", "allowRead", "denyRead"] as const) {
     const unioned = unionSandboxFilesystemArray(tiersLowestFirst, key);
     if (unioned === undefined) delete filesystem[key];
     else {

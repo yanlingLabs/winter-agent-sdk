@@ -34,6 +34,12 @@ import { resolveRealTarget } from "../permissions/paths.ts";
 export interface SandboxFilesystemSettings {
   allowWrite?: string[];
   denyWrite?: string[];
+  // `allowRead` (WS-21 fix round 10, item C): carried for structural parity with `SandboxSettingsConfig`
+  // (protocol/config.ts, whose own header requires the two stay in sync) -- NOT YET consumed by
+  // `buildSeatbeltProfile` below, which has no "allow re-permit within an otherwise-denied read
+  // region" SBPL mechanism at all. See that type's own doc comment for the full disclosed-gap
+  // rationale (fails closed: an unenforced allowRead simply leaves the outer denyRead in effect).
+  allowRead?: string[];
   denyRead?: string[];
 }
 

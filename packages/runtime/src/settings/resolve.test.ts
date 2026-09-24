@@ -200,15 +200,18 @@ describe("precedence + provenance", () => {
   });
 });
 
-// SV-11 (WS-21 fix round 9, security): `settings.json`'s own `sandbox` block had NO consumer at all
-// -- the runtime's actual sandbox always ran on `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS`, never
-// on anything resolveSettingsDetailed produced. `sandbox.filesystem.denyWrite`/`denyRead` union
+// SV-11 (WS-21 fix round 9, security; CORRECTED in fix round 10, item C): `settings.json`'s own
+// `sandbox` block had NO consumer at all -- the runtime's actual sandbox always ran on
+// `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS`, never on anything resolveSettingsDetailed produced.
+// ALL FOUR `sandbox.filesystem` arrays (`allowWrite`, `denyWrite`, `allowRead`, `denyRead`) union
 // across every tier (including the host's own config, fed in as the `inline`/`flag` tier -- claude's
 // own architecture: its SDK `Options` occupies this identical position), exactly like
 // `permissions.deny` -- a restrictive rule set must never be silently narrowed by a higher tier's
-// own list. `allowWrite` is the opposite direction (a grant, not a restriction) and is NOT unioned:
-// the ordinary replace-by-higher-tier merge is the safe posture for a widening key.
-describe("SV-11: sandbox.filesystem.denyWrite/denyRead union across tiers, including the host's own inline config", () => {
+// own list. Round 9 reasoned `allowWrite` (a widening key) should NOT union and used plain
+// replace-by-higher-tier instead -- round 10's controller ruling reverses that, dump-confirmed
+// against claude's own live sandbox-reconciliation code, which unions its rule-derived allowWrite
+// set with the native sandbox's own currently-configured one rather than replacing it.
+describe("SV-11: sandbox.filesystem union across all four arrays and tiers, including the host's own inline config", () => {
   test("a PROJECT denyWrite survives a LOCAL denyWrite -- the identical fail-open shape permissions.deny's own union prevents", async () => {
     writeProject({ sandbox: { filesystem: { denyWrite: ["**/secrets/**"] } } });
     writeLocal({ sandbox: { filesystem: { denyWrite: ["**/*.key"] } } });
@@ -236,11 +239,18 @@ describe("SV-11: sandbox.filesystem.denyWrite/denyRead union across tiers, inclu
     expect((r.effective["sandbox"] as { filesystem: { denyWrite: string[] } }).filesystem.denyWrite).toEqual(["**/secrets/**", "**/*.pem"]);
   });
 
-  test("allowWrite is REPLACED by the higher tier, never unioned -- a widening key, the opposite direction from denyWrite/denyRead", async () => {
+  test("fix round 10, item C: allowWrite UNIONS across tiers too, reversing round 9's own replace-by-higher-tier ruling", async () => {
     writeProject({ sandbox: { filesystem: { allowWrite: ["/project-only"] } } });
     writeLocal({ sandbox: { filesystem: { allowWrite: ["/local-only"] } } });
     const r = await resolve();
-    expect((r.effective["sandbox"] as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite).toEqual(["/local-only"]);
+    expect((r.effective["sandbox"] as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite).toEqual(["/project-only", "/local-only"]);
+  });
+
+  test("fix round 10, item C: allowRead unions the same way as the other three arrays", async () => {
+    writeUser({ sandbox: { filesystem: { allowRead: ["/user-only"] } } });
+    writeProject({ sandbox: { filesystem: { allowRead: ["/project-only"] } } });
+    const r = await resolve();
+    expect((r.effective["sandbox"] as { filesystem: { allowRead: string[] } }).filesystem.allowRead).toEqual(["/user-only", "/project-only"]);
   });
 
   test("a non-sandbox key elsewhere in the file is unaffected -- the union touches only sandbox.filesystem.denyWrite/denyRead", async () => {

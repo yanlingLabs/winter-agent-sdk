@@ -157,7 +157,16 @@ export interface SandboxSettingsConfig {
   autoAllowBashIfSandboxed?: boolean;
   excludedCommands?: string[];
   allowUnsandboxedCommands?: boolean;
-  filesystem?: { allowWrite?: string[]; denyWrite?: string[]; denyRead?: string[] };
+  // `allowRead` (WS-21 fix round 10, item C): claude's own `getFsReadConfig` carries it (dump-
+  // confirmed: `allowWithinDeny:(e?.filesystem.allowRead??[]).map(Og)` -- a re-permit CARVED OUT OF
+  // an otherwise-denied region, not a broad allow-list the way `allowWrite` gates the write-default-
+  // deny). The type carries it (so it merges correctly, see resolve.ts's own union) but Winter's own
+  // seatbelt profile generator (sandbox/profile.ts's `buildSeatbeltProfile`) has NO "allow-within-
+  // deny" read mechanism to hand it to yet -- reads are already broadly unfenced by design (CLAUDE.md's
+  // own standing rule), so an unenforced `allowRead` FAILS CLOSED (the outer denyRead it would have
+  // carved an exception out of simply stays in full effect), never open. Disclosed WS-21 follow-up:
+  // building the SBPL "allow re-permit after a deny" rule is a separate, larger change.
+  filesystem?: { allowWrite?: string[]; denyWrite?: string[]; allowRead?: string[]; denyRead?: string[] };
   network?: { allowedDomains?: string[]; deniedDomains?: string[]; [key: string]: unknown };
 }
 
