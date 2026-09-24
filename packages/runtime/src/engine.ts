@@ -126,7 +126,7 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // integration recipe in its own report, and could not perform the integration itself: the
 // elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
-import { createMcpLifecycle, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
@@ -4003,30 +4003,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
     // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
     await mcpLifecycle.start();
-    // Fix round 19 (the R.3 live gate, BLOCKING): claude's headless FIRST-TURN wait (`km`, dump byte
-    // 34109614; mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs` has the full trail). `start()` above
-    // is claude's nonblocking connect, so without this every stdio server was still `pending` when
-    // `system/init` and the first turn were built: init reported `pending`, and turn 1 carried none of
-    // its tools. claude awaits `km` before the first turn, then builds that turn's `system/init` and
-    // tool list from live state (`zi`, 33869605); Winter writes its startup `system/init` once, before
-    // the first turn, so the wait belongs here, ahead of the capability/partition/init derivations
-    // below. Settled means not `pending` (connected, cached, failed, needs-auth), so a server that
-    // cannot spawn ends the wait at once, and a session with nothing pending does not wait at all.
-    //
-    // Scoped as claude scopes it: the TOP-LEVEL run only (claude's is in `runHeadless`; a child engine
-    // shares its parent's board and never builds its own lifecycle), and only this engine's own
-    // lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns its MCP stack, which
-    // this engine did not start and does not wait on.
-    if (config.agentId === undefined) {
-      await mcpLifecycle.stateSource.waitForPending(
-        undefined,
-        firstTurnMcpWaitDeadlineMs({
-          ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
-          ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
-          envConfig: mcpEnvConfig,
-        }),
-      );
-    }
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
@@ -4050,10 +4026,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // stack -- B-M1's case, preserved) or at least one real slot on the state board.
   //
   // A FUNCTION, not a value: `mcp_set_servers` can add the session's first server mid-run, and every
-  // consumer that can honour a live answer does (the dispatch-time availability check and the
-  // ToolSearch session runtime, both below). `system/init.tools` cannot -- it is written once, before
-  // the turn loop, and no re-init frame exists in this protocol (rider 5's recorded gap) -- so the
-  // startup snapshot keeps the value it had, which is what keeps the goldens byte-identical.
+  // consumer that can honour a live answer does (the dispatch-time availability check, the ToolSearch
+  // session runtime, and -- since fix round 19 -- the advertised partition every provider request and
+  // every `system/init` build re-derives). The startup `type:"init"` frame is written once, before the
+  // turn loop, from the first derivation, which is what keeps the goldens byte-identical.
   //
   // RULING P4-N (residual round): the predicate is the LIVE SLOT COUNT ALONE, at every nesting level.
   // The previous form also short-circuited on "a caller supplied a state source", on the heuristic
@@ -4324,8 +4300,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // question is asked LIVE (it is a getter, and the wiring re-resolves when the settings view or the
   // session's family changes), so an advisor that becomes resolvable mid-session -- a credential
   // stored, a `set_model` into a family that has a reviewer -- is advertised at the next boundary,
-  // and one that stops being resolvable is withdrawn. `init.tools` reads the startup snapshot below,
-  // exactly as it always did.
+  // and one that stops being resolvable is withdrawn -- since fix round 19 the advertised partition
+  // (and so each provider request's tools) re-derives the live capability set; the startup
+  // `type:"init"` frame reads the first derivation.
   //
   // A HOST-SUPPLIED token still wins as a union member (registry.ts's own rule: derived tokens union
   // with host tokens, never replace them), so nothing a host configured before this change stops
@@ -4459,8 +4436,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const missing = derived.filter((token) => !base.includes(token));
     return missing.length === 0 ? base : [...base, ...missing];
   };
-  // The STARTUP snapshot, for `init.tools` and the advertised partition (see sessionHasMcp above for
-  // why this one cannot be live).
+  // The startup value, kept on `advertisedCfg` for the consumers that spread it (the alias-exclusion
+  // check below). The advertised partition itself reads the LIVE set (fix round 19,
+  // `computeAdvertisedPartition`).
   const sessionCapabilities = resolveLiveSessionCapabilities();
   // Phase 4 Task 8 (rider 3, WS-09 §10 / RULING P4-E): the Winter branch's own canonical alias pair.
   // WS-10 §15 names it verbatim -- [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
@@ -4549,8 +4527,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `resolveLiveSessionCapabilities()` the dispatch-time availability check already reads per call.
   // `advertisedCfg.mode` stays the startup mode: rider 5's recorded init-vs-live-mode posture (above)
   // is unchanged, and the live mode still governs execution. The startup `type:"init"` frame and
-  // `advertisedToolNames` below read the first derivation, which already includes every server that
-  // connected within the first-turn MCP wait (the `firstTurnMcpWaitDeadlineMs` call above).
+  // `advertisedToolNames` below read the first derivation: the registry as it stands at startup, when
+  // an ordinary stdio server is still `pending` (claude's own `system/init` lists such a server
+  // `pending` with none of its tools, measured against 2.1.250 by the router's same-view row).
   const computeAdvertisedPartition = () =>
     suppressAliasedDuplicates(
       partitionAdvertisedTools({ ...advertisedCfg, capabilities: resolveLiveSessionCapabilities() }, deferralActivation),
