@@ -2342,6 +2342,187 @@ describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space de
   });
 });
 
+// Fix round 11 (CRITICAL regression the controller's own re-review of round 10 found): round 10 item
+// B trimmed the TOOL's own write (write.ts et al.) and `resolveTargetPath`, but `REAL_SPECIAL_CHECKS.
+// isProtectedWrite` reads its candidate from a SEPARATE root (`extractCandidateWritePaths` ->
+// `recognizeEditOperation` -> the raw, untrimmed `call.input[...]`) that round 10 never touched --
+// `Write({file_path:"/w/proj/.bashrc "})` wrote the TRIMMED `.bashrc` while the protected-file check
+// still saw the UNTRIMMED `".bashrc "`, which is not in PROTECTED_FILE_BASENAMES, so the write sailed
+// through with no card under acceptEdits/auto/bypass. Fixed by trimming at the source
+// (edit-recognition.ts's `recognizeEditOperation`) plus three defense-in-depth trims (evaluator.ts's
+// `isWithinBounds`/`dedicatedReadToolPath`, protected.ts's own `isProtectedWrite`) so no future
+// caller can silently re-open the gap by reading `call.input` directly again.
+describe("evaluate() -- fix round 11 (CRITICAL): a trailing space/tab no longer bypasses the protected-file check", () => {
+  test(".bashrc with a trailing space is recognized as protected under acceptEdits (was silently written through before this fix)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // routed to canUseTool, exactly like an ordinary (untrimmed) protected write
+    expect(record.decision).toBe("deny");
+  });
+
+  test("~/.zshrc with a trailing space is recognized as protected (home-relative, same bug shape)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      home: "/synthetic/home/tester",
+      policy: policy({ mode: "acceptEdits" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Write", { file_path: "/synthetic/home/tester/.zshrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test(".mcp.json followed by a tab is recognized as protected", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.mcp.json\t" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  // A trailing-space name is, BY CONSTRUCTION, also `Vbe`-shaped -- there is no fixture that exercises
+  // ONLY the trim regression's own bypass cell without also tripping fix round 11's OTHER half (the
+  // `mL` safety check just below, whose own point is that it does NOT exempt bypass). So this proves
+  // the two fixes COMPOSE correctly under bypass, rather than isolating one of them: with BOTH fixes
+  // landed, `.bashrc ` under bypassPermissions still asks (denies, no prompt handler configured) --
+  // `mL`'s own "checked first, never classifier/bypass-approvable" posture wins over protected-write's
+  // OWN, weaker bypass cell (an unconditional allow, WS-07 §6.7 -- see the untrimmed `.git/config`
+  // fixture in the Task 7 matrix above for that cell in isolation, on a NON-suspicious protected path).
+  test("bypassPermissions: the TRIMMED protected write is now ALSO caught by the mL safety check (fix round 11's other half), which does not exempt bypass -- the two fixes compose", async () => {
+    const ctx = baseCtx({ cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("control: an ordinary path with no trailing whitespace is unaffected (proves the fix didn't widen the protected set, only stopped it failing open)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/notes.txt" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+});
+
+// Fix round 11: claude's own `mL`/`$K` (evaluator.ts's `isSuspiciousPath`/`firstSuspiciousWritePath`
+// own header has the full dump citation, byte 14442494, pinned 2.1.250) -- a NEW, second half of the
+// controller's "both parts" fix, additive to the trim fix above. This is the part that makes
+// `.bashrc ` (and the other Vbe-shaped candidates) ask even under `bypassPermissions`, which the
+// pre-existing protected-write standing exception's own bypass cell does NOT do (that cell is an
+// unconditional ALLOW, WS-07 §6.7 -- see the "control" test just above). `classifierApprovable:!1` in
+// claude's own source: this check is never softened by an allow rule, acceptEdits, auto's classifier,
+// or bypassPermissions -- it is wired at stage 3, strictly before stage 4 (mode baseline) and stage 5
+// (allow rules).
+describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory ask that survives even bypassPermissions", () => {
+  test(".bashrc with a trailing space asks under acceptEdits", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "acceptEdits" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test(".bashrc with a trailing space asks under bypassPermissions (the whole point of this check -- bypass does NOT exempt it, unlike the pre-existing protected-write exception)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("~/.zshrc with a trailing space asks under bypassPermissions", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/synthetic/home/tester/.zshrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test(".mcp.json followed by a tab asks under bypassPermissions", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.mcp.json\t" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("foo. (a bare component ending in a dot, no whitespace) asks under bypassPermissions", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/foo." }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("~1 (an NT short-filename tilde-sequence) asks under bypassPermissions", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/PROGRA~1" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("... (three-or-more dots as a whole path component) asks under bypassPermissions", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/..." }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  // Ground-truth note (dump-verified, byte 14442494): claude's own `mL` flags a device name ONLY as a
+  // literal `.<name>` SUFFIX on the whole path (`In=/\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i`) -- a
+  // BARE component with no leading dot (a path ending exactly in `CON`, no extension) does NOT match
+  // `In`, is not a `Vbe`-shaped trailing dot/whitespace run, and is not covered by ANY other branch of
+  // the dump-verified `mL` body; claude itself would not flag it either. Tested here as `notes.CON`
+  // (the actual reserved-device-as-extension shape claude's own check targets), not a bare `CON`.
+  test("a device name used as a file extension (notes.CON) asks under bypassPermissions", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/notes.CON" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("dontAsk converts this mandatory ask into an immediate denial, mechanism 'mode', canUseTool never called -- matching the isMandatoryPrivateAddressAsk/isMandatoryMcpInteraction precedent", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // even if it WOULD ask-then-allow, dontAsk must never ask at all
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "dontAsk" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("an explicit allow rule does NOT clear this check -- stage 3 runs before stage 5's allow rules, exactly like AskUserQuestion/the private-address mandate", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/w/proj",
+      policy: policy({ mode: "bypassPermissions", rules: withRules(rule("Write(**)", "allow")) }),
+    });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("control: an ordinary path with no suspicious shape is unaffected under bypassPermissions -- proves this check doesn't ask about everything", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Write", { file_path: "/w/proj/notes.txt" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("control: a Read of a suspicious-shaped path is unaffected -- claude's own $K message is unconditionally 'write to', scoped here to write-shaped candidates only (extractCandidateWritePaths), matching claude's own message text rather than inventing a read-shaped variant it has none for", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Read", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+});
+
 // Task 8 (P3 close-out, "Baseline read denial" MUST; WS-12 §2 / D6): the exact rule shapes engine.ts
 // seeds into EVERY session (`BASELINE_DENY_RULES`) -- two `~`-anchored deny rules, source "managed".
 // Per engine.ts's own documented testing convention ("tests that need a synthetic home construct an

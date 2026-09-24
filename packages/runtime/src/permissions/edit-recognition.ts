@@ -282,7 +282,16 @@ export function recognizeEditOperation(
 ): RecognizedEditOperation | null {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const path = call.input[fileRulePathField(call.toolName)];
-    return typeof path === "string" ? { kind: "edit", paths: [path] } : null;
+    // Fix round 11 (CRITICAL regression, round 10 item B): trim HERE, at the one place every
+    // downstream consumer of this candidate (protected-write, critical-removal's own sibling
+    // checks, findFileDenyBlockingEdit, isWithinBounds's acceptEdits caller) ultimately derives its
+    // own candidate path from -- "normalise the tool input once" rather than trimming at each of
+    // the many separate `resolve(ctx.cwd, p)` call sites downstream, which is what silently drifted
+    // out of sync with round 10's own tool-side trim (write.ts/edit.ts/notebook-edit.ts) in the
+    // first place: `Write({file_path:"/w/proj/.bashrc "})` wrote the TRIMMED `.bashrc` (round 10's
+    // own fix) while every check reading this candidate straight from `call.input` still saw the
+    // UNTRIMMED `".bashrc "`, so `.bashrc` was never recognised as protected at all.
+    return typeof path === "string" ? { kind: "edit", paths: [path.trim()] } : null;
   }
   // RULING P3-K (fix wave, P3 close-out): CronCreate(durable: true) is write-shaped -- its target is
   // a FIXED, non-model-controllable path (`<sessionRoot>/<projectDir>/scheduled_tasks.json`, cron.ts's

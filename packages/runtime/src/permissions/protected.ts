@@ -346,7 +346,13 @@ export function isProtectedWrite(
   ctx: { cwd: string; home: string; winterHome?: string; storeHome?: string; brand?: ProtectedBrand; outputsDirs?: readonly string[] },
 ): boolean {
   const brand = ctx.brand ?? WINTER_BRAND;
-  const absPath = resolve(ctx.cwd, path);
+  // Fix round 11 (CRITICAL regression, defense in depth): trimmed here too, regardless of whether
+  // the caller already trimmed its own candidate (evaluator.ts's `REAL_SPECIAL_CHECKS.
+  // isProtectedWrite` does, via edit-recognition.ts's own round-11 fix) -- this is the exported,
+  // public "is this path protected" primitive claude's own message names explicitly ("protected"),
+  // and a future caller that forgets to trim upstream must not silently reopen the
+  // `.bashrc ` bypass round 10 item B introduced.
+  const absPath = resolve(ctx.cwd, path.trim());
   // WS-21 §3.7: `projects/` (what both carve-outs below address) lives under the shared STORE home
   // once the router links `buildRunHome`, not under the per-run folder `ctx.winterHome` names --
   // the two are now DIFFERENT directories. `durableRoot` is what the carve-outs anchor on; absent a

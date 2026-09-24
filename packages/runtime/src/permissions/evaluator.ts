@@ -548,7 +548,13 @@ export function boundedRoots(ctx: EvaluationContext): string[] {
 // Windows-only UNC-path-shape concern (`\\?\`-prefixed paths), and this codebase targets macOS only
 // (CLAUDE.md's own latest-OS-floors rule); disclosed rather than silently ignored.
 function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
-  const absPath = resolve(ctx.cwd, path);
+  // Fix round 11 (defense in depth, "the check and the write must never disagree"): trimmed here
+  // too, REGARDLESS of whether a caller already trimmed its own candidate -- every caller today
+  // does (edit-recognition.ts's recognizeEditOperation, dedicatedReadToolPath above), but this
+  // function is the "bounds" check the controller's own audit named explicitly, and a bounds check
+  // that only stays correct because every current caller happens to trim first is exactly the class
+  // of drift round 10 item B introduced. Trimming HERE means a future caller cannot re-open it.
+  const absPath = resolve(ctx.cwd, path.trim());
   const target = resolveRealTarget(absPath);
   return boundedRoots(ctx).some((root) => isPathWithinRoot(absPath, root, { caseFold: false }) && isPathWithinRoot(target, root, { caseFold: false }));
 }
@@ -582,6 +588,99 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 export function extractCandidateWritePaths(call: PermissionCall, ctx: EvaluationContext): string[] {
   const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot, home: ctx.home, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
   return recognized ? recognized.paths : [];
+}
+
+// --- Fix round 11: claude's `mL` -- the "suspicious Windows path pattern" safety check -------------
+//
+// A path COMPONENT ending in a run of dots and/or whitespace (claude's own `Vbe`, dump byte 14328362,
+// pinned 2.1.250: `/[.\s]+$/`, ground-truth-verified via `grep -bo`/byte-slice extraction, NOT the
+// coordinator's own cited "~272613" -- see this file's history of every prior round's citation
+// never landing on the number given). Windows silently strips trailing dots/spaces off a path
+// component when it resolves it, so `.bashrc ` / `.bashrc.` and `.bashrc` name the SAME file THERE --
+// claude treats any such component as suspicious enough to force a manual ask, on every OS, not only
+// Windows (this branch of `mL`, dump byte 14442494, is not itself OS-gated).
+const TRAILING_DOT_OR_WHITESPACE_COMPONENT = /[.\s]+$/;
+
+// A path whose FULL TEXT ends in a literal `.<device-name>` suffix (claude's own `In`, same dump
+// region: `/\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i`) -- a Windows reserved-device name used as an
+// "extension", e.g. `notes.CON`. Also not OS-gated in claude's own `mL`.
+const DEVICE_NAME_SUFFIX = /\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+// Three-or-more dots as a WHOLE path component (claude inlines this directly in `mL`, same dump
+// region): `...`, `....`, etc., between separators or at either end of the string.
+const TRIPLE_DOT_COMPONENT = /(^|\/|\\)\.{3,}(\/|\\|$)/;
+
+// An NT short-filename tilde-sequence anywhere in the path (claude inlines this too, directly in
+// `mL`): `~1`, `~23`, ...
+const SHORT_FILENAME_TILDE = /~\d/;
+
+/**
+ * Port of claude's `mL` (dump byte 14442494, pinned 2.1.250) -- the safety check `$K` (same byte
+ * region) runs on every candidate write path BEFORE any other approval logic, unconditionally
+ * forcing an ask (`classifierApprovable:!1` in claude's own source -- never classifier/auto-
+ * approvable, unlike `$K`'s OTHER checks) when it fires. Ported here as a pure predicate; the
+ * evaluator wires it in as a new stage-3 mandatory-ask reason, below.
+ *
+ * Two of claude's own branches are Windows/WSL-only BY CLAUDE'S OWN GATE and are DELIBERATELY
+ * omitted, disclosed rather than silently dropped (this codebase targets macOS only, CLAUDE.md's own
+ * latest-OS-floors rule):
+ *   - the `U()==="windows"||U()==="wsl"`-gated colon-position check (a second `:` after index 2,
+ *     Windows alternate-data-stream syntax) is genuinely inert off Windows/WSL in claude's OWN
+ *     source -- there is nothing to port.
+ *   - the trailing `Dg(e,!0)&&!Ha(e)&&!Fe(e,t)` clause is STRUCTURALLY DEAD on macOS in claude's own
+ *     source too: `Dg`'s (dump byte 14418249) own first line is `if(U()!=="windows")return!1`, which
+ *     short-circuits the whole `&&` chain to `false` on every non-Windows host claude itself runs
+ *     on. Porting an intentional no-op would just be dead code; omitted, disclosed rather than
+ *     silently dropped.
+ *
+ * `FU` (dump byte 11268201: `function FU(t){return lt.test(t)||t.includes("??")&&lt.test(pt(t))}`,
+ * `lt=/^[\/]\?\?[\/]/`, `pt` win32-normalizes only on Windows, else identity) IS ported below, in its
+ * macOS-reduced form (`pt` is the identity function here, so `FU` reduces to the single regex test)
+ * -- claude calls it unconditionally, not gated to Windows, so this is a straight port, not a
+ * judgment call.
+ */
+export function isSuspiciousPath(path: string): boolean {
+  if (/^\/\?\?\//.test(path)) return true; // FU, macOS-reduced (see header)
+  if (SHORT_FILENAME_TILDE.test(path)) return true;
+  if (path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\") || path.startsWith("//?/") || path.startsWith("//./")) return true;
+  for (const component of path.split(/[/\\]/)) {
+    if (component === "" || component === "." || component === "..") continue;
+    if (TRAILING_DOT_OR_WHITESPACE_COMPONENT.test(component)) return true;
+  }
+  if (DEVICE_NAME_SUFFIX.test(path)) return true;
+  if (TRIPLE_DOT_COMPONENT.test(path)) return true;
+  return false;
+}
+
+// claude's own message text is unconditionally "write to" ($K, same dump region) -- `$K` is called
+// from the write/edit permission-check path, never the read one, so this is scoped to write-shaped
+// candidates rather than also covering Read/Glob/Grep, matching claude's own message wording exactly
+// rather than inventing a read-shaped variant claude's own source has no message for.
+//
+// Deliberately reads the RAW field straight off `call.input` (mirroring `dedicatedReadToolPath`'s own
+// style just below, not `extractCandidateWritePaths`) rather than the trimmed candidate every OTHER
+// write-shaped check in this file now consumes (fix round 11, item 1): the whole POINT of `Vbe`
+// (`isSuspiciousPath`'s trailing dot/whitespace check) is to notice that the caller's OWN text had a
+// trailing run of dots/spaces AT ALL -- trimming first, the way the protected/critical-removal/bounds
+// checks now correctly do, would erase the very anomaly this check exists to catch, and `foo.bashrc `
+// would never be flagged. Claude's own `mL`/`ht` have the identical division of labour: `ht` trims for
+// MATCHING/resolution, `mL` inspects the untrimmed, as-typed shape -- confirmed empirically here (a
+// first draft built on `extractCandidateWritePaths` made every `Vbe`-shaped fixture below go RED,
+// because round 11's own item-1 fix trims at exactly that source). Scoped to the three structured
+// fields `recognizeEditOperation`'s own direct branch covers (Edit/Write/NotebookEdit) -- the
+// controller's own test list is entirely Write(file_path:...)-shaped, and claude's `$K` is reached
+// from the write/edit permission-check path, not Bash's own shell-command parsing.
+function firstSuspiciousWritePath(call: PermissionCall): string | undefined {
+  if (call.toolName !== "Edit" && call.toolName !== "Write" && call.toolName !== "NotebookEdit") return undefined;
+  const raw = call.input[fileRulePathField(call.toolName)];
+  return typeof raw === "string" && isSuspiciousPath(raw) ? raw : undefined;
+}
+
+// Verbatim claude string (user directive: claude INTERFACE strings ship verbatim) -- `$K`'s own
+// per-candidate message, dump byte 14442494 region: `` `Claude requested permissions to write to
+// ${e}, which contains a suspicious Windows path pattern that requires manual approval.` ``.
+function suspiciousPathAskMessage(path: string): string {
+  return `Claude requested permissions to write to ${path}, which contains a suspicious Windows path pattern that requires manual approval.`;
 }
 
 // --- The SHELL write-target floor (dist-session fixes, lane C C3; claude's pathValidation.ts) ------
@@ -1489,7 +1588,10 @@ function isBashCallReadOnly(call: PermissionCall): boolean {
 function dedicatedReadToolPath(call: PermissionCall): string | undefined {
   if (call.toolName !== "Read" && call.toolName !== "Glob" && call.toolName !== "Grep") return undefined;
   const raw = call.input[fileRulePathField(call.toolName)];
-  if (typeof raw === "string") return raw;
+  // Fix round 11: trim here too, matching edit-recognition.ts's own recognizeEditOperation fix --
+  // this is the SEPARATE root for Read/Glob/Grep's own candidate path (recognizeEditOperation only
+  // covers Edit/Write/NotebookEdit), feeding isReadWithinBounds/isWithinBounds below.
+  if (typeof raw === "string") return raw.trim();
   if (raw === undefined && (call.toolName === "Glob" || call.toolName === "Grep")) return ".";
   return undefined;
 }
@@ -2304,14 +2406,32 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // truthy-coercion" posture for a descriptor-derived signal (registry.ts's own `_meta['anthropic/
   // requiresUserInteraction'] === true` check for the identical reason).
   const isMandatoryMcpInteraction = ctx.requiresInteraction?.(effectiveCall.toolName) === true;
+  // Fix round 11: claude's own `mL`/`$K` (see `isSuspiciousPath`'s own header above) -- a suspicious
+  // write-shaped candidate path forces the SAME kind of mandatory, rule-immune, bypass-immune ask as
+  // AskUserQuestion/the private-address mandate just above (`classifierApprovable:!1` in claude's own
+  // source: never softened by an allow rule, acceptEdits, auto's classifier, or bypassPermissions --
+  // stage 3 runs strictly before stage 4's mode baseline and stage 5's allow rules, which is exactly
+  // "before acceptEdits and auto" and, unlike the pre-existing protected-write standing exception
+  // (whose OWN bypassPermissions cell is an unconditional allow — WS-07 §6.7), this one does NOT
+  // exempt bypass either, matching `$K`'s own "checked first, never classifier-approvable" posture).
+  const suspiciousWritePath = firstSuspiciousWritePath(effectiveCall);
+  const isMandatorySuspiciousPathAsk = suspiciousWritePath !== undefined;
   // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a reason to reach the
   // prompt path — priority, when more than one applies simultaneously, is askEntry >
   // isMandatoryAskUserQuestion > isMandatoryMcpInteraction > hookForcedAsk (a documented judgment call: the more specific attribution's own message/mechanism
   // wins; every case still ends in the identical "prompt, then fail closed on no answer" behavior
   // regardless of which one is picked). In practice the first three are mutually exclusive (a call
   // cannot simultaneously BE AskUserQuestion and an MCP tool), so this ordering is a tie-break with
-  // no live ambiguity today.
-  if (askEntry || isMandatoryAskUserQuestion || isMandatoryMcpInteraction || isMandatoryPrivateAddressAsk || hookForcedAsk) {
+  // no live ambiguity today. `isMandatorySuspiciousPathAsk` joins the SAME tie-break, ordered right
+  // after the private-address mandate (fix round 11).
+  if (
+    askEntry ||
+    isMandatoryAskUserQuestion ||
+    isMandatoryMcpInteraction ||
+    isMandatoryPrivateAddressAsk ||
+    isMandatorySuspiciousPathAsk ||
+    hookForcedAsk
+  ) {
     if (policy.mode === "dontAsk") {
       // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
       // own rule-denial message/mechanism; AskUserQuestion / a hook-forced ask with no matching rule
@@ -2347,6 +2467,18 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
           mechanism: "mode",
           policyVersion,
           message: `Denied: ${privateTarget.hostname} is a private or loopback address (${privateTarget.reason}) and dontAsk mode cannot ask for the approval WebFetch needs to reach it. ${privateAddressRuleHint(privateTarget)}`,
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatorySuspiciousPathAsk && suspiciousWritePath !== undefined) {
+        // Fix round 11: mechanism "mode" -- no rule was involved, matching isMandatoryMcpInteraction/
+        // isMandatoryPrivateAddressAsk's own precedent just above. dontAsk's own §6.3 "every
+        // would-prompt outcome becomes a denial, never a hang" applies here exactly as it does there.
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: `Denied: dontAsk mode cannot ask for the manual approval a suspicious path requires (${suspiciousWritePath}, WS-07 §6.3)`,
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
@@ -2395,7 +2527,9 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
           ? `'${effectiveCall.toolName}' is marked requiresUserInteraction and requires mandatory interaction (WS-09 §6)`
           : isMandatoryPrivateAddressAsk && privateTarget !== undefined
             ? privateAddressAskReason(privateTarget)
-            : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
+            : isMandatorySuspiciousPathAsk && suspiciousWritePath !== undefined
+              ? suspiciousPathAskMessage(suspiciousWritePath) // fix round 11: claude's own $K card text, verbatim
+              : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
     const meta: PromptStageMeta = {
       decisionReason,
       ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
@@ -2435,6 +2569,17 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
           mechanism: "mode",
           policyVersion,
           message: `Denied: ${privateTarget.hostname} is a private or loopback address (${privateTarget.reason}); WebFetch needs explicit approval to reach it and no prompt handler answered. ${privateAddressRuleHint(privateTarget)}`,
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatorySuspiciousPathAsk && suspiciousWritePath !== undefined) {
+        // Fix round 11: fails CLOSED like every other mandatory-interaction branch here -- no real
+        // host answered a request claude itself would never classifier-approve.
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: `${suspiciousPathAskMessage(suspiciousWritePath)} No prompt handler answered it.`,
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
