@@ -542,8 +542,27 @@ export function resolvesWithinPluginRoot(candidatePath: string, pluginRoot: stri
  * direction for a DENY floor (WS-07 §3.1's own posture: a deny that reaches slightly too far is a
  * false-negative-avoiding cost, never a hole), where an escape that matches NOTHING would be a hole.
  */
+// Fix round 9 (a divergence the router measured): claude's own path-to-pattern escaper, `I_t`
+// (dump-confirmed, the same region as `c`/`jr`), ALSO escapes a trailing whitespace run, character
+// by character:
+//   t.replace(/\s+$/, (n) => Array.from(n, (s) => `\${s}`).join(""))
+// The real `ignore` package trims an UNESCAPED trailing whitespace run off a pattern line, exactly
+// like real gitignore -- confirmed empirically (`ignoreFactory().add("repo/sp ").test("repo/sp ")`
+// is `false`; the same call with the space escaped, `"repo/sp\\ "`, is `true`). Before this fix, a
+// path ending in a space (or any trailing whitespace) built into a deny rule through this function
+// silently lost its own protection: the compiled pattern named the file WITHOUT the trailing
+// whitespace, so a write to the real file WITH it went through, unsandboxed by that rule -- a
+// fail-open specific to this direction (path -> pattern); a rule typed directly into settings.json
+// with the space ALREADY escaped by hand was never affected, since round 8's `unescapeRuleContent`
+// doesn't touch `\ ` at all (it only recognises `\(`, `\)`, `\\`) and the `ignore` layer itself
+// already honours the escape correctly, as it does for claude.
+//
+// Runs AFTER the `[`, `]`, `*`, `\` escaping below (matching `I_t`'s own order): backslash-escaping
+// never introduces a new trailing whitespace character, so the two passes commute for every
+// realistic path this codebase's own macOS-only target ever produces.
 export function escapeFileRulePathSegment(path: string): string {
-  return path.replace(/[[\]*\\]/g, (ch) => "\\" + ch);
+  const bracketsAndStar = path.replace(/[[\]*\\]/g, (ch) => "\\" + ch);
+  return bracketsAndStar.replace(/\s+$/, (run) => Array.from(run, (ch) => "\\" + ch).join(""));
 }
 
 /**

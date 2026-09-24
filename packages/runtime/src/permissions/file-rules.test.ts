@@ -276,6 +276,52 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
     // character standing in for "wip") the way a raw, un-escaped class would.
     expect(matchFileRulesGrouped(candidates, "/home/nameW/projects/x.jsonl", { cwd: "/w", home: "/h" }, "denyAsk")).toBeNull();
   });
+
+  // Fix round 9 (a divergence the router measured): the real `ignore` package trims an UNESCAPED
+  // trailing whitespace run off a pattern line, exactly like real gitignore -- confirmed empirically
+  // (`ignoreFactory().add("repo/sp ").test("repo/sp ")` is `false`; the same call with the trailing
+  // space escaped, `"repo/sp\\ "`, is `true`). Claude's own path-to-pattern escaper, `I_t`
+  // (dump-confirmed, same region as `c`/`jr`), protects against exactly this:
+  //   `t.replace(/\s+$/, (n) => Array.from(n, (s) => `\${s}`).join(""))`
+  // -- every character of a trailing whitespace RUN individually escaped. Before this fix,
+  // `escapeFileRulePathSegment` escaped none of it, so a Winter-BUILT deny rule for a real path
+  // ending in a space (or any trailing whitespace) silently failed to protect that exact file: the
+  // compiled pattern named the file WITHOUT its trailing space, so a write to the real,
+  // trailing-space-bearing file went through, unsandboxed by that rule. A rule typed directly into
+  // settings.json with the space ALREADY escaped by hand was never affected -- round 8's
+  // `unescapeRuleContent` doesn't touch `\ ` (it only recognises `\(`, `\)`, `\\`), so it reaches the
+  // `ignore` layer unchanged and already matches correctly; this gap was specific to the PATH ->
+  // PATTERN direction (`escapeFileRulePathSegment`), not the read-back direction.
+  test("escapes a trailing space -- claude's own I_t escapes every character of a trailing whitespace run", () => {
+    expect(escapeFileRulePathSegment("/home/sp ")).toBe("/home/sp\\ ");
+  });
+
+  test("escapes MULTIPLE trailing whitespace characters individually, each with its own backslash", () => {
+    expect(escapeFileRulePathSegment("/home/sp  ")).toBe("/home/sp\\ \\ ");
+  });
+
+  test("a trailing tab is escaped too -- I_t's regex is \\s+$, not space-specific", () => {
+    expect(escapeFileRulePathSegment("/home/sp\t")).toBe("/home/sp\\\t");
+  });
+
+  test("INTERIOR whitespace (not trailing) is left alone -- only a TRAILING run is special, matching gitignore's own line-trimming rule", () => {
+    expect(escapeFileRulePathSegment("/home/has space/file")).toBe("/home/has space/file");
+  });
+
+  test("end to end: a deny rule built from a real path ending in a space blocks a write to that exact file, through the real ignore pipeline", () => {
+    const real = "/repo/sp ";
+    const escaped = escapeFileRulePathSegment(real);
+    const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "floor" }, pattern: `//${escaped}` }];
+    expect(matchFileRulesGrouped(candidates, real, { cwd: "/w", home: "/h" }, "denyAsk")).not.toBeNull();
+  });
+
+  test("control: a rule authored directly with claude's OWN escaped spelling (\\ before the trailing space) already matched correctly before this fix -- the gap was only in escapeFileRulePathSegment, never in the ignore layer itself", () => {
+    const rule = parseRule("Read(//repo/sp\\ )");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "//repo/sp\\ " });
+    const specifier = rule.specifier;
+    const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "floor" }, pattern: specifier?.kind === "pattern" ? specifier.source : "" }];
+    expect(matchFileRulesGrouped(candidates, "/repo/sp ", { cwd: "/w", home: "/h" }, "denyAsk")).not.toBeNull();
+  });
 });
 
 // Unit-level: this function's OWN contract, called with the already-lexically-resolved candidate a
