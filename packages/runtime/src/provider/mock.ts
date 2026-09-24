@@ -34,8 +34,21 @@ export function resetRecordedProviderSystems(): void {
 // Deterministic by construction: the same request and the same turn always produce the same
 // numbers, on every leg and every run. A crude chars/4 estimate -- this is a stand-in for a real
 // provider's reported usage (P6), never a tokenizer.
+//
+// Fix round 22: "the same request" must not include a WALL-CLOCK value. An Agent tool result carries
+// the child's `totalDurationMs` (claude's own result shape), so a child that took 96 ms on one
+// transport leg and 101 ms on another moved `input_tokens` by one -- sdk transport-equivalence's
+// "rider 25" and "Task 8: SendMessage ... RESUMES" flaked on exactly that (`payload@7 (result)
+// differs`, 2909 vs 2908; the durations sit near 100 ms). The equivalence suite already scrubs that
+// key from the tool_result it COMPARES (`AGENT_RESULT_VOLATILE_KEYS`); this makes the usage computed
+// FROM it invariant too. The value is counted as a fixed "0", escaped or not.
+const WALL_CLOCK_DURATION_VALUE = /(totalDurationMs\\?"\s*:\s*)\d+/g;
+function contentChars(content: ProviderMessage["content"]): number {
+  const text = typeof content === "string" ? content : JSON.stringify(content);
+  return text.replace(WALL_CLOCK_DURATION_VALUE, "$10").length;
+}
 function syntheticUsage(input: ProviderRequest, turn: ProviderTurn): ProviderUsage {
-  const messageChars = input.messages.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0);
+  const messageChars = input.messages.reduce((n, m) => n + contentChars(m.content), 0);
   const inputChars = (input.system?.length ?? 0) + messageChars;
   const outputChars =
     turn.kind === "text" ? turn.text.length : JSON.stringify(turn.calls).length;
