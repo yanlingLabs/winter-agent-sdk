@@ -6566,9 +6566,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * surfaces Winter does not have and are not carried.
    *
    * Winter used to run any REGISTERED tool by name. At 47d9adc a call to an MCP tool whose server had
-   * connected after the request was built EXECUTED though the model was never offered it. Checked
-   * ahead of the availability check, the load-first boundary and the permission pipeline -- a tool
-   * the model was not offered never reaches any of them, whatever the mode (bypass included).
+   * connected after the request was built EXECUTED though the model was never offered it. Checked in
+   * the dispatch loop after the availability check and the load-first boundary and ahead of the
+   * permission pipeline, whatever the mode (bypass included); a call a deny rule governs is left to
+   * the pipeline's own rule denial (see the call site).
    *
    * Scope: a name the registry knows (other than a static `hidden` one, below), or any `mcp__` name
    * (claude's MCP namespace). Any other name has no descriptor; it keeps the executor's own answer (the registry's "unknown tool", or a host
@@ -7339,13 +7340,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // Empirically confirmed while wiring this: with the check only in the adapter, a child
           // calling AskUserQuestion still stalled. Checking here turns it into an immediate typed
           // refusal and the child continues normally.
-          // Fix round 19, add-on C: a tool the model was not offered on this request never runs --
-          // see `toolNotOfferedRefusal`. claude's own shape: an `is_error` tool_result.
-          const notOffered = toolNotOfferedRefusal(call.name);
-          if (notOffered !== undefined) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
-            continue;
-          }
           const availabilityDescriptor = getRegisteredTool(call.name)?.descriptor;
           if (availabilityDescriptor !== undefined && !isToolAvailable(availabilityDescriptor, { ...advertisedCfg, mode: policyStateStore.getState().mode })) {
             resultBlocks.push({
@@ -7443,6 +7437,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               throw err;
             }
           };
+          // Fix round 19, add-on C: a tool the model was not offered on this request never runs --
+          // see `toolNotOfferedRefusal` -- answered in claude's shape, an `is_error` tool_result.
+          // Placed AFTER the availability check and the load-first boundary, and skipped for a call a
+          // DENY RULE governs (any alias spelling, `probeRule("deny")`): those are refused already, by
+          // Winter's own pinned channels -- the availability refusal (rider 27), the alias-exclusion
+          // reason (NEW-5), and the permission pipeline's rule denial with its `permission_denied`
+          // frame and `result.permission_denials` entry (C2, B-M2, a subagent's excluded tools) -- none
+          // of which executes. What is left is exactly the hole: a tool nothing else refuses that the
+          // model was not offered (a server connected after the request was built).
+          const notOffered = aliasPermissionIdentities(call.name, config.toolAliases, sessionBrand).some(probeRule("deny")) ? undefined : toolNotOfferedRefusal(call.name);
+          if (notOffered !== undefined) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
+            continue;
+          }
           const permissionCall: PermissionCall = {
             toolName: resolvePermissionIdentity(
               call.name,

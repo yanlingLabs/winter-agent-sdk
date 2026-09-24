@@ -5190,9 +5190,9 @@ describe("fix round 19: tools an MCP server registers after startup reach the ne
 // if its name resolves in the tools THIS query was offered (`IQ`, dump byte 18510312: `g=Zr(o.options.
 // tools,p,o.options.toolAliases)`; a miss answers `<tool_use_error>Error: No such tool available: ${p}
 // ${hint}</tool_use_error>` with `is_error:true`). Each case records whether the executor ran.
-// Measured before the fix: (1) EXECUTED; (2) was refused by the permission pipeline ("Denied by
-// permission rule", a `permission_denied` frame); (3) and (4) by the availability check -- neither ran,
-// but neither answered in claude's shape.
+// Measured before the fix: (1) EXECUTED -- the Critical; (2) was refused by the permission pipeline
+// ("Denied by permission rule", a `permission_denied` frame); (3) and (4) by the availability check.
+// (2)-(4) never ran and keep those pinned channels; (1) is now refused in claude's shape.
 describe("fix round 19 add-on C: a call to a tool the model was not offered is refused, never executed", () => {
   function probeDescriptor(name: string, extra: { modes?: PermissionMode[]; capabilityRequirements?: string[] } = {}) {
     return {
@@ -5287,7 +5287,9 @@ describe("fix round 19 add-on C: a call to a tool the model was not offered is r
       const { toolResult, offered } = await runOneCall(NAME, baseConfig({ sessionId: "r19-addon-c-2", disallowedTools: [NAME], permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }));
       expect(offered).not.toContain(NAME);
       expect(executed).toBe(false);
-      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${NAME}</tool_use_error>`, is_error: true });
+      // Refused by the permission pipeline's rule denial (a `denied` block and a permission_denied
+      // frame the host reads), Winter's pinned channel for a deny-ruled tool -- see engine.ts.
+      expect(toolResult).toMatchObject({ denied: true });
     } finally {
       unregisterToolForTest(NAME);
     }
@@ -5302,7 +5304,9 @@ describe("fix round 19 add-on C: a call to a tool the model was not offered is r
       const { toolResult, offered } = await runOneCall(NAME, baseConfig({ sessionId: "r19-addon-c-3", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }));
       expect(offered).not.toContain(NAME);
       expect(executed).toBe(false);
-      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${NAME}</tool_use_error>`, is_error: true });
+      // Refused by the availability check (rider 27's typed refusal), Winter's pinned channel.
+      expect(toolResult).toMatchObject({ error: true });
+      expect(String(toolResult?.content)).toContain("is not available in this session");
     } finally {
       unregisterToolForTest(NAME);
     }
@@ -5317,7 +5321,8 @@ describe("fix round 19 add-on C: a call to a tool the model was not offered is r
       const { toolResult, offered } = await runOneCall(NAME, baseConfig({ sessionId: "r19-addon-c-4", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }));
       expect(offered).not.toContain(NAME);
       expect(executed).toBe(false);
-      expect(toolResult).toMatchObject({ content: `<tool_use_error>Error: No such tool available: ${NAME}</tool_use_error>`, is_error: true });
+      expect(toolResult).toMatchObject({ error: true });
+      expect(String(toolResult?.content)).toContain("is not available in this session");
     } finally {
       unregisterToolForTest(NAME);
     }
