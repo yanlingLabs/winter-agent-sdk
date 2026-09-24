@@ -200,6 +200,66 @@ describe("precedence + provenance", () => {
   });
 });
 
+// SV-11 (WS-21 fix round 9, security): `settings.json`'s own `sandbox` block had NO consumer at all
+// -- the runtime's actual sandbox always ran on `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS`, never
+// on anything resolveSettingsDetailed produced. `sandbox.filesystem.denyWrite`/`denyRead` union
+// across every tier (including the host's own config, fed in as the `inline`/`flag` tier -- claude's
+// own architecture: its SDK `Options` occupies this identical position), exactly like
+// `permissions.deny` -- a restrictive rule set must never be silently narrowed by a higher tier's
+// own list. `allowWrite` is the opposite direction (a grant, not a restriction) and is NOT unioned:
+// the ordinary replace-by-higher-tier merge is the safe posture for a widening key.
+describe("SV-11: sandbox.filesystem.denyWrite/denyRead union across tiers, including the host's own inline config", () => {
+  test("a PROJECT denyWrite survives a LOCAL denyWrite -- the identical fail-open shape permissions.deny's own union prevents", async () => {
+    writeProject({ sandbox: { filesystem: { denyWrite: ["**/secrets/**"] } } });
+    writeLocal({ sandbox: { filesystem: { denyWrite: ["**/*.key"] } } });
+    const r = await resolve();
+    expect((r.effective["sandbox"] as { filesystem: { denyWrite: string[] } }).filesystem.denyWrite).toEqual(["**/secrets/**", "**/*.key"]);
+  });
+
+  test("denyRead unions the same way, independently of denyWrite", async () => {
+    writeUser({ sandbox: { filesystem: { denyRead: ["**/.env"] } } });
+    writeProject({ sandbox: { filesystem: { denyRead: ["**/id_rsa"] } } });
+    const r = await resolve();
+    expect((r.effective["sandbox"] as { filesystem: { denyRead: string[] } }).filesystem.denyRead).toEqual(["**/.env", "**/id_rsa"]);
+  });
+
+  test("the union dedupes and keeps lowest-tier-first order, matching permissions.deny's own precedent", async () => {
+    writeUser({ sandbox: { filesystem: { denyWrite: ["a", "b"] } } });
+    writeProject({ sandbox: { filesystem: { denyWrite: ["b", "c"] } } });
+    const r = await resolve();
+    expect((r.effective["sandbox"] as { filesystem: { denyWrite: string[] } }).filesystem.denyWrite).toEqual(["a", "b", "c"]);
+  });
+
+  test("the host's OWN sandbox config (inline/flag tier) participates in the SAME union as settings.json's own tiers -- claude's SDK Options occupies this identical position", async () => {
+    writeProject({ sandbox: { filesystem: { denyWrite: ["**/secrets/**"] } } });
+    const r = await resolve({ inline: { sandbox: { filesystem: { denyWrite: ["**/*.pem"] } } } });
+    expect((r.effective["sandbox"] as { filesystem: { denyWrite: string[] } }).filesystem.denyWrite).toEqual(["**/secrets/**", "**/*.pem"]);
+  });
+
+  test("allowWrite is REPLACED by the higher tier, never unioned -- a widening key, the opposite direction from denyWrite/denyRead", async () => {
+    writeProject({ sandbox: { filesystem: { allowWrite: ["/project-only"] } } });
+    writeLocal({ sandbox: { filesystem: { allowWrite: ["/local-only"] } } });
+    const r = await resolve();
+    expect((r.effective["sandbox"] as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite).toEqual(["/local-only"]);
+  });
+
+  test("a non-sandbox key elsewhere in the file is unaffected -- the union touches only sandbox.filesystem.denyWrite/denyRead", async () => {
+    writeProject({ sandbox: { enabled: true, filesystem: { denyWrite: ["a"] } }, apiKeyHelper: "project-helper" });
+    writeLocal({ sandbox: { filesystem: { denyWrite: ["b"] } } });
+    const r = await resolve();
+    const sandbox = r.effective["sandbox"] as { enabled: boolean; filesystem: { denyWrite: string[] } };
+    expect(sandbox.enabled).toBe(true); // scalar, ordinary replace-by-higher-tier (local never set it)
+    expect(sandbox.filesystem.denyWrite).toEqual(["a", "b"]);
+    expect(r.effective["apiKeyHelper"]).toBe("project-helper"); // ordinary key, untouched by this change
+  });
+
+  test("no sandbox key anywhere leaves effective.sandbox absent, exactly as before this field existed", async () => {
+    writeProject({ outputStyle: "project" });
+    const r = await resolve();
+    expect(r.effective["sandbox"]).toBeUndefined();
+  });
+});
+
 describe("OVERLAY_NEVER_KEYS (T1 (a) / OQ-P5-2)", () => {
   test("the list is the auto-memory directory, Winter's own autoMode, and outputStyle", () => {
     expect([...OVERLAY_NEVER_KEYS].sort()).toEqual(["autoMemoryDirectory", "autoMode", "outputStyle"]);

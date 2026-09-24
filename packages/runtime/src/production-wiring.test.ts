@@ -20,6 +20,7 @@ import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } fro
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "./testing.ts";
 import { buildProductionWiring, assertEffectiveSettings, withAutoSkillPermissions } from "./production-wiring.ts";
+import { runCommand } from "./sandbox/spawn.ts";
 // WS-13c (P6.6): the slot resolver probes credentials, so these fixtures inject an in-memory store
 // rather than letting the production composite reach the developer's real Keychain.
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
@@ -2183,4 +2184,100 @@ describe("WS-21 §6.3 item 1 (fix round 2): a plugin's output-styles/ are wired 
     await runOne({ sessionId: "s-plugin-style-disabled", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], outputStyle: "styled2:festive" }, { WINTER_HOME: home });
     expect(recordedProviderSystems().join("\n")).not.toContain("UNMISTAKABLE PLUGIN MARKER TEXT");
   });
+});
+
+// SV-11 (WS-21 fix round 9, security): before this fix, `settings.json`'s own `sandbox` block had
+// NO consumer anywhere in this module -- `engine.ts`'s `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS`
+// read ONLY the host's raw, unmerged `RuntimeConfig.sandbox`, so a plain `sandbox.filesystem.
+// denyWrite` path written into settings.json was silently inert: the denied write went through
+// unsandboxed. Fixed by threading settings.json's resolved `sandbox` block (union-merged across
+// tiers for `denyWrite`/`denyRead`, see `settings/resolve.test.ts`'s own SV-11 suite) into
+// `ProductionWiring.config.sandbox`.
+describe("SV-11: settings.json's sandbox.filesystem.denyWrite reaches the wiring's own config", () => {
+  test("a USER-tier settings.json denyWrite path is carried onto wiring.config.sandbox.filesystem.denyWrite", async () => {
+    writeSettings(home, { sandbox: { filesystem: { denyWrite: ["/some/denied/path"] } } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-sv11-wiring", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual(["/some/denied/path"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("the host's OWN RuntimeConfig.sandbox.filesystem.denyWrite is preserved, unioned with settings.json's own contribution", async () => {
+    writeSettings(home, { sandbox: { filesystem: { denyWrite: ["/from/settings-json"] } } });
+    const wiring = await buildProductionWiring({
+      config: {
+        sessionId: "s-sv11-host-union",
+        cwd,
+        model: "winter-test/echo",
+        winterHome: home,
+        settingSources: ["user"],
+        sandbox: { filesystem: { denyWrite: ["/from/host-config"] } },
+      },
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.config.sandbox?.filesystem?.denyWrite).toEqual(["/from/settings-json", "/from/host-config"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // Real spawn, darwin only: proves the merged config Bash actually receives blocks a write for
+  // real, not merely that the plain JS object carries the right strings. Mirrors bash.ts's own
+  // filesystem.denyWrite -> denyWritePaths translation (tools/impl/bash.ts) exactly, since
+  // `runCommand` itself does not derive `denyWritePaths` from `settings.filesystem.denyWrite` on
+  // its own -- that mapping is the CALLER's job, and this reproduces it rather than assuming it.
+  test.skipIf(process.platform !== "darwin")(
+    "end to end: a settings.json denyWrite path blocks a real sandboxed Bash write, and an UNLISTED path in the same cwd still succeeds",
+    async () => {
+      const scratch = mkdtempSync(join(tmpdir(), "winter-sv11-scratch-"));
+      const deniedPath = join(scratch, "denied.txt");
+      const allowedPath = join(scratch, "allowed.txt");
+      try {
+        writeSettings(home, { sandbox: { filesystem: { denyWrite: [deniedPath] } } });
+        const wiring = await buildProductionWiring({
+          config: { sessionId: "s-sv11-e2e", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
+          env: {},
+          winterHome: home,
+        });
+        try {
+          const fs = wiring.config.sandbox?.filesystem;
+          expect(fs?.denyWrite).toEqual([deniedPath]);
+          const denied = await runCommand({
+            command: `echo blocked > ${JSON.stringify(deniedPath)}`,
+            cwd: scratch,
+            env: { ...process.env, TMPDIR: scratch },
+            timeoutMs: 5000,
+            settings: wiring.config.sandbox ?? {},
+            ...(fs?.denyWrite !== undefined ? { denyWritePaths: fs.denyWrite } : {}),
+          });
+          expect(denied.posture).toBe("sandboxed");
+          expect(denied.exitCode).not.toBe(0);
+          expect(existsSync(deniedPath)).toBe(false);
+
+          const allowed = await runCommand({
+            command: `echo ok > ${JSON.stringify(allowedPath)}`,
+            cwd: scratch,
+            env: { ...process.env, TMPDIR: scratch },
+            timeoutMs: 5000,
+            settings: wiring.config.sandbox ?? {},
+            ...(fs?.denyWrite !== undefined ? { denyWritePaths: fs.denyWrite } : {}),
+          });
+          expect(allowed.exitCode).toBe(0);
+          expect(existsSync(allowedPath)).toBe(true);
+        } finally {
+          wiring.dispose();
+        }
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 });

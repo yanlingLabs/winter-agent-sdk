@@ -271,6 +271,55 @@ function unionRuleArray(tiersLowestFirst: readonly { values: Settings }[], key: 
   return out.length > 0 ? out : undefined;
 }
 
+/** Union of one `sandbox.filesystem` array key across the given tiers, lowest-precedence first, de-duplicated. */
+function unionSandboxFilesystemArray(tiersLowestFirst: readonly { values: Settings }[], key: "denyWrite" | "denyRead"): string[] | undefined {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tier of tiersLowestFirst) {
+    const sandbox = tier.values["sandbox"];
+    if (!isPlainObject(sandbox)) continue;
+    const filesystem = sandbox["filesystem"];
+    if (!isPlainObject(filesystem)) continue;
+    for (const rule of stringArrayOrUndefined(filesystem[key]) ?? []) {
+      if (seen.has(rule)) continue;
+      seen.add(rule);
+      out.push(rule);
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * SV-11 (WS-21 fix round 9, security): `sandbox.filesystem.denyWrite`/`denyRead` union across every
+ * contributing tier -- the identical reasoning `unionPermissionRuleArrays` (below/`permissions.deny`)
+ * already applies, ported to the sandbox surface: these are RESTRICTIVE rule sets, and the ordinary
+ * replace-by-higher-tier merge is actively unsafe for one. A user-tier `sandbox.filesystem.denyWrite:
+ * ["**\/.env"]` plus a project-tier `denyWrite: ["**\/secrets/**"]` must deny BOTH, not just whichever
+ * tier happened to win the plain merge -- under replacement, the LOWER tier's own restriction would
+ * silently vanish the moment a higher tier's file declared any `denyWrite` array of its own, even one
+ * naming something unrelated. `allowWrite` is deliberately NOT unioned here: it widens the write
+ * surface, so `deepMergeInto`'s ordinary "the winning tier's own value" replacement is the safe
+ * direction for it, matching `Settings.sandbox`'s own doc comment.
+ */
+function unionSandboxFilesystemDenyArrays(effective: Record<string, unknown>, tiersLowestFirst: readonly { values: Settings }[]): void {
+  const mergedSandbox = effective["sandbox"];
+  const mergedFilesystem = isPlainObject(mergedSandbox) ? mergedSandbox["filesystem"] : undefined;
+  const filesystem: Record<string, unknown> = isPlainObject(mergedFilesystem) ? { ...mergedFilesystem } : {};
+  let any = isPlainObject(mergedFilesystem);
+  for (const key of ["denyWrite", "denyRead"] as const) {
+    const unioned = unionSandboxFilesystemArray(tiersLowestFirst, key);
+    if (unioned === undefined) delete filesystem[key];
+    else {
+      filesystem[key] = unioned;
+      any = true;
+    }
+  }
+  if (!any) return;
+  const sandbox: Record<string, unknown> = isPlainObject(mergedSandbox) ? { ...mergedSandbox } : {};
+  sandbox["filesystem"] = filesystem;
+  effective["sandbox"] = sandbox;
+}
+
 /**
  * RULING R6b-9: `providers.<id>.enabled` is RESTRICTIVE-ONLY across tiers.
  *
@@ -442,6 +491,10 @@ export async function resolveSettingsDetailed(
   // RULING R6b-9, the SECOND exception to replace-by-higher-tier. Same overlay-filtered view, same
   // reason: a tier's contribution is read here exactly as it was merged above.
   restrictProviderEnables(effective, overlayFilteredTiers);
+  // SV-11 (fix round 9), the THIRD exception to replace-by-higher-tier. Same overlay-filtered view,
+  // same reason: `sandbox.filesystem.denyWrite`/`denyRead` must never be silently dropped by a
+  // higher tier's own, possibly-narrower list -- see `unionSandboxFilesystemDenyArrays`'s own header.
+  unionSandboxFilesystemDenyArrays(effective, overlayFilteredTiers);
 
   // P6.6 Lane B (R13c-7): `modelSlotsIgnored` provenance -- set iff the PROJECT tier actually had
   // either key AND no HIGHER-precedence tier (local/flag/managed; NOT user, which is lower than

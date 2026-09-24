@@ -38,7 +38,7 @@ export type SettingsBrand = Pick<BrandProfile, "envPrefix" | "homeDirName" | "pr
 // WS-13c §5: `Settings.modelSlots` holds the SAME shape the public listing surface uses, imported
 // rather than re-declared — a settings key and the API that reports it disagreeing about an optional
 // field is precisely the drift `protocol/config.ts`'s own header describes.
-import type { ModelSlotSetting } from "../protocol/config.ts";
+import type { ModelSlotSetting, SandboxSettingsConfig } from "../protocol/config.ts";
 
 /** The three settings FILE tiers a session may load. `sdk.d.ts:7917`, verbatim and in pinned order. */
 export type SettingSource = "user" | "project" | "local";
@@ -90,6 +90,27 @@ export interface SettingsPermissionsBlock {
 
 export interface Settings {
   permissions?: SettingsPermissionsBlock;
+  /**
+   * SV-11 (WS-21 fix round 9, security): the CC-shaped sandbox configuration surface, same shape as
+   * `RuntimeConfig.sandbox` (`protocol/config.ts`'s own `SandboxSettingsConfig`, kept structurally
+   * identical to `packages/runtime/src/sandbox/profile.ts`'s `SandboxSettings` for the same
+   * WS-02 §3 reason that type's own header states). Before this field existed, Winter's runtime read
+   * ONLY the host-supplied `RuntimeConfig.sandbox`, ignoring `settings.json`'s own `sandbox` block
+   * entirely -- a denied write from a plain, un-escalated `sandbox.filesystem.denyWrite` path went
+   * through unsandboxed, silently, because nothing ever threaded that key into the running sandbox at
+   * all (not a merge-precedence bug; there was no merge). `production-wiring.ts` now feeds the host's
+   * own `RuntimeConfig.sandbox` into this resolution as the `flag` tier (claude's own architecture:
+   * its SDK `Options` occupies the identical tier position for this same setting), and reads the
+   * result back off `effective.sandbox` into the config it actually hands the engine.
+   *
+   * `filesystem.denyWrite`/`denyRead` UNION across every tier (deep-merge's ordinary
+   * replace-by-higher-tier would let a higher tier silently drop a lower tier's own restriction --
+   * the identical fail-open shape `permissions.deny`'s own union exists to prevent; see
+   * `unionSandboxFilesystemDenyArrays` below). `allowWrite` is NOT unioned -- it WIDENS the write
+   * surface, so the ordinary replace-by-higher-tier merge is the safe direction for it (a widening
+   * key should never accumulate across tiers the way a narrowing one must).
+   */
+  sandbox?: SandboxSettingsConfig;
   hooks?: SettingsHooksConfig;
   env?: Record<string, string>;
   apiKeyHelper?: string;

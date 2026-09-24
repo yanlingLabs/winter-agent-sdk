@@ -654,6 +654,17 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // Passed here rather than derived a second time: `defaultTrustSource(config)` (below, and in
     // engine.ts) reads exactly this field, so the two cannot disagree.
     ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
+    // SV-11 (WS-21 fix round 9, security): the host's own `RuntimeConfig.sandbox` occupies the
+    // `flag` tier for this ONE key -- claude's own architecture (dump-confirmed: its SDK `Options`
+    // reads through the identical settings-tier machinery as `flagSettings`/`policySettings`) puts
+    // the host-supplied sandbox config at exactly this precedence position, above every
+    // settings.json tier but below `managed`. Before this, `config.sandbox` never reached
+    // `resolveSettingsDetailed` at all, and `settings.json`'s own `sandbox` block had no consumer
+    // anywhere in this module -- `engine.ts`'s `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS` read
+    // ONLY the host's raw, unmerged value (see `resolvedConfig` below for where the merged result
+    // is read back in). A `{sandbox:{...}}` object touches ONLY the `sandbox` key of this merge;
+    // every other key's resolution is unaffected by `inline` being newly used here.
+    ...(config.sandbox !== undefined ? { inline: { sandbox: config.sandbox } } : {}),
   });
   assertEffectiveSettings(resolved.effective, resolved);
   // WS-21 §6.3 item 6 / F20, fix round 1 (item 5): `applyHostManagedSettingsFilter` was implemented
@@ -1509,6 +1520,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     ...(providerWiring.contextWindowTokens !== undefined ? { contextWindowTokens: providerWiring.contextWindowTokens } : {}),
     ...(storeHome !== undefined ? { storeHome } : {}),
     ...(pluginCacheDir !== undefined ? { pluginCacheDir } : {}),
+    // SV-11 (fix round 9, security): the MERGED view -- the host's own `config.sandbox` (fed in
+    // above as the `flag` tier) unioned with every `settings.json` tier's own `sandbox.filesystem.
+    // denyWrite`/`denyRead` -- replaces the host's raw, unmerged value here, which is what makes
+    // `engine.ts`'s `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS` see settings.json's contribution
+    // at all. Omitted (not set to `undefined`, `exactOptionalPropertyTypes`) exactly when neither
+    // the host nor any settings tier ever set one, which resolves the same way it always did (the
+    // engine's own default).
+    ...(effective.sandbox !== undefined ? { sandbox: effective.sandbox } : {}),
   };
 
   return {
