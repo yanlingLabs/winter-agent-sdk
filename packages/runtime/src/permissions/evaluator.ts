@@ -3068,6 +3068,22 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
 export type ReadAccessProbe = "silent" | "prompt" | "deny";
 
 export function probeReadAccess(filePath: string, ctx: EvaluationContext): ReadAccessProbe {
+  // Fix round 17 (R.3 M-1): the probe is called OUTSIDE `evaluate()` -- per matched file by Glob and
+  // Grep, and by the read-before-edit check of Edit/Write/NotebookEdit -- so `evaluate()`'s ONE
+  // `FileRuleCompileError` catch never covered it, and a malformed `Read(...)` rule threw out of the
+  // tool (`error_during_execution` for the whole round). claude's boundary is per tool call (`aD`/
+  // `WKe`'s try/catch, falling back to `d8t`'s hardcoded deny -- `evaluate()`'s own header): one call
+  // is denied, never the round. So a compile failure here is `"deny"` for this one probed path; any
+  // other throw still propagates, exactly as `evaluate()`'s catch re-throws it.
+  try {
+    return probeReadAccessStages(filePath, ctx);
+  } catch (err) {
+    if (err instanceof FileRuleCompileError) return "deny";
+    throw err;
+  }
+}
+
+function probeReadAccessStages(filePath: string, ctx: EvaluationContext): ReadAccessProbe {
   const call: PermissionCall = { toolName: "Read", input: { file_path: filePath } };
 
   // Stage 2: a deny rule is a hard rejection, never a prompt.

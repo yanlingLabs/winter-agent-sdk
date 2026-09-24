@@ -139,7 +139,7 @@ import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-a
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
-import { escapeFileRulePathSegment } from "./permissions/file-rules.ts";
+import { escapeFileRulePathSegment, FileRuleCompileError } from "./permissions/file-rules.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
@@ -7329,9 +7329,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // hook entries are filtered out: WS-08 §2.1 makes them match every occurrence, so counting
           // them would let one global hook flip the identity of every call in the session.
           const evalCtxForIdentity = makeEvalCtx();
-          const probeRule = (behavior: "deny" | "ask" | "allow") => (candidate: string): boolean =>
-            findMatchingRuleEntry(evalCtxForIdentity.policy.rules, { toolName: candidate, input: permissionInput, toolUseId: call.id }, behavior, evalCtxForIdentity) !==
-            undefined;
+          // Fix round 17 (R.3 M-1): these probes run OUTSIDE `evaluate()`'s one `FileRuleCompileError`
+          // catch, so a malformed file rule used to escape here and end the round with
+          // `error_during_execution`. A rule the probe cannot compile is treated as MATCHING: the call
+          // is then evaluated under that identity (the strictest one), and `evaluate()`'s own catch
+          // denies this one call -- claude's per-call boundary (`evaluate()`'s header, `aD`/`d8t`).
+          const probeRule = (behavior: "deny" | "ask" | "allow") => (candidate: string): boolean => {
+            try {
+              return (
+                findMatchingRuleEntry(evalCtxForIdentity.policy.rules, { toolName: candidate, input: permissionInput, toolUseId: call.id }, behavior, evalCtxForIdentity) !==
+                undefined
+              );
+            } catch (err) {
+              if (err instanceof FileRuleCompileError) return true;
+              throw err;
+            }
+          };
           const permissionCall: PermissionCall = {
             toolName: resolvePermissionIdentity(
               call.name,

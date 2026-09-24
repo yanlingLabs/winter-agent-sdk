@@ -3870,6 +3870,45 @@ describe("Phase 4 Task 8: init.tools reflects derived capabilities, the activati
     }
   });
 
+  // Fix round 17 (R.3 M-1, engine half): the alias-identity probes (`probeRule`, the permission-identity
+  // resolution just before `evaluate()`) call `findMatchingRuleEntry` OUTSIDE `evaluate()`'s one
+  // `FileRuleCompileError` catch. With a malformed `Read(...)` rule and a tool aliased to `Read`, the
+  // compile failure used to escape the engine and end the round with `error_during_execution`; claude
+  // denies the one call (per-call boundary, `evaluate()`'s own header). The probe now treats a rule it
+  // cannot compile as matching, so the call is evaluated under that identity and `evaluate()` denies it.
+  test("fix round 17 (M-1): a malformed file rule reached through an alias twin denies the ONE call instead of ending the round", async () => {
+    const srcName = "__r17_alias_to_read__";
+    registerTool({
+      descriptor: {
+        canonicalName: srcName, advertisedName: srcName, source: "sdk", inputSchema: { type: "object" },
+        description: "alias-to-Read fixture", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+    });
+    replaceExecutor(srcName, { async execute() { return { output: "SOURCE EXECUTOR RAN" }; } });
+    // A REAL directory: the rule and symlink checks stat the path, and a fixed literal like `/tmp/x`
+    // can be anything on a given machine.
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "winter-r17-m1-")));
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: srcName, input: { file_path: join(cwd, "bad", "baz", "x") } }] }, { kind: "text", text: "done" }]);
+      const config = baseConfig({ cwd, permissionMode: "dontAsk", toolAliases: { [srcName]: "Read" }, permissions: { deny: ["Read([bad/baz)"] } });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const msgs = dataMessages(frames);
+      const denied = msgs.find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "permission_denied");
+      expect(denied, "the one call is denied").toBeDefined();
+      const result = msgs.find((m) => m.type === "result") as { subtype?: string } | undefined;
+      expect(result?.subtype, "the round is not ended by the compile error").toBe("success");
+      expect(JSON.stringify(msgs)).not.toContain("SOURCE EXECUTOR RAN");
+    } finally {
+      unregisterToolForTest(srcName);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   // The control for the test above: the IDENTICAL config with NO alias table denies by the MODE
   // floor instead of the rule -- which is what makes "rule" above a real, falsifiable signal rather
   // than an incidental value.

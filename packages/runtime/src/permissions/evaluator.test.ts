@@ -4173,6 +4173,24 @@ describe("probeReadAccess (P3 seam, widened by RULING P3-B): side-effect-free by
     expect(probeReadAccess("/work/secrets/key.pem", ctx)).toBe("deny");
   });
 
+  // Fix round 17 (R.3 M-1): Glob/Grep call this per matched file, and Edit/Write/NotebookEdit's
+  // read-before-edit check calls it too -- none of them inside `evaluate()`'s catch. A malformed
+  // cwd-anchored `Read(...)` rule used to throw `FileRuleCompileError` out of the TOOL, ending the round
+  // with `error_during_execution`; claude's per-call boundary denies the one call instead (`evaluate()`'s
+  // own header has the `aD`/`d8t` citation). The probe now answers "deny".
+  test('"deny" -- a malformed file rule (FileRuleCompileError) denies the probed read instead of throwing out of the tool', () => {
+    const ctx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read([bad/baz)", "deny")) }) });
+    expect(() => probeReadAccess("/work/bad/baz/x", ctx)).not.toThrow();
+    expect(probeReadAccess("/work/bad/baz/x", ctx)).toBe("deny");
+  });
+
+  test('"deny" -- the same for a malformed ASK rule (reached: no deny rule) and a malformed ALLOW rule (reached: a read outside cwd)', () => {
+    const askCtx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read([bad/baz)", "ask")) }) });
+    expect(probeReadAccess("/work/bad/baz/x", askCtx)).toBe("deny");
+    const allowCtx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read(//outside/[bad/baz)", "allow")) }) });
+    expect(probeReadAccess("/outside/bad/baz/x", allowCtx)).toBe("deny");
+  });
+
   test('"prompt" -- stage 3, a matched ask rule outside dontAsk: genuine interaction needed', () => {
     const ctx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read(secrets/**)", "ask")) }) });
     expect(probeReadAccess("/work/secrets/key.pem", ctx)).toBe("prompt");
