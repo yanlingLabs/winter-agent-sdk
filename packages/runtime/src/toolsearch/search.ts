@@ -5,7 +5,7 @@
 // second copy of this algorithm) -- see this file's own "Session runtime registry" section for why
 // that split exists and what it still needs from engine.ts.
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
-import type { DeferralActivation } from "../tools/registry.ts";
+import type { DeferralActivation, ToolDescriptor } from "../tools/registry.ts";
 import type { McpServerStateSource } from "../mcp/state.ts";
 import { computeExposurePartition } from "./exposure.ts";
 import { rankCandidates, type RankableCandidate } from "./ranking.ts";
@@ -64,6 +64,10 @@ export interface ToolSearchDeps {
   // host-configured alias edge. Present on the SESSION-scoped shape (engine.ts registers it once per
   // run from `RuntimeConfig.toolAliases`), never per call.
   toolAliases?: Record<string, string>;
+  // Fix round 21: the run's own scope over the process-wide registry (`ExposureQuery.toolFilter`).
+  // Read once per ToolSearch pass -- engine.ts supplies it as a GETTER, so the visible-server set is
+  // the live one each time.
+  toolFilter?: (descriptor: ToolDescriptor) => boolean;
   // WS-09 §8.2 "Successful selection returns tool_reference blocks" / [WS-06] §1.3 -- the SAME seam
   // `ToolExecutionContext.emitToolReference` already is (registry.ts, Task 3): marks `names` loaded
   // in the session's own LoadedToolSet AND emits the wire tool_reference block, as one atomic
@@ -102,6 +106,7 @@ function exposureQuery(deps: ToolSearchDeps) {
     ...(deps.insideSubagent !== undefined ? { insideSubagent: deps.insideSubagent } : {}),
     ...(deps.familyMetadata !== undefined ? { familyMetadata: deps.familyMetadata } : {}),
     ...(deps.toolAliases !== undefined ? { toolAliases: deps.toolAliases } : {}),
+    ...(deps.toolFilter !== undefined ? { toolFilter: deps.toolFilter } : {}),
   };
 }
 

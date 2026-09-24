@@ -40,6 +40,15 @@ export interface ExposureQuery {
   // that supplies nothing here still gets the C2 guarantee for the two canonical twins -- this field
   // only widens the same guarantee to a host-configured alias edge.
   toolAliases?: Record<string, string>;
+  /**
+   * Fix round 21: the run's own scope over the process-wide registry -- engine.ts passes the SAME
+   * predicate its advertised partition applies (`computeAdvertisedPartition`: a live server's MCP tool
+   * only for a server the run can see), so ToolSearch never finds or selects another run's tools
+   * (e.g. a subagent's own object-form server's, while that subagent runs). claude's ToolSearch
+   * searches only the calling agent's own tools (`x = refreshTools?.() ?? tools`, dump byte
+   * 15619044). Absent = no scope (every pre-round-21 caller).
+   */
+  toolFilter?: (descriptor: ToolDescriptor) => boolean;
 }
 
 export interface DeferredCandidates {
@@ -81,5 +90,10 @@ export function computeExposurePartition(query: ExposureQuery): DeferredCandidat
   // count. Duplicate suppression is a MODEL-FACING listing concern that `init.tools` owns; exclusion
   // is a security concern both surfaces owe.
   const partition = hideAliasExcludedTwins(partitionAdvertisedTools(cfg, query.activation), query.toolAliases, query.disallowedTools);
-  return { eager: partition.eager, deferred: partition.deferred, hidden: partition.hidden, totalDeferredTools: partition.deferred.length };
+  // Fix round 21: the run's own scope (see `ExposureQuery.toolFilter`), applied to all three lists so
+  // `total_deferred_tools` counts only what this run could load.
+  const keep = query.toolFilter;
+  if (keep === undefined) return { eager: partition.eager, deferred: partition.deferred, hidden: partition.hidden, totalDeferredTools: partition.deferred.length };
+  const deferred = partition.deferred.filter(keep);
+  return { eager: partition.eager.filter(keep), deferred, hidden: partition.hidden.filter(keep), totalDeferredTools: deferred.length };
 }

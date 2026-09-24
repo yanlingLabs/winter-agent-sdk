@@ -4589,6 +4589,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...Object.keys(config.mcpServers ?? {}),
       ...(inheritedMcpServerNames?.() ?? []),
     ]);
+  // The scope as a predicate, built over ONE snapshot of the visible set -- shared by the advertised
+  // partition below and, fix round 21, ToolSearch's pool (the session runtime's `toolFilter`).
+  const visibleServerToolFilter = (): ((d: ToolDescriptor) => boolean) => {
+    const visible = visibleMcpServers();
+    return (d) => {
+      const owner = mcpServerOwningTool(d.canonicalName);
+      return owner === undefined || visible.has(owner);
+    };
+  };
   const computeAdvertisedPartition = () => {
     const partition = suppressAliasedDuplicates(
       partitionAdvertisedTools({ ...advertisedCfg, capabilities: resolveLiveSessionCapabilities() }, deferralActivation),
@@ -4596,11 +4605,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       config.disallowedTools,
       sessionBrand,
     );
-    const visible = visibleMcpServers();
-    const ownServerTool = (d: ToolDescriptor): boolean => {
-      const owner = mcpServerOwningTool(d.canonicalName);
-      return owner === undefined || visible.has(owner);
-    };
+    const ownServerTool = visibleServerToolFilter();
     return { eager: partition.eager.filter(ownServerTool), deferred: partition.deferred.filter(ownServerTool), hidden: partition.hidden.filter(ownServerTool) };
   };
   let advertisedPartition = computeAdvertisedPartition();
@@ -4663,6 +4668,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // string[]` structurally, so no interface changes.
     get capabilities() {
       return resolveLiveSessionCapabilities();
+    },
+    // Fix round 21 (R21-2): the same server scope as the advertised partition, so ToolSearch never
+    // finds or selects another run's MCP tools. A GETTER for the same live-vs-frozen reason as
+    // `capabilities` above: one visible-set snapshot per ToolSearch pass.
+    get toolFilter() {
+      return visibleServerToolFilter();
     },
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),

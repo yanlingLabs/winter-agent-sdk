@@ -3745,4 +3745,83 @@ describe("fix round 21: the MCP server scope reaches every descendant, and ToolS
     expect(grandchildReqs[0]).toContain(CHILD_TOOL);
   }, 30_000);
 
+  test("R21-2: while a subagent holds its own server, the parent's ToolSearch neither finds nor selects that server's tool", async () => {
+    let handle: { result(): Promise<unknown> } | undefined;
+    probeTool("r21_bg", async (input, ctx) => {
+      if (!ctx.session.spawnChild) return "no spawnChild";
+      handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+      return "spawned";
+    });
+    probeTool("r21_wait", async () => {
+      for (let i = 0; i < 500; i++) {
+        if (getRegisteredTool(CHILD_TOOL) !== undefined) return "registered";
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return "timeout";
+    });
+    probeTool("r21_join", async () => {
+      await handle?.result();
+      return "joined";
+    });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const childProvider: Provider = {
+      async generate() {
+        await gate;
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const toolResults = new Map<string, string>();
+    await withHttpFixture(zebraSpec, async (url) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "p1", prompt: "hold", runInBackground: false,
+        definition: { description: "child", prompt: "persona", mcpServers: [{ childsrv: { type: "http", url: url.href } }] },
+      };
+      let n = 0;
+      const parentProvider: Provider = {
+        async generate(request) {
+          for (const m of request.messages) {
+            if (m.role !== "tool") continue;
+            for (const block of (m.content as Array<{ type?: string; tool_use_id?: string; content?: unknown }>) ?? []) {
+              if (block.tool_use_id !== undefined) toolResults.set(block.tool_use_id, typeof block.content === "string" ? block.content : JSON.stringify(block.content));
+            }
+          }
+          n++;
+          if (n === 1) return { kind: "tool_use", calls: [{ id: "p1", name: "r21_bg", input: req }] };
+          if (n === 2) return { kind: "tool_use", calls: [{ id: "p2", name: "r21_wait", input: {} }] };
+          if (n === 3) return { kind: "tool_use", calls: [{ id: "p3", name: "ToolSearch", input: { query: "zebra", max_results: 5 } }] };
+          if (n === 4) return { kind: "tool_use", calls: [{ id: "p4", name: "ToolSearch", input: { query: `select:${CHILD_TOOL}`, max_results: 5 } }] };
+          if (n === 5) {
+            release();
+            return { kind: "tool_use", calls: [{ id: "p5", name: "r21_join", input: {} }] };
+          }
+          return { kind: "text", text: "parent done" };
+        },
+      };
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }));
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: baseConfig({ sessionId: "r21-toolsearch", toolSearchEnabled: true, mcpServers: parentServers }),
+        input: runtime.input,
+        output: runtime.output,
+        provider: parentProvider,
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      expect(await done).toBe(0);
+    });
+    expect(toolResults.get("p2")).toContain("registered");
+    // ToolSearch answers JSON (`{matches, query, total_deferred_tools}`); a `select:` query echoes the
+    // name back in `query`, so the assertion is on `matches` alone.
+    const matchesOf = (id: string): string[] => (JSON.parse(toolResults.get(id) ?? "{}") as { matches?: string[] }).matches ?? ["<no ToolSearch result>"];
+    expect(matchesOf("p3")).not.toContain(CHILD_TOOL);
+    expect(matchesOf("p4")).not.toContain(CHILD_TOOL);
+    expect(matchesOf("p4")).toEqual([]);
+  }, 30_000);
+
 });
