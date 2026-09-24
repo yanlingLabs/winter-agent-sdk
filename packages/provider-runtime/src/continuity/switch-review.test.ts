@@ -213,4 +213,51 @@ describe("switchFactsFor", () => {
     const entries = oneTurnEntries("a1");
     expect(switchFactsFor({ entries, sidecarRecords: [], from: GPT }).midTurnAbort).toBe(false);
   });
+
+  // F2 (WS-21 fix round 23): claude writes a PARALLEL batch as one assistant entry per call and
+  // parents each result on its own call's entry, so the leaf's single parentUuid chain holds only the
+  // batch's last result. The warning's count must be what the Winter leg carries -- every result,
+  // recovered the way `runtime/src/store/resume.ts`'s `recoverParallelToolResults` recovers them.
+  // The transcript shape the pinned claude wrote in the router rig (lane-L2-report.md, "F2").
+  function claudeParallelBatch(): SessionStoreEntry[] {
+    const call = (uuid: string, parentUuid: string, id: string, name: string): SessionStoreEntry => ({
+      type: "assistant",
+      uuid,
+      parentUuid,
+      message: { id: "msg_f2_batch", role: "assistant", content: [{ type: "tool_use", id, name, input: {} }] },
+    });
+    const result = (uuid: string, parentUuid: string, toolUseId: string): SessionStoreEntry => ({
+      type: "user",
+      uuid,
+      parentUuid,
+      sourceToolAssistantUUID: parentUuid,
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content: "ok" }] },
+    });
+    return [
+      { type: "user", uuid: "25b2b70a", parentUuid: null, message: { role: "user", content: "run the F2 batch" } },
+      call("69c00c59", "25b2b70a", "toolu_f2_skill", "Skill"),
+      call("8552ed72", "69c00c59", "toolu_f2_search", "ToolSearch"),
+      call("54487711", "8552ed72", "toolu_f2_mcp", "mcp__sv-user-mcp__echo"),
+      result("cf52004b", "69c00c59", "toolu_f2_skill"),
+      { type: "user", uuid: "caa5da55", parentUuid: "cf52004b", isMeta: true, message: { role: "user", content: [{ type: "text", text: "F2 SKILL BODY" }] } },
+      result("4e5e7265", "8552ed72", "toolu_f2_search"),
+      result("568f4afb", "54487711", "toolu_f2_mcp"),
+      { type: "attachment", uuid: "519bfcd0", parentUuid: "568f4afb", attachment: { type: "f2_unrendered" } },
+      { type: "assistant", uuid: "ba33ce5b", parentUuid: "519bfcd0", message: { id: "msg_f2_done", role: "assistant", content: [{ type: "text", text: "F2-DONE" }] } },
+      { type: "user", uuid: "f2-next", parentUuid: "ba33ce5b", message: { role: "user", content: "and the next question" } },
+    ];
+  }
+
+  test("F2: completedToolResults counts every result of a claude parallel batch, not only the one on the leaf's chain", () => {
+    expect(switchFactsFor({ entries: claudeParallelBatch(), sidecarRecords: [], from: CLAUDE }).completedToolResults).toBe(3);
+  });
+
+  test("F2: a parallel batch before the last compaction boundary still counts nothing", () => {
+    const entries: SessionStoreEntry[] = [
+      ...claudeParallelBatch(),
+      { type: "system", subtype: "compact_boundary", uuid: "f2-boundary", parentUuid: null, logicalParentUuid: "f2-next", compactMetadata: { trigger: "auto", preTokens: 100 } },
+      { type: "user", uuid: "f2-summary", parentUuid: "f2-boundary", isCompactSummary: true, message: { role: "user", content: "F2 SUMMARY" } },
+    ];
+    expect(switchFactsFor({ entries, sidecarRecords: [], from: CLAUDE }).completedToolResults).toBe(0);
+  });
 });

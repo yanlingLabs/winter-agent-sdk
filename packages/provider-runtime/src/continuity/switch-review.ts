@@ -35,6 +35,16 @@ interface Node {
   type: string;
   subtype?: string;
   role?: string;
+  /** An `assistant` entry's `tool_use` ids, in block order (F2). */
+  toolUseIds: string[];
+  /** A `user` entry's `tool_result` ids, in block order (F2). */
+  toolResultIds: string[];
+}
+
+function blockIds(message: unknown, blockType: "tool_use" | "tool_result", idKey: "id" | "tool_use_id"): string[] {
+  const content = isRecord(message) ? message.content : undefined;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((b: unknown) => (isRecord(b) && b.type === blockType && typeof b[idKey] === "string" ? [b[idKey] as string] : []));
 }
 
 function toNodes(entries: SessionStoreEntry[]): Node[] {
@@ -46,9 +56,75 @@ function toNodes(entries: SessionStoreEntry[]): Node[] {
     const subtype = typeof rawSubtype === "string" ? rawSubtype : undefined;
     const message = (e as { message?: unknown }).message;
     const role = isRecord(message) && typeof message.role === "string" ? message.role : undefined;
-    nodes.push({ uuid: e.uuid, parentUuid, type: e.type, ...(subtype !== undefined ? { subtype } : {}), ...(role !== undefined ? { role } : {}) });
+    nodes.push({
+      uuid: e.uuid,
+      parentUuid,
+      type: e.type,
+      ...(subtype !== undefined ? { subtype } : {}),
+      ...(role !== undefined ? { role } : {}),
+      toolUseIds: e.type === "assistant" ? blockIds(message, "tool_use", "id") : [],
+      toolResultIds: e.type === "user" ? blockIds(message, "tool_result", "tool_use_id") : [],
+    });
   }
   return nodes;
+}
+
+/**
+ * F2 (WS-21 fix round 23): `runtime/src/store/resume.ts`'s `recoverParallelToolResults`, redeclared
+ * (provider-runtime must never import the runtime package -- this file's own rule, above) so the
+ * warning's "N completed tool results" counts exactly what the Winter leg's rebuild carries.
+ *
+ * claude writes a PARALLEL batch as one one-block `assistant` entry per call and parents each call's
+ * result on ITS OWN call's entry, so the single parentUuid chain from the leaf holds only the result
+ * the next turn was chained onto. claude's own reader splices the others back in after its walk
+ * (`Cer`, claude 2.1.250 dump offset 20061141). Here as there: for each run of consecutive chain
+ * `assistant` entries that does not end the chain, the off-chain `user` entries parented on a run
+ * member whose results answer a call nothing on the chain answers yet are inserted right after the
+ * run's last entry, in call order. resume.ts's header comment has the full reasoning and the two
+ * deliberate differences from `Cer` (grouped by the run and matched by `tool_use_id`, never by
+ * `message.id`; no sibling assistant entries).
+ */
+function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
+  const onChain = new Set(chain.map((n) => n.uuid));
+  const resultsByParent = new Map<string, Node[]>();
+  for (const n of pool) {
+    if (onChain.has(n.uuid) || n.parentUuid === null || n.toolResultIds.length === 0) continue;
+    const siblings = resultsByParent.get(n.parentUuid);
+    if (siblings !== undefined) siblings.push(n);
+    else resultsByParent.set(n.parentUuid, [n]);
+  }
+  if (resultsByParent.size === 0) return chain;
+
+  const answered = new Set(chain.flatMap((n) => n.toolResultIds));
+  const recovered = new Set<string>();
+  const inserts = new Map<string, Node[]>();
+  for (let start = 0; start < chain.length; ) {
+    if (chain[start]!.type !== "assistant") {
+      start++;
+      continue;
+    }
+    let end = start;
+    while (end + 1 < chain.length && chain[end + 1]!.type === "assistant") end++;
+    if (end < chain.length - 1) {
+      const found: Node[] = [];
+      for (let k = start; k <= end; k++) {
+        const member = chain[k]!;
+        const open = member.toolUseIds.filter((id) => !answered.has(id));
+        if (open.length === 0) continue;
+        for (const candidate of resultsByParent.get(member.uuid) ?? []) {
+          if (recovered.has(candidate.uuid)) continue;
+          if (!candidate.toolResultIds.some((id) => open.includes(id) && !answered.has(id))) continue;
+          recovered.add(candidate.uuid);
+          for (const id of candidate.toolResultIds) answered.add(id);
+          found.push(candidate);
+        }
+      }
+      if (found.length > 0) inserts.set(chain[end]!.uuid, found);
+    }
+    start = end + 1;
+  }
+  if (inserts.size === 0) return chain;
+  return chain.flatMap((n) => [n, ...(inserts.get(n.uuid) ?? [])]);
 }
 
 function isBoundary(n: Node): boolean {
@@ -59,7 +135,8 @@ function isBoundary(n: Node): boolean {
  * The lineage from the array's own last entry (file order is append order) back to the root,
  * cut at the LAST boundary on it -- everything at or before the boundary is excluded, matching
  * `resume.ts`'s own "carriage stops at a compaction boundary" (W18-16). No boundary at all -> the
- * whole ancestry.
+ * whole ancestry. A parallel batch after the cut brings its side-branch results with it (F2,
+ * `recoverParallelToolResults` above) -- recovered AFTER the cut, so a batch before it never counts.
  */
 function lineageSinceLastBoundary(entries: SessionStoreEntry[]): Node[] {
   const nodes = toNodes(entries);
@@ -77,7 +154,7 @@ function lineageSinceLastBoundary(entries: SessionStoreEntry[]): Node[] {
   }
   chain.reverse(); // root-first
   const lastBoundaryIndex = chain.reduce((acc, n, i) => (isBoundary(n) ? i : acc), -1);
-  return lastBoundaryIndex === -1 ? chain : chain.slice(lastBoundaryIndex + 1);
+  return recoverParallelToolResults(lastBoundaryIndex === -1 ? chain : chain.slice(lastBoundaryIndex + 1), nodes);
 }
 
 // --- sidecar lookups -------------------------------------------------------------------------------
