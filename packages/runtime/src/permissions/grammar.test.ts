@@ -177,10 +177,10 @@ describe("parseRule -- fix round 8, claude's Tool(content) escape-aware extracti
     expect(rule.specifier).toEqual({ kind: "pattern", source: "echo foo(bar)" });
   });
 
-  test("empty content, Tool(), is NOT folded into the bare-equivalent shortcut -- unlike claude's own jr (s===\"\"), disclosed and deliberate: WebSearch() must stay `invalid`, not bare-equivalent (see the WebSearch describe block)", () => {
+  test("empty content, Tool(), IS bare-equivalent -- fix round 9 supersedes round 8's disclosed non-port: full Tool() parity, including WebSearch() and mcp__s__x() (see the WebSearch and mcp__ describe blocks)", () => {
     const rule = parseRule("Bash()");
-    expect(rule.specifier).toEqual({ kind: "pattern", source: "" });
-    expect(rule.isBareEquivalent).toBe(false);
+    expect(rule.specifier).toEqual({ kind: "wildcardAll" });
+    expect(rule.isBareEquivalent).toBe(true);
   });
 
 });
@@ -625,8 +625,8 @@ describe("WebFetch domain rules (WS-07 §3)", () => {
 describe("WebSearch rules -- bare name only", () => {
   const searchCall = call("WebSearch", { query: "bun test runner", allowed_domains: ["bun.sh"] });
 
-  test("a bare WebSearch rule (and WebSearch(*)) matches a real call on both directions", () => {
-    for (const source of ["WebSearch", "WebSearch(*)"]) {
+  test("a bare WebSearch rule (and WebSearch(*), and WebSearch() -- fix round 9, full Tool() parity) matches a real call on both directions", () => {
+    for (const source of ["WebSearch", "WebSearch(*)", "WebSearch()"]) {
       const rule = parseRule(source);
       expect(rule.isBareEquivalent).toBe(true);
       expect(matchesRule(rule, searchCall, { direction: "allow" })).toBe(true);
@@ -636,7 +636,7 @@ describe("WebSearch rules -- bare name only", () => {
   });
 
   test("a SCOPED WebSearch rule is `invalid` -- whatever its content looks like -- and never matches", () => {
-    for (const source of ["WebSearch(query:bun test runner)", "WebSearch(bun test runner)", "WebSearch(domain:bun.sh)", "WebSearch(bun*)", "WebSearch()"]) {
+    for (const source of ["WebSearch(query:bun test runner)", "WebSearch(bun test runner)", "WebSearch(domain:bun.sh)", "WebSearch(bun*)"]) {
       const rule = parseRule(source);
       expect(rule.specifier?.kind).toBe("invalid");
       expect(rule.isBareEquivalent).toBe(false);

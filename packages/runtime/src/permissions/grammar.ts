@@ -999,15 +999,18 @@ export function parseRule(raw: string): ParsedRule {
 
   const rawContent = trimmed.slice(openIdx + 1, closeIdx);
   // `jr` itself treats an EMPTY parenthetical (`s===""`) exactly like `s==="*"` -- both collapse to
-  // a bare rule with no specifier at all. NOT ported here: Winter's own `WebSearch` ruling
-  // deliberately makes `WebSearch()` `invalid` (a scoped-looking rule that can never match anything
-  // useful), distinct from the bare-equivalent `WebSearch(*)` -- pinned by an existing test
-  // ("a SCOPED WebSearch rule is invalid ... WebSearch()"). Folding "" into the same early,
-  // toolName-agnostic shortcut `*` already gets would make `WebSearch()` bare-equivalent too,
-  // silently overriding that ruling. Kept scoped to `*` alone, byte-identical to this module's
-  // pre-round-8 behaviour for empty content; flagged in the report as a disclosed, deliberately
-  // unported piece of `jr`'s grammar.
-  if (rawContent === "*") {
+  // a bare rule with no specifier at all.
+  //
+  // Fix round 9 (full parity, superseding round 8's disclosed non-port): round 8 deliberately kept
+  // this shortcut scoped to `*` alone, to avoid silently overriding Winter's own pre-existing
+  // `WebSearch()`-is-`invalid` ruling. The controller's round-9 ruling reverses that: FULL parity --
+  // fold every `Tool()` to bare, `WebSearch()` and `mcp__s__x()` included, because under WS-21 both
+  // legs read the SAME `settings.json`, so a deny `Bash()`/`Read()` that blocks the whole tool on
+  // claude and does NOTHING on Winter (round 8's own gap, since an unmatched `content:""` pattern
+  // specifier never matches anything) is a fail-open divergence in a shared home, which outranks the
+  // narrower WebSearch design goal. This one shortcut check already runs BEFORE the `mcp__` branch
+  // below, so folding `""` in here also covers `mcp__s__x()` for free, with no separate edit there.
+  if (rawContent === "" || rawContent === "*") {
     return { toolName, specifier: { kind: "wildcardAll" }, isBareEquivalent: true };
   }
   const content = unescapeRuleContent(rawContent);
