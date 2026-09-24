@@ -776,16 +776,26 @@ describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest travers
 // do not on every macOS version -- e.g. a sealed-system-volume install may have `/bin` as a real,
 // non-symlinked directory -- which is exactly why the map is VERIFIED dynamically, never assumed).
 describe("canonicalizeTrustedSymlinkPath -- fix round 5, claude's trusted-symlink mapping (ni/QCt)", () => {
-  test("rewrites /private/tmp/... to /tmp/...", () => {
+  // trustedSymlinkEquivalences() VERIFIES each pair dynamically (realpathSync(alias) === real) --
+  // that's the whole point (see the map's own doc comment: "a pair that does not resolve that way on
+  // a given machine is excluded"). `/tmp` -> `/private/tmp` and `/var` -> `/private/var` are real
+  // macOS symlinks; on Linux `/tmp` and `/var` are ordinary directories, so the verified map comes
+  // back EMPTY and canonicalizeTrustedSymlinkPath is a no-op for every input. These three cases are
+  // therefore darwin-only; the Linux no-rewrite behavior gets its own assertion right after them.
+  test.skipIf(process.platform !== "darwin")("rewrites /private/tmp/... to /tmp/...", () => {
     expect(canonicalizeTrustedSymlinkPath("/private/tmp/x/y.txt")).toBe("/tmp/x/y.txt");
   });
 
-  test("rewrites /private/var/... to /var/...", () => {
+  test.skipIf(process.platform !== "darwin")("rewrites /private/var/... to /var/...", () => {
     expect(canonicalizeTrustedSymlinkPath("/private/var/folders/abc")).toBe("/var/folders/abc");
   });
 
-  test("rewrites the bare real directory itself (no trailing segment)", () => {
+  test.skipIf(process.platform !== "darwin")("rewrites the bare real directory itself (no trailing segment)", () => {
     expect(canonicalizeTrustedSymlinkPath("/private/tmp")).toBe("/tmp");
+  });
+
+  test.skipIf(process.platform === "darwin")("on a non-darwin host, no real/alias pair verifies, so /private/tmp/... passes through unchanged", () => {
+    expect(canonicalizeTrustedSymlinkPath("/private/tmp/x/y.txt")).toBe("/private/tmp/x/y.txt");
   });
 
   test("a path with no matching real prefix passes through unchanged", () => {
