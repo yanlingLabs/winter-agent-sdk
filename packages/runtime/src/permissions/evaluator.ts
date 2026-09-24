@@ -604,6 +604,21 @@ const TRAILING_DOT_OR_WHITESPACE_COMPONENT = /[.\s]+$/;
 // A path whose FULL TEXT ends in a literal `.<device-name>` suffix (claude's own `In`, same dump
 // region: `/\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i`) -- a Windows reserved-device name used as an
 // "extension", e.g. `notes.CON`. Also not OS-gated in claude's own `mL`.
+//
+// Deliberately does NOT also flag a BARE component (a path ending exactly in `CON`, no leading dot):
+// `mL`'s own dump-verified body (byte 14442494) has no such branch -- `In` requires the literal dot,
+// and no other branch of `mL` covers it either. Claude DOES have bare-device-name checks elsewhere in
+// the same dump, confirmed by content search, but neither is on `$K`'s own call graph (the file-write
+// permission path this port targets):
+//   - `co(e)` (dump byte 14327883: `let t=gt(e,".").replace(/ +$/,"");return/~\d/.test(e)||
+//     /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(t)`) is claude's SYNCED-ITEM/skill-sync name
+//     validator (`$le`/"synced item name resolves to reserved path") -- an unrelated feature.
+//   - `wee(e)` (dump byte 14328421, right next to `Vbe`/`In`'s own definitions) is composed with
+//     `mL` at exactly ONE of `$K`'s own five call sites (dump byte 28948162: `if(Ae&&(mL(Me)||
+//     wee(Me)))`, an artifact/document-save naming check, "unsafe_name") -- not the other four,
+//     which are the ordinary Edit/Write/NotebookEdit/Bash-redirect permission path this port covers.
+// So a BARE `CON` genuinely does not trip claude's own file-write safety check either -- tested below
+// as `notes.CON` (the actual shape `In` targets), not a bare `CON`.
 const DEVICE_NAME_SUFFIX = /\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
 // Three-or-more dots as a WHOLE path component (claude inlines this directly in `mL`, same dump
@@ -634,13 +649,16 @@ const SHORT_FILENAME_TILDE = /~\d/;
  *     silently dropped.
  *
  * `FU` (dump byte 11268201: `function FU(t){return lt.test(t)||t.includes("??")&&lt.test(pt(t))}`,
- * `lt=/^[\/]\?\?[\/]/`, `pt` win32-normalizes only on Windows, else identity) IS ported below, in its
- * macOS-reduced form (`pt` is the identity function here, so `FU` reduces to the single regex test)
- * -- claude calls it unconditionally, not gated to Windows, so this is a straight port, not a
- * judgment call.
+ * `pt` win32-normalizes only on Windows, else identity) IS ported below, in its macOS-reduced form
+ * (`pt` is the identity function here, so `FU` reduces to the single regex test) -- claude calls it
+ * unconditionally, not gated to Windows, so this is a straight port, not a judgment call. `lt`'s own
+ * literal bytes (re-verified with a fresh byte-slice extraction after an advisor review caught a
+ * narrower first draft: the dump's raw bytes are `[` `\` `\` `/` `]`, i.e. a JS source character
+ * class holding an ESCAPED backslash plus a forward slash) is `/^[\\/]\?\?[\\/]/` -- EITHER separator
+ * at both ends (`\??\`, `\??/`, `/??\`, `/??/`), not `/` alone.
  */
 export function isSuspiciousPath(path: string): boolean {
-  if (/^\/\?\?\//.test(path)) return true; // FU, macOS-reduced (see header)
+  if (/^[\\/]\?\?[\\/]/.test(path)) return true; // FU, macOS-reduced (see header)
   if (SHORT_FILENAME_TILDE.test(path)) return true;
   if (path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\") || path.startsWith("//?/") || path.startsWith("//./")) return true;
   for (const component of path.split(/[/\\]/)) {
@@ -657,8 +675,17 @@ export function isSuspiciousPath(path: string): boolean {
 // candidates rather than also covering Read/Glob/Grep, matching claude's own message wording exactly
 // rather than inventing a read-shaped variant claude's own source has no message for.
 //
-// Deliberately reads the RAW field straight off `call.input` (mirroring `dedicatedReadToolPath`'s own
-// style just below, not `extractCandidateWritePaths`) rather than the trimmed candidate every OTHER
+// CORRECTED (this same round, advisor-caught before this comment's first draft was committed): `$K`
+// IS reached from Bash's own output-redirection parsing, not just the write/edit structured-field
+// path -- dump byte 16957904, `E6(e,t,r,o,u,p)`, claude's shell-redirect-safety validator
+// (`hasDangerousRedirection`/`UJ(e.command)`/"Output redirection to '${we}' was blocked by a deny
+// rule."): `let we=$K(Ce.path,Oe);if(!we.safe&&...)j={behavior:"ask",message:we.message,...}` runs
+// `$K` on every dangerous-redirection target. Ported below via `isShellCall`/`shellWriteTargets`
+// (the SAME shell-target extraction `REAL_SPECIAL_CHECKS.isProtectedWrite`'s own shell half already
+// uses) alongside the structured-field branch.
+//
+// The structured-field branch (Edit/Write/NotebookEdit) deliberately reads the RAW field straight off
+// `call.input` (mirroring `dedicatedReadToolPath`'s own style), NOT the trimmed candidate every OTHER
 // write-shaped check in this file now consumes (fix round 11, item 1): the whole POINT of `Vbe`
 // (`isSuspiciousPath`'s trailing dot/whitespace check) is to notice that the caller's OWN text had a
 // trailing run of dots/spaces AT ALL -- trimming first, the way the protected/critical-removal/bounds
@@ -666,14 +693,23 @@ export function isSuspiciousPath(path: string): boolean {
 // would never be flagged. Claude's own `mL`/`ht` have the identical division of labour: `ht` trims for
 // MATCHING/resolution, `mL` inspects the untrimmed, as-typed shape -- confirmed empirically here (a
 // first draft built on `extractCandidateWritePaths` made every `Vbe`-shaped fixture below go RED,
-// because round 11's own item-1 fix trims at exactly that source). Scoped to the three structured
-// fields `recognizeEditOperation`'s own direct branch covers (Edit/Write/NotebookEdit) -- the
-// controller's own test list is entirely Write(file_path:...)-shaped, and claude's `$K` is reached
-// from the write/edit permission-check path, not Bash's own shell-command parsing.
-function firstSuspiciousWritePath(call: PermissionCall): string | undefined {
-  if (call.toolName !== "Edit" && call.toolName !== "Write" && call.toolName !== "NotebookEdit") return undefined;
-  const raw = call.input[fileRulePathField(call.toolName)];
-  return typeof raw === "string" && isSuspiciousPath(raw) ? raw : undefined;
+// because round 11's own item-1 fix trims at exactly that source). The SHELL branch below is NOT
+// affected by that same trim fix -- `recognizeEditOperation`'s shell-parsing arm was never touched by
+// it -- so `shellWriteTargets`'s own output is already the as-parsed shape (a genuinely QUOTED
+// trailing space in a redirect target, e.g. `echo x > "foo.bashrc "`, survives real shell
+// tokenization; an UNQUOTED one is a word separator and never reaches here at all -- a real
+// tokenization fact, not a Winter-side trim).
+function firstSuspiciousWritePath(call: PermissionCall, ctx: EvaluationContext): string | undefined {
+  if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
+    const raw = call.input[fileRulePathField(call.toolName)];
+    return typeof raw === "string" && isSuspiciousPath(raw) ? raw : undefined;
+  }
+  if (isShellCall(call)) {
+    for (const candidate of shellWriteTargets(call, ctx)) {
+      if (isSuspiciousPath(candidate)) return candidate;
+    }
+  }
+  return undefined;
 }
 
 // Verbatim claude string (user directive: claude INTERFACE strings ship verbatim) -- `$K`'s own
@@ -2414,7 +2450,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // "before acceptEdits and auto" and, unlike the pre-existing protected-write standing exception
   // (whose OWN bypassPermissions cell is an unconditional allow — WS-07 §6.7), this one does NOT
   // exempt bypass either, matching `$K`'s own "checked first, never classifier-approvable" posture).
-  const suspiciousWritePath = firstSuspiciousWritePath(effectiveCall);
+  const suspiciousWritePath = firstSuspiciousWritePath(effectiveCall, ctx);
   const isMandatorySuspiciousPathAsk = suspiciousWritePath !== undefined;
   // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a reason to reach the
   // prompt path — priority, when more than one applies simultaneously, is askEntry >

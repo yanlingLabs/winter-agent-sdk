@@ -2352,6 +2352,35 @@ describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space de
 // (edit-recognition.ts's `recognizeEditOperation`) plus three defense-in-depth trims (evaluator.ts's
 // `isWithinBounds`/`dedicatedReadToolPath`, protected.ts's own `isProtectedWrite`) so no future
 // caller can silently re-open the gap by reading `call.input` directly again.
+//
+// This describe block tests the PRIMITIVE directly (`REAL_SPECIAL_CHECKS.isProtectedWrite`, the exact
+// function the controller's own bug report named) rather than through `evaluate()` -- once fix round
+// 11's OTHER half (the `mL` safety check, below) also lands, every `evaluate()`-level fixture for a
+// `Vbe`-shaped name like `.bashrc ` is masked: `mL` fires at stage 3, ahead of the standing-exception
+// stage `isProtectedWrite` belongs to, so `evaluate()`'s own outcome no longer discriminates whether
+// THIS fix, specifically, is the one doing the work. Calling the primitive directly sidesteps that.
+describe("REAL_SPECIAL_CHECKS.isProtectedWrite -- fix round 11 (CRITICAL), tested as a primitive so fix round 11's OWN mL check (which ALSO fires for these paths, at evaluate()'s stage 3) can't mask a regression here", () => {
+  test(".bashrc with a trailing space is recognized as protected", () => {
+    const ctx = baseCtx({ cwd: "/w/proj" });
+    expect(REAL_SPECIAL_CHECKS.isProtectedWrite(call("Write", { file_path: "/w/proj/.bashrc " }), ctx)).toBe(true);
+  });
+
+  test("~/.zshrc with a trailing space is recognized as protected", () => {
+    const ctx = baseCtx({ cwd: "/work", home: "/synthetic/home/tester" });
+    expect(REAL_SPECIAL_CHECKS.isProtectedWrite(call("Write", { file_path: "/synthetic/home/tester/.zshrc " }), ctx)).toBe(true);
+  });
+
+  test(".mcp.json followed by a tab is recognized as protected", () => {
+    const ctx = baseCtx({ cwd: "/w/proj" });
+    expect(REAL_SPECIAL_CHECKS.isProtectedWrite(call("Write", { file_path: "/w/proj/.mcp.json\t" }), ctx)).toBe(true);
+  });
+
+  test("control: an ordinary path is NOT protected", () => {
+    const ctx = baseCtx({ cwd: "/w/proj" });
+    expect(REAL_SPECIAL_CHECKS.isProtectedWrite(call("Write", { file_path: "/w/proj/notes.txt" }), ctx)).toBe(false);
+  });
+});
+
 describe("evaluate() -- fix round 11 (CRITICAL): a trailing space/tab no longer bypasses the protected-file check", () => {
   test(".bashrc with a trailing space is recognized as protected under acceptEdits (was silently written through before this fix)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
@@ -2518,6 +2547,30 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
     const record = await evaluate(call("Read", { file_path: "/w/proj/.bashrc " }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  // Advisor-caught gap (this same round): $K IS reached from Bash's own output-redirection parsing
+  // too (dump byte 16957904, claude's `E6` shell-redirect-safety validator), not only the structured
+  // Edit/Write/NotebookEdit field -- an earlier draft's own header comment claimed otherwise before
+  // being checked against the dump and corrected. A QUOTED trailing space survives real shell-word
+  // tokenization (empirically confirmed here against Winter's own shellWords/extractRedirectWrites,
+  // the disclosed tree-sitter-bash stand-in from round 9): `echo x > "foo.bashrc "` -> candidate
+  // `foo.bashrc ` (trailing space intact); an UNQUOTED one is a word separator and never reaches this
+  // check at all, which is a genuine tokenization fact, not a Winter-side trim.
+  test("a Bash output redirect to a QUOTED, trailing-space-shaped target asks under bypassPermissions (claude's E6 reaches $K for shell redirects too)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Bash", { command: 'echo x > "foo.bashrc "' }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("control: a Bash output redirect to an UNQUOTED trailing-space target is unaffected -- the space is a word separator, never reaches the check as part of the filename (tokenization fact, not a Winter-side gap)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
+    const record = await evaluate(call("Bash", { command: "echo x > foo.bashrc " }), ctx);
     expect(promptSpy.calls.length).toBe(0);
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
