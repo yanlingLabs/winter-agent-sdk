@@ -268,6 +268,99 @@ function ancestryChain(byUuid: Map<string, DialectEntry>, leafUuid: string): Dia
   return chain.reverse();
 }
 
+// --- F2 (WS-21 fix round 23): a PARALLEL tool batch's side-branch results --------------------------
+//
+// claude writes a batch of parallel tool calls as one one-block `assistant` entry per call, chained
+// one after another, and parents each call's `tool_result` entry on ITS OWN call's entry (the
+// `sourceToolAssistantUUID` override in its `insertMessageChain`). The parentUuid walk from the leaf
+// therefore passes through only ONE result -- the one the next turn was chained onto, normally the
+// batch's last -- and every other call reached the provider with no output: "No tool output found
+// for function call <id>" on the first turn after a claude -> Winter switch (the live gate's F2).
+//
+// claude's own reader has the same walk and splices the orphans back in straight afterwards: `Cer`
+// (claude 2.1.250 dump, offset 20061141), called by its chain builder `hye` (20059033) right after
+// the ancestry walk, logging `tengu_chain_parallel_tr_recovered`. For each group of chain assistant
+// entries it collects the `user` entries with `tool_result` content whose parentUuid is a member of
+// the group and that are not on the chain, and inserts them right after the group's LAST chain
+// member -- so the batch stays contiguous and every result lands after its call.
+//
+// Winter's pass is that one, with two deliberate differences:
+//   - the group is the RUN of consecutive chain `assistant` entries (one response's entries), not a
+//     `message.id` -- this projection carries no message id, and the router's same-view loopback
+//     answers every turn with one id, so an id group would lump unrelated turns. A recovered entry
+//     must ALSO answer a call of the run that nothing on the chain answers yet (the pairing the
+//     provider enforces), so a stray duplicate result is never replayed.
+//   - claude's pass also recovers off-chain SIBLING assistant entries of the same message id. Not
+//     here: in the batches claude writes, the next turn chains through a result whose call is the
+//     batch's LAST entry, so every call entry is already on the chain; recovering assistant entries
+//     would also resurrect calls a `resumeSessionAt` deliberately cut away.
+// Recovered results come in call order (claude sorts by timestamp, which is its write order: the
+// call order, for the batches measured). Only RESULTS come back: the skill body and attachments that
+// hang off a recovered result's own branch stay out, as they do in claude's pass.
+//
+// A run that ENDS the chain gets nothing spliced after it. That is claude's `--resume-session-at`,
+// which slices its RECOVERED chain at the target: slicing at a batch's last call cuts off the
+// results spliced after it. It is also what keeps the chain's last element the chain's own tail.
+
+function toolUseIdsOf(e: DialectEntry): string[] {
+  if (e.type !== "assistant" || !Array.isArray(e.message?.content)) return [];
+  return (e.message.content as unknown[]).flatMap((b) => (isRecord(b) && b.type === "tool_use" && typeof b.id === "string" ? [b.id] : []));
+}
+
+function toolResultIdsOf(e: DialectEntry): string[] {
+  if (e.type !== "user" || !Array.isArray(e.message?.content)) return [];
+  return (e.message.content as unknown[]).flatMap((b) => (isRecord(b) && b.type === "tool_result" && typeof b.tool_use_id === "string" ? [b.tool_use_id] : []));
+}
+
+/**
+ * `chain` (root-first) with each parallel batch's off-chain results spliced in right after the
+ * batch's last call entry. `pool` is where they are looked for (the loaded file, or what of it a
+ * truncation keeps in play). Returns `chain` itself when nothing was recovered.
+ */
+export function recoverParallelToolResults(chain: readonly DialectEntry[], pool: readonly DialectEntry[]): DialectEntry[] {
+  const onChain = new Set(chain.map((e) => e.uuid));
+  const resultsByParent = new Map<string, DialectEntry[]>();
+  for (const e of pool) {
+    if (onChain.has(e.uuid) || e.parentUuid === null || toolResultIdsOf(e).length === 0) continue;
+    const siblings = resultsByParent.get(e.parentUuid);
+    if (siblings !== undefined) siblings.push(e);
+    else resultsByParent.set(e.parentUuid, [e]);
+  }
+  if (resultsByParent.size === 0) return [...chain];
+
+  const answered = new Set(chain.flatMap(toolResultIdsOf));
+  const recovered = new Set<string>();
+  const inserts = new Map<string, DialectEntry[]>();
+  for (let start = 0; start < chain.length; ) {
+    if (chain[start]!.type !== "assistant") {
+      start++;
+      continue;
+    }
+    let end = start;
+    while (end + 1 < chain.length && chain[end + 1]!.type === "assistant") end++;
+    if (end < chain.length - 1) {
+      const found: DialectEntry[] = [];
+      for (let k = start; k <= end; k++) {
+        const member = chain[k]!;
+        const open = toolUseIdsOf(member).filter((id) => !answered.has(id));
+        if (open.length === 0) continue;
+        for (const candidate of resultsByParent.get(member.uuid) ?? []) {
+          if (recovered.has(candidate.uuid)) continue;
+          const ids = toolResultIdsOf(candidate);
+          if (!ids.some((id) => open.includes(id) && !answered.has(id))) continue;
+          recovered.add(candidate.uuid);
+          for (const id of ids) answered.add(id);
+          found.push(candidate);
+        }
+      }
+      if (found.length > 0) inserts.set(chain[end]!.uuid, found);
+    }
+    start = end + 1;
+  }
+  if (inserts.size === 0) return [...chain];
+  return chain.flatMap((e) => [e, ...(inserts.get(e.uuid) ?? [])]);
+}
+
 // Ruling P1-R: "descendant" is graph membership, never file position — entry `candidateUuid`
 // descends from `ancestorUuid` iff walking the CANDIDATE's own ancestry passes through the ancestor.
 // Excludes the ancestor itself (a node is not its own descendant).
@@ -315,7 +408,12 @@ export function truncateAt(entries: DialectEntry[], opts: { atUuid: string; drop
     );
   }
 
-  return kept;
+  // F2 (fix round 23): a parallel batch inside the kept ancestry brings its side-branch results with
+  // it -- `rebuildProviderMessages` finds them only in the entries it is handed, and the writer's
+  // `initialConversationalUuids` must name them in the same order. Never a dropped entry, and never
+  // after the last kept element: that stays `atUuid`, which the next append chains onto.
+  const droppedUuids = new Set(dropped.map((e) => e.uuid));
+  return recoverParallelToolResults(kept, entries.filter((e) => !droppedUuids.has(e.uuid)));
 }
 
 // --- rebuilding provider context from a resumed/continued/forked transcript ----------------------
@@ -448,8 +546,13 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
           return [...head, ...lineage.slice(lastBoundaryIndex + 1)];
         })();
 
+  // F2 (fix round 23): a claude parallel batch's other results live on side branches of the walk --
+  // spliced back in after the batch (`recoverParallelToolResults`, claude's `Cer`). Run on the
+  // lineage AFTER the compaction cut, so only a batch that survives the cut can recover anything.
+  const recoveredLineage = recoverParallelToolResults(effectiveLineage, entries);
+
   const messages: ProviderMessage[] = [];
-  for (const e of effectiveLineage) {
+  for (const e of recoveredLineage) {
     // SDK 0.0.16 (P16-5/P16-6): a persisted ATTACHMENT comes back as the same meta user message the
     // live engine appended -- rendered from its payload by the one renderer (context/attachments.ts),
     // so the folds see it and nothing is re-announced. A type Winter has no renderer for (claude's own

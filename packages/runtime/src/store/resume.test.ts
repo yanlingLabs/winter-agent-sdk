@@ -501,6 +501,151 @@ describe("rebuildProviderMessages — compaction, both shapes (W18-13)", () => {
   });
 });
 
+// --- F2 (WS-21 fix round 23): claude's PARALLEL tool batch -----------------------------------------
+//
+// The live gate's handoff failure: claude writes a batch of parallel calls as one one-block assistant
+// entry per call, chained one after another, and parents each call's tool_result entry on ITS OWN
+// call's entry. A single parentUuid walk from the leaf therefore reaches only the LAST call's result;
+// the others sit on side branches. This is the transcript shape the pinned claude wrote in the router
+// rig (lane-L2-report.md, "F2"), uuids kept as measured.
+function claudeParallelBatch(): SessionStoreEntry[] {
+  const assistant = (uuid: string, parentUuid: string, block: Record<string, unknown>): SessionStoreEntry => ({
+    type: "assistant",
+    uuid,
+    parentUuid,
+    timestamp: "2026-09-24T12:00:00.000Z",
+    message: { id: "msg_f2_batch", role: "assistant", model: "claude-sonnet-f2", content: [block] },
+  });
+  const result = (uuid: string, parentUuid: string, toolUseId: string, content: unknown): SessionStoreEntry => ({
+    type: "user",
+    uuid,
+    parentUuid,
+    timestamp: "2026-09-24T12:00:01.000Z",
+    sourceToolAssistantUUID: parentUuid,
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content }] },
+  });
+  return [
+    { type: "user", uuid: "25b2b70a", parentUuid: null, timestamp: "2026-09-24T12:00:00.000Z", message: { role: "user", content: "run the F2 batch" } },
+    assistant("69c00c59", "25b2b70a", { type: "tool_use", id: "toolu_f2_skill", name: "Skill", input: { skill: "gate-user" } }),
+    assistant("8552ed72", "69c00c59", { type: "tool_use", id: "toolu_f2_search", name: "ToolSearch", input: { query: "select:mcp__sv-user-mcp__echo" } }),
+    assistant("54487711", "8552ed72", { type: "tool_use", id: "toolu_f2_mcp", name: "mcp__sv-user-mcp__echo", input: { text: "f2" } }),
+    result("cf52004b", "69c00c59", "toolu_f2_skill", "Launching skill: gate-user"),
+    // The skill's body (isMeta) and its attachments hang off the Skill RESULT's branch. claude's own
+    // splice pass never recovers these, so neither does Winter's (parity note 4 in the F2 spec).
+    { type: "user", uuid: "caa5da55", parentUuid: "cf52004b", isMeta: true, timestamp: "2026-09-24T12:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "F2 SKILL BODY" }] } },
+    { type: "attachment", uuid: "f2-att-s1", parentUuid: "caa5da55", timestamp: "2026-09-24T12:00:01.000Z", attachment: { type: "date_change", newDate: "2026-09-25" } },
+    { type: "attachment", uuid: "f2-att-s2", parentUuid: "f2-att-s1", timestamp: "2026-09-24T12:00:01.000Z", attachment: { type: "f2_unrendered" } },
+    result("4e5e7265", "8552ed72", "toolu_f2_search", [{ type: "tool_reference", tool_name: "mcp__sv-user-mcp__echo" }]),
+    result("568f4afb", "54487711", "toolu_f2_mcp", "echo: f2"),
+    { type: "attachment", uuid: "f2-att-m1", parentUuid: "568f4afb", timestamp: "2026-09-24T12:00:01.000Z", attachment: { type: "f2_unrendered" } },
+    { type: "attachment", uuid: "519bfcd0", parentUuid: "f2-att-m1", timestamp: "2026-09-24T12:00:01.000Z", attachment: { type: "f2_unrendered" } },
+    { type: "assistant", uuid: "ba33ce5b", parentUuid: "519bfcd0", timestamp: "2026-09-24T12:00:02.000Z", message: { id: "msg_f2_done", role: "assistant", model: "claude-sonnet-f2", content: [{ type: "text", text: "F2-DONE" }] } },
+    { type: "user", uuid: "f2-next", parentUuid: "ba33ce5b", timestamp: "2026-09-24T12:00:03.000Z", message: { role: "user", content: "and the next question" } },
+  ];
+}
+
+/** The rebuilt calls no rebuilt tool_result answers, in call order -- exactly what a provider refuses ("No tool output found for function call <id>"). */
+function unpairedCalls(messages: ProviderMessage[]): string[] {
+  const results = new Set<string>();
+  for (const m of messages) {
+    if (!Array.isArray(m.content)) continue;
+    for (const b of m.content) if (b.type === "tool_result") results.add(b.tool_use_id);
+  }
+  const unpaired: string[] = [];
+  for (const m of messages) {
+    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+    for (const b of m.content) if (b.type === "tool_use" && !results.has(b.id)) unpaired.push(b.id);
+  }
+  return unpaired;
+}
+
+/** The rebuilt history as `role:<call ids | result ids | text>` lines, so an order assertion reads like the transcript. */
+function shapeOf(messages: ProviderMessage[]): string[] {
+  return messages.map((m) => {
+    if (typeof m.content === "string") return `${m.role}:${m.content}`;
+    const parts = m.content.map((b) => (b.type === "tool_use" ? `use:${b.id}` : b.type === "tool_result" ? `result:${b.tool_use_id}` : b.type));
+    return `${m.role}:${parts.join(",")}`;
+  });
+}
+
+describe("F2 (fix round 23): a claude parallel tool batch rebuilds with every call paired", () => {
+  test("every call of the batch reaches the provider with its output, each recovered result right after the batch's last call entry", () => {
+    const rebuilt = rebuildProviderMessages(toDialectEntries(claudeParallelBatch()));
+    expect(unpairedCalls(rebuilt)).toEqual([]);
+    expect(shapeOf(rebuilt)).toEqual([
+      "user:run the F2 batch",
+      "assistant:use:toolu_f2_skill",
+      "assistant:use:toolu_f2_search",
+      "assistant:use:toolu_f2_mcp",
+      "tool:result:toolu_f2_skill",
+      "tool:result:toolu_f2_search",
+      "tool:result:toolu_f2_mcp",
+      "assistant:F2-DONE",
+      "user:and the next question",
+    ]);
+    // claude parity: only the RESULTS come back -- the skill body and its attachments stay out.
+    expect(JSON.stringify(rebuilt)).not.toContain("F2 SKILL BODY");
+    expect(JSON.stringify(rebuilt)).not.toContain("2026-09-25");
+  });
+
+  test("resumeSessionAt the batch's own last result carries the side results too; at the batch's last CALL it carries none (claude's recover-then-slice)", () => {
+    const entries = toDialectEntries(claudeParallelBatch());
+    const atResult = truncateAt(entries, { atUuid: "568f4afb", dropsTurn: true });
+    expect(atResult.map((e) => e.uuid)).toEqual(["25b2b70a", "69c00c59", "8552ed72", "54487711", "cf52004b", "4e5e7265", "568f4afb"]);
+    expect(atResult.at(-1)!.uuid).toBe("568f4afb"); // dialect.ts continues the chain from the LAST element
+    expect(unpairedCalls(rebuildProviderMessages(atResult))).toEqual([]);
+
+    const atLastCall = truncateAt(entries, { atUuid: "54487711", dropsTurn: true });
+    expect(atLastCall.map((e) => e.uuid)).toEqual(["25b2b70a", "69c00c59", "8552ed72", "54487711"]);
+  });
+
+  test("a batch before the last compaction boundary is never resurrected; a batch after it is recovered", () => {
+    const batch = claudeParallelBatch();
+    const before: SessionStoreEntry[] = [
+      ...batch.slice(0, -1),
+      { type: "system", subtype: "compact_boundary", uuid: "f2-boundary", parentUuid: null, logicalParentUuid: "ba33ce5b", timestamp: "2026-09-24T12:00:04.000Z", compactMetadata: { trigger: "auto", preTokens: 100 } },
+      { type: "user", uuid: "f2-summary", parentUuid: "f2-boundary", isCompactSummary: true, timestamp: "2026-09-24T12:00:04.000Z", message: { role: "user", content: "F2 SUMMARY" } },
+      { type: "user", uuid: "f2-after", parentUuid: "f2-summary", timestamp: "2026-09-24T12:00:05.000Z", message: { role: "user", content: "after the cut" } },
+    ];
+    const cut = rebuildProviderMessages(toDialectEntries(before));
+    expect(shapeOf(cut)).toEqual(["user:F2 SUMMARY", "user:after the cut"]);
+
+    // The same batch, now written AFTER a boundary (re-rooted on the summary).
+    const after: SessionStoreEntry[] = [
+      { type: "system", subtype: "compact_boundary", uuid: "f2-boundary", parentUuid: null, timestamp: "2026-09-24T11:59:00.000Z", compactMetadata: { trigger: "auto", preTokens: 100 } },
+      { type: "user", uuid: "f2-summary", parentUuid: "f2-boundary", isCompactSummary: true, timestamp: "2026-09-24T11:59:00.000Z", message: { role: "user", content: "F2 SUMMARY" } },
+      ...batch.map((e) => (e.uuid === "25b2b70a" ? { ...e, parentUuid: "f2-summary" } : e)),
+    ];
+    const recovered = rebuildProviderMessages(toDialectEntries(after));
+    expect(unpairedCalls(recovered)).toEqual([]);
+    expect(shapeOf(recovered).slice(0, 8)).toEqual([
+      "user:F2 SUMMARY",
+      "user:run the F2 batch",
+      "assistant:use:toolu_f2_skill",
+      "assistant:use:toolu_f2_search",
+      "assistant:use:toolu_f2_mcp",
+      "tool:result:toolu_f2_skill",
+      "tool:result:toolu_f2_search",
+      "tool:result:toolu_f2_mcp",
+    ]);
+  });
+
+  test("a call already answered on the chain is never answered twice, and a Winter-shaped linear batch is unchanged", () => {
+    // Winter's own writer: ONE assistant entry with every call, ONE user entry with every result.
+    const linear: DialectEntry[] = [
+      { type: "user", uuid: "w1", parentUuid: null, message: { role: "user", content: "go" } },
+      { type: "assistant", uuid: "w2", parentUuid: "w1", message: { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "t", input: {} }, { type: "tool_use", id: "c2", name: "t", input: {} }] } },
+      { type: "user", uuid: "w3", parentUuid: "w2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "c1", content: "one" }, { type: "tool_result", tool_use_id: "c2", content: "two" }] } },
+      // A stray second result for c1 on a side branch of the call entry (an abandoned retry, say).
+      { type: "user", uuid: "w-stray", parentUuid: "w2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "c1", content: "stray" }] } },
+      { type: "assistant", uuid: "w4", parentUuid: "w3", message: { role: "assistant", content: [{ type: "text", text: "done" }] } },
+    ];
+    const rebuilt = rebuildProviderMessages(linear);
+    expect(shapeOf(rebuilt)).toEqual(["user:go", "assistant:use:c1,use:c2", "tool:result:c1,result:c2", "assistant:done"]);
+    expect(JSON.stringify(rebuilt)).not.toContain("stray");
+  });
+});
+
 // --- message.model round trip (fix round 3, P10b-6, W18-17) --------------------------------------
 //
 // The real claude binary writes `message.model` on every assistant entry it produces (W18-11 is why
