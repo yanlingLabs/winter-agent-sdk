@@ -503,7 +503,7 @@ describe("substituteArguments -- fix round 9, the full zE port ($ARGUMENTS[n], $
     expect(substituteArguments("\\\\$ARGUMENTS", "z")).toBe("\\\\z");
   });
 
-  test("the word-boundary sentinel: $1$ARGUMENTS[0] with args 'a b' gives 'ba', not '$1a' -- without the kW wrap around a substituted value, the earlier-run $n pass's own negative lookahead would misjudge what follows the digit", () => {
+  test("the word-boundary sentinel: $1$ARGUMENTS[0] with args 'a b' gives 'ba', not '$1a' -- $ARGUMENTS[0] substitutes FIRST (pass order), and its kW-wrapped value is what lets the LATER $n pass's own negative lookahead still see a non-word character right after '$1'", () => {
     expect(substituteArguments("$1$ARGUMENTS[0]", "a b")).toBe("ba");
   });
 

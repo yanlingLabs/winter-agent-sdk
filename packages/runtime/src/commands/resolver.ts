@@ -285,10 +285,14 @@ function splitCommand(prompt: string): { name: string; args: string } {
 // elsewhere, avoided here structurally rather than by scan order); and the value is WRAPPED in `kW`
 // on both sides, a word-boundary spacer for the `(?!\w)`/`(?![\[\w])` negative lookaheads THIS same
 // function's OWN passes use -- without it, `zE("$1$ARGUMENTS[0]","a b")` would insert "a" directly
-// after "$1" with no boundary, and the earlier `$n` pass (which already ran, in claude's actual
-// left-to-right pass order `$ARGUMENTS[n]` then `$n`... -- SEE THE TEST for the concrete case) would
-// misjudge what follows the digit. Both markers are stripped to `$`/`""` only at the very end, after
-// every pass has run.
+// after "$1" with no boundary. The pass order is `$ARGUMENTS[n]` THEN `$n` (see this function's own
+// body below), so `$ARGUMENTS[0]` substitutes FIRST, inserting its `kW`-wrapped value between "$1"
+// and where "a" would otherwise sit; the `$n` pass runs SECOND and sees that `kW` (not a word
+// character) immediately after "$1", so its own `(?!\w)` lookahead succeeds and "$1" substitutes
+// correctly too. Without the wrap, the `$n` pass would instead see "$1" immediately followed by "a"
+// (a word character) and refuse to match at all, leaving a literal "$1" in the output. SEE THE TEST
+// for the concrete case. Both markers are stripped to `$`/`""` only at the very end, after every
+// pass has run.
 const ARG_DOLLAR_SENTINEL = "￿";
 const ARG_BOUNDARY_SENTINEL = "￾";
 

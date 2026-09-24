@@ -249,6 +249,14 @@ interface RootGroup<TEntry> {
   /** Keyed by the `ki`-compiled pattern text actually fed to `ignore()` -- see this module's header on why this replaces claude's own `E.has(D+"/**")` reconstruction. */
   byCompiledPattern: Map<string, TEntry>;
   ig: ReturnType<typeof ignoreFactory>;
+  /**
+   * Item 2, fix round 9: the FIRST candidate entry added to this root's group -- kept so a
+   * denyAsk evaluation has something concrete to return as "the blocking rule" if the group's own
+   * `ignore()` instance never became usable (see `matchFileRulesGrouped`'s own header for why this
+   * is the entry claude's own equivalent fail-closed posture would deny the call over, even though
+   * claude's own decision is not attributed to one specific rule entry the way an ordinary match is).
+   */
+  firstEntry: TEntry;
 }
 
 // Fix round 5, N-1 (the re-review of 57e7fef..20b623e, Important): the pre-fix version below
@@ -291,18 +299,49 @@ export function matchFileRulesGrouped<TEntry>(candidates: readonly FileRuleCandi
     const compiled = unanchorTrailingDoubleStar(normalized, behavior === "allow");
     let group = groups.get(rootKey);
     if (group === undefined) {
-      group = { byCompiledPattern: new Map(), ig: ignoreFactory({ ignorecase: true }) };
+      group = { byCompiledPattern: new Map(), ig: ignoreFactory({ ignorecase: true }), firstEntry: candidate.entry };
       groups.set(rootKey, group);
       groupOrder.push(rootKey);
     }
     group.byCompiledPattern.set(compiled, candidate.entry);
+    // `.add()` itself does not throw for a malformed pattern (confirmed empirically against the
+    // real package: it only THROWS lazily, the first time `.test()` forces the combined regex to
+    // compile -- see the `.test()` call below, which is where this is actually caught).
     group.ig.add(compiled);
   }
   for (const rootKey of groupOrder) {
     const group = groups.get(rootKey)!;
     const rel = relative(rootKey, path);
     if (!isPathValidRelative(rel)) continue;
-    const result = group.ig.test(rel);
+    // Item 2, fix round 9: a malformed pattern (e.g. an unterminated `[...]` character class
+    // followed by another path segment) makes the real `ignore` package's own regex construction
+    // throw HERE, at `.test()` -- confirmed empirically, not assumed: `.add()` alone never throws
+    // for the same input; the combined regex is compiled lazily, on first use. An uncaught throw
+    // here would crash this whole evaluation and everything above it, for every OTHER candidate and
+    // every OTHER anchor root too, not just the one rule that is actually broken.
+    //
+    // Claude's own posture (dump-confirmed, `d8t`'s hardcoded fallback -- Read/Edit declare no
+    // custom `permissionCheckFailureDecision`): a permission check that crashes is caught PER TOOL
+    // CALL and resolved to `{behavior:"deny", message:"...permission check failed and its
+    // fail-closed posture could not be determined. The call is denied.", decisionReason:{type:
+    // "other", reason:"permission check crashed; tool declares a fail-closed posture"}}` -- never a
+    // propagating exception, never a crash. Winter has no equivalent "tool declares a
+    // permissionCheckFailureDecision callback" architecture for this to route through byte-for-byte;
+    // what is ported is the OBSERVABLE, direction-aware outcome: `denyAsk` treats the broken group
+    // as MATCHING (a malformed deny/ask rule still protects, exactly as claude's own fail-closed
+    // fallback denies the call), `allow` treats it as NOT matching (a malformed allow rule must
+    // never auto-grant) -- the identical fail-closed-per-direction posture this module's own
+    // MAX_DOUBLE_STARS/MAX_STARS_PER_SEGMENT caps already use one file up (`paths.ts`) for a
+    // different "too complex to safely evaluate" case. Scoped to THIS root's own group only, exactly
+    // like claude's own per-anchor-root `ignore()` memoization (`ln`'s `getIg`) -- an unrelated
+    // root's candidates are built and tested completely independently and never see this at all.
+    let result: { ignored: boolean; rule?: { pattern: string } };
+    try {
+      result = group.ig.test(rel);
+    } catch {
+      if (behavior === "denyAsk") return group.firstEntry;
+      continue;
+    }
     if (result.ignored && result.rule) {
       const winner = group.byCompiledPattern.get(result.rule.pattern);
       if (winner !== undefined) return winner;
