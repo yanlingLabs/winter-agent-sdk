@@ -23,8 +23,8 @@
 // without coupling permission-rule matching to transcript-key logic, which the brief explicitly
 // forbids; this module shares no code with either file (only the mkdtemp/realpath-the-base TEST
 // convention is intentionally mirrored -- see paths.test.ts).
-import { realpathSync } from "node:fs";
-import { dirname, basename, join, isAbsolute, normalize } from "node:path";
+import { realpathSync, readlinkSync } from "node:fs";
+import { dirname, basename, join, resolve, isAbsolute, normalize } from "node:path";
 import type { PermissionBehavior } from "@yanlinglabs/winter-agent-sdk";
 
 // ---------------------------------------------------------------------------------------------
@@ -555,22 +555,93 @@ export function resolveRealTarget(path: string): string {
   }
 }
 
+// Fix round 13 (Important item 2, claude's own `Ii`/here named `yh` in its own dump chunk -- see
+// this function's own citation below): a MANUAL, ITERATIVE symlink-chain resolver, distinct from
+// `resolveRealTarget` above and NOT a replacement for it -- `resolveRealTarget` is correct and
+// unchanged for its own, much more common purpose ("a not-yet-existing WRITE target with no symlink
+// involved at all," where falling back to the literal path text is exactly right). This one exists
+// for a narrower, security-relevant case `resolveRealTarget` cannot answer: a symlink whose ULTIMATE
+// target does not (yet) fully exist on disk -- a dangling link, or a link into a not-yet-created
+// subtree (`ln -s .git/hooks/pre-commit innocent` in a fresh repo with no hooks installed yet).
+// `realpathSync` throws for the WHOLE chain in that case, and `resolveRealTarget`'s own ENOENT
+// fallback walks up `path`'s OWN ancestors -- it never reads what the symlink ITSELF points at, so
+// it falls back to the LINK'S OWN literal name, silently losing the fact that it was ever a symlink
+// at all.
+//
+// claude's own `Ii` (dump byte 15346812; minified as `yh` in the chunk it was found in --
+// content-search on `readlinkSync` near the sandbox/permissions super-region, since a name search
+// for the literal `Ii` collides with unrelated same-named functions in other bundle chunks, the
+// SAME cross-chunk problem this whole engagement keeps hitting): up to `eR` (40) hops, each one
+// tries `realpathSync` on the whole current candidate; on failure, walks UP via `dirname` to find
+// the DEEPEST ancestor that DOES fully resolve, then `readlinkSync`s the immediate child under that
+// ancestor (works even when that child is a DANGLING symlink, unlike `realpathSync`) -- a non-symlink
+// (readlink itself throws) returns the reconstructed "resolved-ancestor + literal remainder" path,
+// matching `resolveRealTarget`'s own fallback shape exactly; a symlink (readlink succeeds) splices
+// its OWN raw target text in place of the unresolved child and loops again, so a CHAIN of dangling
+// symlinks is followed just as far as claude's own `Ii` follows it.
+const MAX_SYMLINK_CHAIN_HOPS = 40;
+
+export function resolveSymlinkTargetChain(path: string): string | undefined {
+  let current = path;
+  for (let hop = 0; hop < MAX_SYMLINK_CHAIN_HOPS; hop++) {
+    try {
+      return realpathSync(current);
+    } catch {
+      // fall through to the manual, one-hop-at-a-time walk below
+    }
+    let probe = current;
+    const remainder: string[] = [];
+    let deepestReal: string | null = null;
+    while (deepestReal === null) {
+      const parent = dirname(probe);
+      if (parent === probe) return undefined; // reached the fs root and still nothing resolves -- give up
+      remainder.unshift(basename(probe));
+      probe = parent;
+      try {
+        deepestReal = realpathSync(probe);
+      } catch {
+        // keep walking up
+      }
+    }
+    const firstUnresolved = join(deepestReal, remainder[0]!);
+    let linkValue: string | null = null;
+    try {
+      linkValue = readlinkSync(firstUnresolved);
+    } catch {
+      // not a symlink at all -- linkValue stays null, matching claude's own w===null branch
+    }
+    if (linkValue === null) return join(deepestReal, ...remainder);
+    current = join(resolve(dirname(firstUnresolved), linkValue), ...remainder.slice(1));
+  }
+  return undefined;
+}
+
 // WS-07 §3.1: "Symlinks are checked at both ends: allow requires link AND resolved target to both
 // match; deny applies if EITHER matches." `matcher` tests ONE candidate path string against
 // whatever rule pattern the caller is evaluating (typically `(p) => matchFileRule(pattern, {...,
 // path: p})`, but kept as a plain predicate here so this function stays pure-decision and never
 // itself re-derives anchor/opts plumbing) -- composing a matcher with `matchFileRule` for the
 // pattern-plus-anchors case is T7's job at the evaluator layer, not this primitive's.
+//
+// Fix round 13: a THIRD candidate, `resolveSymlinkTargetChain`'s own result, joins the SAME "deny if
+// any end matches, allow only if every end does" composition -- `checkSymlinkBothEnds`'s own header
+// already calls this "a bare predicate-composer" (Ruling P2-J, a Winter-specific mechanism, not
+// itself a direct claude port), so extending its own "both/either" rule to a third candidate is this
+// module's own consistent choice, not a claim about claude's own (different) allow-retry mechanism.
+// `undefined` when the chain resolver gives up entirely (mirrors `resolveRealTarget`'s own
+// "give up at the fs root" case) -- simply omitted from the candidate set, never treated as a match.
 export function checkSymlinkBothEnds(
   path: string,
   matcher: (candidatePath: string) => boolean,
 ): SymlinkBothEndsResult {
   const target = resolveRealTarget(path);
+  const chainTarget = resolveSymlinkTargetChain(path);
   const linkMatches = matcher(path);
   const targetMatches = matcher(target);
+  const chainTargetMatches = chainTarget !== undefined ? matcher(chainTarget) : undefined;
   return {
-    allowRequiresBoth: linkMatches && targetMatches,
-    denyIfEither: linkMatches || targetMatches,
+    allowRequiresBoth: linkMatches && targetMatches && (chainTargetMatches ?? true),
+    denyIfEither: linkMatches || targetMatches || (chainTargetMatches ?? false),
   };
 }
 

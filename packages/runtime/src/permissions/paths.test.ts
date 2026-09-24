@@ -27,6 +27,7 @@ import {
   MAX_STARS_PER_SEGMENT,
   exceedsStarsPerSegmentCap,
   resolveTargetPath,
+  resolveSymlinkTargetChain,
   type FileRuleEntry,
 } from "./paths.ts";
 
@@ -621,6 +622,100 @@ describe("checkSymlinkBothEnds (WS-07 §3.1: 'symlinks are checked at both ends'
         allowRequiresBoth: true,
         denyIfEither: true,
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fix round 13 (Important item 2, claude's own Ii): a DANGLING symlink whose stored target sits
+  // OUTSIDE the link's own location (unlike the test just above, where the dangling target happens
+  // to be a sibling INSIDE the same project dir) -- the case resolveRealTarget's own ENOENT fallback
+  // cannot answer, since it never reads the symlink's own readlink() value and falls back to the
+  // LINK's own literal path instead.
+  test("a dangling symlink pointing OUTSIDE its own location: deny fires via the chain-resolved target, matching resolveSymlinkTargetChain's own result", () => {
+    const root = freshRoot();
+    try {
+      const projectDir = join(root, "project");
+      const sensitiveDir = join(root, "sensitive", "nested"); // deliberately never created
+      mkdirSync(projectDir);
+      const linkPath = join(projectDir, "dangling-link");
+      const danglingTarget = join(sensitiveDir, "secret.txt");
+      symlinkSync(danglingTarget, linkPath);
+
+      expect(resolveSymlinkTargetChain(linkPath)).toBe(danglingTarget);
+
+      const matchesSensitive = (p: string) => p.startsWith(join(root, "sensitive") + "/");
+      const result = checkSymlinkBothEnds(linkPath, matchesSensitive);
+      // resolveRealTarget's own candidate is just `linkPath` itself here (project/dangling-link),
+      // which does not match -- only the NEW chain-resolved candidate does, closing the gap.
+      expect(result.denyIfEither).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveSymlinkTargetChain -- fix round 13 (Important item 2), claude's own Ii", () => {
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-paths-symlink-chain-")));
+  }
+
+  test("a plain, non-symlink, existing path resolves via ordinary realpath", () => {
+    const root = freshRoot();
+    try {
+      const filePath = join(root, "plain.txt");
+      writeFileSync(filePath, "content");
+      expect(resolveSymlinkTargetChain(filePath)).toBe(filePath);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a real, non-dangling symlink resolves to its real target -- same as resolveRealTarget", () => {
+    const root = freshRoot();
+    try {
+      const realFile = join(root, "real.txt");
+      writeFileSync(realFile, "content");
+      const linkPath = join(root, "link");
+      symlinkSync(realFile, linkPath);
+      expect(resolveSymlinkTargetChain(linkPath)).toBe(realFile);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a DANGLING symlink resolves to its OWN stored target text, even though nothing on that path exists -- the controller's own scenario (a symlink into a not-yet-created .git/hooks/)", () => {
+    const root = freshRoot();
+    try {
+      mkdirSync(join(root, ".git", "hooks"), { recursive: true });
+      const hookTarget = join(root, ".git", "hooks", "pre-commit"); // never created
+      const linkPath = join(root, "innocent");
+      symlinkSync(hookTarget, linkPath);
+      expect(resolveSymlinkTargetChain(linkPath)).toBe(hookTarget);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a CHAIN of dangling symlinks is followed to the end", () => {
+    const root = freshRoot();
+    try {
+      const linkA = join(root, "a");
+      const linkB = join(root, "b"); // A -> B -> final (final never created)
+      const final = join(root, "final-target.txt");
+      symlinkSync(linkB, linkA);
+      symlinkSync(final, linkB);
+      expect(resolveSymlinkTargetChain(linkA)).toBe(final);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a not-yet-existing path with NO symlink involved resolves the same way resolveRealTarget does", () => {
+    const root = freshRoot();
+    try {
+      const newFilePath = join(root, "not-yet-created.txt");
+      expect(resolveSymlinkTargetChain(newFilePath)).toBe(newFilePath);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

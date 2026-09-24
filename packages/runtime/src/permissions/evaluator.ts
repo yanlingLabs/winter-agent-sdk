@@ -37,7 +37,7 @@
 import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, shellWords, stripWrappers, type ParsedRule } from "./grammar.ts";
-import { checkSymlinkBothEnds, resolveRealTarget, resolveTargetPath } from "./paths.ts";
+import { checkSymlinkBothEnds, resolveRealTarget, resolveSymlinkTargetChain, resolveTargetPath } from "./paths.ts";
 import {
   fileRuleKindFor,
   canonicalFileRuleAuthoringToolName,
@@ -728,7 +728,16 @@ function suspiciousSymlinkTarget(rawCandidate: string, ctx: EvaluationContext): 
   try {
     const absPath = resolveTargetPath(rawCandidate, ctx.cwd);
     const target = resolveRealTarget(absPath);
-    return isSuspiciousPath(target) ? target : undefined;
+    if (isSuspiciousPath(target)) return target;
+    // Fix round 13 (Important item 2, claude's own Ii): resolveRealTarget's own fallback never reads
+    // a symlink's OWN stored target when the ultimate chain doesn't fully exist on disk (a dangling
+    // link, or a link into a not-yet-created subtree) -- it falls back to the LINK'S OWN literal
+    // name, silently losing the fact it was ever a symlink. resolveSymlinkTargetChain (paths.ts,
+    // this same round) follows the symlink's own readlink() value even when dangling, so a candidate
+    // like `ln -s .git/hooks/pre-commit innocent` still surfaces its real, suspicious-or-protected
+    // destination here.
+    const chainTarget = resolveSymlinkTargetChain(absPath);
+    return chainTarget !== undefined && isSuspiciousPath(chainTarget) ? chainTarget : undefined;
   } catch {
     return undefined;
   }

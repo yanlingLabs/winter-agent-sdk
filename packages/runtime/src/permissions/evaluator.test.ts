@@ -3440,6 +3440,36 @@ describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-awar
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Fix round 13 (Important item 2, claude's own Ii, dump byte 15346812): the controller's own exact
+  // scenario -- a DANGLING symlink (its target does not exist yet at all). resolveRealTarget's own
+  // ENOENT fallback never reads the symlink's OWN stored value, so it fell back to the LINK's own
+  // literal name ("innocent") -- no ".git" segment there, so isProtectedPath saw nothing protected
+  // and this was silently auto-approved under acceptEdits, creating a git hook. resolveSymlinkTargetChain
+  // (paths.ts) follows the dangling link's own readlink() value, so checkSymlinkBothEnds now sees the
+  // REAL, protected destination even though nothing on that path exists yet.
+  test("acceptEdits: writing through a DANGLING symlink whose stored target is inside .git/hooks (nothing on that path exists yet) is still protected — not silently auto-approved", async () => {
+    const root = freshRoot();
+    try {
+      mkdirSync(join(root, ".git", "hooks"), { recursive: true });
+      const hookTarget = join(root, ".git", "hooks", "pre-commit"); // deliberately never created
+      const linkPath = join(root, "innocent");
+      symlinkSync(hookTarget, linkPath); // a real, but DANGLING, symlink
+
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: root,
+        policy: policy({ mode: "acceptEdits" }),
+        specialChecks: REAL_SPECIAL_CHECKS,
+      });
+      const record = await evaluate(call("Write", { file_path: linkPath }), ctx);
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.decision).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // Fix round 12 (minor, claude's own `Ii`): `$K` runs `mL` on every candidate from `Ii(e)`, not just
