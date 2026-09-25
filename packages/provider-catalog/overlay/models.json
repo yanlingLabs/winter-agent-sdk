@@ -25841,7 +25841,7 @@
       "upstreamId": "qwen3.8-max",
       "displayName": "Qwen3.8 Max",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: reasoning_effort=none (maps to enable_thinking=false), also enable_thinking=false. Chat effort: reasoning_effort low/medium/xhigh; minimal maps low and high/max map xhigh. Do not combine reasoning_effort with thinking_budget. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: reasoning_effort=none (maps to enable_thinking=false), also enable_thinking=false. Chat effort: reasoning_effort low/medium/xhigh; minimal maps low and high/max map xhigh. Do not combine reasoning_effort with thinking_budget. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -25936,7 +25936,7 @@
       "upstreamId": "qwen3.7-max",
       "displayName": "Qwen3.7 Max",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Currently equivalent to qwen3.7-max-2026-05-20; this mutable alias is not a fixed snapshot. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Currently equivalent to qwen3.7-max-2026-05-20; this mutable alias is not a fixed snapshot. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26023,7 +26023,7 @@
       "upstreamId": "qwen3.7-plus",
       "displayName": "Qwen3.7 Plus",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26119,7 +26119,7 @@
       "upstreamId": "qwen3.6-plus",
       "displayName": "Qwen3.6 Plus",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26208,7 +26208,7 @@
       "upstreamId": "qwen3.5-plus",
       "displayName": "Qwen3.5 Plus",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26297,7 +26297,7 @@
       "upstreamId": "qwen3.8-flash",
       "displayName": "Qwen3.8 Flash",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: reasoning_effort=none (maps to enable_thinking=false), also enable_thinking=false. Chat effort: reasoning_effort low/medium/xhigh; minimal maps low and high/max map xhigh. Do not combine reasoning_effort with thinking_budget. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: reasoning_effort=none (maps to enable_thinking=false), also enable_thinking=false. Chat effort: reasoning_effort low/medium/xhigh; minimal maps low and high/max map xhigh. Do not combine reasoning_effort with thinking_budget. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26392,7 +26392,7 @@
       "upstreamId": "qwen3.6-flash",
       "displayName": "Qwen3.6 Flash",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26488,7 +26488,7 @@
       "upstreamId": "qwen3-coder-plus",
       "displayName": "Qwen3 Coder Plus",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately.  Responses guide omits this ID from explicit enhanced-compatibility roster; keep Chat only until endpoint support confirmed. Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing per region-specific model page; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately.  Responses guide omits this ID from explicit enhanced-compatibility roster; keep Chat only until endpoint support confirmed. Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing per region-specific model page; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26589,7 +26589,7 @@
       "upstreamId": "qwen3-coder-next",
       "displayName": "Qwen3 Coder Next",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately.  Responses guide omits this ID from explicit enhanced-compatibility roster; keep Chat only until endpoint support confirmed. Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing from newer overview; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately.  Responses guide omits this ID from explicit enhanced-compatibility roster; keep Chat only until endpoint support confirmed. Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing from newer overview; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26690,7 +26690,7 @@
       "upstreamId": "qwen3.5-122b-a10b",
       "displayName": "Qwen3.5 122B A10B",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26793,7 +26793,7 @@
       "upstreamId": "qwen3.5-397b-a17b",
       "displayName": "Qwen3.5 397B A17B",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26896,7 +26896,7 @@
       "upstreamId": "qwen3.6-27b",
       "displayName": "Qwen3.6 27B",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Responses guide omits this ID from explicit enhanced-compatibility roster; keep Chat only until endpoint support confirmed. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. Responses guide omits this ID from explicit enhanced-compatibility roster; keep Chat only until endpoint support confirmed. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -26999,7 +26999,7 @@
       "upstreamId": "qwen3.6-35b-a3b",
       "displayName": "Qwen3.6 35B A3B",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) OpenAI-compatible Chat base: https://dashscope.aliyuncs.com/compatible-mode/v1. Thinking off: enable_thinking=false. Chat effort is via thinking_budget, not reasoning_effort; Winter OpenAI chat adapter cannot send generic effort here, hence efforts=[]. Responses uses reasoning.effort separately. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27102,7 +27102,7 @@
       "upstreamId": "qwen3.8-max",
       "displayName": "Qwen3.8 Max (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27197,7 +27197,7 @@
       "upstreamId": "qwen3.7-max",
       "displayName": "Qwen3.7 Max (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Currently equivalent to qwen3.7-max-2026-05-20; this mutable alias is not a fixed snapshot. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Currently equivalent to qwen3.7-max-2026-05-20; this mutable alias is not a fixed snapshot. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27290,7 +27290,7 @@
       "upstreamId": "qwen3.7-plus",
       "displayName": "Qwen3.7 Plus (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27392,7 +27392,7 @@
       "upstreamId": "qwen3.6-plus",
       "displayName": "Qwen3.6 Plus (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27487,7 +27487,7 @@
       "upstreamId": "qwen3.5-plus",
       "displayName": "Qwen3.5 Plus (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27582,7 +27582,7 @@
       "upstreamId": "qwen3.8-flash",
       "displayName": "Qwen3.8 Flash (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27677,7 +27677,7 @@
       "upstreamId": "qwen3.6-flash",
       "displayName": "Qwen3.6 Flash (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27779,7 +27779,7 @@
       "upstreamId": "qwen3-coder-plus",
       "displayName": "Qwen3 Coder Plus (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort.  Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing per region-specific model page; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort.  Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing per region-specific model page; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27886,7 +27886,7 @@
       "upstreamId": "qwen3-coder-next",
       "displayName": "Qwen3 Coder Next (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort.  Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing from newer overview; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort.  Conflict adjudication: Sep 24 overview vs Sep 11 model page; structured output=true from newer overview (inferred). Function calling=native for Beijing from newer overview; see both URLs in field sourceRefs. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -27993,7 +27993,7 @@
       "upstreamId": "qwen3.5-122b-a10b",
       "displayName": "Qwen3.5 122B A10B (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -28102,7 +28102,7 @@
       "upstreamId": "qwen3.5-397b-a17b",
       "displayName": "Qwen3.5 397B A17B (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. Alibaba's Sep24 text-generation page labels this model legacy/no longer recommended; no retirement date announced. Context conflict: individual model page states 262,144; Sep24 vision overview lists 32k context/8k output for vision usage. Catalog uses model-specific limit; vision mode may have lower cap. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
@@ -28211,7 +28211,7 @@
       "upstreamId": "qwen3.6-27b",
       "displayName": "Qwen3.6 27B (Anthropic dialect)",
       "aliases": [],
-      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and fixed ¥7.25/USD conversion",
+      "$comment": "PAYG China (Beijing) Anthropic Messages base: https://dashscope.aliyuncs.com/apps/anthropic. Thinking off: thinking.type=disabled. Effort: Winter Anthropic adapter sends its fixed low/medium/high/xhigh/max budget_tokens ladder under thinking.type=enabled; Alibaba says budget_tokens remains accepted but will be deprecated in favor of output_config.effort. — 2026-09-25 audit fix (0.0.24): https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY base-tier price and the catalog-wide 0.1490 USD/CNY rate (2026-09-25)",
       "endpoints": [
         "chat"
       ],
