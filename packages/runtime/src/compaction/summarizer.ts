@@ -54,6 +54,17 @@ export function isCompactionSummaryRequest(req: Pick<ProviderRequest, "system" |
 /** WS-23: appended when the conversation already opens with a summary this compaction carries forward VERBATIM. */
 export const CARRIED_SUMMARY_NOTE = "The conversation above begins with an earlier summary, which is kept verbatim; summarize only what happened after it.";
 
+/**
+ * WS-23: the prefix-reusing request shows the model the WHOLE conversation, including the exchanges the
+ * compaction keeps verbatim after the summary -- the redacted request only ever showed it the part
+ * being replaced. This sentence scopes the summary back to that part, so a compaction does not
+ * restate what stays in context anyway. It rides the appended instruction, so it costs the cache
+ * nothing.
+ */
+export function retainedExchangesNote(pairs: number): string {
+  return `The most recent ${pairs} user/assistant exchange${pairs === 1 ? "" : "s"} will be kept verbatim after your summary; summarize what precedes ${pairs === 1 ? "it" : "them"}, and include from ${pairs === 1 ? "it" : "them"} only what is needed to understand the earlier context.`;
+}
+
 /** How much of a tool call's own input is rendered into the summarizer's view of the transcript. */
 export const DEFAULT_TOOL_INPUT_PREVIEW_CHARS = 500;
 

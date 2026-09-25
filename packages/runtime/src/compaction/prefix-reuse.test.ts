@@ -8,7 +8,7 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { createContextAccountant, runEngine, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { createCompactionController } from "./controller.ts";
-import { CARRIED_SUMMARY_NOTE, WINTER_PREFIX_SUMMARY_INSTRUCTION } from "./summarizer.ts";
+import { CARRIED_SUMMARY_NOTE, retainedExchangesNote, WINTER_PREFIX_SUMMARY_INSTRUCTION } from "./summarizer.ts";
 
 const history = (pairs: number): ProviderMessage[] =>
   Array.from({ length: pairs }, (_, i) => [
@@ -45,7 +45,8 @@ describe("the controller's prefix-reusing summary (WS-23 item 4)", () => {
     expect(seen).toHaveLength(1);
     const sent = seen[0]!;
     expect(sent.messages.slice(0, prefix.messages.length)).toEqual(prefix.messages);
-    expect(sent.messages.at(-1)).toEqual({ role: "user", content: WINTER_PREFIX_SUMMARY_INSTRUCTION });
+    // The instruction, scoped to what the compaction REPLACES: the two retained exchanges stay verbatim.
+    expect(sent.messages.at(-1)).toEqual({ role: "user", content: `${WINTER_PREFIX_SUMMARY_INSTRUCTION} ${retainedExchangesNote(2)}` });
     expect(sent.systemBlocks).toEqual(prefix.systemBlocks);
     expect(sent.tools).toEqual(prefix.tools);
     expect(sent.effort).toBe("high");
@@ -86,7 +87,7 @@ describe("the controller's prefix-reusing summary (WS-23 item 4)", () => {
     const first = await controller.compact({ messages: history(4), trigger: "auto", customInstructions: null, accountant: createContextAccountant(), provider, prefixRequest: { messages: history(4) } });
     const again: ProviderMessage[] = [{ role: "user", content: first.summary }, ...first.retained, ...history(3)];
     const second = await controller.compact({ messages: again, trigger: "auto", customInstructions: null, accountant: createContextAccountant(), provider, prefixRequest: { messages: again } });
-    expect(seen[1]!.messages.at(-1)).toEqual({ role: "user", content: `${WINTER_PREFIX_SUMMARY_INSTRUCTION} ${CARRIED_SUMMARY_NOTE}` });
+    expect(seen[1]!.messages.at(-1)).toEqual({ role: "user", content: `${WINTER_PREFIX_SUMMARY_INSTRUCTION} ${CARRIED_SUMMARY_NOTE} ${retainedExchangesNote(1)}` });
     expect(second.summary).toBe("summary 1\n\nsummary 2");
   });
 });
@@ -132,7 +133,7 @@ describe("through the engine: /compact reuses the last main-loop request's prefi
 
     const lastMain = requests[2]!;
     const summary = requests[3]!;
-    expect(summary.messages.at(-1)).toEqual({ role: "user", content: WINTER_PREFIX_SUMMARY_INSTRUCTION });
+    expect(summary.messages.at(-1)).toEqual({ role: "user", content: `${WINTER_PREFIX_SUMMARY_INSTRUCTION} ${retainedExchangesNote(1)}` });
     // Everything the last main-loop request sent is a byte-identical prefix of the summary request --
     // the effort marker before `two` included -- and the reply it produced follows it.
     expect(summary.messages.slice(0, lastMain.messages.length)).toEqual(lastMain.messages);
