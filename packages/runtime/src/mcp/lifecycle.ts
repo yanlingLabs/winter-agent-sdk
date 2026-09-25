@@ -82,9 +82,21 @@ export interface ShadowedMcpServerEntry {
   origin: McpConfigSourceOrigin; // the LOSING declaration's own source
   shadowedBy: McpConfigSourceOrigin; // the source that already won this name
 }
+/**
+ * Why a declaration was refused, as a CODE a caller can branch on (the `reason` is prose for a
+ * human). WS-23 added the code; every rejection carries one.
+ *
+ * - `invalid_config` -- malformed, an unrecognized `type`, the claudeai-proxy variant, or a bad
+ *   `versionNegotiation` value (`validateServerConfig`).
+ * - `reserved_name` -- the standing server's name (RULING P4-B).
+ * - `sdk_type_from_file_config` -- a `type: "sdk"` entry from a settings/project/plugin FILE. Only
+ *   the host's own `Options.mcpServers` (origin `explicit`) may declare one; see the check itself.
+ */
+export type McpServerRejectionCode = "invalid_config" | "reserved_name" | "sdk_type_from_file_config";
 export interface RejectedMcpServerEntry {
   name: string;
   origin: McpConfigSourceOrigin;
+  code: McpServerRejectionCode;
   reason: string;
 }
 export interface ResolveMcpServerSourcesResult {
@@ -212,12 +224,29 @@ export function resolveMcpServerSources(
         claimed.set(name, origin);
 
         if (name === reservedServerName) {
-          rejected.push({ name, origin, reason: `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
+          rejected.push({ name, origin, code: "reserved_name", reason: `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
           continue;
         }
         const validated = validateServerConfig(raw);
         if (!validated.ok) {
-          rejected.push({ name, origin, reason: validated.reason });
+          rejected.push({ name, origin, code: "invalid_config", reason: validated.reason });
+          continue;
+        }
+        // WS-23 hardening: `type: "sdk"` names an IN-PROCESS server object, which only the host that
+        // holds it can supply (`Options.mcpServers`, origin `explicit`; the live `mcp_set_servers`
+        // door is also the host's). From a settings/project/plugin FILE it can never be real -- no
+        // file can carry a live object -- yet it used to resolve like any other entry, and `start()`
+        // then reported it `connected` (RULING P4-C's state-only feed) with whatever `tools[]` the
+        // file listed: a config file could make the host believe a server, and tools, existed. Refused
+        // here, typed, before it can become a slot. A `project` file is refused the same way whether
+        // or not the workspace is trusted -- trust gates what a real server may do, and this is not one.
+        if (validated.config.type === "sdk" && origin !== "explicit") {
+          rejected.push({
+            name,
+            origin,
+            code: "sdk_type_from_file_config",
+            reason: `a type "sdk" MCP server can only be declared by the host (Options.mcpServers) -- a ${origin} config file cannot supply the in-process server it names, so "${name}" is refused`,
+          });
           continue;
         }
         // RULING P5-K (fix wave), amending WS-09 §1.2: a PROJECT-sourced server of ANY transport
