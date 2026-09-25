@@ -18,8 +18,9 @@
 // Responses adapter on a connection with NO `baseUrl`, so every request also proves the base-URL rule
 // against the real host (each request's URL is printed).
 //
-// NOTHING SECRET IS EVER PRINTED. The key is read from the macOS Keychain — service
-// `com.winter.core.dev`, account `xai:default` — through the runtime's own Keychain store (the one
+// NOTHING SECRET IS EVER PRINTED. The key is read from the macOS Keychain — the brand's DEV service
+// (`DEFAULT_KEYCHAIN_SERVICE` + `.dev`, derived rather than spelled so the brand sweep gate stays
+// green), account `xai:default` — READ ONLY, through the runtime's own Keychain store (the one
 // file allowed to reach the secrets API; see the tripwire in `keychain-store.test.ts`), handed to the
 // adapter as a credential store, and never touched as a string here. Output is event TYPE names and
 // counts, item keys, lengths, token counts, stop reasons, status codes and normalized error codes.
@@ -40,9 +41,10 @@ import { createShippedAdapters } from "../packages/provider-runtime/src/adapters
 import { createMemoryCredentialStore } from "../packages/provider-runtime/src/credentials/memory.ts";
 import { CredentialResolutionError } from "../packages/provider-runtime/src/credentials/types.ts";
 import type { CredentialMaterial, CredentialRef, CredentialStore, ProviderAdapter, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../packages/provider-runtime/src/types.ts";
-import { createKeychainCredentialStore, createKeychainSecretReader } from "../packages/runtime/src/provider/keychain-store.ts";
+import { DEFAULT_KEYCHAIN_SERVICE, createKeychainCredentialStore, createKeychainSecretReader } from "../packages/runtime/src/provider/keychain-store.ts";
 
-const KEYCHAIN_SERVICE = "com.winter.core.dev";
+/** The dev profile's Keychain service — where the Winter dev daemon stores `xai:default`. Read, never written. */
+const KEYCHAIN_SERVICE = `${DEFAULT_KEYCHAIN_SERVICE}.dev`;
 const KEYCHAIN_REF: Extract<CredentialRef, { kind: "keychain" }> = { kind: "keychain", account: "xai:default", service: KEYCHAIN_SERVICE };
 
 // --- raw wire observation (event TYPES and shapes only) ---------------------------------------------
