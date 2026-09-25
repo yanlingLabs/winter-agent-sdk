@@ -9,6 +9,8 @@ import { serve } from "bun";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, INTERLEAVED_THINKING_BETA, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor } from "./messages.ts";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
+import { winterUserAgent } from "../../identity.ts";
+import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER } from "./console-oauth.ts";
 import type { ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
 
 type Answer = { status: number; body: string; contentType?: string };
@@ -247,5 +249,59 @@ describe("WS-23 item 5: the interleaved-thinking beta on the budget-only 4.5 row
     const withHostBeta = createAnthropicMessagesAdapter({ catalog: loadCatalog(), betas: [INTERLEAVED_THINKING_BETA] });
     for await (const _ of withHostBeta.streamTurn({ model: "claude-sonnet-4.5", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS }, ctx(s.url))) void _;
     expect(s.requests[0]!.headers["anthropic-beta"]).toBe(INTERLEAVED_THINKING_BETA);
+  });
+});
+
+describe("WS-23 item 7: a `console` session speaks bearer the way the `anthropic` row does -- as Winter", () => {
+  const CONSOLE_REF = { kind: "keychain" as const, account: ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, service: "com.winter.test.hermetic" };
+  const bearerCtx = (url: string, providerId: string, ref: { kind: "keychain"; account: string; service: string } = CONSOLE_REF): ProviderContext => ({
+    connection: { providerId, baseUrl: url, local: true },
+    // A throwaway in-memory record, never a real Keychain item and never a real token.
+    credentials: createMemoryCredentialStore([[ref, { kind: "bearer", token: "ant-minted-fixture-token" }]]),
+    authRef: ref,
+    stallTimeoutMs: 2_000,
+    log: () => {},
+  });
+  const turn = async (url: string, providerId: string, ref?: { kind: "keychain"; account: string; service: string }): Promise<ProviderEvent[]> => {
+    const events: ProviderEvent[] = [];
+    for await (const e of adapter().streamTurn({ model: "claude-sonnet-5", messages: [{ role: "user", content: "hi" }] }, bearerCtx(url, providerId, ref))) events.push(e);
+    return events;
+  };
+
+  test("the request carries `Authorization: Bearer`, the oauth beta, Winter's own user-agent -- and nothing claiming to be claude", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn")));
+    const events = await turn(s.url, "console");
+    expect(done(events)?.stopReason).toBe("end_turn");
+    const headers = s.requests[0]!.headers;
+    expect(headers["authorization"]).toBe("<redacted>"); // present (the fake records the scheme's presence only)
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect((headers["anthropic-beta"] ?? "").split(",")).toContain(CONSOLE_BEARER.betaHeader);
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(headers["user-agent"]).toBe(winterUserAgent());
+    expect(headers["user-agent"]).not.toMatch(/claude/i);
+    expect(headers["x-app"]).toBeUndefined();
+    expect(Object.keys(headers).some((h) => h.startsWith("x-stainless") || h === "anthropic-dangerous-direct-browser-access")).toBe(false);
+  });
+
+  test("the `anthropic` row's bearer path is unchanged", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn")));
+    await turn(s.url, "anthropic");
+    expect((s.requests[0]!.headers["anthropic-beta"] ?? "").split(",")).toContain(CONSOLE_BEARER.betaHeader);
+  });
+
+  test("a console bearer under ANY other account is refused before the wire (the anthropic row's account guard now covers console too)", async () => {
+    const s = start(() => sse(messageStart + ending("end_turn")));
+    const events = await turn(s.url, "console", { kind: "keychain", account: "anthropic:default", service: "com.winter.test.hermetic" });
+    expect(error(events)?.error).toMatchObject({ code: "capability" });
+    expect(s.requests).toHaveLength(0);
+  });
+
+  test("a sibling Anthropic-dialect row's bearer gets NO Anthropic beta (the gate is the vendor's own rows, not the adapter)", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn")));
+    const ref = { kind: "keychain" as const, account: "zai-anthropic:default", service: "com.winter.test.hermetic" };
+    const events: ProviderEvent[] = [];
+    for await (const e of adapter().streamTurn({ model: "glm-5.3", messages: [{ role: "user", content: "hi" }] }, bearerCtx(s.url, "zai-anthropic", ref))) events.push(e);
+    expect(s.requests).toHaveLength(1);
+    expect(s.requests[0]!.headers["anthropic-beta"] ?? "").not.toContain(CONSOLE_BEARER.betaHeader);
   });
 });

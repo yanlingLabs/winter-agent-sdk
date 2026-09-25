@@ -62,6 +62,22 @@ import type { CredentialRef } from "../../types.ts";
 export const ANTHROPIC_CONSOLE_PROVIDER_ID = "anthropic";
 
 /**
+ * WS-23: the provider ids whose BEARER credential is Anthropic's own -- the rows `messages.ts` sends
+ * `CONSOLE_BEARER.betaHeader` with, and holds to the `anthropic:console` account.
+ *
+ * TWO ROWS NOW, because the catalog split them (WS-20): the Console arm ships as its OWN `console`
+ * provider (auth kind `console-profile`) beside `anthropic` (api-key). This gate used to name
+ * `anthropic` alone, so a `console` session sent its ant-minted bearer WITHOUT the `oauth-2025-04-20`
+ * beta Anthropic requires alongside an OAuth bearer
+ * (https://platform.claude.com/docs/en/api/overview -- an OAuth access token goes on
+ * `Authorization: Bearer` together with that beta), and the account guard never ran for it. Both
+ * rows are the vendor's own endpoint; every sibling `<id>-anthropic` row stays outside the set, so a
+ * third party never gets Anthropic's beta name. `ANTHROPIC_CONSOLE_PROVIDER_ID` keeps its value (a
+ * public export pinned by the daemon); this set is the gate.
+ */
+export const ANTHROPIC_BEARER_PROVIDER_IDS: ReadonlySet<string> = new Set([ANTHROPIC_CONSOLE_PROVIDER_ID, "console"]);
+
+/**
  * What survives of the old `CONSOLE_OAUTH` object once its login-only fields are gone: the ONE header
  * value `messages.ts` still sends alongside an Anthropic Console credential's bearer -- an `oauth`-
  * kind one, or (P10a, M5) a `bearer`-kind one from the host-brokered `console-broker.ts` leg, on the

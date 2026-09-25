@@ -58,7 +58,7 @@ import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type Iden
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse, type SseEvent } from "../../sse.ts";
-import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_BEARER } from "./console-oauth.ts";
+import { ANTHROPIC_BEARER_PROVIDER_IDS, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
   CredentialMaterial,
@@ -938,11 +938,12 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  * account-scoped header lands in the right place.
  */
 /**
- * Is this connection the Anthropic Console row, as opposed to a sibling third-party row sharing this
- * adapter (R6b-5)? The gate on the beta header (D20).
+ * Is this connection one of Anthropic's OWN rows -- `anthropic`, or (WS-23) the `console` row WS-20
+ * split out -- as opposed to a sibling third-party row sharing this adapter (R6b-5)? The gate on the
+ * bearer beta header (D20) and on the bearer's account guard. See `ANTHROPIC_BEARER_PROVIDER_IDS`.
  */
 function isConsoleProvider(ctx: ProviderContext): boolean {
-  return ctx.connection.providerId === ANTHROPIC_CONSOLE_PROVIDER_ID;
+  return ANTHROPIC_BEARER_PROVIDER_IDS.has(ctx.connection.providerId);
 }
 
 /**
@@ -974,7 +975,7 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
 export async function buildHeaders(ctx: ProviderContext, bodyBetas: string | readonly (string | undefined)[] | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
   // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
-  // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
+  // row (and, WS-23, the `console` row -- `isConsoleProvider`) is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
   // (`anthropic:console`) -- never under `anthropic:default`, the account `winter login
   // --anthropic-key` writes the user's pasted API key to. Checked BEFORE anything else runs (no
   // header is built, no beta is added) and refused with a NAMED, TYPED reason rather than being
