@@ -1,6 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import {
   connectMcpServer,
   McpConnectError,
@@ -187,8 +186,8 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
   test("listTools() is a LIVE re-query every call, never a snapshot frozen at connect time (regression pin -- mcp/lifecycle.ts's RefreshMcpTools depends on this)", async () => {
     let toolName = "v1";
     const server = new Server({ name: "mutable", version: "1.0.0" }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
-    server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [] }));
+    server.setRequestHandler("tools/list", async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
+    server.setRequestHandler("tools/call", async () => ({ content: [] }));
     const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       expect((await client.listTools()).map((t) => t.name)).toEqual(["v1"]);
@@ -214,10 +213,10 @@ describe("connectMcpServer: error classification", () => {
   });
 
   test("an HTTP 401 (auth required, no authProvider configured) classifies as needs_auth (WS-09 §2.1's 'needsAuth' state)", async () => {
-    // Verified against the real SDK's own source before writing this test:
-    // StreamableHTTPClientTransport throws UnauthorizedError('No auth provider') the moment a
-    // request comes back 401 and no authProvider was configured -- this connector never configures
-    // one (WS-09 doesn't ask Lane A to implement an OAuth flow), so any 401-gated server lands here.
+    // This connector never configures an authProvider (WS-09 doesn't ask Lane A to implement an
+    // OAuth flow), so a 401 surfaces as a plain HTTP error carrying the status -- on the MCP TS SDK
+    // v2 an `SdkHttpError` with `status: 401`, whether it answered the default `'auto'` probe or
+    // `initialize` itself (the WS-23 block below pins both modes) -- and classifies as needs_auth.
     const authServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("unauthorized", { status: 401 }) });
     try {
       let error: unknown;
@@ -276,3 +275,4 @@ describe("connectMcpServer: error classification", () => {
     });
   });
 });
+

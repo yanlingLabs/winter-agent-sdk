@@ -508,11 +508,8 @@ const ITEM_11: ConformanceRow[] = [
     spec: "WS-09 §11.11",
     bullet: "descriptor identity for the standing set (P7a/D29: the advisor left the standing server for a bare native name, so the standing set is EMPTY today and both halves are asserted)",
     status: "covered",
-    citations: [
-      { file: "../tools/conformance.test.ts", testName: "advisor is a bare NATIVE name with an identical descriptor across every permission mode" },
-      { file: "./winter-server.test.ts", testName: "a real MCP client sees NO tools" },
-      { file: "./winter-server.test.ts", testName: "the advisor lives in the REGISTRY under its bare native name, not on this server" },
-    ],
+    citations: [{ file: "../tools/conformance.test.ts", testName: "advisor is a bare NATIVE name with an identical descriptor across every permission mode" }],
+    note: "WS-23 deleted the empty standing-server OBJECT (mcp/winter-server.ts's `createWinterServer`, never imported) and the two tests that connected a client to it to observe \"no tools\". The standing set is still empty and still asserted: the cited test pins the advisor as a bare native name, and `mcp__<server>__advisor`'s absence from the registry stays pinned there too.",
   },
   {
     id: "WS09-11b",

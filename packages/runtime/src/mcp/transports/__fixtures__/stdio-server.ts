@@ -11,13 +11,17 @@
 // `WinterStdioTransport.buildStdioEnv()` actually handed to a real, separately-spawned child
 // (a same-process check can only ever prove what the FUNCTION computes, never what a real spawned
 // child actually receives).
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+//
+// WS-23: on the v2 server package (`@modelcontextprotocol/server` 2.1.0, a dev dependency), with
+// method-string handler keys. Hand-connected (`server.connect(new StdioServerTransport())`), so it is
+// a LEGACY-era server: it answers the 2025 `initialize` handshake and nothing modern -- exactly the
+// "existing server" an `'auto'` stdio client must still settle on 2025-11-25 against.
+import { Server } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 const server = new Server({ name: "stdio-fixture", version: "1.0.0" }, { capabilities: { tools: {}, resources: {} } });
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
+server.setRequestHandler("tools/list", async () => ({
   tools: [
     { name: "echo", description: "echoes text back", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
     { name: "boom", description: "always fails", inputSchema: { type: "object", properties: {} } },
@@ -25,7 +29,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
+server.setRequestHandler("tools/call", async (req) => {
   if (req.params.name === "echo") {
     const args = req.params.arguments as { text?: unknown } | undefined;
     return { content: [{ type: "text", text: `echo:${String(args?.text)}` }] };
@@ -43,14 +47,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   throw new Error(`fixture: unknown tool "${req.params.name}"`);
 });
 
-server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+server.setRequestHandler("resources/list", async () => ({
   resources: [
     { uri: "fixture://text.txt", name: "text.txt", mimeType: "text/plain" },
     { uri: "fixture://blob.bin", name: "blob.bin", mimeType: "application/octet-stream" },
   ],
 }));
 
-server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+server.setRequestHandler("resources/read", async (req) => {
   if (req.params.uri === "fixture://text.txt") {
     return { contents: [{ uri: req.params.uri, mimeType: "text/plain", text: "hello fixture world" }] };
   }

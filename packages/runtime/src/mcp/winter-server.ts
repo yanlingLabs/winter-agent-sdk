@@ -1,49 +1,23 @@
-// WS-09 §1.3: the standing Winter server (`winter`) -- Winter's own product-capability tools,
-// registered as a real, in-process @modelcontextprotocol/sdk `McpServer` object so the Winter branch
-// and the official (Claude) branch can advertise byte-identical descriptors for the same names
-// (WS-06 §6 obligation 5).
+// WS-09 §1.3: the standing Winter server's NAME (`winter`) -- the reserved identity both MCP doors
+// (mcp/lifecycle.ts's `resolveMcpServerSources`, mcp/control.ts's `setServers`) refuse to let any
+// source configure, and the rename's `from` side under a brand.
 //
-// IT REGISTERS NOTHING TODAY, and that is the P7a state rather than an oversight. The one tool this
-// file ever carried was the advisor, and D29 retired the server-qualified advisor name entirely: the
-// advisor is now a BARE NATIVE tool (`advisor`, tools/descriptors/advisor.ts), because that is the
-// name the model sees on the official branch too — Anthropic's own API-side advisor server tool,
-// which a host cannot intercept. Registering a second, server-qualified twin here would put a name
-// on the Winter branch that the official branch cannot have, which is the exact divergence the
-// interchangeability rule exists to prevent. The other standing-server tools WS-09 §1.3 names
-// (browser/computer/docs/sheets/slides/sessions) are P7/P8 product-layer work owned by
-// [WS-14]/[WS-15]; nothing registers them here yet.
-//
-// So this factory survives as the SEAM, empty: `createWinterServer()` returns a real, connectable
-// server object with an empty tool list, and the first product-layer tool that needs the standing
-// server registers itself here rather than reinventing the plumbing. An empty server is also the
-// honest advertisement of the current state — a client that lists its tools learns "none yet",
-// which is true.
-//
-// Deliberately NOT wired into any auto-loaded barrel (main.ts, tools/descriptors/index.ts, this
-// package's own index.ts): nothing imports this module yet, so the compiled `winter` binary's
-// dependency graph is UNAFFECTED -- @modelcontextprotocol/sdk is a real, declared dependency (R4-3)
-// but is not yet reachable from any entry point `bun build --compile` follows.
+// WS-23 (MCP TS SDK v2): this file used to ALSO build the standing server itself, as a real, empty
+// in-process `McpServer` object (`createWinterServer`). Nothing ever imported that factory -- D29 had
+// already moved its one tool, the advisor, to a bare native name (tools/descriptors/advisor.ts), and
+// the other standing-server tools WS-09 §1.3 names are product-layer work that registers nowhere yet.
+// The v2 migration deleted the factory (and its test) rather than port dead code onto a new server
+// package: it was the runtime's only production import of an MCP SERVER class, so the compiled
+// `winter` binary now depends on the client package alone. The NAME stays, here, because four
+// modules and the brand gate's call-site allowlist already read it from this path. The first
+// product-layer tool that genuinely needs a standing server object builds it then, on the server
+// package of that day.
 //
 // Collision note (see registry.ts's own "Phase 4 Task 2: live MCP server registration" header):
-// The standing server's name is RESERVED (registry.ts's own RESERVED_MCP_SERVER_NAMES, which a
+// the standing server's name is RESERVED (registry.ts's own RESERVED_MCP_SERVER_NAMES, which a
 // branded session extends through `rebrandStandingServerTools`), so ANY `registerMcpServerTools`
-// call under it throws unconditionally, for any tool name. Building a real McpServer object
-// directly, as this file does, is how WS-09 §1.3's obligation is met without going through that
-// live-registration mechanism at all. Resolving the two mechanisms deliberately (rather than by
-// surprise) means removing the name from that reserved set, not working around it.
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+// call under it throws unconditionally, for any tool name.
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 
 /** Winter's OWN standing-server name, derived rather than spelled (P7a, D19). */
 export const WINTER_SERVER_NAME = WINTER_BRAND.mcpServerName;
-
-// Re-callable by design (no module-load singleton, no cached instance) -- a later phase that wants a
-// fresh server per session, or that extends this factory with real tools, can call it as many times
-// as it needs.
-//
-// P7a (D19): the server's NAME is `brand.mcpServerName`, which is the same segment
-// `mcpToolName(brand, ...)` puts in every `mcp__<server>__<tool>` this server would advertise.
-// Omitted = `WINTER_BRAND`.
-export function createWinterServer(brand?: Pick<BrandProfile, "mcpServerName">): McpServer {
-  return new McpServer({ name: (brand ?? WINTER_BRAND).mcpServerName, version: "0.0.1" });
-}

@@ -130,6 +130,21 @@ function validateServerConfig(raw: unknown): { ok: true; config: McpServerConfig
       return { ok: false, reason: "sdk MCP server config is missing a string 'name'" };
     }
   }
+  // WS-23: `versionNegotiation` is refused here, at resolution, rather than handed to the v2 client
+  // to fail on at connect time -- a typo in a settings file then names the field and the value
+  // instead of surfacing as a generic handshake failure. A pin must look like a protocol revision
+  // (an ISO date); WHICH revisions exist is the server's answer to give, not this check's.
+  const negotiation = (raw as { versionNegotiation?: unknown }).versionNegotiation;
+  if (negotiation !== undefined) {
+    if (type === "sdk") {
+      return { ok: false, reason: "'versionNegotiation' does not apply to an in-process sdk MCP server (it always speaks the legacy handshake)" };
+    }
+    const pin = typeof negotiation === "object" && negotiation !== null && !Array.isArray(negotiation) ? (negotiation as { pin?: unknown }).pin : undefined;
+    const pinOk = typeof pin === "string" && /^\d{4}-\d{2}-\d{2}$/.test(pin) && Object.keys(negotiation as object).length === 1;
+    if (negotiation !== "legacy" && negotiation !== "auto" && !pinOk) {
+      return { ok: false, reason: `MCP server config 'versionNegotiation' must be "legacy", "auto" or { "pin": "<YYYY-MM-DD revision>" }; got ${JSON.stringify(negotiation)}` };
+    }
+  }
   return { ok: true, config: raw as McpServerConfigForProcessTransport };
 }
 export { validateServerConfig };
@@ -281,12 +296,18 @@ interface ConnectionSlot {
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
+  // WS-23: read off the LIVE client, never stored separately on the slot -- every path that drops a
+  // connection already clears `slot.client`, so the version can never outlive the connection that
+  // negotiated it. A disabled slot keeps its idle connection (disableSlot's own comment), and so
+  // keeps reporting that connection's version, which is the truth.
+  const protocolVersion = slot.client?.protocolVersion;
   return {
     name: slot.name,
     state: slot.state,
     toolNames: slot.toolNames,
     ...(slot.errorCode !== undefined ? { errorCode: slot.errorCode } : {}),
     ...(slot.error !== undefined ? { error: slot.error } : {}),
+    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
   };
 }
 

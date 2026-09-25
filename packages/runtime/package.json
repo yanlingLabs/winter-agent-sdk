@@ -13,11 +13,14 @@
     "winter": "./src/main.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/client": "^2.1.0",
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*",
     "ajv": "^8.20.0",
     "ignore": "7.0.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/server": "^2.1.0"
   }
 }

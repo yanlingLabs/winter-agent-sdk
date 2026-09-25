@@ -16,23 +16,31 @@
 // disclosure.
 //
 // `WinterStdioTransport` below is a from-scratch implementation of the SDK's own `Transport`
-// interface (`shared/transport.d.ts`) over `node:child_process.spawn`, reusing the SDK's own wire
-// framing (`ReadBuffer`/`serializeMessage`, `@modelcontextprotocol/sdk/shared/stdio.js` -- the
-// package's own `./*` export wildcard makes this subpath reachable, verified before writing this
-// file) so the actual JSON-RPC-over-newlines protocol stays byte-identical to the reference
-// implementation; only the PROCESS LIFECYCLE (env, detachment, kill semantics) is Winter's own.
+// interface over `node:child_process.spawn`, reusing the SDK's own wire framing (`ReadBuffer`/
+// `serializeMessage`) so the actual JSON-RPC-over-newlines protocol stays byte-identical to the
+// reference implementation; only the PROCESS LIFECYCLE (env, detachment, kill semantics) is Winter's
+// own.
+//
+// WS-23 (MCP TS SDK v2): the framing and the `Transport`/`JSONRPCMessage` types now come from the
+// ROOT of `@modelcontextprotocol/client` 2.1.0, which still exports `ReadBuffer`/`serializeMessage`
+// (v1's `./shared/stdio.js` subpath is gone). v2's own `StdioClientTransport` was re-checked before
+// keeping this file: it still spawns through `cross-spawn` with the same unconditional
+// default-environment merge and no process-group kill, so the two findings above still stand and
+// Winter's transport stays. One v2 consequence to know about: the v2 client probes a CUSTOM stdio
+// transport like this one IN PLACE when `versionNegotiation` is `'auto'` (it can run its sibling-
+// process probe only for its own class), which is why stdio defaults to `'legacy'`
+// (mcp/client.ts's `resolveVersionNegotiation`).
 // `cross-spawn` (the reference's own dependency, needed for Windows shell-resolution quirks) is
 // deliberately NOT used -- this repo's own OS floors are macOS/Linux only (CLAUDE.md's "Latest-OS
 // floors" convention, carried from the wider product), so `node:child_process.spawn` alone suffices.
 import { spawn, type ChildProcess } from "node:child_process";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { ReadBuffer, serializeMessage, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client";
 import type { McpStdioServerConfig } from "@yanlinglabs/winter-agent-sdk";
 
 // The upstream PARITY BASELINE, named explicitly rather than silently duplicated: this is the exact
-// non-Windows `DEFAULT_INHERITED_ENV_VARS` list the pinned @modelcontextprotocol/sdk itself ships
-// (`dist/esm/client/stdio.js`, "list inspired by the default env inheritance of sudo") -- Winter
+// non-Windows `DEFAULT_INHERITED_ENV_VARS` list the MCP TS SDK itself ships (v1's
+// `dist/esm/client/stdio.js`, unchanged in v2's `@modelcontextprotocol/client/stdio`, "list inspired
+// by the default env inheritance of sudo") -- Winter
 // matches the SAME six names so a server author's own expectations ("stdio servers can assume a
 // normal-looking minimal env") are not broken by this transport's replacement, but Winter builds
 // this list EXPLICITLY and OWNS the merge order, rather than inheriting it unconditionally

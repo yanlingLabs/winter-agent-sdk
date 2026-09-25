@@ -1,9 +1,9 @@
 import { describe, test, expect } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/client";
 import { buildSdkTransport } from "./sdk.ts";
 import { createFixtureMcpServer, defaultFixtureSpec } from "../test-fixtures.ts";
 
-describe("buildSdkTransport: in-process @modelcontextprotocol/sdk McpServer over InMemoryTransport", () => {
+describe("buildSdkTransport: in-process MCP server over InMemoryTransport", () => {
   test("connects, lists tools, calls a tool, and closes cleanly", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const clientTransport = await buildSdkTransport(server);
@@ -12,7 +12,7 @@ describe("buildSdkTransport: in-process @modelcontextprotocol/sdk McpServer over
       await client.connect(clientTransport, { timeout: 5000 });
       const tools = await client.listTools();
       expect(tools.tools.map((t) => t.name).sort()).toEqual(["boom", "echo"]);
-      const result = await client.callTool({ name: "echo", arguments: { text: "hi" } }, undefined, { timeout: 5000 });
+      const result = await client.callTool({ name: "echo", arguments: { text: "hi" } }, { timeout: 5000 });
       expect(result).toEqual({ content: [{ type: "text", text: "echo:hi" }] });
     } finally {
       await client.close();
@@ -29,8 +29,8 @@ describe("buildSdkTransport: in-process @modelcontextprotocol/sdk McpServer over
     try {
       await Promise.all([clientA.connect(transportA, { timeout: 5000 }), clientB.connect(transportB, { timeout: 5000 })]);
       const [resultA, resultB] = await Promise.all([
-        clientA.callTool({ name: "echo", arguments: { text: "A" } }, undefined, { timeout: 5000 }),
-        clientB.callTool({ name: "echo", arguments: { text: "B" } }, undefined, { timeout: 5000 }),
+        clientA.callTool({ name: "echo", arguments: { text: "A" } }, { timeout: 5000 }),
+        clientB.callTool({ name: "echo", arguments: { text: "B" } }, { timeout: 5000 }),
       ]);
       expect(resultA).toEqual({ content: [{ type: "text", text: "echo:A" }] });
       expect(resultB).toEqual({ content: [{ type: "text", text: "echo:B" }] });

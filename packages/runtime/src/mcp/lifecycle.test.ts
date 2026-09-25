@@ -3,9 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { getRegisteredTool } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
 import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
@@ -270,7 +268,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     try {
       await lifecycle.start();
       const snap = lifecycle.stateSource.snapshot();
-      expect(snap).toEqual([{ name: "fix", state: "connected", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[] }]);
+      expect(snap).toEqual([{ name: "fix", state: "connected", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[], protocolVersion: "2025-11-25" }]);
 
       const registered = getRegisteredTool("mcp__fix__echo");
       expect(registered).toBeDefined();
@@ -616,8 +614,8 @@ describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnec
     // which requires a live, mutable closure the server's own request handler reads fresh each time.
     let toolName = "v1";
     const server = new Server({ name: "mutable-fixture", version: "1.0.0" }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
-    server.setRequestHandler(CallToolRequestSchema, async (req) => ({ content: [{ type: "text", text: `called:${req.params.name}` }] }));
+    server.setRequestHandler("tools/list", async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
+    server.setRequestHandler("tools/call", async (req) => ({ content: [{ type: "text", text: `called:${req.params.name}` }] }));
 
     const resolved: ResolvedMcpServerEntry[] = [{ name: "refreshable", origin: "explicit", config: { type: "sdk", name: "refreshable" } }];
     const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { refreshable: server } });
@@ -918,3 +916,4 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
     expect(closeCount()).toBe(1); // the late-resolving connection was closed, not leaked
   });
 });
+

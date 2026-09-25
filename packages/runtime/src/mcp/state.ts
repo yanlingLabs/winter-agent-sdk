@@ -19,6 +19,14 @@ export interface McpServerState {
   errorCode?: string;
   error?: string;
   toolNames: string[];
+  /**
+   * WS-23: the protocol revision the server's LIVE connection negotiated (`2025-11-25`, or
+   * `2026-07-28` when `versionNegotiation` selected the modern era). Present only while a live
+   * connection exists -- absent for `pending`/`cached`/`failed`/`needsAuth`, and for an in-process
+   * `sdk` server reported through RULING P4-C's state-only feed (there is no protocol connection to
+   * have a version). Additive: every consumer that predates it reads name/state/toolNames only.
+   */
+  protocolVersion?: string;
 }
 
 export interface McpServerStateSource {

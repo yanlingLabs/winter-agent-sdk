@@ -7,7 +7,7 @@
 // fixture keeps `createFixtureMcpServer` (the shared, zod-free server builder) and adds the two
 // things that one lacks: a transport PER SESSION, and an HTTP gate in front of them.
 import { randomUUID } from "node:crypto";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { createFixtureMcpServer, type FixtureToolResult } from "../../mcp/test-fixtures.ts";
 
 export interface ExaFixtureCall {
