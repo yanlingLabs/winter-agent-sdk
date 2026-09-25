@@ -402,15 +402,6 @@ describe("runHooks -- schema-validation seam (WS-23: an invalid transform is a D
     expect(composite.transformedInput).toBeUndefined();
     expect(composite.message).toContain("bad shape");
   });
-
-  test("fix round 1 (M1): when the ORIGINAL input is already invalid, an invalid rewrite is dropped, not denied -- the call runs with the original and the tool reports its own error", async () => {
-    const rejectsEverything: ToolInputValidator = { validate: () => ({ valid: false, reason: "missing query" }) };
-    const { invoker } = sequenceInvoker([{ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "x", blocked_domains: ["a.com"] }, additionalContext: "kept" } }]);
-    const composite = await runHooks("PreToolUse", { toolName: "WebSearch", input: { query: "x" } }, ctxWith({ registry: fakeRegistry([entry("floor", "PreToolUse")]), invoker, validator: rejectsEverything }));
-    expect(composite.decision).toBeUndefined();
-    expect(composite.transformedInput).toBeUndefined();
-    expect(composite.extraContext?.map((c) => c.context)).toEqual(["kept"]); // the rest of the hook's answer still counts
-  });
 });
 
 describe("runHooks -- §8 failure matrix, row by row", () => {

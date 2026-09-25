@@ -298,6 +298,11 @@ describe("WS-23 fix round 1 (M5): claude's matcher semantics", () => {
     expect(ids(registry("Edit").matching("PreToolUse", "Edit"))).toEqual(["h"]);
     expect(ids(registry("Edit|Write").matching("PreToolUse", "NotebookEdit"))).toEqual([]);
     expect(ids(registry("Edit|MultiEdit").matching("PreToolUse", "MultiEdit"))).toEqual(["h"]);
+    // fix round 2: claude's name list also splits on `,` and trims spaces -- `Edit, Write` is two names
+    expect(ids(registry("Edit, Write").matching("PreToolUse", "Write"))).toEqual(["h"]);
+    expect(ids(registry("Edit, Write").matching("PreToolUse", "Edit"))).toEqual(["h"]);
+    expect(ids(registry("Edit, Write").matching("PreToolUse", "NotebookEdit"))).toEqual([]);
+    expect(ids(registry("mcp__my-server__tool").matching("PreToolUse", "mcp__my-server__tool"))).toEqual(["h"]);
   });
 
   test("anything else is an UNANCHORED regex test, as in claude: `mcp__.*github` matches mcp__github__create_issue", () => {
@@ -350,18 +355,18 @@ describe("WS-23 fix round 1 (C1): every text contribution is bounded, with a vis
   });
 });
 
-describe("WS-23 fix round 1 (M1): the WebSearch floor and a model's own invalid query", () => {
-  test("original {query:'x'} (too short) + the floor's rewrite -> no deny; the call runs with the ORIGINAL so WebSearch reports its own error", async () => {
+describe("WS-23 fix round 2 (M1 reverted): an invalid rewrite DENIES whatever the original input was", () => {
+  test("original {query:'x'} (already invalid) + an invalid rewrite -> DENY -- the model cannot skip a rewrite by making its own input invalid", async () => {
     await import("../tools/descriptors/index.ts");
     const validator = createRegistryToolInputValidator();
-    expect(validator.validate("WebSearch", { query: "x" }).valid).toBe(false); // the premise: the model's own input is already invalid
-    const floorRewrite = { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "x", blocked_domains: ["pastebin.com"] } } };
-    const composite = await runHooks("PreToolUse", { toolName: "WebSearch", input: { query: "x" } }, ctx([reg("floor", "PreToolUse", "WebSearch", { failClosed: true })], answering(floorRewrite), { validator }));
-    expect(composite.decision).toBeUndefined();
+    expect(validator.validate("WebSearch", { query: "x" }).valid).toBe(false);
+    const rewrite = { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "x", blocked_domains: ["pastebin.com"] } } };
+    const composite = await runHooks("PreToolUse", { toolName: "WebSearch", input: { query: "x" } }, ctx([reg("floor", "PreToolUse", "WebSearch", { failClosed: true })], answering(rewrite), { validator }));
+    expect(composite.decision).toBe("deny");
     expect(composite.transformedInput).toBeUndefined();
   });
 
-  test("a VALID original + the same rewrite shape stays a valid transform", async () => {
+  test("a VALID original + a valid rewrite stays a valid transform", async () => {
     await import("../tools/descriptors/index.ts");
     const validator = createRegistryToolInputValidator();
     const floorRewrite = { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "news today", blocked_domains: ["pastebin.com"] } } };

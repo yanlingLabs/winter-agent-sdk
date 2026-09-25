@@ -436,3 +436,43 @@ describe("WS-23 fix round 1 (I4): a fail-closed PreToolUse hook denies under byp
     });
   }
 });
+
+// Fix round 2 (review r2, M1 reverted): the reviewer's bypass probe as a test. Round 1's fallback ran
+// the ORIGINAL input when it was schema-invalid -- but `description: 5` is harmless to Bash and fails
+// the schema, so the model could skip a hook's rewrite at will and run with no prompt.
+describe("WS-23 fix round 2: a schema-invalid original cannot skip a hook's rewrite", () => {
+  test("Bash {command, description: 5} + a hook rewrite (allow, and rewrite-only): DENIED, the original never runs", async () => {
+    for (const decision of ["allow", undefined] as const) {
+      const executed: unknown[] = [];
+      const tools = { async execute({ input }: { name: string; input: unknown }) { executed.push(input); return { output: "ran" }; } };
+      const { host, runtime } = createInMemoryChannel();
+      const { provider } = recordingProvider([{ kind: "tool_use", calls: [{ id: "c1", name: "Bash", input: { command: "touch orig_ran", description: 5 } }] }, { kind: "text", text: "done" }]);
+      const done = runEngine({
+        config: baseConfig({ hooks: { PreToolUse: [{ matcher: "Bash", hookCount: 1, source: "sdk" }] } }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        tools,
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      let denied: Extract<ContentBlock, { type: "tool_result" }> | undefined;
+      for await (const f of host.input) {
+        if (f.type === "data" && (f as { message: SdkMessage }).message.type === "user") {
+          for (const b of ((f as { message: { message?: { content?: ContentBlock[] } } }).message.message?.content ?? [])) if (b.type === "tool_result") denied = b;
+        }
+        if (f.type !== "control_request") continue;
+        const cf = f as ControlRequestFrame;
+        if (cf.subtype === "hook") {
+          host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { hookSpecificOutput: { hookEventName: "PreToolUse", ...(decision !== undefined ? { permissionDecision: decision } : {}), updatedInput: { command: "touch safe_ran", description: 5 } } } });
+        } else if (cf.subtype === "permission") {
+          host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { behavior: "deny", message: "user said no" } });
+        }
+      }
+      await done;
+      expect(executed).toEqual([]);
+      expect(denied?.denied).toBe(true);
+      expect(String(denied?.content)).toContain("does not match");
+    }
+  });
+});

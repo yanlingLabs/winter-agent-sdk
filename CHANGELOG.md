@@ -13,7 +13,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `PermissionRequest` hook a DENY naming the hook and a failure code (never the error text or command line). Such a
   hook answering `async`, with another event's `hookSpecificOutput`, or with non-JSON stdout is malformed too; `{}`
   stays an allow. Default off: other hooks' failures stay non-blocking.
-- **Matchers** follow claude's semantics: a pattern of only `[A-Za-z0-9_|]` is a list of exact names (`Edit|Write`),
+- **Matchers** follow claude's semantics: a pattern of only letters, digits, `_`, `|`, `,`, `-` and spaces is a
+  list of exact names split on `|`/`,` and trimmed (`Edit|Write`, `Edit, Write`),
   anything else an unanchored regular-expression test (`mcp__.*`, `.*`); `""` and `*` match all. Winter's existing
   `mcp__srv__*` / `Tool(*)` globs keep their glob reading. A pattern that will not compile warns once and matches
   nothing -- or everything, for a fail-closed hook. `SessionStart`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact` and `Notification`
@@ -35,9 +36,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   ends the turn (`terminal_reason: "hook_stopped"`); `systemMessage` is a new `system/informational` frame;
   `suppressOutput` hides a command hook's stdout from `hook_response`, which now carries command hooks'
   stdout/stderr/exit code; `PostToolUse` `updatedToolOutput` / `updatedMCPToolOutput` replaces the tool result.
-- **`updatedInput` is validated** against the tool's input schema; an invalid one DENIES the call when the model's
-  original input was valid (previously the original input ran). When the original was already invalid, the
-  rewrite is dropped and the tool reports its own error.
+- **`updatedInput` is validated** against the tool's input schema; an invalid one DENIES the call, whatever the
+  model's original input was (previously the original input ran).
 - **New events fire:** `SubagentStart` / `SubagentStop` from a subagent's engine (in place of `SessionStart` /
   `Stop`), and `SessionStart` with `source: "compact"` after a compaction.
 - `UserPromptSubmit` now fires before the prompt is recorded (so a blocked prompt never enters the transcript).

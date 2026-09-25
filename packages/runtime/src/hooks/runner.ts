@@ -307,7 +307,7 @@ const VALID_PERMISSION_DECISIONS: ReadonlySet<string> = new Set(["allow", "ask",
 // (hook-stage.ts's own adapter, evaluator.ts's stage 1). Durable-approval parking is engine.ts's
 // job once evaluate() reports "defer"; this function's only remaining responsibility for the value
 // is the malformed-shape/invalid-defer checks already above/below it (unchanged).
-function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName: string; hookLabel: string; originalInput?: Record<string, unknown> }): HookOutcome {
+function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName: string; hookLabel: string }): HookOutcome {
   const hso = hookSpecificOutputOf(sync);
   const pre = hso !== undefined && hso["hookEventName"] === "PreToolUse" ? hso : undefined;
 
@@ -327,12 +327,12 @@ function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: T
       // file's header for why running the un-rewritten original is the wrong direction. The denial
       // carries no transform, so nothing of the invalid input reaches an executor either way.
       //
-      // Fix round 1 (M1): ONLY when the original was itself valid. A rewrite that merely carried the
-      // MODEL's own mistake along (the daemon's WebSearch floor copies `query` verbatim, so a
-      // `{query: "x"}` stays one character short) is not the hook's failure: the transform is dropped
-      // and the call runs with the original, so the tool reports its own error to the model instead
-      // of a policy denial it cannot act on.
-      if (!originalIsValid(opts)) return withoutTransform(sync, pre, opts);
+      // Fix round 2: WHATEVER the original input was. Round 1 dropped the rewrite and ran the ORIGINAL
+      // when the original was itself schema-invalid -- but the schema is stricter than the tools
+      // (Bash ignores `description: 5`), so the MODEL could make its own input "invalid" at will and
+      // run it past a hook's rewrite without a prompt: fail-open. A hook whose rewrite would carry the
+      // model's own mistake along must stand down itself (the daemon's WebSearch floor does, for a
+      // missing/short `query`), so the tool reports its own error.
       return { kind: "decision", decision: "deny", message: invalidUpdatedInputMessage(opts.hookLabel, opts.toolName, check.reason) };
     }
     transformedInput = rawUpdatedInput;
@@ -384,18 +384,6 @@ function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: T
     ...(extraContext !== undefined ? { extraContext } : {}),
     ...(message !== undefined ? { message } : {}),
   };
-}
-
-function originalIsValid(opts: { validator: ToolInputValidator; toolName?: string; originalInput?: Record<string, unknown> }): boolean {
-  return opts.originalInput === undefined || opts.validator.validate(opts.toolName ?? "", opts.originalInput).valid;
-}
-
-// M1's "run with the original": the SAME output re-read with its `updatedInput` removed, so the hook's
-// decision, reason and context all still count -- only the rewrite (which would carry the model's own
-// invalid input into a policy denial) is gone.
-function withoutTransform(sync: Record<string, unknown>, pre: Record<string, unknown> | undefined, opts: { validator: ToolInputValidator; toolName: string; hookLabel: string }): HookOutcome {
-  const { updatedInput: _dropped, ...rest } = pre ?? {};
-  return interpretPreToolUse({ ...sync, hookSpecificOutput: rest }, opts);
 }
 
 // PostToolUse (WS-08 §5, derived-shapes item (b)): contribution-capable ONLY — structurally, this
@@ -494,7 +482,7 @@ function interpretGeneric(sync: Record<string, unknown>): HookOutcome {
 // error, no audit distinction, a genuine under-enforcement bug caught by T9's own review before this
 // task wired PermissionRequest at all (a hook that means to ANSWER would be silently ignored, and
 // evaluate() would fall through to canUseTool as though no hook had opined).
-function interpretPermissionRequest(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string; originalInput?: Record<string, unknown> }): HookOutcome {
+function interpretPermissionRequest(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string }): HookOutcome {
   const hso = hookSpecificOutputOf(sync);
   const pr = hso !== undefined && hso["hookEventName"] === "PermissionRequest" ? hso : undefined;
   // Mismatched/absent hookEventName -- "none", matching every other interpreter's own silent-none
@@ -532,13 +520,9 @@ function interpretPermissionRequest(sync: Record<string, unknown>, opts: { valid
       // WS-23: the same schema gate PreToolUse's transform passes through, and the same answer on
       // failure -- a deny naming the hook, never the allow running an input nobody validated.
       const check = opts.validator.validate(opts.toolName ?? "", rawUpdatedInput);
-      if (!check.valid) {
-        // Fix round 1 (M1): as for PreToolUse -- deny only when the original was valid; otherwise the
-        // allow stands on the ORIGINAL input and the tool reports the model's own mistake.
-        if (originalIsValid(opts)) return { kind: "decision", decision: "deny", message: invalidUpdatedInputMessage(opts.hookLabel, opts.toolName ?? "", check.reason) };
-      } else {
-        transformedInput = rawUpdatedInput;
-      }
+      // Fix round 2: a deny whatever the original was -- see interpretPreToolUse's own note.
+      if (!check.valid) return { kind: "decision", decision: "deny", message: invalidUpdatedInputMessage(opts.hookLabel, opts.toolName ?? "", check.reason) };
+      transformedInput = rawUpdatedInput;
     }
     const rawUpdatedPermissions = rawDecision["updatedPermissions"];
     let updatedPermissions: PermissionUpdate[] | undefined;
@@ -577,7 +561,7 @@ function interpretPermissionRequest(sync: Record<string, unknown>, opts: { valid
   return { kind: "error", reason: `PermissionRequest decision.behavior is not "allow" or "deny": ${JSON.stringify(behavior)}` };
 }
 
-type HookInterpreterFn = (sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string; originalInput?: Record<string, unknown> }) => HookOutcome;
+type HookInterpreterFn = (sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string }) => HookOutcome;
 
 function invalidUpdatedInputMessage(hookLabel: string, toolName: string, reason: string | undefined): string {
   return `Denied: hook ${hookLabel} returned an updatedInput that does not match ${toolName.length > 0 ? `${toolName}'s` : "the tool's"} input schema (${reason ?? "schema validation failed"}), so the call was not run with it.`;
@@ -601,7 +585,7 @@ function invalidUpdatedInputMessage(hookLabel: string, toolName: string, reason:
 // individually below maps EXPLICITLY to `interpretGeneric`, recorded once, here — never an implicit
 // "whatever's left" default.
 const HOOK_EVENT_INTERPRETERS = {
-  PreToolUse: (sync, opts) => interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "", hookLabel: opts.hookLabel, ...(opts.originalInput !== undefined ? { originalInput: opts.originalInput } : {}) }),
+  PreToolUse: (sync, opts) => interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "", hookLabel: opts.hookLabel }),
   PostToolUse: interpretPostToolUse,
   PostToolUseFailure: interpretPostToolUseFailure,
   PermissionRequest: interpretPermissionRequest,
@@ -639,7 +623,7 @@ const HOOK_EVENT_INTERPRETERS = {
   DirectoryAdded: interpretGeneric,
 } satisfies Record<HookEvent, HookInterpreterFn>;
 
-function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string; originalInput?: Record<string, unknown> }): HookOutcome {
+function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string }): HookOutcome {
   if (hasInvalidDefer(hookSpecificOutputOf(sync), event)) {
     return { kind: "error", reason: `defer is invalid on ${event} (non-suspendable event, WS-08 §7)` };
   }
@@ -845,7 +829,6 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
           validator,
           ...(call.toolName !== undefined ? { toolName: call.toolName } : {}),
           hookLabel: hookLabelOf(entry),
-          ...(call.input !== undefined ? { originalInput: call.input } : {}),
         });
         if (outcome.kind === "error" && outcome.code === undefined) outcome = { ...outcome, code: "malformed_output" };
       }

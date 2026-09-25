@@ -96,9 +96,10 @@ export interface SourcedHookEntry extends HookParticipant {
    */
   failClosed?: boolean;
   /**
-   * WS-23: the plugin's own root directory, for a plugin-sourced command hook -- what
-   * `${CLAUDE_PLUGIN_ROOT}` is substituted with in `command` and exported as in the hook's
-   * environment (command-invoker.ts). Absent on every non-plugin entry.
+   * WS-23: the plugin's own root directory, for a plugin-sourced command hook -- exported as
+   * `CLAUDE_PLUGIN_ROOT` (and its brand twin) in the hook's environment, so `/bin/sh` expands a
+   * `${CLAUDE_PLUGIN_ROOT}` in `command` itself; never spliced into the command text
+   * (command-invoker.ts). Absent on every non-plugin entry.
    */
   pluginRoot?: string;
 }
@@ -134,10 +135,10 @@ const SOURCE_RANK: Record<HookSource, number> = { managed: 0, user: 1, project: 
 // R3), compiled ONCE per distinct pattern at registry build, in this order:
 //
 //   1. absent, "" or "*"               -> every occurrence (claude's own reading of all three).
-//   2. only [A-Za-z0-9_|]              -> EXACT names, `|`-separated alternatives (claude: a pattern of
-//                                         only those characters is a name list, never a regex). So
-//                                         `Edit` matches Edit and never NotebookEdit, and `Edit|Write`
-//                                         matches exactly those two.
+//   2. only letters, digits, `_`, `|`,  -> EXACT names: split on `|` or `,` and trimmed (claude
+//      `,`, `-` and spaces                  2.1.282's own name-list rule, never a regex). So `Edit`
+//                                         matches Edit and never NotebookEdit, and `Edit|Write` /
+//                                         `Edit, Write` match exactly those two.
 //   3. Winter's existing globs         -> the WS-08 §2.1 glob path above, UNCHANGED: `mcp__srv__*`,
 //      (name characters plus `*` and       `Tool(*)`. Kept because the WS-23 brief requires the existing
 //      `-`, optionally ending `(*)`)       globs to keep working. On real tool names claude's regex
@@ -151,7 +152,7 @@ const SOURCE_RANK: Record<HookSource, number> = { managed: 0, user: 1, project: 
 // A pattern that will not compile logs ONE warning (at build, so once per registry, never per call)
 // and matches NOTHING -- unless its hook is FAIL-CLOSED (review I2): a security hook whose matcher is
 // broken must not silently stop gating, so it runs for EVERY call of its event instead, and says so.
-const NAME_LIST_MATCHER = /^[A-Za-z0-9_|]+$/;
+const NAME_LIST_MATCHER = /^[A-Za-z0-9_|, -]+$/;
 const WINTER_GLOB_MATCHER = /^[A-Za-z0-9_*-]+(\(\*\))?$/;
 
 interface CompiledMatcher {
@@ -163,7 +164,7 @@ interface CompiledMatcher {
 function compileMatcher(matcher: string, warn: (line: string) => void): CompiledMatcher {
   if (matcher === "*") return { test: () => true, invalid: false };
   if (NAME_LIST_MATCHER.test(matcher)) {
-    const names = new Set(matcher.split("|").filter((n) => n.length > 0));
+    const names = new Set(matcher.split(/[|,]/).map((n) => n.trim()).filter((n) => n.length > 0));
     return { test: (toolName) => names.has(toolName), invalid: false };
   }
   if (WINTER_GLOB_MATCHER.test(matcher)) {
