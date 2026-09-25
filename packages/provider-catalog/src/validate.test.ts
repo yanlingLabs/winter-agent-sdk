@@ -208,6 +208,19 @@ describe("validateCatalog — evidence integrity", () => {
     expectRejected(baseCatalog({ models: [baseModel({ nativeTools: { value: true, source: "official-doc", confidence: "declared", observedAt: "2026-09-05" } })] }), "ISO-8601 instant");
   });
 
+  test("accepts a documented `effortRequest` field, and rejects an unknown one or an extra key", () => {
+    const reasoning = (effortRequest: unknown) => ({
+      supported: { value: true, source: "official-doc", confidence: "declared" },
+      efforts: ["low", "high"],
+      continuation: "opaque-provider-state",
+      effortRequest,
+    });
+    const evidence = (value: unknown) => ({ value, source: "official-doc", confidence: "declared", sourceRef: "https://platform.claude.com/docs/en/build-with-claude/effort", observedAt: "2026-09-25T00:00:00Z" });
+    expect(validateCatalog(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ field: "output_config.effort" })) } as never)] })).ok).toBe(true);
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ field: "reasoning_effort" })) } as never)] }), "unknown effort request field");
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ field: "output_config.effort", thinking: "adaptive" })) } as never)] }), "unknown key");
+  });
+
   test("rejects a defaultEffort the model's own `efforts` does not contain", () => {
     expectRejected(
       baseCatalog({
@@ -517,6 +530,7 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["readableStates", "$defs.evidenceReadableState.properties.value"],
     ["replayScopes", "$defs.evidenceReplayScope.properties.value"],
     ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
+    ["effortRequestFields", "$defs.evidenceEffortRequest.properties.value.properties.field"],
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
     ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],

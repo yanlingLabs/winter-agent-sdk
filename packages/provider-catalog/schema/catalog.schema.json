@@ -47,6 +47,17 @@
     "evidenceReplayScope": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "enum": ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] } } },
     "evidenceToolLoopRequirement": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "enum": ["hard-error", "silent-degradation", "not-required"] } } },
     "evidenceString": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "type": "string", "minLength": 1 } } },
+    "evidenceEffortRequest": {
+      "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
+      "properties": {
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field"],
+          "properties": { "field": { "enum": ["output_config.effort"] } }
+        }
+      }
+    },
     "evidenceSummaryRequest": {
       "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
       "properties": {
@@ -184,7 +195,8 @@
             "replayScope": { "$ref": "#/$defs/evidenceReplayScope" },
             "continuationDomain": { "$ref": "#/$defs/evidenceStringArray" },
             "completionEvent": { "$ref": "#/$defs/evidenceString" },
-            "toolLoopRequirement": { "$ref": "#/$defs/evidenceToolLoopRequirement" }
+            "toolLoopRequirement": { "$ref": "#/$defs/evidenceToolLoopRequirement" },
+            "effortRequest": { "$ref": "#/$defs/evidenceEffortRequest" }
           }
         },
         "unsupportedParameters": { "type": "array", "items": { "type": "string", "minLength": 1 } },

@@ -113,6 +113,7 @@ const CONTINUATIONS = ["none", "plaintext", "opaque-provider-state", "server-res
 const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
 const TOOL_LOOP_REQUIREMENTS = ["hard-error", "silent-degradation", "not-required"] as const;
+const EFFORT_REQUEST_FIELDS = ["output_config.effort"] as const;
 
 /**
  * The closed vocabularies, exported as ONE object so the JSON Schema can be checked against the
@@ -153,6 +154,7 @@ export const CATALOG_VOCABULARIES = {
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,
   toolLoopRequirements: TOOL_LOOP_REQUIREMENTS,
+  effortRequestFields: EFFORT_REQUEST_FIELDS,
 } as const satisfies Record<string, readonly string[]>;
 
 // --- secrets floor (WS-13 §6/§13, R6-10: "descriptors never contain secrets; a catalog test greps
@@ -391,6 +393,11 @@ function checkReasoning(errs: Errors, v: unknown, path: string): void {
   }, false);
   checkEvidence(errs, v["toolLoopRequirement"], `${path}.toolLoopRequirement`, (val, p) => {
     if (typeof val !== "string" || !(TOOL_LOOP_REQUIREMENTS as readonly string[]).includes(val)) errs.add(p, `unknown tool-loop requirement ${describe(val)}`);
+  }, false);
+  checkEvidence(errs, v["effortRequest"], `${path}.effortRequest`, (val, p) => {
+    if (!isRecord(val)) return errs.add(p, `expected {field}, got ${describe(val)}`);
+    for (const key of Object.keys(val)) if (key !== "field") errs.add(`${p}.${key}`, "unknown key");
+    if (typeof val["field"] !== "string" || !(EFFORT_REQUEST_FIELDS as readonly string[]).includes(val["field"])) errs.add(`${p}.field`, `unknown effort request field ${describe(val["field"])}`);
   }, false);
 }
 
