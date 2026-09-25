@@ -308,6 +308,14 @@ export function assistantEntry(opts: {
    * to before this task.
    */
   uuid?: string;
+  /**
+   * WS-23: claude's own assistant-entry fields, verbatim names -- `effort` is the top-level effort the
+   * request sent, `perTurnEffort` the level in force for the turn (they differ only under per-message
+   * effort). TOP-LEVEL entry fields, exactly where claude 2.1.282 writes them; spread conditionally so
+   * an entry written without them stays byte-identical (the goldens compare whole entries).
+   */
+  effort?: string;
+  perTurnEffort?: string;
 }): DialectEntryBase & { type: "assistant"; message: { id: string; type: "message"; role: "assistant"; content: Block[] } } {
   const base = baseFields(opts.ctx, opts.chain);
   // The uuid a pre-allocated caller passes always wins over baseFields' own freshly minted one
@@ -320,6 +328,8 @@ export function assistantEntry(opts: {
     ...base,
     uuid,
     ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
+    ...(opts.perTurnEffort !== undefined ? { perTurnEffort: opts.perTurnEffort } : {}),
     // model/usage/stop_reason are deliberately NOT invented (W18-11: probe A3 behaved exactly like
     // A2 without them) -- only id/type are Claude-required for the merge-across-tool_result fix.
     message: { id: winterMessageIdFor(uuid), type: "message", role: "assistant", content: opts.content },
@@ -755,9 +765,19 @@ export class TranscriptWriter implements SessionPersistence {
     this.trackConversational(entry.uuid);
   }
 
-  async recordAssistantEntry(content: Block[], opts?: { uuid?: string }): Promise<void> {
+  async recordAssistantEntry(content: Block[], opts?: { uuid?: string; effort?: string; perTurnEffort?: string }): Promise<void> {
     const chain: Chain = { parentUuid: this.parentUuid };
-    const entry = assistantEntry({ content, chain, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}), ...(opts?.uuid !== undefined ? { uuid: opts.uuid } : {}) });
+    const entry = assistantEntry({
+      content,
+      chain,
+      ctx: this.ctx,
+      ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}),
+      ...(opts?.uuid !== undefined ? { uuid: opts.uuid } : {}),
+      // WS-23: FORWARDED, like the uuid above -- a dropped forward here would silently lose the effort
+      // annotations and a resumed session would re-derive no markers (a cache miss on every resume).
+      ...(opts?.effort !== undefined ? { effort: opts.effort } : {}),
+      ...(opts?.perTurnEffort !== undefined ? { perTurnEffort: opts.perTurnEffort } : {}),
+    });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
     this.trackConversational(entry.uuid);

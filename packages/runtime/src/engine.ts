@@ -995,7 +995,13 @@ export interface SessionPersistence {
    * garbage-collectable) but never an entry without a record it needed. Omitted by every pre-P6
    * caller, in which case the writer mints its own exactly as before.
    */
-  recordAssistantEntry(content: ContentBlock[], opts?: { uuid?: string }): void | Promise<void>;
+  /**
+   * WS-23: `effort`/`perTurnEffort` are claude's own assistant-entry fields -- the top-level effort
+   * the request sent and the level in force for the turn. Present only when the session has a named
+   * effort; the store writes them as top-level entry fields, and resume carries them back onto the
+   * rebuilt message so the effort markers re-derive at the same positions.
+   */
+  recordAssistantEntry(content: ContentBlock[], opts?: { uuid?: string; effort?: string; perTurnEffort?: string }): void | Promise<void>;
   /**
    * R6-7: one provider-state record. MUST be called BEFORE `recordAssistantEntry` for the same
    * `anchorUuid` -- that ordering is the whole guarantee, and provider-state.ts's crash-pair fixture
@@ -3067,7 +3073,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }): Promise<string | undefined> => {
+  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }, effortStamp?: { effort: string; perTurnEffort: string }): Promise<string | undefined> => {
     if (!store) return undefined;
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
@@ -3113,7 +3119,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       });
     }
     try {
-      await store.recordAssistantEntry(content, { uuid });
+      await store.recordAssistantEntry(content, { uuid, ...(effortStamp ?? {}) });
     } catch {
       /* auxiliary — see comment above */
     }
@@ -7484,7 +7490,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // names. A live session's history and the same session's RESUMED history must agree on every
         // assistant message's `uuid` -- that agreement is what the continuation chain is keyed on,
         // and resume.test.ts's continuous-vs-split fidelity test pins it.
-        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
+        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn), generationEffort);
         messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         break roundLoop;
@@ -7512,7 +7518,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
-      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn));
+      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
       messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
 
       const resultBlocks: ContentBlock[] = [];
