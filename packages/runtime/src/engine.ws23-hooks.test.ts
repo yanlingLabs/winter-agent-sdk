@@ -295,3 +295,144 @@ describe("WS-23 command hooks through the engine: claude's stdin, with the store
     }
   });
 });
+
+// --- WS-23 fix round 1 -----------------------------------------------------------------------------
+
+describe("WS-23 fix round 1 (C1): a huge hook contribution cannot break the session", () => {
+  test("a 5 MB PostToolUse additionalContext is bounded: the turn completes, and the NEXT turn runs", async () => {
+    const big = "A".repeat(5 * 1024 * 1024);
+    const { requests, messages } = await run({
+      prompts: ["go", "second prompt"],
+      turns: [...TOOL_ROUND, { kind: "text", text: "second answer" }],
+      hooks: one("PostToolUse"),
+      answer: () => ({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: big } }),
+    });
+    expect(requests).toHaveLength(3); // tool round, its follow-up, and the second prompt's own generation
+    const results = messages.filter((m) => m.type === "result") as Array<{ is_error?: boolean; result?: string }>;
+    expect(results.map((r) => r.is_error)).toEqual([false, false]);
+    expect(results[1]!.result).toBe("second answer");
+    const carried = textOf(toolResult(requests[2]!.messages, "c1")!.content);
+    expect(carried).toContain("[…truncated: hook output exceeded");
+    expect(carried.length).toBeLessThan(20_000);
+  });
+
+  test("a 5 MB updatedToolOutput is bounded too", async () => {
+    const { requests } = await run({ prompts: ["go"], turns: TOOL_ROUND, hooks: one("PostToolUse"), answer: () => ({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: "B".repeat(5 * 1024 * 1024) } }) });
+    const replaced = textOf(toolResult(requests[1]!.messages, "c1")!.content);
+    expect(replaced.length).toBeLessThan(110_000);
+    expect(replaced).toContain("[…truncated: hook output exceeded 100000 characters]");
+  });
+});
+
+describe("WS-23 fix round 1 (I1/M2): a stop request belongs to the turn that raised it", () => {
+  test("SessionStart `continue:false` is announced and consumed -- the first prompt still runs", async () => {
+    const { requests, messages } = await run({ prompts: ["hello"], turns: [{ kind: "text", text: "hi" }], hooks: one("SessionStart"), answer: () => ({ continue: false, stopReason: "maintenance" }) });
+    expect(requests).toHaveLength(1);
+    const notice = messages.find((m) => (m as { subtype?: string }).subtype === "informational") as { content?: string };
+    expect(notice.content).toContain("SessionStart:startup hook asked to stop");
+    expect(notice.content).not.toContain("UserPromptSubmit");
+    expect((messages.find((m) => m.type === "result") as { terminal_reason?: string }).terminal_reason).toBeUndefined();
+  });
+
+  test("PostCompact `continue:false` during /compact does not drop the NEXT prompt", async () => {
+    const { requests } = await run({
+      prompts: ["hello", "/compact", "after"],
+      turns: [{ kind: "text", text: "ok" }],
+      hooks: one("PostCompact"),
+      answer: () => ({ continue: false, stopReason: "compact-stop" }),
+      engine: { compactionController: fakeCompactionController({ keep: 0, summary: "SUMMARY" }) },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.messages.map((m) => textOf(m.content)).join("\n")).toContain("after");
+  });
+
+  test("M2: SessionStart context survives a BLOCKED first prompt and rides with the next one", async () => {
+    let prompts = 0;
+    const { requests } = await run({
+      prompts: ["blocked one", "allowed one"],
+      turns: [{ kind: "text", text: "ok" }],
+      hooks: { SessionStart: [{ hookCount: 1, source: "sdk" }], UserPromptSubmit: [{ hookCount: 1, source: "sdk" }] },
+      answer: (c) =>
+        c.event === "SessionStart"
+          ? { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "project briefing" } }
+          : ++prompts === 1
+            ? { decision: "block", reason: "no", hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "context of the blocked prompt" } }
+            : {},
+    });
+    expect(requests).toHaveLength(1);
+    const sent = requests[0]!.messages.map((m) => textOf(m.content)).join("\n");
+    expect(sent).toContain("project briefing");
+    expect(sent).not.toContain("context of the blocked prompt");
+    expect(sent).not.toContain("blocked one");
+  });
+});
+
+// I4: fail-closed END TO END through the engine, the evaluator and the in-memory hook bridge, under
+// the two postures in which nothing else would stop the call -- bypassPermissions, and a matching
+// allow rule (both skip the approval prompt). Adapted from the security review's probe.
+describe("WS-23 fix round 1 (I4): a fail-closed PreToolUse hook denies under bypass and under an allow rule", () => {
+  type Answer = { kind: "ok"; payload: unknown } | { kind: "err"; code: string; message: string } | { kind: "never" };
+  async function runFailClosed(opts: { answer: Answer; failClosed: boolean; posture: Partial<RuntimeConfig>; timeoutSec?: number }): Promise<{ executed: number; result?: Extract<ContentBlock, { type: "tool_result" }> }> {
+    const { host, runtime } = createInMemoryChannel();
+    let executed = 0;
+    const tools = { async execute({ name, input }: { name: string; input: unknown }) { executed++; return { output: `${name}:${JSON.stringify(input)}` }; } };
+    const { provider } = recordingProvider(TOOL_ROUND);
+    const done = runEngine({
+      config: baseConfig({
+        hooks: { PreToolUse: [{ matcher: "t", hookCount: 1, source: "sdk", ...(opts.failClosed ? { failClosed: true } : {}), ...(opts.timeoutSec !== undefined ? { timeoutSec: opts.timeoutSec } : {}) }] },
+        ...opts.posture,
+      }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+      tools,
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    const frames: WinterFrame[] = [];
+    for await (const f of host.input) {
+      frames.push(f);
+      if (f.type !== "control_request") continue;
+      const cf = f as ControlRequestFrame;
+      if (cf.subtype === "hook") {
+        if (opts.answer.kind === "ok") host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: opts.answer.payload });
+        else if (opts.answer.kind === "err") host.output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: opts.answer.code, message: opts.answer.message } });
+      } else if (cf.subtype === "permission") {
+        host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { behavior: "allow" } });
+      }
+    }
+    await done;
+    const blocks = frames
+      .filter((f) => f.type === "data" && (f as { message: SdkMessage }).message.type === "user")
+      .flatMap((f) => ((f as { message: { message?: { content?: ContentBlock[] } } }).message.message?.content ?? []));
+    const result = blocks.find((b): b is Extract<ContentBlock, { type: "tool_result" }> => b.type === "tool_result" && b.tool_use_id === "c1");
+    return { executed, ...(result !== undefined ? { result } : {}) };
+  }
+
+  const POSTURES: Array<[string, Partial<RuntimeConfig>]> = [
+    ["bypassPermissions", { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }],
+    ["a matching allow rule", { allowedTools: ["t"] }],
+  ];
+  const FAILURES: Array<[string, Answer, number | undefined]> = [
+    ["a throw (hook_threw)", { kind: "err", code: "hook_threw", message: "boom" }, undefined],
+    ["a timeout", { kind: "never" }, 0.3],
+    ["a malformed (non-object) answer", { kind: "ok", payload: "nope" }, undefined],
+    ["a null answer", { kind: "ok", payload: null }, undefined],
+    ["an unknown_hook_id (bridge drift)", { kind: "err", code: "unknown_hook_id", message: "no such hook" }, undefined],
+  ];
+  for (const [postureName, posture] of POSTURES) {
+    for (const [failureName, answer, timeoutSec] of FAILURES) {
+      test(`${postureName}: ${failureName} DENIES and the executor never runs`, async () => {
+        const r = await runFailClosed({ answer, failClosed: true, posture, ...(timeoutSec !== undefined ? { timeoutSec } : {}) });
+        expect(r.executed).toBe(0);
+        expect(r.result?.denied).toBe(true);
+        expect(String(r.result?.content)).toContain("fail-closed");
+        expect(String(r.result?.content)).not.toContain("boom"); // M3: never the host's error text
+      });
+    }
+    test(`${postureName}: WITHOUT failClosed a throw still lets the call run (the default is unchanged)`, async () => {
+      const r = await runFailClosed({ answer: { kind: "err", code: "hook_threw", message: "boom" }, failClosed: false, posture });
+      expect(r.executed).toBe(1);
+    });
+  }
+});

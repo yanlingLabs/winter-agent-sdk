@@ -231,6 +231,7 @@ import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoke
 import type { HookComposite } from "./hooks/reducer.ts";
 import { createRegistryToolInputValidator } from "./hooks/input-validator.ts";
 import { contextStrings, hookAdditionalContextAttachment, hookFeedbackAttachment } from "./hooks/additional-context.ts";
+import { capHookText, MAX_HOOK_TOOL_OUTPUT_CHARS } from "./hooks/bounds.ts";
 // Task 11 (WS-07 §9 / WS-08 §7): the durable approval store a `defer` decision parks into, and the
 // pure revalidation function the resume-consumption step (this file, below) uses.
 import {
@@ -1905,8 +1906,19 @@ export const STOP_HOOK_BLOCK_CAP = 8;
  * `CallToolResult`-shaped object contributes its `content` array; anything else is shown to the model
  * as its JSON text -- a replacement is always DELIVERED, never silently dropped for its shape.
  */
+//
+// Fix round 1 (C1): BOUNDED at MAX_HOOK_TOOL_OUTPUT_CHARS (hooks/bounds.ts) -- a replacement is
+// written into the history like any tool result, so an unbounded one would break every later request.
+// Block content counts text plus image payload; an oversized block list falls back to its text,
+// capped, with each image replaced by a one-line placeholder (a partial image is not an image).
 function toolOutputReplacement(value: unknown): string | ContentBlock[] {
-  if (typeof value === "string") return value;
+  const cap = MAX_HOOK_TOOL_OUTPUT_CHARS;
+  const boundBlocks = (blocks: ContentBlock[]): string | ContentBlock[] => {
+    const size = blocks.reduce((n, b) => n + (b.type === "text" ? b.text.length : b.type === "image" ? b.source.data.length : 0), 0);
+    if (size <= cap) return blocks;
+    return capHookText(blocks.map((b) => (b.type === "text" ? b.text : "[image omitted: the hook's replacement output exceeded its size bound]")).join("\n"), cap);
+  };
+  if (typeof value === "string") return capHookText(value, cap);
   const blocksOf = (candidate: unknown): ContentBlock[] | undefined => {
     if (!Array.isArray(candidate) || candidate.length === 0) return undefined;
     const ok = candidate.every(
@@ -1914,20 +1926,22 @@ function toolOutputReplacement(value: unknown): string | ContentBlock[] {
         typeof b === "object" &&
         b !== null &&
         (((b as { type?: unknown }).type === "text" && typeof (b as { text?: unknown }).text === "string") ||
-          ((b as { type?: unknown }).type === "image" && typeof (b as { source?: unknown }).source === "object")),
+          ((b as { type?: unknown }).type === "image" &&
+            typeof (b as { source?: { data?: unknown } }).source === "object" &&
+            typeof (b as { source?: { data?: unknown } }).source?.data === "string")),
     );
     return ok ? (candidate as ContentBlock[]) : undefined;
   };
   const direct = blocksOf(value);
-  if (direct !== undefined) return direct;
+  if (direct !== undefined) return boundBlocks(direct);
   if (typeof value === "object" && value !== null) {
     const mcp = blocksOf((value as { content?: unknown }).content);
-    if (mcp !== undefined) return mcp;
+    if (mcp !== undefined) return boundBlocks(mcp);
   }
   try {
-    return JSON.stringify(value) ?? String(value);
+    return capHookText(JSON.stringify(value) ?? String(value), cap);
   } catch {
-    return String(value);
+    return capHookText(String(value), cap);
   }
 }
 
@@ -3067,15 +3081,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       },
     });
   };
-  const absorbHookComposite = (composite: HookComposite, opts: { hookName: string; context?: boolean; toolUseID?: string }): void => {
+  // `outsideTurn` (fix round 1, I1): a site that fires with NO turn to stop -- SessionStart/SubagentStart
+  // before the first envelope, a manual `/compact` (a built-in that ends its own turn regardless).
+  // Its `continue: false` is CONSUMED right there (the notice, then nothing) instead of being left for
+  // whichever turn comes next: the review's probe showed a leaked stop silently dropping the user's
+  // NEXT prompt, announced as a UserPromptSubmit block it never was.
+  const absorbHookComposite = (composite: HookComposite, opts: { hookName: string; context?: boolean; toolUseID?: string; outsideTurn?: boolean }): void => {
     for (const notice of contextStrings(composite.systemMessages)) emitHookNotice(notice);
     if (opts.context === true) {
       const attachment = hookAdditionalContextAttachment(opts.hookName, contextStrings(composite.extraContext), opts.toolUseID);
       if (attachment !== undefined) pendingHookAttachments.push(attachment);
     }
-    if (composite.preventContinuation !== undefined && turnStop.request === undefined) {
-      turnStop.request = { hookName: opts.hookName, ...(composite.preventContinuation.reason !== undefined ? { reason: composite.preventContinuation.reason } : {}) };
+    if (composite.preventContinuation === undefined) return;
+    const reason = composite.preventContinuation.reason;
+    if (opts.outsideTurn === true) {
+      emitHookNotice(`${opts.hookName} hook asked to stop, but there is no turn to stop here${reason !== undefined ? `: ${reason}` : ""}`);
+      return;
     }
+    if (turnStop.request === undefined) turnStop.request = { hookName: opts.hookName, ...(reason !== undefined ? { reason } : {}) };
   };
   const flushPendingHookAttachments = async (): Promise<void> => {
     for (const attachment of pendingHookAttachments.splice(0)) {
@@ -5876,11 +5899,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // user turn (`flushPendingHookAttachments` at turn start) -- never into the system prompt.
   if (subagentHooks !== undefined) {
     const started = await fireObservationalHook("SubagentStart", { payload: { agent_id: config.agentId ?? "", agent_type: subagentHooks.agentType } });
-    absorbHookComposite(started, { hookName: `SubagentStart:${subagentHooks.agentType}`, context: true });
+    absorbHookComposite(started, { hookName: `SubagentStart:${subagentHooks.agentType}`, context: true, outsideTurn: true });
   } else {
     const sessionStartSource = config.forkSession === true ? "fork" : config.resume !== undefined || config.continue === true ? "resume" : "startup";
     const started = await fireObservationalHook("SessionStart", { payload: { source: sessionStartSource } });
-    absorbHookComposite(started, { hookName: `SessionStart:${sessionStartSource}`, context: true });
+    absorbHookComposite(started, { hookName: `SessionStart:${sessionStartSource}`, context: true, outsideTurn: true });
   }
   // B-H1(c) point 2: the session is IDLE, waiting for a user envelope (WS-04 §4.1's `idle` state).
   // Emitted here and again after every terminal result below, which is exactly the set of moments
@@ -6194,7 +6217,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // PreCompact -- pinned input `{ trigger, custom_instructions }` (derived-shapes-p5 item (f)).
     // `custom_instructions` is `string | null` on the pin, never absent.
     const pre = await fireObservationalHook("PreCompact", { payload: { trigger, custom_instructions: customInstructions } });
-    absorbHookComposite(pre, { hookName: `PreCompact:${trigger}` }); // WS-23: notices + `continue: false`; its context stays compaction instructions, below
+    absorbHookComposite(pre, { hookName: `PreCompact:${trigger}`, outsideTurn: trigger === "manual" }); // WS-23: notices + `continue: false`; its context stays compaction instructions, below
     const forwarded = (pre.extraContext ?? []).map((c) => c.context).filter((t) => typeof t === "string" && t.length > 0);
     const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
 
@@ -6303,14 +6326,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // PostCompact AFTER compact(): its pinned input carries `compact_summary` as a REQUIRED string,
     // so the summary must exist before the hook can be given its input at all.
     // WS-23: its notices and a `continue: false` are honoured like every other event's.
-    absorbHookComposite(await fireObservationalHook("PostCompact", { payload: { trigger, compact_summary: result.summary } }), { hookName: `PostCompact:${trigger}` });
+    absorbHookComposite(await fireObservationalHook("PostCompact", { payload: { trigger, compact_summary: result.summary } }), { hookName: `PostCompact:${trigger}`, outsideTurn: trigger === "manual" });
 
     // WS-23 (brief item 7): `SessionStart` with `source: "compact"` -- the context a SessionStart hook
     // injects (a project's conventions, a status snapshot) was IN the history the summary just
     // replaced, so the hook is asked again and its context is appended right after the summary. A
     // subagent fires no SessionStart (EngineOptions.subagentHooks), so a child's compaction does not.
     if (subagentHooks === undefined) {
-      absorbHookComposite(await fireObservationalHook("SessionStart", { payload: { source: "compact" } }), { hookName: "SessionStart:compact", context: true });
+      absorbHookComposite(await fireObservationalHook("SessionStart", { payload: { source: "compact" } }), { hookName: "SessionStart:compact", context: true, outsideTurn: trigger === "manual" });
       await flushPendingHookAttachments();
     }
 
@@ -7294,15 +7317,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // at acceptance: a hook's own latency must not let a control request that arrived after this
     // envelope (a `set_permission_mode`) leak into how this envelope's prompt is assembled.
     const envelopeInput = promptInput();
+    // Fix round 1 (I1): every turn starts with no stop request -- a stop belongs to the turn that
+    // raised it, never to the next one.
+    delete turnStop.request;
+    // Fix round 1 (M2): what was queued BEFORE this prompt's hook (SessionStart's context, waiting for
+    // the first user turn) is not this prompt's -- a blocked prompt drops only its own hook's context.
+    const pendingBeforePrompt = pendingHookAttachments.length;
     const promptHooks = await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
     absorbHookComposite(promptHooks, { hookName: "UserPromptSubmit", context: true });
     const promptBlock = contextStrings(promptHooks.blockReasons);
-    if (promptBlock.length > 0 || currentTurnStop() !== undefined) {
+    const promptStop = currentTurnStop();
+    if (promptBlock.length > 0 || promptStop !== undefined) {
       interruptCurrentTurn.current = null;
-      pendingHookAttachments.length = 0; // the prompt they would have accompanied never enters the history
-      const reason = promptBlock.length > 0 ? promptBlock.join("\n") : (turnStop.request?.reason ?? "");
+      pendingHookAttachments.length = pendingBeforePrompt; // this prompt never enters the history, so neither does its context
+      const reason = promptBlock.length > 0 ? promptBlock.join("\n") : (promptStop?.reason ?? "");
       delete turnStop.request;
-      emitHookNotice(`UserPromptSubmit operation blocked by hook${reason.length > 0 ? `:\n${reason}` : ""}`, { preventContinuation: true });
+      emitHookNotice(
+        promptBlock.length > 0
+          ? `UserPromptSubmit operation blocked by hook${reason.length > 0 ? `:\n${reason}` : ""}`
+          : `${promptStop!.hookName} hook stopped continuation${reason.length > 0 ? `: ${reason}` : ""}`,
+        { preventContinuation: true },
+      );
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: reason, terminal_reason: "hook_stopped", usage: emptyResultUsage(), permission_denials: [] } });
       await flushStore();
       endTurn();
