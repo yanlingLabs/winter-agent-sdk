@@ -927,6 +927,11 @@ export interface UserEntryMeta {
 }
 
 export interface SessionPersistence {
+  /**
+   * WS-23: the durable transcript's absolute path, when the store knows it (store/dialect.ts's
+   * writer does). A command hook's stdin names it as `transcript_path`; absent, that field is `""`.
+   */
+  transcriptPath?: string;
   recordUserEntry(content: string | ContentBlock[], opts?: UserEntryMeta): void | Promise<void>;
   /**
    * SDK 0.0.16 (P16-5/P16-6): one persisted attachment -- claude's `{type: "attachment", attachment}`
@@ -2401,16 +2406,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // host answers), so a session with no command hooks behaves exactly as it did before this wiring.
   const bridgeHookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
   // WS-23: claude's command-hook wire needs three session facts a command's stdin/env carries --
-  // the transcript path (`transcript_path`; `""` with no durable store to point at, never a guess),
+  // the transcript path (`transcript_path`: the STORE's own, `SessionPersistence.transcriptPath`, so a
+  // resume found under another project directory names the right file; `""` when there is no durable
+  // store, never a path re-derived here and possibly wrong -- a claude-format script may `cat` it),
   // the LIVE permission mode (`permission_mode`, read per invocation: it changes mid-session), and
-  // the brand whose prefix names the Winter twins of CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT. The
-  // transcript path is the owning SESSION's even for a child (claude's `transcript_path` semantics;
-  // a subagent's own path rides SubagentStop's `agent_transcript_path`).
-  const hookTranscriptDurableRoot = config.storeHome ?? wiredWinterHome ?? config.winterHome;
-  const hookTranscriptPath =
-    store !== undefined && hookTranscriptDurableRoot !== undefined
-      ? join(hookTranscriptDurableRoot, "projects", resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env, sessionBrand), `${config.sessionId}.jsonl`)
-      : "";
+  // the brand whose prefix names the Winter twins of CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT. A child
+  // engine's store (a bare child TranscriptWriter) states no path, so a subagent's command hooks get
+  // `""` here; its own transcript rides SubagentStop's `agent_transcript_path`.
+  const hookTranscriptPath = store?.transcriptPath ?? "";
   const hookInvoker: HookInvoker = allHookEntries.some((e) => e.command !== undefined && e.command.length > 0)
     ? createCommandHookInvoker(allHookEntries, {
         next: bridgeHookInvoker,

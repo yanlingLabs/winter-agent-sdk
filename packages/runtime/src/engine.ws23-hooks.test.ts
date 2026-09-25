@@ -253,3 +253,45 @@ describe("WS-23 subagent lifecycle: a child engine fires SubagentStart/SubagentS
     expect(requests[1]!.messages.map((m) => textOf(m.content)).join("\n")).toContain("SubagentStop:code-reviewer hook feedback:\nalso check the tests");
   });
 });
+
+describe("WS-23 command hooks through the engine: claude's stdin, with the store's own transcript path", () => {
+  test("a settings command hook reads session_id, the REAL transcript_path, cwd, permission_mode and the tool fields on stdin", async () => {
+    const { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, realpathSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { resolveEngineSession } = await import("./store/dialect.ts");
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "winter-ws23-cmdhook-")));
+    try {
+      const cwd = join(home, "work");
+      mkdirSync(cwd, { recursive: true });
+      const captured = join(home, "stdin.json");
+      const sessionConfig: RuntimeConfig = { sessionId: "sess-ws23", cwd, model: "winter-test/echo", winterHome: home, allowedTools: ["t"] };
+      const resolved = await resolveEngineSession({ config: sessionConfig, resolveWinterHome: () => home, env: {} });
+      const { host, runtime } = createInMemoryChannel();
+      const { provider } = recordingProvider(TOOL_ROUND);
+      const done = runEngine({
+        config: resolved.config,
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        tools: stubExecutor,
+        store: resolved.store!,
+        env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+        extraHookEntries: [{ id: "PreToolUse:user:0:0", event: "PreToolUse", source: "user", matcher: "t", command: `cat > ${JSON.stringify(captured)}` }],
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      for await (const _f of host.input) {
+        /* drain */
+      }
+      await done;
+      const input = JSON.parse(readFileSync(captured, "utf8")) as Record<string, unknown>;
+      expect(input).toMatchObject({ session_id: "sess-ws23", cwd, permission_mode: "default", hook_event_name: "PreToolUse", tool_name: "t", tool_input: { x: 1 }, tool_use_id: "c1" });
+      expect(typeof input["transcript_path"]).toBe("string");
+      expect(String(input["transcript_path"]).endsWith("/sess-ws23.jsonl")).toBe(true);
+      expect(existsSync(String(input["transcript_path"]))).toBe(true); // the file the session actually writes
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
