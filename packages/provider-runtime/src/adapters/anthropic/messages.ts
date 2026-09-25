@@ -627,6 +627,41 @@ function resolveToolChoice(toolChoice: NonNullable<TurnRequest["toolChoice"]>, u
 }
 
 /**
+ * A row's DOTTED upstream id -> Anthropic's own DASHED wire id (e.g. `claude-opus-4.8` ->
+ * `claude-opus-4-8`), or the id UNCHANGED when it does not match that shape.
+ *
+ * PRE-EXISTING BUG (found by the live gate, fix round 3): the registry sends a resolved session's
+ * `model` as the row's own `upstreamId` (`bridge.ts`'s `providerModelId`), and seven Claude rows have
+ * a DOTTED upstream id -- `claude-opus-4.5`/`4.6`/`4.7`/`4.8`, `claude-sonnet-4.5`/`4.6` and
+ * `claude-haiku-4.5`, on BOTH `anthropic` and `console` (same spelling, same bug, independent of
+ * provider). Sending that spelling verbatim 404s: "model: claude-opus-4.8 was not found. Did you mean
+ * claude-opus-4-8?" -- Winter's own leg has never been able to call any of the seven. Anthropic's own
+ * model pages give the dashed form as the API id
+ * (https://platform.claude.com/docs/en/models/opus-4-7/overview: "Model ID: claude-opus-4-7").
+ *
+ * FIXED AT THE WIRE, NOT IN THE CATALOG: the catalog key must equal `<providerId>/<upstreamId>`
+ * (WS-13 §8.3), so renaming the seven stored ids would be a stored-tag migration -- a different, much
+ * larger change than this file owns. `findDescriptor` keeps looking the row up by the DOTTED id
+ * (`req.model`, unchanged) exactly as before; only the `model` field this file WRITES INTO THE REQUEST
+ * BODY is rewritten, so capability resolution (descriptor lookup, `unsupportedParameters`,
+ * `effortRequest`, everything `buildThinking` reads) is completely unaffected by this function.
+ *
+ * THE PATTERN IS NARROW ON PURPOSE: `/^(claude-[a-z]+-\d+)\.(\d+)$/` matches only a bare
+ * `claude-<family>-<major>.<minor>` shape and nothing else, so a DATED id
+ * (`claude-haiku-4-5-20251001`, no dot at all), an ALREADY-DASHED id, and a non-Claude model on a
+ * sibling Anthropic-dialect provider (`deepseek-flash`, `glm-5.3`, `MiniMax-M2.7` -- none of which are
+ * `claude-*`, and whose own `.` means something this pattern must never touch) all fail to match and
+ * pass through byte-identical. This is a Claude-id-SHAPE fix, not a general dot-to-dash transform.
+ *
+ * SCOPED TO THIS ADAPTER, per the fix-round instruction: bedrock/vertex serve the same models under
+ * their OWN id schemes, which this pattern is not written against and would not reliably match -- out
+ * of scope here, and this helper has no reason to be shared with either.
+ */
+export function anthropicWireModelId(id: string): string {
+  return id.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, "$1-$2");
+}
+
+/**
  * The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the
  * network.
  *
@@ -723,7 +758,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
     // the field is unverified -- sending it would be an unevidenced capability claim on an endpoint
     // this adapter has no fixture proving it against.
     return {
-      model: req.model,
+      model: anthropicWireModelId(req.model),
       messages: toWireMessages(req.messages),
       ...(req.system !== undefined ? { system: req.system } : {}),
       ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) } : {}),
@@ -740,7 +775,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   const caching = promptCachingLayout(req, descriptor);
   const wireMessages = toWireMessages(req.messages);
   return {
-    model: req.model,
+    model: anthropicWireModelId(req.model),
     max_tokens: maxTokens,
     messages: caching ? withMessageCacheMarker(wireMessages) : wireMessages,
     stream: true,
