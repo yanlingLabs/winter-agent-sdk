@@ -1057,3 +1057,67 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
     expect(lifecycle.stateSource.snapshot().every((s) => s.protocolVersion === undefined)).toBe(true);
   }, 15_000);
 });
+
+// --- WS-23 fix round 1 (review I3 + a test gap): overlapping refreshes, and a change parked while connecting ---
+
+describe("WS-23 fix round 1: listChanged refreshes are single-flight; a change during the initial connect is not lost", () => {
+  test("two overlapping refreshes (the FIRST one's tools/list slow): the NEWEST list wins, never the slower older answer", async () => {
+    let current = "v0";
+    let listCalls = 0;
+    const server = new Server({ name: "race", version: "1" }, { capabilities: { tools: { listChanged: true } } });
+    server.setRequestHandler("tools/list", async () => {
+      const n = ++listCalls;
+      const snapshot = current; // the list as it is when the request ARRIVES
+      if (n === 2) await new Promise((r) => setTimeout(r, 1000)); // the first refresh is slow
+      return { tools: [{ name: snapshot, inputSchema: { type: "object", properties: {} } }] };
+    });
+    server.setRequestHandler("tools/call", async () => ({ content: [{ type: "text", text: "x" }] }));
+    const lifecycle = createMcpLifecycle({ servers: [{ name: "race", origin: "explicit", config: { type: "sdk", name: "race" } }], envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { race: server } });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["v0"]);
+      current = "v1";
+      await server.sendToolListChanged();
+      await new Promise((r) => setTimeout(r, 400)); // past the 300 ms debounce: refresh A (slow) in flight
+      current = "v2";
+      await server.sendToolListChanged();
+      await new Promise((r) => setTimeout(r, 2000)); // before the fix, the fast B landed first and the slow A overwrote it
+      expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["v2"]);
+      expect(getRegisteredTool("mcp__race__v2")).toBeDefined();
+      expect(getRegisteredTool("mcp__race__v1")).toBeUndefined();
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  }, 10_000);
+
+  test("a change announced WHILE the initial connect's tools/list is in flight is parked, then applied once connected", async () => {
+    let current = "before";
+    let listCalls = 0;
+    const server = new Server({ name: "early", version: "1" }, { capabilities: { tools: { listChanged: true } } });
+    server.setRequestHandler("tools/list", async () => {
+      const n = ++listCalls;
+      const snapshot = current;
+      if (n === 1) {
+        // The server changes its list and says so while answering the connect's FIRST tools/list,
+        // and holds that (now stale) answer past the client's 300 ms debounce: the signal lands
+        // before the slot has a committed client.
+        current = "after";
+        await server.sendToolListChanged();
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      return { tools: [{ name: snapshot, inputSchema: { type: "object", properties: {} } }] };
+    });
+    server.setRequestHandler("tools/call", async () => ({ content: [] }));
+    const lifecycle = createMcpLifecycle({ servers: [{ name: "early", origin: "explicit", config: { type: "sdk", name: "early" } }], envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT, inProcessServers: { early: server } });
+    try {
+      await lifecycle.start();
+      for (let i = 0; i < 200 && lifecycle.stateSource.snapshot()[0]!.toolNames[0] !== "after"; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lifecycle.stateSource.snapshot()[0]).toMatchObject({ state: "connected", toolNames: ["after"] });
+      expect(listCalls).toBe(2); // the connect's own list, then exactly one replayed refresh
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  }, 10_000);
+});

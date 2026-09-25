@@ -329,6 +329,14 @@ interface ConnectionSlot {
   // and replayed the moment the slot reaches `connected` (connectOneServer's success path,
   // enableSlot's instant restore) rather than lost.
   toolListStale?: boolean | undefined;
+  // WS-23 fix round 1 (ruling I3): refreshes of ONE slot are SINGLE-FLIGHT. Two overlapping
+  // refreshes (a listChanged signal landing while an earlier refresh's `tools/list` is still in
+  // flight) used to race, and the slower answer -- possibly the OLDER list -- committed last and
+  // stuck. `refreshing` is the run in progress; a refresh requested during it sets
+  // `refreshAgain` and joins it, and the run loops once more before settling, so the last commit
+  // is always from a `tools/list` sent AFTER the last request.
+  refreshing?: Promise<RefreshServerToolsResult> | undefined;
+  refreshAgain?: boolean | undefined;
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
@@ -944,7 +952,32 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     return slot?.state === "connected" ? slot.client : undefined;
   }
 
-  async function refreshServerTools(name: string): Promise<RefreshServerToolsResult> {
+  // The public door: single-flight per slot (see ConnectionSlot.refreshing). A caller that joins a
+  // run in progress gets the result of the run's LAST pass -- the one that reflects its request.
+  function refreshServerTools(name: string): Promise<RefreshServerToolsResult> {
+    const slot = slots.get(name);
+    if (!slot) return Promise.resolve({ ok: false, reason: `unknown MCP server "${name}"` });
+    if (slot.refreshing !== undefined) {
+      slot.refreshAgain = true;
+      return slot.refreshing;
+    }
+    const run = (async (): Promise<RefreshServerToolsResult> => {
+      let result: RefreshServerToolsResult;
+      do {
+        slot.refreshAgain = false;
+        result = await refreshServerToolsOnce(name);
+        // Re-read after the await: a joiner may have set it meanwhile (tsc narrows it to `false`
+        // from the assignment above, which is exactly what the await invalidates).
+      } while ((slot.refreshAgain as boolean | undefined) === true && slots.get(name) === slot);
+      return result;
+    })().finally(() => {
+      slot.refreshing = undefined;
+    });
+    slot.refreshing = run;
+    return run;
+  }
+
+  async function refreshServerToolsOnce(name: string): Promise<RefreshServerToolsResult> {
     const slot = slots.get(name);
     if (!slot) return { ok: false, reason: `unknown MCP server "${name}"` };
     if (slot.state !== "connected" || !slot.client) {
