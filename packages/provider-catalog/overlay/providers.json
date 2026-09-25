@@ -849,11 +849,11 @@
     },
     {
       "id": "kimi-coding",
-      "displayName": "Kimi Code (Anthropic dialect)",
+      "displayName": "Kimi Code China (Anthropic dialect)",
       "protocols": [
         "anthropic-messages"
       ],
-      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). SUBSCRIPTION-priced (WS-13b §1): `priceUsage` returns nothing for this row, so a Kimi Code session never reports `total_cost_usd` — a membership seat has no per-token price and reporting one would be a fabricated number. The OAuth half of this id is DROPPED per audit §5.2 (no third-party OAuth is documented); the key row is what ships. Endpoint is the ROOT: the adapter appends `/v1/messages`, reproducing the documented `https://api.kimi.com/coding/v1/messages`.",
+      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). SUBSCRIPTION-priced (WS-13b §1): `priceUsage` returns nothing for this row, so a Kimi Code session never reports `total_cost_usd` — a membership seat has no per-token price and reporting one would be a fabricated number. The OAuth half of this id is DROPPED per audit §5.2 (no third-party OAuth is documented); the key row is what ships. Endpoint is the ROOT: the adapter appends `/v1/messages`, reproducing the documented `https://api.kimi.com/coding/v1/messages`. 2026-09-25 refresh: Kimi Code's docs (https://www.kimi.com/code/docs/en/, retrieved 2026-09-25) now label `api.kimi.com/coding[/v1]` as the CHINA endpoint and `api.kimi.ai/coding[/v1]` as the OVERSEAS one, with region-bound keys. This row has always pointed at api.kimi.com, so any key stored against it is a China key — the id keeps its host and is relabelled; the overseas plan is the separate `kimi-coding-intl` pair.",
       "authKinds": [
         "api-key"
       ],
@@ -886,8 +886,8 @@
     },
     {
       "id": "kimi-coding-openai",
-      "displayName": "Kimi Code (OpenAI dialect)",
-      "$comment": "The Kimi Code membership endpoint supports both documented dialects. This separate subscription row is the OpenAI-compatible sibling of `kimi-coding`, not Moonshot's token-billed platform API.",
+      "displayName": "Kimi Code China (OpenAI dialect)",
+      "$comment": "The Kimi Code membership endpoint supports both documented dialects. This separate subscription row is the OpenAI-compatible sibling of `kimi-coding`, not Moonshot's token-billed platform API. 2026-09-25 refresh: Kimi Code's docs (https://www.kimi.com/code/docs/en/, retrieved 2026-09-25) now label `api.kimi.com/coding[/v1]` as the CHINA endpoint and `api.kimi.ai/coding[/v1]` as the OVERSEAS one, with region-bound keys. This row has always pointed at api.kimi.com, so any key stored against it is a China key — the id keeps its host and is relabelled; the overseas plan is the separate `kimi-coding-intl` pair.",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -1377,9 +1377,10 @@
       "id": "moonshot",
       "displayName": "Moonshot AI (Kimi platform)",
       "protocols": [
-        "openai-chat-completions"
+        "openai-chat-completions",
+        "openai-responses"
       ],
-      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). Upstream's `moonshot` entry states this same base URL but drives it through a bespoke `moonshot` executor, which Winter does not represent — an unknown executor FAILS the extraction run rather than defaulting, so the id is in `blocked` and the row is authored here. This is the TOKEN-PRICED platform API; `kimi-coding` is the separate SUBSCRIPTION plan, and audit §5.6(3) is explicit that conflating the two silently misreports cost.",
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). Upstream's `moonshot` entry states this same base URL but drives it through a bespoke `moonshot` executor, which Winter does not represent — an unknown executor FAILS the extraction run rather than defaulting, so the id is in `blocked` and the row is authored here. This is the TOKEN-PRICED platform API; `kimi-coding` is the separate SUBSCRIPTION plan, and audit §5.6(3) is explicit that conflating the two silently misreports cost. 2026-09-25 refresh: Moonshot's /v1/responses (https://platform.kimi.ai/docs/api/responses) is served on this same host and key — currently for kimi-k3 only — so it is a protocol of this row, not a separate provider (user ruling 2026-09-25).",
       "authKinds": [
         "api-key"
       ],
@@ -3614,6 +3615,81 @@
       "admission": {
         "basis": "api-key",
         "citation": "https://dev.meta.ai/docs/models — Meta's Model API documentation (Meta Superintelligence Labs), retrieved 2026-09-25: OpenAI-compatible API at `https://api.meta.ai/v1` with a Model API key, pay-as-you-go per-token billing; serves the Muse Spark models.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "kimi-coding-intl",
+      "displayName": "Kimi Code Overseas (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Overseas twin of `kimi-coding` (which is the China plan at api.kimi.com). Endpoint is the ROOT: the adapter appends `/v1/messages`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.kimi.ai/coding"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.kimi.com/code/docs/en/ — Kimi Code's own docs, retrieved 2026-09-25: the overseas plan's Anthropic-compatible base is `https://api.kimi.ai/coding/` and its OpenAI-compatible base `https://api.kimi.ai/coding/v1` (the China plan uses api.kimi.com); membership API keys are region-bound; billing is the membership subscription.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "kimi-coding-intl-openai",
+      "displayName": "Kimi Code Overseas (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Dialect sibling of `kimi-coding-intl`; overseas twin of `kimi-coding-openai`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.kimi.ai/coding/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.kimi.com/code/docs/en/ — Kimi Code's own docs, retrieved 2026-09-25: the overseas plan's Anthropic-compatible base is `https://api.kimi.ai/coding/` and its OpenAI-compatible base `https://api.kimi.ai/coding/v1` (the China plan uses api.kimi.com); membership API keys are region-bound; billing is the membership subscription.",
         "tier": "fetched-document"
       },
       "scope": "llm"

@@ -1777,23 +1777,23 @@
         "deepseek-v4-flash",
         "deepseek-v4-flash-vision-exp"
       ],
-      "$comment": "DeepSeek's official Anthropic-compatible endpoint documents `deepseek-flash` as the current V4.1 Flash id. The listed aliases are legacy ids DeepSeek temporarily routes to it. The endpoint supports reasoning blocks, but its official guide does not document the OpenAI-Chat `reasoning_content` replay contract, so continuation remains `none` rather than borrowing that dialect's plaintext contract.",
+      "$comment": "DeepSeek's official Anthropic-compatible endpoint documents `deepseek-flash` as the current V4.1 Flash id. The listed aliases are legacy ids DeepSeek temporarily routes to it. The endpoint supports reasoning blocks, but its official guide does not document the OpenAI-Chat `reasoning_content` replay contract, so continuation remains `none` rather than borrowing that dialect's plaintext contract. — 2026-09-25 refresh: Anthropic base https://api-docs.deepseek.com/guides/anthropic_api/; thinking.type enabled/disabled and output_config.effort low/high/max; budget_tokens and listed parameters are IGNORED, not rejected. top_p only effective in thinking mode and floor 0.95. Unrecognized model names silently map to deepseek-flash. Do not infer opaque thinking replay support. Legacy V4 Flash IDs route to V4.1 Flash.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4.1-Flash context window 1M tokens",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — model details: both have 1M context",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "maxOutputTokens": {
-        "value": 384000,
+        "value": 393216,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4.1-Flash maximum output 384K tokens",
+        "sourceRef": "https://api-docs.deepseek.com/api/create-chat-completion/ — max_tokens accepts up to 384K (393216) for both",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -1801,43 +1801,49 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/guides/vision/ — DeepSeek-V4.1-Flash accepts images through the Anthropic `/messages` API",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — vision supported for Flash; text chat input",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: DeepSeek documents text responses but no output-modality taxonomy, so `text` is Winter's inference for this chat row, not a vendor-declared capability.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/api/list-models/ — model schema lists output_modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/guides/anthropic_api/ — Anthropic-compatible endpoint supports client tools and tool use/result blocks",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/guides/anthropic_api/ — Anthropic-compatible endpoint supports client tools and tool use/result blocks",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — price table lists cache-hit input rate for both models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Anthropic-compatible API supports thinking mode",
+          "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — both support thinking and non-thinking; thinking is default",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
-          "none",
           "low",
           "high",
           "max"
@@ -1856,7 +1862,17 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "top_k",
+        "thinking.budget_tokens",
+        "container",
+        "mcp_servers",
+        "service_tier",
+        "tools[].cache_control",
+        "tool_choice.disable_parallel_tool_use",
+        "messages[].cache_control",
+        "messages[].citations"
+      ],
       "status": "candidate"
     },
     {
@@ -1865,66 +1881,72 @@
       "upstreamId": "deepseek-v4-pro",
       "displayName": "DeepSeek V4 Pro (Anthropic dialect)",
       "aliases": [],
-      "$comment": "DeepSeek's official Anthropic-compatible endpoint accepts the current `deepseek-v4-pro` id. It supports reasoning blocks, but its official guide does not document the OpenAI-Chat `reasoning_content` replay contract, so continuation remains `none` rather than borrowing that dialect's plaintext contract.",
+      "$comment": "DeepSeek's official Anthropic-compatible endpoint accepts the current `deepseek-v4-pro` id. It supports reasoning blocks, but its official guide does not document the OpenAI-Chat `reasoning_content` replay contract, so continuation remains `none` rather than borrowing that dialect's plaintext contract. — 2026-09-25 refresh: Anthropic base https://api-docs.deepseek.com/guides/anthropic_api/; thinking.type enabled/disabled and output_config.effort low/high/max; budget_tokens and listed parameters are IGNORED, not rejected. top_p only effective in thinking mode and floor 0.95. Unrecognized model names silently map to deepseek-flash. Do not infer opaque thinking replay support. ",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4-Pro context window 1M tokens",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — model details: both have 1M context",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "maxOutputTokens": {
-        "value": 384000,
+        "value": 393216,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4-Pro maximum output 384K tokens",
+        "sourceRef": "https://api-docs.deepseek.com/api/create-chat-completion/ — max_tokens accepts up to 384K (393216) for both",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details marks DeepSeek-V4-Pro visual input unsupported",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — vision not supported for V4 Pro; text chat input",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: DeepSeek documents text responses but no output-modality taxonomy, so `text` is Winter's inference for this chat row, not a vendor-declared capability.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/api/list-models/ — model schema lists output_modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/guides/anthropic_api/ — Anthropic-compatible endpoint supports client tools and tool use/result blocks",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/guides/anthropic_api/ — Anthropic-compatible endpoint supports client tools and tool use/result blocks",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — price table lists cache-hit input rate for both models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Anthropic-compatible API supports thinking mode",
+          "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — both support thinking and non-thinking; thinking is default",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
-          "none",
           "low",
           "high",
           "max"
@@ -1943,7 +1965,17 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "top_k",
+        "thinking.budget_tokens",
+        "container",
+        "mcp_servers",
+        "service_tier",
+        "tools[].cache_control",
+        "tool_choice.disable_parallel_tool_use",
+        "messages[].cache_control",
+        "messages[].citations"
+      ],
       "status": "candidate"
     },
     {
@@ -1955,23 +1987,23 @@
         "deepseek-v4-flash",
         "deepseek-v4-flash-vision-exp"
       ],
-      "$comment": "DeepSeek's official model list now names `deepseek-flash` as V4.1 Flash. The legacy aliases are temporarily routed to it. Winter drives its OpenAI Chat Completions surface, whose documented `reasoning_content` replay contract is therefore carried only on this direct-dialect row.",
+      "$comment": "DeepSeek's official model list now names `deepseek-flash` as V4.1 Flash. The legacy aliases are temporarily routed to it. Winter drives its OpenAI Chat Completions surface, whose documented `reasoning_content` replay contract is therefore carried only on this direct-dialect row. — 2026-09-25 refresh: Chat uses thinking.type enabled/disabled plus reasoning_effort none/low/high/max (none disables); Responses uses reasoning.effort. https://api-docs.deepseek.com/guides/responses_api/ guide table still says only Flash but https://api-docs.deepseek.com/api/create-response/ model enum and https://api-docs.deepseek.com/quick_start/pricing/ feature table both list Pro too. Responses stateless: no previous_response_id. Temperature/presence_penalty/frequency_penalty ignored in thinking mode, not rejected. Legacy V4 Flash IDs are retired and route to V4.1 Flash. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4.1-Flash context window 1M tokens",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — model details: both have 1M context",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "maxOutputTokens": {
-        "value": 384000,
+        "value": 393216,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4.1-Flash maximum output 384K tokens",
+        "sourceRef": "https://api-docs.deepseek.com/api/create-chat-completion/ — max_tokens accepts up to 384K (393216) for both",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -1979,40 +2011,61 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/guides/vision/ — DeepSeek-V4.1-Flash accepts images through the OpenAI-compatible Chat Completions API",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — vision supported for Flash; text chat input",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: DeepSeek documents text responses but no output-modality taxonomy, so `text` is Winter's inference for this chat row, not a vendor-declared capability.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/api/list-models/ — model schema lists output_modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details marks tool calls supported for DeepSeek-V4.1-Flash",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details marks tool calls supported for DeepSeek-V4.1-Flash",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/guides/responses_api/ — parallel_tool_calls is ignored because parallel calling is always enabled",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — JSON Output checked for both models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — price table lists cache-hit input rate for both models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — current models support thinking mode",
+          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Chat reasoning_effort and Responses reasoning.effort allow none/low/high/max; default high; none disables",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "none",
@@ -2064,63 +2117,84 @@
       "upstreamId": "deepseek-v4-pro",
       "displayName": "DeepSeek V4 Pro",
       "aliases": [],
-      "$comment": "DeepSeek's current model list retains `deepseek-v4-pro`. Winter drives the documented OpenAI Chat Completions surface, rather than the stale upstream extraction's Responses endpoint, because its readable reasoning and tool-loop replay contract are documented on Chat Completions.",
+      "$comment": "DeepSeek's current model list retains `deepseek-v4-pro`. Winter drives the documented OpenAI Chat Completions surface, rather than the stale upstream extraction's Responses endpoint, because its readable reasoning and tool-loop replay contract are documented on Chat Completions. — 2026-09-25 refresh: Chat uses thinking.type enabled/disabled plus reasoning_effort none/low/high/max (none disables); Responses uses reasoning.effort. https://api-docs.deepseek.com/guides/responses_api/ guide table still says only Flash but https://api-docs.deepseek.com/api/create-response/ model enum and https://api-docs.deepseek.com/quick_start/pricing/ feature table both list Pro too. Responses stateless: no previous_response_id. Temperature/presence_penalty/frequency_penalty ignored in thinking mode, not rejected.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4-Pro context window 1M tokens",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — model details: both have 1M context",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "maxOutputTokens": {
-        "value": 384000,
+        "value": 393216,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details: DeepSeek-V4-Pro maximum output 384K tokens",
+        "sourceRef": "https://api-docs.deepseek.com/api/create-chat-completion/ — max_tokens accepts up to 384K (393216) for both",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details marks DeepSeek-V4-Pro visual input unsupported",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — vision not supported for V4 Pro; text chat input",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: DeepSeek documents text responses but no output-modality taxonomy, so `text` is Winter's inference for this chat row, not a vendor-declared capability.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/api/list-models/ — model schema lists output_modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details marks tool calls supported for DeepSeek-V4-Pro",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — Model Details marks tool calls supported for DeepSeek-V4-Pro",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — tool calls checked for both models",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/guides/responses_api/ — parallel_tool_calls is ignored because parallel calling is always enabled",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — JSON Output checked for both models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://api-docs.deepseek.com/quick_start/pricing/ — price table lists cache-hit input rate for both models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — current models support thinking mode",
+          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Chat reasoning_effort and Responses reasoning.effort allow none/low/high/max; default high; none disables",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "none",
@@ -2447,18 +2521,18 @@
       "providerId": "kimi-coding",
       "upstreamId": "k3",
       "canonicalModelId": "kimi-k3",
-      "displayName": "Kimi K3 (Kimi Code)",
+      "displayName": "Kimi K3 (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Kimi's current Coding Plan document makes context an entitlement: Plus/Moderato members receive up to 256K, while Pro/Allegretto and above receive 1M. The one-valued schema records the lowest advertised entitlement and discloses the higher tier in evidence.",
+      "$comment": "Kimi's current Coding Plan document makes context an entitlement: Plus/Moderato members receive up to 256K, while Pro/Allegretto and above receive 1M. The one-valued schema records the lowest advertised entitlement and discloses the higher tier in evidence. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 262144,
+        "value": 1048576,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 is 256K for Plus/Moderato members and reaches 1M only on Pro/Allegretto and above; this row records the lowest advertised plan entitlement (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 up to 1048576 for higher tiers; Plus/Moderato limited to 262144",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -2467,9 +2541,9 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 supports image and video input (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports image and video input plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
@@ -2478,29 +2552,36 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#k3 at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#k3 at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 documents low/high/max thinking effort, default high (retrieved 2026-09-19).",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports low/high/max thinking effort",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -2517,18 +2598,18 @@
       "key": "kimi-coding/kimi-for-coding",
       "providerId": "kimi-coding",
       "upstreamId": "kimi-for-coding",
-      "displayName": "Kimi K2.8 Preview (Kimi Code)",
+      "displayName": "Kimi K2.8 Preview (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "The stable `kimi-for-coding` ID is now K2.8 Preview; the update happens in place, so it remains distinct from the token-billed Moonshot platform model ids.",
+      "$comment": "The stable `kimi-for-coding` ID is now K2.8 Preview; the update happens in place, so it remains distinct from the token-billed Moonshot platform model ids. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1048576,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — `kimi-for-coding` (K2.8 Preview) supports a 1M-token context window (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding context window 1048576",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -2537,9 +2618,9 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K2.8 Preview supports image and video input (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports image and video input plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
@@ -2548,29 +2629,36 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#kimi-for-coding at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#kimi-for-coding at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K2.8 Preview documents low/high/max thinking effort, default max (retrieved 2026-09-19).",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports low/high/max thinking effort",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -2587,18 +2675,18 @@
       "key": "kimi-coding/kimi-for-coding-highspeed",
       "providerId": "kimi-coding",
       "upstreamId": "kimi-for-coding-highspeed",
-      "displayName": "Kimi K2.7 Code (High Speed) (Kimi Code)",
+      "displayName": "Kimi K2.7 Code HighSpeed (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Kimi documents HighSpeed as the K2.7 Code variant with the same coding capability and roughly 5–6x faster output. It documents thinking enabled but no selectable named effort vocabulary, so no effort is invented here.",
+      "$comment": "Kimi documents HighSpeed as the K2.7 Code variant with the same coding capability and roughly 5–6x faster output. It documents thinking enabled but no selectable named effort vocabulary, so no effort is invented here. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  HighSpeed always thinks; no effort levels documented. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#kimi-for-coding-highspeed at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — `contextLength`",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed context window 262144",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -2607,9 +2695,9 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K2.7 Code HighSpeed supports image and video input (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed supports image and video input plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
@@ -2618,29 +2706,36 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#kimi-for-coding-highspeed at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/kimi/coding/index.ts#kimi-for-coding-highspeed at v3.8.50 (5458026c) — `KIMI_CODING_MODELS` — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K2.7 Code HighSpeed documents Thinking: ON but no selectable named effort levels (retrieved 2026-09-19).",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — HighSpeed has Thinking:ON",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [],
         "continuation": "none"
@@ -2886,23 +2981,16 @@
       "upstreamId": "kimi-k2.6",
       "displayName": "Kimi K2.6",
       "aliases": [],
-      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2).",
+      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2). — 2026-09-25 refresh: Responses not listed for this ID: https://platform.kimi.ai/docs/api/responses currently supports only kimi-k3. K2.6 thinking enabled by default, disabled allowed; reasoning_effort unsupported. tool_choice required rejected; fixed sampling defaults reject other values (https://platform.kimi.ai/docs/api/models-overview).",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.ai/help/kimi-api/api-model-selection — Kimi K2.6 supports text, image, and video input, thinking/non-thinking modes, and up to 256K context (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code, HighSpeed, and K2.6 have 256K-token (262144) context windows",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "maxOutputTokens": {
-        "value": 262144,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.6 at v3.8.50 (5458026c) — `maxOutputTokens`",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -2911,45 +2999,65 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.ai/help/kimi-api/api-model-selection — Kimi K2.6 supports text, image, and video input, thinking/non-thinking modes, and up to 256K context (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.6 at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code multi-step tool calling documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.6 at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — native function/tool use documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K2 price table has cache-hit input pricing; no cache-write fee listed",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.6 at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/models-overview — K2.7 Code thinking is always on; K2.6 supports enabled/disabled",
           "confidence": "declared",
-          "observedAt": "2026-09-06T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [],
         "continuation": "none"
       },
-      "unsupportedParameters": [],
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.95,
+          "outputPerMTokUsd": 4,
+          "cacheReadPerMTokUsd": 0.16
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — kimi-k2.6 USD per 1M: input cache miss $0.95, cache hit $0.16, output $4",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "unsupportedParameters": [
+        "reasoning_effort"
+      ],
       "status": "candidate"
     },
     {
@@ -2958,140 +3066,168 @@
       "upstreamId": "kimi-k2.7-code",
       "displayName": "Kimi K2.7 Code",
       "aliases": [],
-      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2).",
+      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2). — 2026-09-25 refresh: Responses not listed for this ID: https://platform.kimi.ai/docs/api/responses currently supports only kimi-k3. K2.7 always thinks and only thinking={type:enabled,keep:all} if explicit; top-level reasoning_effort unsupported. tool_choice required rejected; fixed sampling defaults reject other values (https://platform.kimi.ai/docs/api/models-overview).",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code at v3.8.50 (5458026c) — `contextLength`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code, HighSpeed, and K2.6 have 256K-token (262144) context windows",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
-      },
-      "maxOutputTokens": {
-        "value": 262144,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code at v3.8.50 (5458026c) — `maxOutputTokens`",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code at v3.8.50 (5458026c) — `supportsVision: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code multi-step tool calling documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — native function/tool use documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K2 price table has cache-hit input pricing; no cache-write fee listed",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/models-overview — K2.7 Code thinking is always on; K2.6 supports enabled/disabled",
           "confidence": "declared",
-          "observedAt": "2026-09-06T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [],
         "continuation": "none"
       },
-      "unsupportedParameters": [],
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.95,
+          "outputPerMTokUsd": 4,
+          "cacheReadPerMTokUsd": 0.19
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — kimi-k2.7-code USD per 1M: input cache miss $0.95, cache hit $0.19, output $4",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "unsupportedParameters": [
+        "reasoning_effort"
+      ],
       "status": "candidate"
     },
     {
       "key": "moonshot/kimi-k2.7-code-highspeed",
       "providerId": "moonshot",
       "upstreamId": "kimi-k2.7-code-highspeed",
-      "displayName": "Kimi K2.7 Code (High Speed)",
+      "displayName": "Kimi K2.7 Code HighSpeed",
       "aliases": [],
-      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2).",
+      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2). — 2026-09-25 refresh: Responses not listed for this ID: https://platform.kimi.ai/docs/api/responses currently supports only kimi-k3. K2.7 always thinks and only thinking={type:enabled,keep:all} if explicit; top-level reasoning_effort unsupported. tool_choice required rejected; fixed sampling defaults reject other values (https://platform.kimi.ai/docs/api/models-overview).",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code-highspeed at v3.8.50 (5458026c) — `contextLength`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code, HighSpeed, and K2.6 have 256K-token (262144) context windows",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
-      },
-      "maxOutputTokens": {
-        "value": 262144,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code-highspeed at v3.8.50 (5458026c) — `maxOutputTokens`",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code-highspeed at v3.8.50 (5458026c) — `supportsVision: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code-highspeed at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code multi-step tool calling documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code-highspeed at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — native function/tool use documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K2 price table has cache-hit input pricing; no cache-write fee listed",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k2.7-code-highspeed at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/models-overview — K2.7 Code thinking is always on; K2.6 supports enabled/disabled",
           "confidence": "declared",
-          "observedAt": "2026-09-06T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [],
         "continuation": "none"
       },
-      "unsupportedParameters": [],
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.9,
+          "outputPerMTokUsd": 8,
+          "cacheReadPerMTokUsd": 0.38
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — kimi-k2.7-code-highspeed USD per 1M: input cache miss $1.9, cache hit $0.38, output $8",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "unsupportedParameters": [
+        "reasoning_effort"
+      ],
       "status": "candidate"
     },
     {
@@ -3100,64 +3236,79 @@
       "upstreamId": "kimi-k3",
       "displayName": "Kimi K3",
       "aliases": [],
-      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2).",
+      "$comment": "Read from the pinned entry's own ACCEPTED literals (`MOONSHOT_KIMI_MODELS`), which the extractor resolves — only the provider's `executor` is unrepresentable, not its model list. `reasoning.efforts` is deliberately EMPTY: upstream notes K3 accepts the literal `max` only and rejects its own `xhigh` tier, so borrowing an effort vocabulary here would invent a control the endpoint refuses (WS-13 §8.2). — 2026-09-25 refresh: Responses API explicitly says currently only kimi-k3 (https://platform.kimi.ai/docs/api/responses); max_completion_tokens/max_output_tokens up to 1048576 (https://platform.kimi.ai/docs/guide/kimi-k3-quickstart). K3 fixed temperature 1.0, top_p .95, n 1, presence/frequency penalties 0; nondefault values rejected. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1048576,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.ai/help/kimi-api/api-model-selection — Kimi K3 supports up to 1M context; it always thinks and accepts low, high, and max reasoning_effort, defaulting to max (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 has a 1M-token (1048576) context window",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "maxOutputTokens": {
         "value": 1048576,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k3 at v3.8.50 (5458026c) — `maxOutputTokens`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 max_completion_tokens can be set up to 1048576",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k3 at v3.8.50 (5458026c) — `supportsVision: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "toolCalling": {
         "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k3 at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 custom tools / tool_choice examples",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
         "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/moonshot/index.ts#kimi-k3 at v3.8.50 (5458026c) — `toolCalling: true`",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — native function/tool use documented",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 response_format json_schema strict example",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/context-caching — K3 supports cache writes and reads (5m and 1h TTL)",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.ai/help/kimi-api/api-model-selection — Kimi K3 supports up to 1M context; it always thinks and accepts low, high, and max reasoning_effort, defaulting to max (retrieved 2026-09-19).",
+          "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 always thinks",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -3167,19 +3318,22 @@
         "defaultEffort": "max",
         "continuation": "plaintext"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 3,
           "outputPerMTokUsd": 15,
-          "cacheReadPerMTokUsd": 0.3
+          "cacheReadPerMTokUsd": 0.3,
+          "cacheWritePerMTokUsd": 3
         },
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.ai/blog/kimi-k3 — official Kimi API rates for K3: cache-hit input $0.30/MTok, cache-miss input $3.00/MTok, output $15.00/MTok (retrieved 2026-09-19). The API also charges web-search invocations separately, which ModelPricing cannot represent.",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K3 USD per 1M: input $3, output $15, cached input $0.30, 5m cache write $3 (1h $6); 5m base TTL",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "unsupportedParameters": [
+        "thinking"
+      ],
+      "status": "candidate"
     },
     {
       "key": "nebius/deepseek-ai/DeepSeek-R1-0528",
@@ -4202,10 +4356,9 @@
         "grok-4.20-beta-0309-non-reasoning",
         "grok-4.20-non-reasoning-gv2"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20-non-reasoning. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Its templated detail page displays a generic Reasoning capability, conflicting with the explicit non-reasoning model name; reasoning block omitted pending probe.",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20-non-reasoning. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Its templated detail page displays a generic Reasoning capability, conflicting with the explicit non-reasoning model name; reasoning block omitted pending probe. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -4297,10 +4450,9 @@
         "grok-4.20-experimental-beta-latest",
         "grok-4.20-reasoning-gv2"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Model page does not document an effort vocabulary for this exact model, so efforts is empty.",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Model page does not document an effort vocabulary for this exact model, so efforts is empty. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -4389,10 +4541,9 @@
       "aliases": [
         "grok-4.3-latest"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.3. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Detail page lists none/low/medium/high/xhigh, default low. Its prose only names none/low/medium/high; xhigh appears in the detailed effort list.",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.3. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Detail page lists none/low/medium/high/xhigh, default low. Its prose only names none/low/medium/high; xhigh appears in the detailed effort list. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -4490,10 +4641,9 @@
         "grok-code-fast",
         "grok-code-fast-1-0825"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-build-0.1. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. xAI's May 15 retirement page says grok-code-fast-1 redirects to grok-4.3, whereas this model page lists it as a grok-build-0.1 alias; live resolution of that alias needs checking (https://docs.x.ai/developers/migration/may-15-retirement). Model page does not document an effort vocabulary for this exact model, so efforts is empty.",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-build-0.1. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. xAI's May 15 retirement page says grok-code-fast-1 redirects to grok-4.3, whereas this model page lists it as a grok-build-0.1 alias; live resolution of that alias needs checking (https://docs.x.ai/developers/migration/may-15-retirement). Model page does not document an effort vocabulary for this exact model, so efforts is empty. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 256000,
@@ -5974,10 +6124,9 @@
       "upstreamId": "grok-4.6",
       "displayName": "Grok 4.6",
       "aliases": [],
-      "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `reasoning.supported` mirrors `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools`/`inputModalities` are ALSO inherited from that sibling row, each at `confidence: \"inferred\"` rather than the sibling's `\"declared\"` — fix r1 (I-2, I-3) found that the sibling's own citations for these three fields do not check out against a direct re-read of `https://docs.x.ai/docs/models` (no tool-calling statement anywhere on it) and `derived-shapes-p6b-xai.md` §6 (no modality data at all, and its own text hints at image input via \"web search / image description\"). Values are carried forward rather than dropped (general-API grounds for tool-calling; the sibling's admission for modalities), with the gap disclosed in each field's own `sourceRef`; the same two downgrades were applied to the `xai-oauth/grok-4.6` and `xai-oauth/grok-4.5` sibling rows in the same fix round, since the overlay is this lane's to correct during the phase. `contextWindow` and `pricing` (now including the published `cacheReadPerMTokUsd`, fix r1 I-1) are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.6. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider.",
+      "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `reasoning.supported` mirrors `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools`/`inputModalities` are ALSO inherited from that sibling row, each at `confidence: \"inferred\"` rather than the sibling's `\"declared\"` — fix r1 (I-2, I-3) found that the sibling's own citations for these three fields do not check out against a direct re-read of `https://docs.x.ai/docs/models` (no tool-calling statement anywhere on it) and `derived-shapes-p6b-xai.md` §6 (no modality data at all, and its own text hints at image input via \"web search / image description\"). Values are carried forward rather than dropped (general-API grounds for tool-calling; the sibling's admission for modalities), with the gap disclosed in each field's own `sourceRef`; the same two downgrades were applied to the `xai-oauth/grok-4.6` and `xai-oauth/grok-4.5` sibling rows in the same fix round, since the overlay is this lane's to correct during the phase. `contextWindow` and `pricing` (now including the published `cacheReadPerMTokUsd`, fix r1 I-1) are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.6. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 500000,
@@ -12453,17 +12602,18 @@
       "providerId": "kimi-coding",
       "upstreamId": "k3-256k",
       "canonicalModelId": "kimi-k3",
-      "displayName": "Kimi K3 256K (Kimi Code)",
+      "displayName": "Kimi K3 256K (Coding Plan Anthropic)",
       "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — fixed 256K K3 plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k context window 262144",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -12471,40 +12621,47 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3-256K supports image, but not video, input (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports image input, not video, plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports low/high/max thinking effort",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -12522,17 +12679,18 @@
       "providerId": "kimi-coding-openai",
       "upstreamId": "k3",
       "canonicalModelId": "kimi-k3",
-      "displayName": "Kimi K3 (Kimi Code, OpenAI dialect)",
+      "displayName": "Kimi K3 (Coding Plan)",
       "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 262144,
+        "value": 1048576,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — lowest K3 plan entitlement is 256K; higher plans reach 1M (retrieved 2026-09-19).",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 up to 1048576 for higher tiers; Plus/Moderato limited to 262144",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -12541,40 +12699,47 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports image and video input plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports low/high/max thinking effort",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -12592,17 +12757,18 @@
       "providerId": "kimi-coding-openai",
       "upstreamId": "k3-256k",
       "canonicalModelId": "kimi-k3",
-      "displayName": "Kimi K3 256K (Kimi Code, OpenAI dialect)",
+      "displayName": "Kimi K3 256K (Coding Plan)",
       "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k context window 262144",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -12610,40 +12776,47 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports image input, not video, plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports low/high/max thinking effort",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -12661,17 +12834,18 @@
       "providerId": "kimi-coding-openai",
       "upstreamId": "kimi-for-coding",
       "canonicalModelId": "kimi-for-coding",
-      "displayName": "Kimi K2.8 Preview (Kimi Code, OpenAI dialect)",
+      "displayName": "Kimi K2.8 Preview (Coding Plan)",
       "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 1048576,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding context window 1048576",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -12680,40 +12854,47 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports image and video input plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports low/high/max thinking effort",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [
           "low",
@@ -12731,17 +12912,18 @@
       "providerId": "kimi-coding-openai",
       "upstreamId": "kimi-for-coding-highspeed",
       "canonicalModelId": "kimi-for-coding-highspeed",
-      "displayName": "Kimi K2.7 Code HighSpeed (Kimi Code, OpenAI dialect)",
+      "displayName": "Kimi K2.7 Code HighSpeed (Coding Plan)",
       "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  HighSpeed always thinks; no effort levels documented. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
         "value": 262144,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed context window 262144",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "inputModalities": {
         "value": [
@@ -12750,40 +12932,47 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed supports image and video input plus text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — no model-level function-calling claim; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — HighSpeed has Thinking:ON",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T08:45:47Z"
         },
         "efforts": [],
         "continuation": "none"
@@ -18593,10 +18782,9 @@
       "upstreamId": "grok-4.7",
       "displayName": "Grok 4.7",
       "aliases": [],
-      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.7. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider.",
+      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.7. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 500000,
@@ -18696,10 +18884,9 @@
         "grok-4.5-latest",
         "grok-build-latest"
       ],
-      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.5. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. Conflict: https://docs.x.ai/developers/models/grok-4.5 lists xhigh on its detail page, but https://docs.x.ai/developers/model-capabilities/text/reasoning says xhigh on 4.5 is treated as high; efforts omit xhigh because it is not a distinct behavior.",
+      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.5. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. Conflict: https://docs.x.ai/developers/models/grok-4.5 lists xhigh on its detail page, but https://docs.x.ai/developers/model-capabilities/text/reasoning says xhigh on 4.5 is treated as high; efforts omit xhigh because it is not a distinct behavior. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
       "endpoints": [
-        "chat",
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 500000,
@@ -18855,6 +19042,713 @@
         ],
         "continuation": "plaintext",
         "defaultEffort": "high"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "moonshot-anthropic/kimi-k3",
+      "providerId": "moonshot-anthropic",
+      "upstreamId": "kimi-k3",
+      "displayName": "Kimi K3 (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Base https://platform.kimi.ai/docs/api/overview. Messages reference explicitly allows kimi-k3; output_config.effort enum low/high/max default max (see https://platform.kimi.ai/docs/api/messages). Context cache write requires top-level cache_control; message-level markers ignored. Underlying K3 reasoning is always on.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 has a 1M-token (1048576) context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "maxOutputTokens": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 max_completion_tokens can be set up to 1048576",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/api/messages — Messages API defines tools/tool_choice and tool_use blocks",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/api/messages — native function/tool use documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/api/messages — output_config.format supports json_schema",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/context-caching — K3 supports cache writes and reads (5m and 1h TTL)",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 always thinks",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "max",
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 3,
+          "outputPerMTokUsd": 15,
+          "cacheReadPerMTokUsd": 0.3,
+          "cacheWritePerMTokUsd": 3
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K3 USD per 1M: input $3, output $15, cached input $0.30, 5m cache write $3 (1h $6); 5m base TTL",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl/k3",
+      "providerId": "kimi-coding-intl",
+      "upstreamId": "k3",
+      "displayName": "Kimi K3 (Coding Plan Anthropic)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 up to 1048576 for higher tiers; Plus/Moderato limited to 262144",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports image and video input plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports low/high/max thinking effort",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl/k3-256k",
+      "providerId": "kimi-coding-intl",
+      "upstreamId": "k3-256k",
+      "displayName": "Kimi K3 256K (Coding Plan Anthropic)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k context window 262144",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports image input, not video, plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports low/high/max thinking effort",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl/kimi-for-coding",
+      "providerId": "kimi-coding-intl",
+      "upstreamId": "kimi-for-coding",
+      "displayName": "Kimi K2.8 Preview (Coding Plan Anthropic)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding context window 1048576",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports image and video input plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports low/high/max thinking effort",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "max",
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl/kimi-for-coding-highspeed",
+      "providerId": "kimi-coding-intl",
+      "upstreamId": "kimi-for-coding-highspeed",
+      "displayName": "Kimi K2.7 Code HighSpeed (Coding Plan Anthropic)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  HighSpeed always thinks; no effort levels documented. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed context window 262144",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed supports image and video input plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — HighSpeed has Thinking:ON",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl-openai/k3",
+      "providerId": "kimi-coding-intl-openai",
+      "upstreamId": "k3",
+      "displayName": "Kimi K3 (Coding Plan)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — K3 up to 1048576 for higher tiers; Plus/Moderato limited to 262144",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports image and video input plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3 supports low/high/max thinking effort",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl-openai/k3-256k",
+      "providerId": "kimi-coding-intl-openai",
+      "upstreamId": "k3-256k",
+      "displayName": "Kimi K3 256K (Coding Plan)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k context window 262144",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports image input, not video, plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — k3-256k supports low/high/max thinking effort",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl-openai/kimi-for-coding",
+      "providerId": "kimi-coding-intl-openai",
+      "upstreamId": "kimi-for-coding",
+      "displayName": "Kimi K2.8 Preview (Coding Plan)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding context window 1048576",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports image and video input plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding supports low/high/max thinking effort",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "max",
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "kimi-coding-intl-openai/kimi-for-coding-highspeed",
+      "providerId": "kimi-coding-intl-openai",
+      "upstreamId": "kimi-for-coding-highspeed",
+      "displayName": "Kimi K2.7 Code HighSpeed (Coding Plan)",
+      "aliases": [],
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/v1; overseas base https://api.kimi.ai/coding/v1 (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  HighSpeed always thinks; no effort levels documented. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed context window 262144",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — kimi-for-coding-highspeed supports image and video input plus text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files — official CLI model configuration marks Kimi Code models with tool_use capability",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — switching model or reasoning effort invalidates existing context cache",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html — HighSpeed has Thinking:ON",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate"
