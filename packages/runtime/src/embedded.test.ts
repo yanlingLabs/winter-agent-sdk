@@ -258,6 +258,26 @@ describe("spawnEmbeddedWorker (one Worker per session)", () => {
     expect(procs.every((p) => p.pid === null)).toBe(true);
   }, 60_000);
 
+  test("Bash runs from inside a Worker: the session's shell child (sandboxed where the host has sandbox-exec) spawns and answers", async () => {
+    // Dispatch keeps Bash, and embedded, its shell child is spawned by a Worker thread of the host
+    // process, on the Worker's own process.env -- measured here rather than assumed.
+    const messages = await drain(
+      query({
+        prompt: "go",
+        options: {
+          model: "winter-test/lanec",
+          cwd: tempDir("cwd"),
+          env: sessionEnv(),
+          spawnClaudeCodeProcess: (o) => spawnEmbeddedWorker({ workerEntry: WORKER_ENTRY, spawn: o }),
+        },
+      }),
+    );
+    const toolResult = messages.find((m) => (m as { type?: string }).type === "user") as { message: { content: Array<{ type: string; content?: unknown; is_error?: boolean }> } } | undefined;
+    expect(toolResult?.message.content[0]?.is_error ?? false).toBe(false);
+    expect(JSON.stringify(toolResult?.message.content[0]?.content)).toContain("winter-t8-lanec");
+    expect(resultOf(messages)?.result).toBe("lane c done");
+  }, 30_000);
+
   test("kill() aborts the session: exited settles only once the Worker closed, after its engine wrote its interrupted result and its teardown", async () => {
     const sessionId = crypto.randomUUID();
     const proc = spawnEmbeddedWorker({
