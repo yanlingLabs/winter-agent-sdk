@@ -7,7 +7,7 @@
 // vocabulary, the capability read, and the endpoint-policy refusals that happen before a URL exists.
 import { describe, expect, test } from "bun:test";
 import { ANTHROPIC_DEFAULT_BASE_URL, createAnthropicMessagesAdapter, mapAnthropicEffort, toWireMessages } from "./index.ts";
-import { buildHeaders, buildRequestBody, promptCachingLayout } from "./messages.ts";
+import { blockBindingBetaFor, buildHeaders, buildRequestBody, promptCachingLayout } from "./messages.ts";
 import { ProviderRequestError } from "../../http.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext, TurnRequest } from "../../types.ts";
@@ -186,6 +186,19 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
     },
   });
 
+  // Fable 5's REAL catalog shape (fix round 2): always on ("enabled" AND "disabled" both rejected,
+  // same as Opus 5.5), but documents NEITHER `summaryRequest` NOR `blockBinding` -- no real row
+  // combines "always-on" with "nothing else" today except this one. Sending a bare `{type:"adaptive"}`
+  // here would accomplish nothing (no display evidence to attach, no block_binding to carry), so
+  // Minor 2's tightened fallback must never fire for it, and an explicit `disabled` must still be
+  // OMITTED (the CRITICAL fix's override applies only when `blockBinding` is defined).
+  const fable5Shaped = descriptor({
+    key: "anthropic/fable-5-shaped",
+    upstreamId: "fable-5-shaped",
+    unsupportedParameters: ["thinking.type.enabled", "thinking.type.disabled"],
+    reasoning: { supported: evidence(true), efforts: ["low", "medium", "high", "xhigh", "max"], continuation: "opaque-provider-state" },
+  });
+
   // Opus 4.5's real catalog shape: `enabled`-only, `adaptive` is the documented 400, and effort
   // COMPOSES with the budget ladder rather than replacing it (the vendor's effort page, per row).
   const opus45Shaped = descriptor({
@@ -263,13 +276,28 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
       expect(body["thinking"]).toEqual({ type: "adaptive", block_binding: opus55BlockBinding });
     });
 
-    test("explicit `thinking: {type:\"disabled\"}` OMITS the field entirely -- this model is always on", () => {
-      // No block_binding either: an omitted field has no object for it to merge onto (the doc comment
-      // on the merge site -- "onto WHATEVER thinking object this request ends up sending, never
-      // invented on its own"), and this omission is a DECIDED one the block-binding fallback must not
-      // override (`!thinkingFieldDecided`, `buildThinking`'s own comment).
+    test("explicit `thinking: {type:\"disabled\"}` BECOMES adaptive+block_binding -- CRITICAL FIX, fix round 2", () => {
+      // The bug the re-review found: this model is always on, so it keeps producing and replaying
+      // thinking blocks regardless of what any one turn's `thinking` field says
+      // (`Options.thinking`/`maxThinkingTokens: 0` forwards `disabled` on every generation, including
+      // forks). Omitting the field used to leave a live session sending UNPROTECTED requests forever,
+      // then 400ing the moment a later turn's tools/prefix changed -- exactly what `block_binding`
+      // exists to prevent. Sending `{type:"adaptive"}` means exactly what the caller got anyway
+      // (Anthropic: omitting is equivalent to adaptive), plus the opt-in this row needs on every
+      // request. `an always-on row WITHOUT blockBinding still omits` (below) proves the other half.
       const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "disabled" } }), opus55Shaped, {});
-      expect(body).not.toHaveProperty("thinking");
+      expect(body["thinking"]).toEqual({ type: "adaptive", block_binding: opus55BlockBinding });
+    });
+
+    test("explicit disabled + requestSummary: the override also picks up display -- pinned, not obvious", () => {
+      // A caller who sent `disabled` did not literally ask for a summary display, but once the CRITICAL
+      // fix decides to send `{type:"adaptive"}` anyway (the field now EXISTS), the ordinary display
+      // step downstream has no reason to skip it -- the row's `summaryRequest` evidence and
+      // `req.requestSummary` are both satisfied, exactly as they would be for any other adaptive
+      // object this row sends. Pinned here so the answer is a decision, not an accident someone has to
+      // re-derive by tracing the function.
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "disabled" }, requestSummary: true }), opus55Shaped, {});
+      expect(body["thinking"]).toEqual({ type: "adaptive", display: "summarized", block_binding: opus55BlockBinding });
     });
 
     test("explicit thinking wins the FIELD, but output_config.effort still rides when both are requested together", () => {
@@ -281,9 +309,9 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
       expect(body["output_config"]).toEqual({ effort: "high" }); // effort still reaches output_config
     });
 
-    test("an explicit `disabled` that OMITS the field also survives an effort request -- the omission is not overwritten", () => {
+    test("an explicit `disabled`->adaptive override still lets output_config.effort ride alongside it", () => {
       const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "disabled" }, effort: "high" }), opus55Shaped, {});
-      expect(body).not.toHaveProperty("thinking");
+      expect(body["thinking"]).toEqual({ type: "adaptive", block_binding: opus55BlockBinding });
       expect(body["output_config"]).toEqual({ effort: "high" });
     });
 
@@ -308,6 +336,25 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
       expect(any["tool_choice"]).toEqual({ type: "any" });
       const named = buildRequestBody(req({ model: toolOnlyRejected.upstreamId, tools, toolChoice: { type: "tool", name: "t" } }), toolOnlyRejected, {});
       expect(named["tool_choice"]).toEqual({ type: "auto" });
+    });
+  });
+
+  // Fix round 2's other half: an always-on row with NEITHER `summaryRequest` NOR `blockBinding`
+  // evidence (Fable 5's real shape) must NOT get the CRITICAL fix's override, and must NOT get a bare
+  // `{type:"adaptive"}` from Minor 2's tightened fallback either -- there is nothing for either to
+  // accomplish on this row, so both stay exactly at "omit".
+  describe("a Fable-5-shaped row (always-on, no summaryRequest, no blockBinding)", () => {
+    test("explicit disabled still OMITS the field -- no blockBinding evidence, so the CRITICAL-fix override does not apply", () => {
+      const body = buildRequestBody(req({ model: fable5Shaped.upstreamId, thinking: { type: "disabled" } }), fable5Shaped, {});
+      expect(body).not.toHaveProperty("thinking");
+    });
+
+    test("requestSummary=true alone does NOT produce a bare {type:\"adaptive\"} -- Minor 2", () => {
+      // Nothing requested at all except a summary this row has no evidence for honouring: sending
+      // `{type:"adaptive"}` here would be a wire change accomplishing nothing (no display attaches,
+      // no block_binding attaches), so the fallback must not fire.
+      const body = buildRequestBody(req({ model: fable5Shaped.upstreamId, requestSummary: true }), fable5Shaped, {});
+      expect(body).not.toHaveProperty("thinking");
     });
   });
 
@@ -428,19 +475,63 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
     if (!policy.ok) throw new Error(`test setup: endpoint policy construction failed: ${policy.reason}`);
 
     test("the beta header is present for a blockBinding row, and absent for one with no such evidence", async () => {
-      const withBinding = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), opus55Shaped, policy.policy, {}, true);
-      const withoutBinding = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), opus46Shaped, policy.policy, {}, true);
+      // `blockBindingBetaFor` is the SAME function `prepare()`/`countTokens()` call, against a REAL
+      // body -- not a hand-picked value -- so this proves the actual production wiring, not a stand-in
+      // for it.
+      const boundBody = buildRequestBody(req({ model: opus55Shaped.upstreamId, effort: "low" }), opus55Shaped, {});
+      const unboundBody = buildRequestBody(req({ model: opus46Shaped.upstreamId, effort: "low" }), opus46Shaped, {});
+      const withBinding = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), blockBindingBetaFor(boundBody, opus55Shaped), policy.policy, {}, true);
+      const withoutBinding = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), blockBindingBetaFor(unboundBody, opus46Shaped), policy.policy, {}, true);
       expect(withBinding["anthropic-beta"]).toBe("thinking-binding-controls-2026-08-01");
       expect(withoutBinding["anthropic-beta"]).toBeUndefined();
     });
 
     test("the beta is DEDUPED against an already-configured opts.betas, never sent twice", async () => {
-      const headers = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), opus55Shaped, policy.policy, { betas: ["thinking-binding-controls-2026-08-01", "some-other-beta-2026"] }, true);
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, effort: "low" }), opus55Shaped, {});
+      const headers = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), blockBindingBetaFor(body, opus55Shaped), policy.policy, { betas: ["thinking-binding-controls-2026-08-01", "some-other-beta-2026"] }, true);
       // A single occurrence, comma-joined with whatever else was configured -- not
       // "beta,beta,some-other-beta-2026" and not the beta silently dropped either.
       const betas = (headers["anthropic-beta"] ?? "").split(",");
       expect(betas.filter((b) => b === "thinking-binding-controls-2026-08-01")).toHaveLength(1);
       expect(betas).toContain("some-other-beta-2026");
+    });
+
+    test("disabled on an Opus-5.5 shape -> adaptive+block_binding in the body, AND the header carries the beta (fix round 2)", async () => {
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "disabled" } }), opus55Shaped, {});
+      expect(body["thinking"]).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+      const headers = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), blockBindingBetaFor(body, opus55Shaped), policy.policy, {}, true);
+      expect(headers["anthropic-beta"]).toBe("thinking-binding-controls-2026-08-01");
+    });
+
+    test("disabled on a Fable-5 shape (always-on, NO blockBinding) -> still omitted, and no beta", async () => {
+      const body = buildRequestBody(req({ model: fable5Shaped.upstreamId, thinking: { type: "disabled" } }), fable5Shaped, {});
+      expect(body).not.toHaveProperty("thinking");
+      const headers = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), blockBindingBetaFor(body, fable5Shaped), policy.policy, {}, true);
+      expect(headers["anthropic-beta"]).toBeUndefined();
+    });
+
+    test("the beta and body's block_binding agree across every fixture shape -- never one without the other", async () => {
+      const cases: Array<{ name: string; row: WinterModelDescriptor; request: Partial<TurnRequest> }> = [
+        { name: "opus55, nothing requested (always-on fallback)", row: opus55Shaped, request: {} },
+        { name: "opus55, explicit disabled (CRITICAL fix override)", row: opus55Shaped, request: { thinking: { type: "disabled" } } },
+        { name: "opus55, effort", row: opus55Shaped, request: { effort: "low" } },
+        { name: "opus45, effort (no blockBinding evidence)", row: opus45Shaped, request: { effort: "low" } },
+        { name: "opus46, effort (no blockBinding evidence)", row: opus46Shaped, request: { effort: "low" } },
+        { name: "alwaysOnNoBlockBinding, requestSummary (A1, no blockBinding)", row: alwaysOnNoBlockBindingShaped, request: { requestSummary: true } },
+        { name: "fable5, nothing requested (Minor 2: no bare adaptive)", row: fable5Shaped, request: {} },
+        { name: "fable5, explicit disabled (no blockBinding, still omits)", row: fable5Shaped, request: { thinking: { type: "disabled" } } },
+        { name: "sonnet45, effort (no effortRequest, no blockBinding)", row: sonnet45Shaped, request: { effort: "low" } },
+      ];
+      for (const { name, row, request } of cases) {
+        const body = buildRequestBody(req({ model: row.upstreamId, ...request }), row, {});
+        const thinking = body["thinking"];
+        const bodyBound = thinking !== undefined && typeof thinking === "object" && thinking !== null && "block_binding" in thinking;
+        const beta = blockBindingBetaFor(body, row);
+        // Tagged with `name` so a failure names WHICH shape disagreed, not just that one did.
+        expect([name, bodyBound]).toEqual([name, beta !== undefined]);
+        const headers = await buildHeaders(ctx(ANTHROPIC_DEFAULT_BASE_URL), beta, policy.policy, {}, true);
+        expect([name, headers["anthropic-beta"] !== undefined]).toEqual([name, bodyBound]);
+      }
     });
 
     test("block_binding rides on EVERY thinking object this row sends -- explicit, effort-derived, and the always-on fallback", () => {
