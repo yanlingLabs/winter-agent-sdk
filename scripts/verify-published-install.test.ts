@@ -6,8 +6,9 @@
 // rather than merely not setting it is the part that actually matters).
 import { test, expect, describe } from "bun:test";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
-import { OPT_IN_VAR, SKIPPED_LINE, currentPublishedVersion, runtimeLabel } from "./verify-published-install.ts";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { OPT_IN_VAR, PLATFORM_PACKAGE, RUNTIME_PACKAGE, SKIPPED_LINE, WRAPPER_PACKAGE, checkExactPins, currentPublishedVersion, runtimeLabel } from "./verify-published-install.ts";
 
 /** `process.env` with the opt-in variable removed, so a developer's own exported token (if any) can never leak into this test's spawned child. */
 function strippedEnv(extra: Record<string, string> = {}): Record<string, string> {
@@ -74,4 +75,65 @@ describe("the script itself, spawned (proves ONLY the skip path -- never a real 
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe(SKIPPED_LINE);
   }, 30_000);
+});
+
+// WS-23: the exact-pin triple, over PLANTED installed trees -- the only way this suite can show the
+// check refusing anything without a real publish. Each planted manifest carries an `exports` map (as
+// every real one does), so the `<pkg>/package.json` resolution is exercised the way a real tree is.
+describe("checkExactPins (WS-23: runtime, wrapper and platform package at ONE version)", () => {
+  function plant(tree: { runtime?: { version: string; wrapperPin: string }; wrapper?: { version: string; platformPin: string }; platform?: { version: string } }): string {
+    const root = mkdtempSync(join(tmpdir(), "winter-pin-plant-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "probe", private: true }));
+    const put = (name: string, manifest: Record<string, unknown>): void => {
+      const dir = join(root, "node_modules", ...name.split("/"));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name, exports: { ".": "./index.js" }, ...manifest }));
+      writeFileSync(join(dir, "index.js"), "export {};\n");
+    };
+    if (tree.runtime) put(RUNTIME_PACKAGE, { version: tree.runtime.version, dependencies: { [WRAPPER_PACKAGE]: tree.runtime.wrapperPin } });
+    if (tree.wrapper) put(WRAPPER_PACKAGE, { version: tree.wrapper.version, optionalDependencies: { [PLATFORM_PACKAGE]: tree.wrapper.platformPin } });
+    if (tree.platform) put(PLATFORM_PACKAGE, { version: tree.platform.version });
+    return root;
+  }
+
+  test("an exact triple passes, with or without the (optional) platform package installed", () => {
+    const withPlatform = plant({ runtime: { version: "0.0.25", wrapperPin: "0.0.25" }, wrapper: { version: "0.0.25", platformPin: "0.0.25" }, platform: { version: "0.0.25" } });
+    const withoutPlatform = plant({ runtime: { version: "0.0.25", wrapperPin: "0.0.25" }, wrapper: { version: "0.0.25", platformPin: "0.0.25" } });
+    try {
+      expect(checkExactPins(withPlatform, "0.0.25")).toEqual([]);
+      expect(checkExactPins(withoutPlatform, "0.0.25")).toEqual([]);
+    } finally {
+      rmSync(withPlatform, { recursive: true, force: true });
+      rmSync(withoutPlatform, { recursive: true, force: true });
+    }
+  });
+
+  test("a RANGE pin, a drifted wrapper and a drifted platform binary are each refused by name", () => {
+    const root = plant({ runtime: { version: "0.0.25", wrapperPin: "^0.0.25" }, wrapper: { version: "0.0.24", platformPin: "0.0.24" }, platform: { version: "0.0.24" } });
+    try {
+      const problems = checkExactPins(root, "0.0.25");
+      expect(problems.some((p) => p.includes(`pins ${WRAPPER_PACKAGE} at "^0.0.25"`))).toBe(true);
+      expect(problems.some((p) => p.includes(`${WRAPPER_PACKAGE} (as ${RUNTIME_PACKAGE} resolves it) is 0.0.24`))).toBe(true);
+      expect(problems.some((p) => p.includes(`pins ${PLATFORM_PACKAGE} at "0.0.24"`))).toBe(true);
+      expect(problems.some((p) => p.includes(`${PLATFORM_PACKAGE} installed at 0.0.24`))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a tree with no runtime at all is one plain refusal", () => {
+    const root = plant({});
+    try {
+      expect(checkExactPins(root, "0.0.25")).toEqual([`${RUNTIME_PACKAGE} is not installed under ${root}`]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the REPO's own manifests pin the triple with workspace:* -- the spelling pnpm packs to an exact version", () => {
+    const runtime = JSON.parse(readFileSync(new URL("../packages/runtime/package.json", import.meta.url), "utf8")) as { dependencies: Record<string, string> };
+    const wrapper = JSON.parse(readFileSync(new URL("../packages/sdk/package.json", import.meta.url), "utf8")) as { optionalDependencies: Record<string, string> };
+    expect(runtime.dependencies[WRAPPER_PACKAGE]).toBe("workspace:*");
+    expect(wrapper.optionalDependencies[PLATFORM_PACKAGE]).toBe("workspace:*");
+  });
 });

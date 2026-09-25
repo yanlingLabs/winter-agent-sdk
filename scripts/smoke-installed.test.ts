@@ -11,7 +11,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverPublishablePackages, type PackedPackage } from "./release-pack.ts";
-import { assertInstalledTreeIsDistOnly, deriveImportTargets, installableOnThisHost, runBinTarget, runSmoke, runtimesFor, type BinTarget, type SmokeResult } from "./smoke-installed.ts";
+import { assertInstalledTreeIsDistOnly, deriveImportTargets, installableOnThisHost, runBinTarget, runSmoke, runtimesFor, thirdPartyRuntimeDependencies, type BinTarget, type SmokeResult } from "./smoke-installed.ts";
 
 // --- P7a fix wave (item 11, N-3): the pack+install legs are OPT-IN outside CI --------------------
 //
@@ -313,5 +313,22 @@ describe("assertInstalledTreeIsDistOnly", () => {
 
   test("a package that is not installed at all is reported, never silently skipped", () => {
     expect(assertInstalledTreeIsDistOnly(tree({}), ["@scope/absent"])[0]).toContain("no package.json");
+  });
+});
+
+// WS-23: the runtime is the first publishable package with third-party runtime dependencies, which an
+// `--offline` install cannot resolve from tarballs -- the smoke primes npm's cache with exactly those
+// first. Hermetic: this reads manifests only.
+describe("thirdPartyRuntimeDependencies (WS-23)", () => {
+  test("names every non-workspace runtime dependency of the set, and never an @yanlinglabs package", () => {
+    const specs = thirdPartyRuntimeDependencies(discoverPublishablePackages());
+    expect(specs.some((s) => s.startsWith("@yanlinglabs/"))).toBe(false);
+    const runtime = JSON.parse(readFileSync(new URL("../packages/runtime/package.json", import.meta.url), "utf8")) as { dependencies: Record<string, string> };
+    for (const [name, range] of Object.entries(runtime.dependencies)) {
+      if (name.startsWith("@yanlinglabs/")) continue;
+      expect(specs).toContain(`${name}@${range}`);
+    }
+    expect([...specs].sort()).toEqual(specs);
+    expect(new Set(specs).size).toBe(specs.length);
   });
 });

@@ -266,6 +266,41 @@ export function assertInstalledTreeIsDistOnly(probeDir: string, packageNames: re
   return violations;
 }
 
+/**
+ * WS-23: every NON-workspace runtime dependency the packed set declares, as `name@range` specs,
+ * sorted and de-duplicated -- read from each package's own manifest (`dependencies` only: what an
+ * installer of that package actually gets). Exported for its hermetic test.
+ */
+export function thirdPartyRuntimeDependencies(packages: ReadonlyArray<Pick<PackedPackage, "name">>): string[] {
+  const byName = new Map(discoverPublishablePackages().map((p) => [p.name, p]));
+  const specs = new Set<string>();
+  for (const packed of packages) {
+    const pkg = byName.get(packed.name);
+    if (pkg === undefined) continue;
+    const manifest = JSON.parse(readFileSync(pkg.packageJsonPath, "utf8")) as { dependencies?: Record<string, string> };
+    for (const [name, range] of Object.entries(manifest.dependencies ?? {})) {
+      if (name.startsWith("@yanlinglabs/")) continue;
+      specs.add(`${name}@${range}`);
+    }
+  }
+  return [...specs].sort();
+}
+
+/** Fill npm's cache with `specs` (and everything they depend on) through a throwaway ONLINE install. */
+function primeThirdPartyCache(specs: readonly string[]): void {
+  if (specs.length === 0) return;
+  const primeDir = mkdtempSync(join(tmpdir(), "winter-smoke-prime-"));
+  try {
+    writeFileSync(join(primeDir, "package.json"), JSON.stringify({ name: "winter-smoke-prime", private: true, version: "0.0.0" }, null, 2) + "\n");
+    const prime = Bun.spawnSync(["npm", "install", "--no-save", "--ignore-scripts", "--no-audit", "--no-fund", ...specs], { cwd: primeDir, stdout: "pipe", stderr: "pipe" });
+    if (prime.exitCode !== 0) {
+      throw new Error(`priming npm's cache with the third-party runtime dependencies (${specs.join(", ")}) failed (exit ${prime.exitCode}):\n${decode(prime.stdout)}${decode(prime.stderr)}`);
+    }
+  } finally {
+    rmSync(primeDir, { recursive: true, force: true });
+  }
+}
+
 export interface SmokeResult {
   ok: boolean;
   /** Every attempt (import or bin), in order, up to and including the first failure. */
@@ -291,6 +326,12 @@ export async function runSmoke(opts: { runtimes?: readonly SmokeRuntime[] } = {}
     // committed .npmrc in scope -- the only thing that could make this succeed is the packed
     // tarballs themselves resolving each other correctly.
     writeFileSync(join(probeDir, "package.json"), JSON.stringify({ name: "winter-smoke-probe", private: true, version: "0.0.0" }, null, 2) + "\n");
+    // WS-23: the runtime is the first publishable package with THIRD-PARTY runtime dependencies
+    // (`@modelcontextprotocol/sdk`, `ajv`, `ignore`), and an `--offline` install cannot resolve those
+    // from tarballs. They are fetched into npm's cache FIRST, in a separate throwaway project, by
+    // their own manifest ranges -- never an `@yanlinglabs` package -- so the install below stays
+    // `--offline` and every workspace package in it still comes ONLY from the tarballs just packed.
+    primeThirdPartyCache(thirdPartyRuntimeDependencies(installable));
     const install = Bun.spawnSync(["npm", "install", "--offline", ...installable.map((p) => p.tarballPath)], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
     if (install.exitCode !== 0) {
       throw new Error(`npm install --offline failed (exit ${install.exitCode}):\n${decode(install.stdout)}${decode(install.stderr)}`);
