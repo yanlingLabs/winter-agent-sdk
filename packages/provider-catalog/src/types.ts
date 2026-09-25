@@ -246,6 +246,14 @@ export interface WinterModelDescriptor {
    * value; absent keeps today's shape (a loaded deferred tool is appended to `tools`).
    */
   deferredToolLoading?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23: the model takes a MID-CONVERSATION `role: "system"` message carrying text -- an operator
+   * instruction appended at the point it becomes relevant instead of editing the top-level `system`
+   * field, so the cached prefix survives it
+   * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages; GA, no
+   * beta header). `true` is the only meaningful value; absent keeps reminders as user-turn text.
+   */
+  midConversationSystem?: CapabilityEvidence<boolean>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

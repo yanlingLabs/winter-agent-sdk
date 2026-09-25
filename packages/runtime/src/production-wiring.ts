@@ -703,6 +703,7 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
   const wire: ModelWireFeatures = {
     ...(row.reasoning?.perMessageEffort !== undefined ? { perMessageEffort: true as const } : {}),
     ...(row.deferredToolLoading?.value === true ? { deferredToolLoading: true as const } : {}),
+    ...(row.midConversationSystem?.value === true ? { midConversationSystem: true as const } : {}),
   };
   const description: ModelDescription = {
     ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),

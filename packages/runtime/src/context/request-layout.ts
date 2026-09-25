@@ -29,6 +29,7 @@
 // history keeps claude's TRANSCRIPT order (prompt, then its attachments) so persistence and resume
 // see exactly what claude's transcript holds.
 import type { ContentBlock, ProviderMessage, ProviderToolSpec } from "../engine.ts";
+import { isSystemRoleAttachment } from "./attachments.ts";
 import type { SystemPromptBlock } from "@yanlinglabs/winter-provider-runtime";
 
 /** One userContext / systemContext entry, in the order it is rendered. */
@@ -97,14 +98,18 @@ function isReorderStop(message: ProviderMessage): boolean {
   return Array.isArray(message.content) && message.content[0]?.type === "tool_result";
 }
 
-/** claude's `SJn` (reorderAttachmentsForAPI). */
-export function reorderAttachments(messages: readonly ProviderMessage[]): ProviderMessage[] {
+/**
+ * claude's `SJn` (reorderAttachmentsForAPI). WS-23: `stays` names attachments that keep their HISTORY
+ * position instead of bubbling up -- a system-role reminder must follow the user turn that triggered
+ * it, which is exactly where the engine appended it.
+ */
+export function reorderAttachments(messages: readonly ProviderMessage[], stays: (message: ProviderMessage) => boolean = () => false): ProviderMessage[] {
   if (!messages.some((m) => m.meta !== undefined)) return [...messages];
   const reversed: ProviderMessage[] = [];
   const pending: ProviderMessage[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.meta !== undefined) {
+    if (m.meta !== undefined && !stays(m)) {
       pending.push(m);
       continue;
     }
@@ -197,12 +202,25 @@ function joinAttachmentBlocks(prev: ContentBlock[], next: ContentBlock[]): Conte
  * Never mutates `history`. Assistant messages pass through untouched (their own merge is the
  * adapters' business, as before).
  */
-export function buildRequestMessages(history: readonly ProviderMessage[], userContextText?: string): ProviderMessage[] {
+export function buildRequestMessages(history: readonly ProviderMessage[], userContextText?: string, opts: { systemReminders?: boolean } = {}): ProviderMessage[] {
   const withContext: ProviderMessage[] = userContextText !== undefined ? [{ role: "user", content: userContextText, isMeta: true }, ...history] : [...history];
-  const ordered = reorderAttachments(withContext);
+  // WS-23: on a model that takes mid-conversation system messages, a reminder whose renderer opted in
+  // rides as `role: "system"` (operator-level, and never merged into the user's own turn). The vendor's
+  // placement rule decides each one: it "must immediately follow a `user` turn ... and must either be
+  // the last entry in `messages` or be immediately followed by an `assistant` turn"
+  // (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages). One that
+  // cannot (a compaction's reminder after a retained assistant reply, or an interrupted turn with a
+  // second user message behind it) falls back to today's user-text form, deterministically.
+  const eligible = (message: ProviderMessage): boolean => opts.systemReminders === true && message.meta !== undefined && isSystemRoleAttachment(message.meta.attachment);
+  const ordered = reorderAttachments(withContext, eligible);
   const out: ProviderMessage[] = [];
-  for (const message of ordered) {
+  for (let index = 0; index < ordered.length; index++) {
+    const message = ordered[index]!;
     const prev = out[out.length - 1];
+    if (eligible(message) && prev !== undefined && (isUserRole(prev) || prev.role === "system") && systemMayPrecede(ordered, index)) {
+      out.push({ role: "system", content: message.content });
+      continue;
+    }
     if (prev === undefined || !isUserRole(message) || !isUserRole(prev)) {
       out.push({ ...message });
       continue;
@@ -301,6 +319,16 @@ export function lastTopLevelEffort(history: readonly ProviderMessage[]): string 
     if (m.role === "assistant" && m.effort !== undefined) return m.effort;
   }
   return undefined;
+}
+
+/** WS-23: the next non-reminder message after `index` is an assistant turn, or there is none. */
+function systemMayPrecede(ordered: readonly ProviderMessage[], index: number): boolean {
+  for (let j = index + 1; j < ordered.length; j++) {
+    const next = ordered[j]!;
+    if (next.meta !== undefined && isSystemRoleAttachment(next.meta.attachment)) continue;
+    return next.role === "assistant";
+  }
+  return true;
 }
 
 // --- the last request, per session (for the fork lane) ---------------------------------------------

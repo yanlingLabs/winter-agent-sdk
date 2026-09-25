@@ -311,3 +311,22 @@ describe("cache lifetime and the 1-hour write counter (WS-23 item 6)", () => {
     });
   });
 });
+
+// --- WS-23 item 7: mid-conversation system reminders ---------------------------------------------------
+
+describe("mid-conversation system reminders (WS-23 item 7)", () => {
+  const reminder: ProviderMessageLike[] = [{ role: "user", content: "two" }, { role: "system", content: "<system-reminder>\nThe date has changed.\n</system-reminder>" }];
+
+  test("a row with `midConversationSystem` evidence sends the reminder as its own `system` entry after the user turn", () => {
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: reminder }, opus55({ midConversationSystem: evidence(true) }), {});
+    expect((body["messages"] as Array<{ role: string }>).map((m) => m.role)).toEqual(["user", "system"]);
+  });
+
+  test("a row without it (Claude Sonnet 5: \"not available\") refuses a text-carrying system message before the request", () => {
+    expect(() => buildRequestBody({ model: "claude-sonnet-5", messages: reminder }, opus55({ key: "anthropic/claude-sonnet-5", upstreamId: "claude-sonnet-5" }), {})).toThrow(/mid-conversation system messages/);
+  });
+
+  test("an effort-only marker needs no such evidence -- it carries no text (its own gate is `perMessageEffort`)", () => {
+    expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: switched, effort: "high" }, opus55(), {})).not.toThrow();
+  });
+});

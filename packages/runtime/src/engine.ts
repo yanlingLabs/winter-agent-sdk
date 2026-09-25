@@ -559,6 +559,8 @@ export interface ModelWireFeatures {
   perMessageEffort?: true;
   /** `deferredToolLoading`: every deferred tool is declared up front with `defer_loading: true`, and ToolSearch surfaces one by reference. */
   deferredToolLoading?: true;
+  /** `midConversationSystem`: a reminder whose renderer opted in rides as a `role: "system"` message after the user turn it follows. */
+  midConversationSystem?: true;
 }
 
 /** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
@@ -6218,7 +6220,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const shape = lastMainRequestShape;
     if (shape === undefined || shape.modelKey !== (currentProviderIdentity?.modelKey ?? currentModel)) return undefined;
     const plan = planEffort();
-    const base = buildRequestMessages(messages, shape.userContextText);
+    const base = buildRequestMessages(messages, shape.userContextText, { systemReminders: systemRemindersOnWire() });
     const outbound = plan.markers !== undefined ? withEffortMarkers(base, plan.markers.topLevel, plan.markers.live, plan.markers.accepts) : base;
     return {
       messages: outbound,
@@ -6541,7 +6543,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText);
+  const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire() });
+  /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
+  const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
   /** WS-23: the LIVE model's catalog description (its effort vocabulary and wire features), or `undefined` for a scripted double. */
   const currentModelDescription = (): ModelDescription | undefined => {

@@ -856,7 +856,15 @@ function isEffortOnlyMarker(message: ProviderMessageLike): boolean {
 function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
   const efforts = descriptor?.reasoning?.efforts ?? [];
   for (const message of req.messages) {
-    if (message.role !== "system" || message.outputConfig === undefined) continue;
+    if (message.role !== "system") continue;
+    // WS-23 item 7: a system message CARRYING TEXT needs the row's own `midConversationSystem`
+    // evidence -- Claude Sonnet 5 documents the opposite ("This feature is not available on Claude
+    // Sonnet 5"), and every other unlisted model is unverified.
+    const carriesText = typeof message.content === "string" ? message.content.length > 0 : message.content.length > 0;
+    if (carriesText && descriptor?.midConversationSystem?.value !== true) {
+      throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document mid-conversation system messages (no \`midConversationSystem\` evidence), so a \`role: "system"\` message is refused before the request rather than sent and rejected upstream`);
+    }
+    if (message.outputConfig === undefined) continue;
     if (descriptor?.reasoning?.perMessageEffort === undefined) {
       throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document per-message effort (no \`reasoning.perMessageEffort\` evidence), so a mid-conversation \`output_config.effort\` is refused before the request rather than sent and rejected upstream`);
     }
