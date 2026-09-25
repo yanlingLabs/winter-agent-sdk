@@ -97,6 +97,15 @@ export interface ReasoningCapabilities {
   completionEvent?: CapabilityEvidence<string>;
   /** What missing reasoning state costs mid-tool-loop (DeepSeek with tools: a 400). */
   toolLoopRequirement?: CapabilityEvidence<"hard-error" | "silent-degradation" | "not-required">;
+  /**
+   * WHERE the model takes its effort on the wire, when that is a documented request field of its own
+   * rather than the adapter's default mapping (2026-09-25). `output_config.effort`: Anthropic's
+   * top-level effort parameter, which the model steers adaptive thinking with — Claude 4.7 and later
+   * reject a manual `thinking.budget_tokens` outright, so an Anthropic-dialect adapter maps effort
+   * HERE for such a row. ABSENT keeps the adapter's own mapping (the budget ladder on the Anthropic
+   * dialect). A closed vocabulary (`CATALOG_VOCABULARIES.effortRequestFields`).
+   */
+  effortRequest?: CapabilityEvidence<{ field: "output_config.effort" }>;
 }
 
 /** List prices, USD per million tokens. R6-H: the ONLY price source Winter has — an unpriced model reports `0` / `costBasis: "unknown"`, never an invented number. */
