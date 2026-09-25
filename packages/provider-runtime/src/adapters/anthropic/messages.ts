@@ -1174,8 +1174,10 @@ export function anthropicCaptureEvent(descriptor: WinterModelDescriptor | undefi
  * A committing frame is anything that is not `message_start` or `ping`: a content block, a
  * `message_delta`, `message_stop`, or an `error` the retry policy cannot help. Up to it nothing has
  * been shown to anyone -- `message_start` carries an id and a usage count, `ping` carries nothing --
- * so a failure there is still safe to replay. Exactly ONE such failure is turned into a retryable
- * throw: an `error` frame whose type is `overloaded_error` (the vendor's documented transient state,
+ * so a failure there is still safe to replay. Exactly ONE provider-reported failure is turned into a retryable
+ * throw (a transport failure in the same window -- a dropped connection between `message_start` and
+ * the first block -- also replays, because `withRetry`'s own `network` verdict is retryable and the
+ * commit line has not been crossed; a stall or an abort stays final): an `error` frame whose type is `overloaded_error` (the vendor's documented transient state,
  * HTTP 529 when it arrives as a status; https://platform.claude.com/docs/en/api/errors). Everything
  * else is handed back, buffered, for the stream loop to treat exactly as it always has -- an
  * unparseable frame, an ordinary content stream, a stream that ended early.
@@ -1449,6 +1451,10 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           }
           case "message_stop":
             sawMessageStop = true;
+            // WS-23 CAVEAT: a row that defers its capture to `message_stop` releases its thinking blocks
+            // AFTER every text/tool event of the turn, so the fold's stream-order `content` puts them
+            // LAST -- not wire order. No Anthropic row declares that completion event today; a row that
+            // ever does needs the blocks' wire indices carried before its `content` can be trusted.
             // Held blocks are released HERE, in wire order, for a row whose evidence names this as its
             // completion event. A stream that never reaches `message_stop` releases none of them --
             // the completion-event rule, stated the same way at whichever event the row names.

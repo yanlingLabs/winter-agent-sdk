@@ -268,6 +268,9 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   // the same boundary rule `StreamEventEmitter` already applies to the `stream_event` frames, so the
   // persisted content and the streamed frames describe one sequence. Tool calls are placeholders
   // here (their arguments are still streaming) and are materialised from `pendingCalls` at the end.
+  // CAVEAT: this is EVENT order, which equals wire order only for an adapter that emits each block when
+  // it completes; one that holds thinking to `message_stop` (see the Anthropic adapter's own note)
+  // would have its thinking placed last.
   const ordered: Array<{ kind: "text"; text: string } | { kind: "block"; block: ContentBlock } | { kind: "call"; id: string }> = [];
   let orderedTextOpen = false;
   let usage: ProviderUsage | undefined;
