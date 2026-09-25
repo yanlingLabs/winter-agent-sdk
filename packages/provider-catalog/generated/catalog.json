@@ -14905,7 +14905,9 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.6",
       "displayName": "Claude Opus 4.6",
-      "aliases": [],
+      "aliases": [
+        "claude-opus-4-6"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -15025,7 +15027,9 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.7",
       "displayName": "Claude Opus 4.7",
-      "aliases": [],
+      "aliases": [
+        "claude-opus-4-7"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -15151,7 +15155,9 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.8",
       "displayName": "Claude Opus 4.8",
-      "aliases": [],
+      "aliases": [
+        "claude-opus-4-8"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -15435,7 +15441,9 @@
         "temperature",
         "top_p",
         "top_k",
-        "thinking.type.enabled"
+        "thinking.type.enabled",
+        "thinking.type.disabled+output_config.effort.xhigh",
+        "thinking.type.disabled+output_config.effort.max"
       ],
       "status": "candidate",
       "canonicalModelId": "claude-opus-5",
@@ -15741,7 +15749,9 @@
       "providerId": "anthropic",
       "upstreamId": "claude-sonnet-4.6",
       "displayName": "Claude Sonnet 4.6",
-      "aliases": [],
+      "aliases": [
+        "claude-sonnet-4-6"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -27010,7 +27020,9 @@
       "providerId": "console",
       "upstreamId": "claude-opus-4.6",
       "displayName": "Claude Opus 4.6",
-      "aliases": [],
+      "aliases": [
+        "claude-opus-4-6"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -27130,7 +27142,9 @@
       "providerId": "console",
       "upstreamId": "claude-opus-4.7",
       "displayName": "Claude Opus 4.7",
-      "aliases": [],
+      "aliases": [
+        "claude-opus-4-7"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -27256,7 +27270,9 @@
       "providerId": "console",
       "upstreamId": "claude-opus-4.8",
       "displayName": "Claude Opus 4.8",
-      "aliases": [],
+      "aliases": [
+        "claude-opus-4-8"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -27540,7 +27556,9 @@
         "temperature",
         "top_p",
         "top_k",
-        "thinking.type.enabled"
+        "thinking.type.enabled",
+        "thinking.type.disabled+output_config.effort.xhigh",
+        "thinking.type.disabled+output_config.effort.max"
       ],
       "status": "candidate",
       "canonicalModelId": "claude-opus-5",
@@ -27846,7 +27864,9 @@
       "providerId": "console",
       "upstreamId": "claude-sonnet-4.6",
       "displayName": "Claude Sonnet 4.6",
-      "aliases": [],
+      "aliases": [
+        "claude-sonnet-4-6"
+      ],
       "endpoints": [
         "chat"
       ],
