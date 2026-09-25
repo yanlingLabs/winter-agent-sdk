@@ -293,6 +293,44 @@ describe("runInnerModel -- the bounded tool loop (WebSearch's inner pass)", () =
   });
 });
 
+describe("WS-23: a round's THINKING is replayed with its calls, in stream order", () => {
+  // On an always-on-thinking row (Opus 5.5, Fable 5/5.1) the inner pass's `disabled` is rewritten to
+  // adaptive, so a tool round comes back with thinking blocks -- and the loop's own replay of that
+  // round must carry them, unmodified and in place, or the next inner generation is a 400.
+  const THINKING_ROUND: ProviderTurn = {
+    kind: "tool_use",
+    calls: [call("c1", "winter sdk")],
+    text: "Searching.",
+    thinking: { blocks: [{ type: "thinking", thinking: "a", signature: "s-a" }, { type: "thinking", thinking: "b", signature: "s-b" }] },
+    content: [
+      { type: "thinking", thinking: "a", signature: "s-a" },
+      { type: "text", text: "Searching." },
+      { type: "thinking", thinking: "b", signature: "s-b" },
+      { type: "tool_use", id: "c1", name: "web_search", input: { query: "winter sdk" } },
+    ],
+  };
+
+  test("the stream order (`turn.content`) is what round 2 replays", async () => {
+    const provider = recordingProvider([THINKING_ROUND, { kind: "text", text: "answer" }]);
+    const result = await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 3, handler: async () => ({ output: "hits" }) }, runtimeOver(provider));
+    expect(result.ok).toBe(true);
+    const replayed = provider.requests[1]!.messages.find((m) => m.role === "assistant");
+    expect(replayed?.content).toEqual(THINKING_ROUND.content!);
+  });
+
+  test("a provider that reports no order still replays its thinking blocks, ahead of the text and calls", async () => {
+    const { content: _dropped, ...noOrder } = THINKING_ROUND;
+    const provider = recordingProvider([noOrder as ProviderTurn, { kind: "text", text: "answer" }]);
+    await runInnerModel(CTX, { prompt: "p", tool: SEARCH_TOOL, maxToolCalls: 3, handler: async () => ({ output: "hits" }) }, runtimeOver(provider));
+    expect(provider.requests[1]!.messages.find((m) => m.role === "assistant")?.content).toEqual([
+      { type: "thinking", thinking: "a", signature: "s-a" },
+      { type: "thinking", thinking: "b", signature: "s-b" },
+      { type: "text", text: "Searching." },
+      { type: "tool_use", id: "c1", name: "web_search", input: { query: "winter sdk" } },
+    ]);
+  });
+});
+
 describe("runInnerModel -- a STATED model", () => {
   test("resolves through `resolveAuxiliaryModel` with the route's own authRef; the request names NO model; usage is accounted under the RESOLVED key", async () => {
     const session = recordingProvider([{ kind: "text", text: "from the session model" }]);

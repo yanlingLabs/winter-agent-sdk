@@ -166,6 +166,30 @@ function addUsage(total: ProviderUsage, usage: ProviderUsage): ProviderUsage {
   };
 }
 
+/**
+ * The assistant message an inner tool round is replayed as.
+ *
+ * WS-23: IT CARRIES THE ROUND'S THINKING, in the order the model produced it. This used to be
+ * `[text, ...calls]` alone, which dropped every thinking block -- harmless while thinking was off,
+ * and a hard 400 on a row whose thinking cannot be turned off (Opus 5.5, Fable 5/5.1: the request's
+ * `disabled` is rewritten to adaptive there, see the Anthropic adapter's `buildThinking`), where a
+ * tool loop's last assistant turn must replay its thinking blocks unmodified. The stream order
+ * (`turn.content`) is used when the provider reported one and it names exactly these calls -- the
+ * same check `engine.ts`'s `inStreamOrder` makes, reproduced here because this module may not
+ * value-import the engine (see the import note above); otherwise the thinking blocks lead, then the
+ * text, then the calls.
+ */
+function replayedContent(turn: Extract<ProviderTurn, { kind: "tool_use" }>, text: string, calls: ReadonlyArray<{ id: string; name: string; input: unknown }>): ContentBlock[] {
+  const content = Array.isArray(turn.content) ? turn.content : [];
+  const orderedIds = content.flatMap((block) => (block.type === "tool_use" ? [block.id] : []));
+  if (content.length > 0 && orderedIds.length === calls.length && orderedIds.every((id, i) => id === calls[i]!.id)) return content;
+  return [
+    ...(turn.thinking?.blocks ?? []),
+    ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
+    ...calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input })),
+  ];
+}
+
 const ABORTED = Symbol("inner-model-aborted");
 
 /** Resolves when `signal` aborts. The returned `dispose` removes the listener so a finished pass leaks nothing onto a long-lived turn signal. */
@@ -384,7 +408,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
       // calls are NOT recorded as steps -- nothing ran and nothing was answered.
       if (closing || round >= maxGenerations) return succeed("tool-call-limit");
 
-      const toolUse: ContentBlock[] = [...(text.length > 0 ? [{ type: "text" as const, text }] : []), ...calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input }))];
+      const toolUse: ContentBlock[] = replayedContent(turn, text, calls);
       // `nativeState` rides with the assistant message so a family that needs its own opaque items
       // replayed beside a function call (and stamps them with its continuation domain) gets them;
       // `origin` lets the session's own renderer treat the message as in-domain.

@@ -258,6 +258,18 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   const calls: Array<{ id: string; name: string; input: unknown }> = [];
   const callOrder: string[] = [];
   const pendingCalls = new Map<string, { name: string; argumentsJson: string }>();
+  // WS-23 (block order): the turn's content IN THE ORDER THE STREAM PRODUCED IT, alongside the
+  // per-kind buckets above (which every existing consumer still reads). The buckets alone lose the
+  // interleaving: a `[thinking, text, thinking, tool_use]` response used to be persisted as
+  // `[thinking, thinking, text, tool_use]`, and Anthropic requires the thinking blocks of an active
+  // tool loop to come back UNMODIFIED and in place -- a reordered replay is exactly the history edit
+  // a block-binding row (Opus 5.5 / Fable 5.1) rejects, and it hands every other row a turn the model
+  // never wrote. A text run opens one text block and is closed by the next thinking block or call,
+  // the same boundary rule `StreamEventEmitter` already applies to the `stream_event` frames, so the
+  // persisted content and the streamed frames describe one sequence. Tool calls are placeholders
+  // here (their arguments are still streaming) and are materialised from `pendingCalls` at the end.
+  const ordered: Array<{ kind: "text"; text: string } | { kind: "block"; block: ContentBlock } | { kind: "call"; id: string }> = [];
+  let orderedTextOpen = false;
   let usage: ProviderUsage | undefined;
   let stopReason: ProviderStopReason | undefined;
   let nativeState: ProviderNativeState | undefined;
@@ -275,10 +287,17 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
         case "message_start":
           emitter.messageStart(event.id, event.model);
           break;
-        case "text_delta":
+        case "text_delta": {
           text += event.text;
+          const open = ordered[ordered.length - 1];
+          if (orderedTextOpen && open !== undefined && open.kind === "text") open.text += event.text;
+          else {
+            ordered.push({ kind: "text", text: event.text });
+            orderedTextOpen = true;
+          }
           emitter.textDelta(event.text);
           break;
+        }
         case "thinking_summary_delta":
           // FOREIGN reasoning. Accumulated for the sidecar's `summary` record and the Winter-only
           // frame; NEVER forwarded as a `stream_event` (there is no pinned raw event for a foreign
@@ -294,13 +313,21 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           const block = coerceDialectThinkingBlock(event.block);
           if (block !== undefined) {
             thinkingBlocks.push(block);
+            ordered.push({ kind: "block", block });
+            orderedTextOpen = false;
             emitter.thinkingBlock(block);
           }
           break;
         }
         case "tool_call_start":
+          // A REPEATED start for an id already open is not a second call: `calls` below is built
+          // from `callOrder`, which would otherwise list it twice -- and so would `ordered`.
+          if (!pendingCalls.has(event.id)) {
+            callOrder.push(event.id);
+            ordered.push({ kind: "call", id: event.id });
+          }
           pendingCalls.set(event.id, { name: event.name, argumentsJson: "" });
-          callOrder.push(event.id);
+          orderedTextOpen = false;
           emitter.toolCallStart(event.id, event.name);
           break;
         case "tool_call_delta": {
@@ -371,6 +398,22 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
     calls.push({ id, name: pending.name, input: parseToolArguments(pending.argumentsJson) });
   }
 
+  // The ordered content, materialised. Each call is the SAME object `calls` carries (parsed once), and
+  // an empty text run -- a stream that opened a text block and never wrote into it -- is dropped:
+  // this endpoint family rejects an empty text block on replay, and it says nothing either way.
+  const callsById = new Map(calls.map((c) => [c.id, c]));
+  const content: ContentBlock[] = [];
+  for (const entry of ordered) {
+    if (entry.kind === "text") {
+      if (entry.text.length > 0) content.push({ type: "text", text: entry.text });
+    } else if (entry.kind === "block") {
+      content.push(entry.block);
+    } else {
+      const call = callsById.get(entry.id);
+      if (call !== undefined) content.push({ type: "tool_use", id: call.id, name: call.name, input: call.input });
+    }
+  }
+
   // W18-15 (Phase 10b Lane S, S4): whether the ACCUMULATED exposed text is the model's WHOLE
   // reasoning trace for this turn, never a partial one. "Normal stop" excludes `max_tokens`
   // (truncated by the provider's own limit), `aborted` and `refusal` -- and an error mid-stream never
@@ -393,6 +436,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
     ...(stopReason !== undefined ? { stopReason } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(nativeState !== undefined ? { nativeState } : {}),
+    ...(content.length > 0 ? { content } : {}),
   };
 
   // A turn with CALLS is a `tool_use` turn even when it also produced text -- and the text rides

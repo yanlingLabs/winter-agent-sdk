@@ -713,9 +713,17 @@ export interface ProviderUsage {
 // before this field the text had nowhere to go and was silently discarded, losing a whole assistant
 // utterance from the transcript with nothing failing anywhere. It persists as a LEADING text block
 // ahead of the tool_use blocks, which is the order the model produced it in.
+//
+// WS-23 (block order): both kinds gain `content?`, the turn's assistant content IN STREAM ORDER --
+// thinking, text and tool_use blocks interleaved exactly as the model produced them. OPTIONAL AND
+// ADDITIVE: a provider that sets it (the adapter bridge's fold) is persisted and replayed in that
+// order; one that does not (every scripted double) keeps the per-kind assembly below
+// (`thinking.blocks`, then `text`, then `calls`), which is the same thing for any turn whose stream
+// was already in that order. `text`/`calls`/`thinking` stay authoritative for everything that is not
+// the persisted content (the result text, the tool dispatch loop, the sidecar summary).
 export type ProviderTurn =
-  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState };
+  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[] }
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[] };
   // Phase 6 Task 10 (R6-13): THE `rpc_probe` TURN KIND IS GONE.
   //
   // It was a P1-only scaffold whose whole purpose was to prove the runtime-originated control-RPC
@@ -729,6 +737,25 @@ export type ProviderTurn =
 
 export interface Provider {
   generate(input: ProviderRequest): Promise<ProviderTurn>;
+}
+
+/**
+ * WS-23 (block order): a turn's assistant content in STREAM ORDER (`ProviderTurn.content`), or
+ * `undefined` when the provider reported none -- the caller then falls back to the per-kind assembly.
+ *
+ * CHECKED, NOT TRUSTED: the tool loop answers `turn.calls`, so a `tool_use` turn's ordered content must
+ * name exactly those calls, in that order. A persisted `tool_use` with no `tool_result` after it (or a
+ * result for a call the content never carried) is a 400 on the very next request, so a list that
+ * disagrees with `calls` is ignored rather than persisted; likewise a `text` turn's content may carry
+ * no call at all.
+ */
+export function inStreamOrder(turn: ProviderTurn): ContentBlock[] | undefined {
+  const content = turn.content;
+  if (content === undefined || content.length === 0) return undefined;
+  const orderedCallIds = content.flatMap((block) => (block.type === "tool_use" ? [block.id] : []));
+  if (turn.kind === "text") return orderedCallIds.length === 0 ? content : undefined;
+  if (orderedCallIds.length !== turn.calls.length || orderedCallIds.some((id, i) => id !== turn.calls[i]!.id)) return undefined;
+  return content;
 }
 
 /**
@@ -7301,7 +7328,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // runtime materialises `signature: ""` on any thinking block that lacks one and replays it
         // verbatim, so a foreign summary written here would ride a fabricated signature (capture (F)).
         const thinkingBlocks = ("thinking" in turn ? turn.thinking?.blocks : undefined) ?? [];
-        const assistantBlocks: ContentBlock[] = [...thinkingBlocks, { type: "text", text: turn.text }];
+        // WS-23: the STREAM ORDER when the provider reported it (`ProviderTurn.content`), else the
+        // per-kind assembly. `inStreamOrder` returns undefined for an absent or empty list.
+        const ordered = inStreamOrder(turn);
+        const assistantBlocks: ContentBlock[] = ordered ?? [...thinkingBlocks, { type: "text", text: turn.text }];
         // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await —
         // the terminal result below is the sole durability barrier for this turn; P6 (partial
         // streaming) must revisit this ordering once intermediate frames become resumable state.
@@ -7334,7 +7364,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // one turn, and before it existed that text had nowhere to go and was silently discarded --
       // losing a whole assistant utterance from the transcript with nothing failing anywhere. It
       // persists as a LEADING text block, which is the order the model produced it in.
-      const toolUseBlocks: ContentBlock[] = [
+      //
+      // WS-23: THAT ORDER IS NOW THE STREAM'S OWN whenever the provider reported one
+      // (`ProviderTurn.content`). The per-kind assembly below is only correct for a turn whose blocks
+      // arrived thinking-first, text-second, calls-last; an interleaved `[thinking, text, thinking,
+      // tool_use]` response came out as `[thinking, thinking, text, tool_use]`, and replaying a tool
+      // loop's thinking out of place is the history edit Anthropic's preserved-thinking check exists
+      // to reject. The fallback survives for a provider that reports no order (every scripted double).
+      const toolUseBlocks: ContentBlock[] = inStreamOrder(turn) ?? [
         ...(("thinking" in turn ? turn.thinking?.blocks : undefined) ?? []),
         ...(turn.text !== undefined && turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : []),
         ...turn.calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input })),
