@@ -10,17 +10,22 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 - **Fail-closed hooks.** `HookCallbackMatcher.failClosed` (and `failClosed: true` on a settings/plugin command
   handler or its matcher group) makes an error, timeout, throw or malformed output from a `PreToolUse` /
-  `PermissionRequest` hook a DENY naming the hook. Default off: other hooks' failures stay non-blocking.
-- **Matchers** accept claude's regular expressions (`Edit|Write`, `mcp__.*`, `.*`; `""` = all) beside the existing
-  exact names and globs, anchored to the whole tool name. A pattern that will not compile warns once and matches
-  nothing. `SessionStart`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact` and `Notification`
+  `PermissionRequest` hook a DENY naming the hook and a failure code (never the error text or command line). Such a
+  hook answering `async`, with another event's `hookSpecificOutput`, or with non-JSON stdout is malformed too; `{}`
+  stays an allow. Default off: other hooks' failures stay non-blocking.
+- **Matchers** follow claude's semantics: a pattern of only `[A-Za-z0-9_|]` is a list of exact names (`Edit|Write`),
+  anything else an unanchored regular-expression test (`mcp__.*`, `.*`); `""` and `*` match all. Winter's existing
+  `mcp__srv__*` / `Tool(*)` globs keep their glob reading. A pattern that will not compile warns once and matches
+  nothing -- or everything, for a fail-closed hook. `SessionStart`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact` and `Notification`
   matchers filter on the event's subject (`source`, `agent_type`, `trigger`, `notification_type`).
 - **Command hooks speak claude's wire:** snake_case stdin (`session_id`, `transcript_path`, `cwd`,
   `hook_event_name`, `permission_mode`, `tool_name`, `tool_input`, `tool_response`, `prompt`, ...); exit 2 blocks
   with stderr as the reason; other non-zero exits are non-blocking errors; plain-text stdout is context for
   `UserPromptSubmit`/`SessionStart`/`SubagentStart`. `CLAUDE_PROJECT_DIR` and `WINTER_PROJECT_DIR` are exported
-  for every hook; a plugin hook gets `${CLAUDE_PLUGIN_ROOT}` substituted and `CLAUDE_PLUGIN_ROOT` /
-  `WINTER_PLUGIN_ROOT` exported. Project/local hooks still need a trusted workspace.
+  for every hook; a plugin hook gets `CLAUDE_PLUGIN_ROOT` / `WINTER_PLUGIN_ROOT` exported (the shell expands
+  `${CLAUDE_PLUGIN_ROOT}` in the command). Project/local hooks still need a trusted workspace.
+- **Every hook contribution is bounded,** with a visible truncation marker: 10,000 characters for context,
+  feedback, reasons and notices; 100,000 for `updatedToolOutput`; 1 MiB of captured stdout.
 - **`additionalContext` reaches the model** for `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
   `UserPromptSubmit`, `SessionStart` and `SubagentStart`, as a `<system-reminder>` at the conversation tail (inside
   the call's tool result, or with the prompt / first user turn), never in the system prompt.
@@ -30,8 +35,9 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   ends the turn (`terminal_reason: "hook_stopped"`); `systemMessage` is a new `system/informational` frame;
   `suppressOutput` hides a command hook's stdout from `hook_response`, which now carries command hooks'
   stdout/stderr/exit code; `PostToolUse` `updatedToolOutput` / `updatedMCPToolOutput` replaces the tool result.
-- **`updatedInput` is validated** against the tool's input schema; an invalid one DENIES the call (previously
-  the original input ran).
+- **`updatedInput` is validated** against the tool's input schema; an invalid one DENIES the call when the model's
+  original input was valid (previously the original input ran). When the original was already invalid, the
+  rewrite is dropped and the tool reports its own error.
 - **New events fire:** `SubagentStart` / `SubagentStop` from a subagent's engine (in place of `SessionStart` /
   `Stop`), and `SessionStart` with `source: "compact"` after a compaction.
 - `UserPromptSubmit` now fires before the prompt is recorded (so a blocked prompt never enters the transcript).
