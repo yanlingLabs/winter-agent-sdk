@@ -45,7 +45,8 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
     try {
       await lifecycle.start();
       const result = await handleMcpStatus({ stateSource: lifecycle.stateSource });
-      expect(result).toEqual({ ok: true, payload: { servers: [{ name: "gh", status: "connected" }] } });
+      // WS-23: the live connection's negotiated revision rides the status (a legacy fixture: 2025-11-25).
+      expect(result).toEqual({ ok: true, payload: { servers: [{ name: "gh", status: "connected", protocolVersion: "2025-11-25" }] } });
     } finally {
       await lifecycle.dispose();
       await server.close();
@@ -74,7 +75,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
       const result = await handleMcpReconnect({ controlSeam: lifecycle.controlSeam }, { serverName: "gh" });
       expect(result).toEqual({ ok: true });
       expect(connectCount()).toBe(2); // a REAL reconnect -- a genuinely new connect() call
-      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gh", state: "connected", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[] }]);
+      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gh", state: "connected", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[], protocolVersion: "2025-11-25" }]);
     } finally {
       await lifecycle.dispose();
       await inner.close();
@@ -106,12 +107,13 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
 
       const off = await handleMcpToggle({ controlSeam: lifecycle.controlSeam }, { serverName: "gh", enabled: false });
       expect(off).toEqual({ ok: true });
-      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gh", state: "disabled", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[] }]);
+      // A disabled slot keeps its idle connection (lifecycle.ts's disableSlot), so it keeps that connection's version.
+      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gh", state: "disabled", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[], protocolVersion: "2025-11-25" }]);
       expect(getRegisteredTool("mcp__gh__echo")).toBeUndefined();
 
       const on = await handleMcpToggle({ controlSeam: lifecycle.controlSeam }, { serverName: "gh", enabled: true });
       expect(on).toEqual({ ok: true });
-      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gh", state: "connected", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[] }]);
+      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gh", state: "connected", toolNames: expect.arrayContaining(["echo", "boom"]) as unknown as string[], protocolVersion: "2025-11-25" }]);
       expect(getRegisteredTool("mcp__gh__echo")).toBeDefined();
       expect(connectCount()).toBe(1); // still 1 -- toggling never re-dialed the connection
 

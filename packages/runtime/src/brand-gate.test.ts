@@ -833,8 +833,8 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/sdk/src/tools/advisor.ts:235": "transcriptSourceForSessionKey's DEFAULT store location; a branded host passes `winterHome` (or its own `store`) explicitly, which is the whole reason both options exist",
   "packages/sdk/src/options.ts:64": "DEFAULT_PLANS_DIRECTORY -- the default a session's `brand.projectDirName` replaces",
   "packages/sdk/src/options.ts:81": "DEFAULT_KEYCHAIN_SERVICE -- the default a host's own `brand.keychainService` replaces",
-  "packages/sdk/src/query.ts:550": "the FALLBACK side of `options.brand?.envPrefix ?? WINTER_BRAND.envPrefix` (M-1's fix)",
-  "packages/sdk/src/query.ts:711": "a COMPARISON against the default, deciding whether to emit the deprecated top-level key",
+  "packages/sdk/src/query.ts:557": "the FALLBACK side of `options.brand?.envPrefix ?? WINTER_BRAND.envPrefix` (M-1's fix)",
+  "packages/sdk/src/query.ts:718": "a COMPARISON against the default, deciding whether to emit the deprecated top-level key",
   "packages/runtime/src/subagents/limits.ts:42": "a DEFAULT PARAMETER; the call site passes `brand ?? WINTER_BRAND` (review §5.1 names this correct)",
   "packages/runtime/src/subagents/limits.ts:58": "a DEFAULT PARAMETER; same call site, same override",
   "packages/runtime/src/subagents/watchdog.ts:12": "a DEFAULT PARAMETER; the call site passes the session brand",
@@ -854,8 +854,8 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/provider-runtime/src/adapters/openai/codex-config.ts:62": "CODEX_ORIGINATOR -- the same default, exported for the fixtures that assert it",
   "packages/provider-runtime/src/adapters/openai/xai-oauth.ts:63": "DOCUMENTATION ONLY (that row's own comment): nothing reads it; all three wire sites read `activeWinterIdentity().product`",
   // --- (b) the `from` side of a rename, or a comparison against the default ------------------------
-  "packages/runtime/src/tools/registry.ts:816": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name (line shifted again by fix round 4's pluginWorkflows/workflowsPaths widening)",
-  "packages/runtime/src/mcp/winter-server.ts:38": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side",
+  "packages/runtime/src/tools/registry.ts:818": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name (line shifted again by fix round 4's pluginWorkflows/workflowsPaths widening, and by WS-23's comment corrections above it)",
+  "packages/runtime/src/mcp/winter-server.ts:23": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side (line moved by WS-23, which deleted the unused server factory above it)",
   "packages/runtime/src/context/winter-code-preset.ts:48": "WINTER_CODE_PRESET_VERSION -- an ATTRIBUTION of who authored the preset, not a name a reuser renames",
   // --- scripts: this repository's own harness ------------------------------------------------------
   "scripts/verify-provider-live.ts:786": "the live gate is Winter's own harness and runs under no brand but Winter's",

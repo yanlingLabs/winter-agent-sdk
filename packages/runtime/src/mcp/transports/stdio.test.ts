@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { execSync } from "node:child_process";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/client";
 import { buildStdioTransport, WinterStdioTransport, buildStdioEnv, STDIO_BASE_ENV_NAMES } from "./stdio.ts";
 import { stdioFixtureCommand, grandchildSpawningCommand } from "../test-fixtures.ts";
 
@@ -86,7 +86,7 @@ describe("buildStdioTransport: a real out-of-process stdio MCP server", () => {
     const { result } = await withStdioConnection({}, async (client) => {
       const tools = await client.listTools();
       expect(tools.tools.map((t) => t.name).sort()).toEqual(["boom", "echo", "env_dump"]);
-      return client.callTool({ name: "echo", arguments: { text: "hi" } }, undefined, { timeout: 5000 });
+      return client.callTool({ name: "echo", arguments: { text: "hi" } }, { timeout: 5000 });
     });
     expect(result).toEqual({ content: [{ type: "text", text: "echo:hi" }] });
   });
@@ -104,7 +104,7 @@ describe("buildStdioTransport: a real out-of-process stdio MCP server", () => {
   });
 
   test("an isError tool result is surfaced, not thrown", async () => {
-    const { result } = await withStdioConnection({}, (client) => client.callTool({ name: "boom", arguments: {} }, undefined, { timeout: 5000 }));
+    const { result } = await withStdioConnection({}, (client) => client.callTool({ name: "boom", arguments: {} }, { timeout: 5000 }));
     expect(result).toEqual({ content: [{ type: "text", text: "boom" }], isError: true });
   });
 
@@ -157,7 +157,7 @@ describe("fix round 1 (MAJOR M1): env allowlist over a REAL spawned child, via t
     process.env.WINTER_CANARY_SECRET = "leak-if-you-see-me";
     try {
       const { result } = await withStdioConnection({}, (client) =>
-        client.callTool({ name: "env_dump", arguments: {} }, undefined, { timeout: 5000 }),
+        client.callTool({ name: "env_dump", arguments: {} }, { timeout: 5000 }),
       );
       const payload = parseEnvDump(result);
       expect(payload.keys).not.toContain("WINTER_CANARY_SECRET");
@@ -170,7 +170,7 @@ describe("fix round 1 (MAJOR M1): env allowlist over a REAL spawned child, via t
 
   test("each STDIO_BASE_ENV_NAMES entry appears in the child iff the parent process actually has it, with the same value", async () => {
     const { result } = await withStdioConnection({}, (client) =>
-      client.callTool({ name: "env_dump", arguments: {} }, undefined, { timeout: 5000 }),
+      client.callTool({ name: "env_dump", arguments: {} }, { timeout: 5000 }),
     );
     const payload = parseEnvDump(result);
     for (const name of STDIO_BASE_ENV_NAMES) {
@@ -186,7 +186,7 @@ describe("fix round 1 (MAJOR M1): env allowlist over a REAL spawned child, via t
   test("a config env value overrides the baseline for the same name, and adds a name outside the baseline", async () => {
     const { result } = await withStdioConnection(
       { PATH: "/custom/override/path", WINTER_TEST_CUSTOM_VAR: "custom-value" },
-      (client) => client.callTool({ name: "env_dump", arguments: {} }, undefined, { timeout: 5000 }),
+      (client) => client.callTool({ name: "env_dump", arguments: {} }, { timeout: 5000 }),
     );
     const payload = parseEnvDump(result);
     expect(payload.values.PATH).toBe("/custom/override/path");

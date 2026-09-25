@@ -117,6 +117,31 @@ function generatedBaseUrlForAdapter(catalog: WinterCatalog, adapterId: string): 
 }
 
 /**
+ * The same authority as `generatedBaseUrlForAdapter`, answered PER PROVIDER (WS-23).
+ *
+ * The single-URL rule above has no answer once an adapter serves a second provider, and for
+ * `winter.openai-responses` that is exactly when it mattered: with `xai` beside `openai`, the
+ * adapter's only remaining default was its compiled-in `api.openai.com`, so an `xai` turn on a
+ * connection with no `baseUrl` went to OpenAI with an xAI key. This lookup gives each provider its
+ * OWN row's `defaultEndpoints.api` and nothing for a provider the catalog does not put on the
+ * adapter — which `resolveEndpoint` refuses typed rather than filling in.
+ *
+ * The runtime's `connectionForProvider` already copies the same URL into the connection (stamped
+ * `"reviewed"`) for every multi-provider adapter, so a session built there never reaches this
+ * lookup; it is the answer for every OTHER caller of `createShippedAdapters` (a host driving the
+ * adapters directly), which had none.
+ */
+function generatedBaseUrlsForAdapter(catalog: WinterCatalog, adapterId: string): (providerId: string) => string | undefined {
+  const byProvider = new Map<string, string>();
+  for (const provider of catalog.providers) {
+    if (provider.adapterId !== adapterId) continue;
+    const api = provider.defaultEndpoints["api"];
+    if (api !== undefined && api.length > 0) byProvider.set(provider.id, api);
+  }
+  return (providerId) => byProvider.get(providerId);
+}
+
+/**
  * Builds every adapter this build ships against ONE catalog.
  *
  * The production wiring's only adapter-construction site (`production-wiring.ts`), and the corpus's
@@ -135,8 +160,16 @@ export function createShippedAdapters(catalog: WinterCatalog): ProviderAdapter[]
     return url !== undefined ? { generatedBaseUrl: url } : {};
   };
   return [
-    // Lane A — the OpenAI family.
-    createResponsesAdapter({ descriptors: lookup("winter.openai-responses"), identityHeaders, ...generated(catalog, "winter.openai-responses") }),
+    // Lane A — the OpenAI family. The Responses adapter serves `openai` AND `xai` (WS-23), so it gets
+    // each provider's own endpoint — without it, a connection with no `baseUrl` fell back to OpenAI's
+    // host whatever the provider. NO single `generatedBaseUrl` beside it (fix round 1, M4): that option
+    // takes precedence in `resolveEndpoint`, so passing both would let one URL answer for every
+    // provider the day the catalog shrank back to one — the per-provider lookup is the only authority.
+    createResponsesAdapter({
+      descriptors: lookup("winter.openai-responses"),
+      identityHeaders,
+      generatedBaseUrls: generatedBaseUrlsForAdapter(catalog, "winter.openai-responses"),
+    }),
     createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), identityHeaders, ...generated(catalog, "winter.openai-chat-completions") }),
     createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), identityHeaders, ...generated(catalog, "winter.codex-oauth") }),
     // `winter.xai-oauth` — the chat adapter at xAI's SUBSCRIPTION proxy. `generated(...)` reads the

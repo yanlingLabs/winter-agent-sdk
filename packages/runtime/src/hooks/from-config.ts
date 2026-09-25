@@ -45,6 +45,8 @@ export function buildHookEntriesFromConfig(config: RuntimeHooksConfig | undefine
           ...(group.matcher !== undefined ? { matcher: group.matcher } : {}),
           source: group.source,
           ...(group.timeoutSec !== undefined ? { timeoutMs: group.timeoutSec * 1000 } : {}),
+          // WS-23: the host's per-matcher opt-in, verbatim (query.ts sends it only when true).
+          ...(group.failClosed === true ? { failClosed: true } : {}),
         });
       }
     });
@@ -180,6 +182,11 @@ export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSou
           // milliseconds on the entry -- converted exactly once, here, matching hooks/runner.ts's
           // own requirement that the conversion never happen twice.
           const timeout = handler["timeout"];
+          // WS-23: a Winter extension to claude's handler shape, beside `timeout` (where the other
+          // per-hook knob lives). Only a literal `true` opts in -- a truthy string is not a decision
+          // anyone made. A matcher GROUP may carry it too, for every handler in the group, mirroring
+          // `HookCallbackMatcher.failClosed`'s own per-matcher scope on the callback side.
+          const failClosed = handler["failClosed"] === true || group["failClosed"] === true;
           entries.push({
             id: `${event}:${source}:${groupIndex}:${hookIndex}`,
             event: event as HookEvent,
@@ -187,6 +194,7 @@ export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSou
             source,
             ...(typeof timeout === "number" && Number.isFinite(timeout) ? { timeoutMs: timeout * 1000 } : {}),
             command: handler["command"],
+            ...(failClosed ? { failClosed: true } : {}),
           });
         });
       });

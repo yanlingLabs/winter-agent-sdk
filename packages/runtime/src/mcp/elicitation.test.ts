@@ -1,8 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { Server } from "@modelcontextprotocol/server";
 import {
   createElicitationAsker,
   installElicitationHandler,
@@ -110,13 +109,14 @@ describe("buildElicitationPayload: translates the real MCP request shape, omitti
   });
 });
 
-// End-to-end against a REAL @modelcontextprotocol/sdk Client/Server pair over InMemoryTransport --
+// End-to-end against a REAL MCP Client/Server pair (the v2 `@modelcontextprotocol/client` and
+// `@modelcontextprotocol/server` packages, WS-23) over InMemoryTransport --
 // proves installElicitationHandler's own wiring (capability declaration requirement, handler
 // registration, request/response shape) against the actual protocol, not just the pure functions
 // above in isolation.
 describe("installElicitationHandler: end-to-end over a real MCP Client/Server pair", () => {
   // Low-level `Server` (never the zod-shaped `McpServer.registerTool` convenience wrapper, and
-  // never a `zod` import) -- `zod` is a peer dependency of @modelcontextprotocol/sdk itself, not a
+  // never a `zod` import) -- `zod` is a dependency of the MCP SDK packages themselves, not a
   // declared dependency of packages/runtime (verified against package.json before writing this
   // file); relying on it resolving via incidental hoisting would be an undeclared dependency this
   // lane's own protocol treats as NEEDS_CONTEXT. The low-level Server also better represents a real,
@@ -124,10 +124,10 @@ describe("installElicitationHandler: end-to-end over a real MCP Client/Server pa
   // authored it.
   async function connectedPair(ask: (payload: import("./elicitation.ts").ElicitationRequestPayload) => Promise<ElicitationResultPayload>) {
     const server = new Server({ name: "fixture", version: "1.0.0" }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler("tools/list", async () => ({
       tools: [{ name: "ask_and_report", description: "elicits then reports", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
     }));
-    server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    server.setRequestHandler("tools/call", async (req) => {
       const args = req.params.arguments as { q: string };
       const result = await server.elicitInput({
         message: `please answer: ${args.q}`,
@@ -137,7 +137,7 @@ describe("installElicitationHandler: end-to-end over a real MCP Client/Server pa
     });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    // capabilities.elicitation MUST be declared or setRequestHandler(ElicitRequestSchema) throws
+    // capabilities.elicitation MUST be declared or setRequestHandler("elicitation/create") throws
     // synchronously (verified empirically -- see elicitation.ts's own header comment).
     const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: { elicitation: {} } });
     installElicitationHandler(client, "fixture", ask);
@@ -160,7 +160,7 @@ describe("installElicitationHandler: end-to-end over a real MCP Client/Server pa
     };
     const { client, close } = await connectedPair(ask);
     try {
-      const result = await client.callTool({ name: "ask_and_report", arguments: { q: "the ultimate question" } }, undefined, { timeout: 5000 });
+      const result = await client.callTool({ name: "ask_and_report", arguments: { q: "the ultimate question" } }, { timeout: 5000 });
       const content = (result as { content: Array<{ type: string; text: string }> }).content;
       expect(JSON.parse(content[0]!.text)).toEqual({ action: "accept", content: { answer: "42" } });
       expect(seenPayload).toMatchObject({
@@ -177,7 +177,7 @@ describe("installElicitationHandler: end-to-end over a real MCP Client/Server pa
     const ask = createElicitationAsker(undefined);
     const { client, close } = await connectedPair(ask);
     try {
-      const result = await client.callTool({ name: "ask_and_report", arguments: { q: "anything" } }, undefined, { timeout: 5000 });
+      const result = await client.callTool({ name: "ask_and_report", arguments: { q: "anything" } }, { timeout: 5000 });
       const content = (result as { content: Array<{ type: string; text: string }> }).content;
       expect(JSON.parse(content[0]!.text)).toEqual({ action: "decline" });
     } finally {

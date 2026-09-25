@@ -1,5 +1,5 @@
 // Phase 4 Task 4 (Lane A), WS-09 §1.1/§1.3: the fourth transport -- an in-process
-// `@modelcontextprotocol/sdk` `McpServer` object connected via a real MCP `Client` over
+// MCP server object (`@modelcontextprotocol/server`'s `McpServer`/`Server`) connected via a real MCP `Client` over
 // `InMemoryTransport`, giving an in-process server the IDENTICAL protocol treatment (resource
 // listing/reading, elicitation, annotations, output cap) mcp/client.ts gives a real stdio/http/sse
 // server -- something the narrower `sdk_mcp_call` bridge (T3's own `WinterMcpServerInstance`
@@ -19,11 +19,14 @@
 // (registry.ts) forbids `registerMcpServerTools("winter", ...)` unconditionally, and that server's
 // own byte-identical-descriptor obligation (WS-06 §6) is already met by mirroring the registry
 // descriptor directly onto a real McpServer object -- nothing needs to CONNECT to it as a client.
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+//
+// WS-23: `InMemoryTransport` now comes from the v2 client package's root. The standing-server note
+// above is historical -- mcp/winter-server.ts no longer builds a server object at all (it keeps only
+// the reserved NAME).
+import { InMemoryTransport, type Transport } from "@modelcontextprotocol/client";
 
 // Structural, not the high-level `McpServer` type by name: `McpServer.connect` is itself a thin
-// delegate to the identical low-level `Server.connect` (`@modelcontextprotocol/sdk/server/index.js`)
+// delegate to the identical low-level `Server.connect` (`@modelcontextprotocol/server`'s `Server`)
 // -- accepting anything with this one method admits BOTH the high-level convenience wrapper WS-09
 // §1.1's own prose names AND the low-level `Server`, which is what this lane's own zod-free test
 // fixtures build (mcp/test-fixtures.ts's own header explains why: `McpServer.registerTool`'s

@@ -24,6 +24,7 @@ import type { PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { PermissionCall, EvaluationContext, HookStage, HookDecision, PromptStageMeta, PermissionRequestHookDecision } from "../permissions/evaluator.ts";
 import { runHooks, type HookInvoker, type HookAuditRecorder, type HookTimeoutConfig, type ToolInputValidator, type HookLifecycleSink } from "./runner.ts";
 import type { HookRegistry } from "./registry.ts";
+import type { HookComposite } from "./reducer.ts";
 
 export interface HookStageDeps {
   registry: HookRegistry;
@@ -36,6 +37,34 @@ export interface HookStageDeps {
   // T10 (WS-08 §9): forwarded verbatim into every runHooks() call this adapter makes (PreToolUse
   // AND PermissionRequest) — see runner.ts's own HookLifecycleSink header for the gating contract.
   lifecycle?: HookLifecycleSink;
+  /**
+   * WS-23: every composite this stage computes, handed to the engine BESIDE the decision -- the
+   * parts of a PreToolUse/PermissionRequest answer that are not a permission decision
+   * (`extraContext`, `systemMessages`, `preventContinuation`) and so have no field on evaluator.ts's
+   * `HookDecision`/`PermissionDecisionRecord`. A side channel rather than thirty new spreads through
+   * every record construction site in evaluate(): the engine keys what it receives by `toolUseId`
+   * and OVERWRITES on each call, so evaluateWithFreshPolicy's stale-policy re-evaluation replaces
+   * the earlier composite instead of doubling its context.
+   */
+  onComposite?: (event: "PreToolUse" | "PermissionRequest", call: PermissionCall, composite: HookComposite) => void;
+}
+
+function reportComposite(deps: HookStageDeps, event: "PreToolUse" | "PermissionRequest", call: PermissionCall, composite: HookComposite): void {
+  try {
+    deps.onComposite?.(event, call, composite);
+  } catch {
+    /* the engine's bookkeeping must never cost the call its permission answer */
+  }
+}
+
+// WS-23: `continue: false` on a GATING event means "stop" -- so the call it gates must not run
+// either. Folded into a deny carrying the hook's own stopReason (the engine separately ends the turn
+// after this round, from the same composite via `onComposite`). A real `deny` already in the
+// composite keeps its own message: it was the more specific answer.
+function stopAsDenial(composite: HookComposite): HookComposite {
+  if (composite.preventContinuation === undefined || composite.decision === "deny") return composite;
+  const reason = composite.preventContinuation.reason;
+  return { ...composite, decision: "deny", message: reason !== undefined ? `Stopped by hook: ${reason}` : "Stopped by hook", lifecycleMessages: composite.lifecycleMessages };
 }
 
 // The lifecycle entry that produced the composite's own WINNING decision, for HookDecision.hookId
@@ -50,7 +79,7 @@ function winningHookId(composite: { decision?: string; lifecycleMessages: Array<
 export function createHookStage(deps: HookStageDeps): HookStage {
   return {
     async preToolUse(call: PermissionCall, ctx: EvaluationContext): Promise<HookDecision> {
-      const composite = await runHooks(
+      const rawComposite = await runHooks(
         "PreToolUse",
         {
           ...(call.toolUseId !== undefined ? { toolUseID: call.toolUseId } : {}),
@@ -69,8 +98,10 @@ export function createHookStage(deps: HookStageDeps): HookStage {
           ...(deps.lifecycle !== undefined ? { lifecycle: deps.lifecycle } : {}),
         },
       );
+      reportComposite(deps, "PreToolUse", call, rawComposite);
+      const composite = stopAsDenial(rawComposite);
 
-      const hookId = winningHookId(composite);
+      const hookId = winningHookId(composite) ?? composite.preventContinuation?.hookId;
 
       if (composite.decision === "deny") {
         return {
@@ -152,7 +183,7 @@ export function createHookStage(deps: HookStageDeps): HookStage {
           ]
         : undefined;
 
-      const composite = await runHooks(
+      const rawComposite = await runHooks(
         "PermissionRequest",
         {
           ...(call.toolUseId !== undefined ? { toolUseID: call.toolUseId } : {}),
@@ -172,8 +203,10 @@ export function createHookStage(deps: HookStageDeps): HookStage {
           ...(deps.lifecycle !== undefined ? { lifecycle: deps.lifecycle } : {}),
         },
       );
+      reportComposite(deps, "PermissionRequest", call, rawComposite);
+      const composite = stopAsDenial(rawComposite);
 
-      const hookId = winningHookId(composite);
+      const hookId = winningHookId(composite) ?? composite.preventContinuation?.hookId;
       if (composite.decision === "deny") {
         return {
           decision: "deny",

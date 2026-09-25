@@ -4,6 +4,115 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### xAI on the Responses API
+
+- The api-key `xai` provider (`https://api.x.ai/v1`) now runs on `winter.openai-responses` instead of
+  `winter.openai-chat-completions`. xAI calls Responses its preferred API and Chat Completions "a legacy
+  endpoint"; only Responses returns reasoning as a replayable encrypted item. Winter stays stateless on it:
+  `store: false`, full history replayed each turn, never `previous_response_id`. `xai-oauth` is unchanged
+  (still Chat Completions): its proxy's `/v1/responses` has never been probed.
+- Every reasoning-capable `xai` row now records `continuation: "opaque-provider-state"`: reasoning carries
+  across turns and tool loops as the encrypted item. `grok-4.7` alone also records a readable summary
+  (`reasoning.summary`, sent as `detailed`). `grok-4.20-0309-reasoning` and `grok-build-0.1` keep an empty
+  effort vocabulary because xAI documents no effort knob for them.
+- New row `xai/grok-4.20-multi-agent-0309` (alias `grok-4.20-multi-agent`), Responses-only. Its effort picks
+  the agent count (low/medium = 4, high/xhigh = 16). A `tools` array or an output cap is refused before
+  the request, since xAI supports neither on this model.
+
+### Responses adapter
+
+- Each provider on the adapter now gets its own endpoint from its catalog row. A connection with no
+  `baseUrl` for any provider other than `openai` used to fall back to `api.openai.com`, which would have
+  sent an xAI key to OpenAI. It now reaches that provider's own host, or is refused with a typed
+  `capability` error when the catalog names no host for it. Sessions built by the runtime are
+  unaffected: they already copy each multi-provider row's endpoint into the connection.
+- A row whose continuation is the encrypted reasoning item (`opaque-provider-state`) now asks for it
+  (`include: ["reasoning.encrypted_content"]`) on every turn that does not switch reasoning off, even
+  when no effort is named. Before, an effortless turn on such a model kept no reasoning for the next
+  turn. This also applies to the opaque `openai/*` and `codex-oauth/*` rows (include only; no
+  `reasoning` object is added).
+- `response.reasoning_text.delta` now reaches the readable-reasoning channel as well as
+  `response.reasoning_summary_text.delta`. It is treated as a summary unless the row records full
+  exposed reasoning.
+- A request with no tools no longer sends `tools`, `tool_choice` or `parallel_tool_calls`. The codex
+  backend is the exception: it rejects a request missing them, so it still gets all three.
+- `OpenAI-Organization` / `OpenAI-Project` are sent only on `openai` turns, never on another provider
+  sharing the adapter.
+
+### Errors
+
+- `normalizeHttpError` also reads xAI's flat error body (`{"code": "<status text>", "error": "<message>"}`),
+  alongside the structured `{error: {…}}` envelopes, whose handling is unchanged. Only a body whose keys
+  are exactly `{error}` or `{error, code}` counts. The flat body's `code` becomes `providerCode`, and
+  its message becomes the snippet. A wrong key, which xAI answers with HTTP 400 and a message starting
+  "Incorrect API key provided", is now classified `auth`, so credential validation reports an invalid
+  key instead of an unreachable endpoint.
+
+### MCP: TypeScript SDK v2 and the 2026-07-28 protocol
+
+- The runtime's MCP client moves from `@modelcontextprotocol/sdk` 1.30 to `@modelcontextprotocol/client` 2.1.0
+  (`@modelcontextprotocol/server` 2.1.0 is a dev dependency for test fixtures only). v1 is gone from the lockfile,
+  along with the Express/Hono server stack it brought in; the workspace's zod (4.5.4) already meets v2's `^4.2`.
+  Every existing server keeps working: stdio, Streamable HTTP, legacy SSE and in-process servers all connect as
+  before, and Winter keeps its own stdio transport (process-group kill, explicit env allowlist).
+- New per-server `versionNegotiation` (`"legacy"` | `"auto"` | `{ pin: "<revision>" }`) on stdio, http and sse
+  configs. Defaults: `"auto"` for `http` (probe `server/discover`, fall back to `initialize`), `"legacy"` for
+  `stdio` (a probe on a live pipe can kill a legacy server) and `sse`. A malformed value is refused at config
+  resolution; a pin the server does not offer fails the connect (`handshake_failed`), never falls back. The
+  negotiated revision is reported per server as `protocolVersion` on `system/init.mcp_servers` and `mcp_status`.
+- 2026-07-28 `input_required` results are fulfilled through the existing elicitation path: the host's
+  `onElicitation` sees the same request shape whichever era a server negotiated, and with no callback the server
+  still gets a deterministic decline. URL-mode elicitation is now declared and reaches `onElicitation` with
+  `mode: "url"`, `url` and `elicitationId`. Accepted content that the protocol cannot carry (a nested value)
+  declines instead of reaching the server.
+- A server that advertises `tools.listChanged` gets its tools re-registered when it announces a change (on either
+  era). A change announced while the server is disabled is applied when it is re-enabled.
+- `type: "sdk"` MCP servers from settings, project `mcp.json` or plugin files are refused (`sdk_type_from_file_config`);
+  only the host's `Options.mcpServers` can declare one. Every MCP config rejection now carries a `code`.
+- HTTP 401 still maps to `needs-auth` under the v2 error classes (Streamable HTTP on both negotiation modes, and SSE).
+  Web search (Exa) connects with `versionNegotiation: "legacy"` and classifies rate limits by HTTP status on v2's
+  `SdkHttpError`.
+- New gate `bun run verify:mcp-compiled`: the compiled `winter` binary connects to a stdio MCP server (legacy and
+  `auto`) and completes a model-issued `tools/call`.
+
+### Hooks (WS-23)
+
+- **Fail-closed hooks.** `HookCallbackMatcher.failClosed` (and `failClosed: true` on a settings/plugin command
+  handler or its matcher group) makes an error, timeout, throw or malformed output from a `PreToolUse` /
+  `PermissionRequest` hook a DENY naming the hook and a failure code (never the error text or command line). Such a
+  hook answering `async`, with another event's `hookSpecificOutput`, or with non-JSON stdout is malformed too; `{}`
+  stays an allow. Default off: other hooks' failures stay non-blocking.
+- **Matchers** follow claude's semantics: a pattern of only letters, digits, `_`, `|`, `,`, `-` and spaces is a
+  list of exact names split on `|`/`,` and trimmed (`Edit|Write`, `Edit, Write`),
+  anything else an unanchored regular-expression test (`mcp__.*`, `.*`); `""` and `*` match all. Winter's existing
+  `mcp__srv__*` / `Tool(*)` globs keep their glob reading. A pattern that will not compile warns once and matches
+  nothing -- or everything, for a fail-closed hook. `SessionStart`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact` and `Notification`
+  matchers filter on the event's subject (`source`, `agent_type`, `trigger`, `notification_type`).
+- **Command hooks speak claude's wire:** snake_case stdin (`session_id`, `transcript_path`, `cwd`,
+  `hook_event_name`, `permission_mode`, `tool_name`, `tool_input`, `tool_response`, `prompt`, ...); exit 2 blocks
+  with stderr as the reason; other non-zero exits are non-blocking errors; plain-text stdout is context for
+  `UserPromptSubmit`/`SessionStart`/`SubagentStart`. `CLAUDE_PROJECT_DIR` and `WINTER_PROJECT_DIR` are exported
+  for every hook; a plugin hook gets `CLAUDE_PLUGIN_ROOT` / `WINTER_PLUGIN_ROOT` exported (the shell expands
+  `${CLAUDE_PLUGIN_ROOT}` in the command). Project/local hooks still need a trusted workspace.
+- **Every hook contribution is bounded,** with a visible truncation marker: 10,000 characters for context,
+  feedback, reasons and notices; 100,000 for `updatedToolOutput`; 1 MiB of captured stdout.
+- **`additionalContext` reaches the model** for `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
+  `UserPromptSubmit`, `SessionStart` and `SubagentStart`, as a `<system-reminder>` at the conversation tail (inside
+  the call's tool result, or with the prompt / first user turn), never in the system prompt.
+- **Decisions that used to be ignored:** `Stop`/`SubagentStop` `decision: "block"` continues the turn with the
+  reason fed to the model (`stop_hook_active` on the re-fire, capped at 8 continuations per turn);
+  `UserPromptSubmit` `decision: "block"` drops the prompt and ends the turn with the reason; `continue: false`
+  ends the turn (`terminal_reason: "hook_stopped"`); `systemMessage` is a new `system/informational` frame;
+  `suppressOutput` hides a command hook's stdout from `hook_response`, which now carries command hooks'
+  stdout/stderr/exit code; `PostToolUse` `updatedToolOutput` / `updatedMCPToolOutput` replaces the tool result.
+- **`updatedInput` is validated** against the tool's input schema; an invalid one DENIES the call, whatever the
+  model's original input was (previously the original input ran).
+- **New events fire:** `SubagentStart` / `SubagentStop` from a subagent's engine (in place of `SessionStart` /
+  `Stop`), and `SessionStart` with `source: "compact"` after a compaction.
+- `UserPromptSubmit` now fires before the prompt is recorded (so a blocked prompt never enters the transcript).
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus

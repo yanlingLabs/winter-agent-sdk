@@ -21,8 +21,13 @@ export function toWireMcpStatus(kind: McpServerStateKind): string {
   return kind === "needsAuth" ? "needs-auth" : kind;
 }
 
-export function mcpServerStatesToWire(states: readonly McpServerState[]): Array<{ name: string; status: string }> {
-  return states.map((s) => ({ name: s.name, status: toWireMcpStatus(s.state) }));
+// WS-23: plus the negotiated `protocolVersion` of a server's live connection, when it has one
+// (mcp/state.ts). Conditional, so a server with no live connection -- and every session with no real
+// MCP connection at all, which is every committed differential golden -- serializes exactly as
+// before. One mapping site still feeds both surfaces, so `system/init.mcp_servers` and `mcp_status`
+// can never disagree about it.
+export function mcpServerStatesToWire(states: readonly McpServerState[]): Array<{ name: string; status: string; protocolVersion?: string }> {
+  return states.map((s) => ({ name: s.name, status: toWireMcpStatus(s.state), ...(s.protocolVersion !== undefined ? { protocolVersion: s.protocolVersion } : {}) }));
 }
 
 export interface McpControlDeps {

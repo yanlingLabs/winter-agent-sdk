@@ -39,8 +39,16 @@
 // structurally satisfies `ElicitationSender` -- without this package needing to import
 // `rpc/bridge.ts`'s own types at all, and without constraining the future caller to construct a
 // real `RpcBridge` just to satisfy a type this file doesn't otherwise need.
-import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+//
+// WS-23 (MCP TS SDK v2, protocol revision 2026-07-28): ONE handler now answers BOTH ways a server can
+// ask for input. On a 2025-era connection that is the server->client `elicitation/create` request it
+// always was. On a 2026-07-28 connection the server instead answers `tools/call` (or
+// `resources/read`, `prompts/get`) with an `input_required` result, and the v2 client's
+// auto-fulfilment driver dispatches each embedded elicitation to the handler registered here, then
+// retries the call -- so the host sees one callback shape whichever era the server negotiated, and
+// every decline guarantee in this file holds for both. URL mode reaches the host the same way (the
+// client declares it; see mcp/client.ts).
+import type { Client, ElicitRequestParams } from "@modelcontextprotocol/client";
 
 // T3's own wire payload shape (`packages/sdk/src/query.ts`'s `McpElicitationRequestPayload`,
 // `packages/sdk/src/options.ts`'s `Options.onElicitation` request parameter) -- reproduced here
@@ -128,15 +136,12 @@ export function createElicitationAsker(sender: ElicitationSender | undefined): E
   };
 }
 
-// The narrowest possible view of the two ElicitRequest param shapes this file actually reads --
-// avoids importing the real SDK's own (non-exported-by-name) inferred zod type just to destructure
-// four optional fields. Every optional field's own union explicitly includes `| undefined` (rather
-// than the bare `field?: T` shorthand): the real SDK's zod-inferred type renders an optional field
-// as `{ field: T | undefined }` (key always present, value possibly undefined), not
-// `{ field?: T }` (key possibly absent) -- under this package's `exactOptionalPropertyTypes: true`
-// those two are NOT structurally assignable to each other, so the explicit `| undefined` is load-
-// bearing, not stylistic (found by the typechecker at this file's own call site, `params.mode` et
-// al. below).
+// The narrowest possible view of the two ElicitRequest param shapes this file actually reads. Every
+// optional field's own union explicitly includes `| undefined` (rather than the bare `field?: T`
+// shorthand): the SDK's zod-inferred type renders an optional field as `{ field: T | undefined }`
+// (key always present, value possibly undefined), not `{ field?: T }` (key possibly absent) -- under
+// this package's `exactOptionalPropertyTypes: true` those two are NOT structurally assignable to each
+// other, so the explicit `| undefined` is load-bearing, not stylistic.
 interface RawElicitParams {
   message: string;
   mode?: "form" | "url" | undefined;
@@ -156,20 +161,58 @@ export function buildElicitationPayload(serverName: string, params: RawElicitPar
   };
 }
 
-// Registers `ask` as the handler for every real `elicitation/create` request a connected `Client`
-// receives from `serverName`. The caller (mcp/client.ts) is responsible for constructing `client`
-// with `capabilities: { elicitation: {} }` -- omitting that capability makes the real SDK's own
-// `setRequestHandler` throw synchronously ("Client does not support elicitation capability"),
-// verified empirically against @modelcontextprotocol/sdk@1.30.0 before writing this file. Installed
-// UNCONDITIONALLY (never gated on whether a sender was configured) so a connected server is NEVER
-// left without a registered handler at the protocol level -- the deterministic-decline behavior
-// lives inside `ask` itself (via `createElicitationAsker`), not in whether a handler exists at all;
-// this is what guarantees "never a hang" all the way down to the wire, regardless of session
-// configuration.
+// The v2 params type is a form|url UNION (`requestedSchema` exists only on form, `url` only on URL
+// mode), so the fields this file reads are narrowed here, once, by key presence -- never by trusting
+// `mode` alone, which a form request may omit (the v2 client defaults it to "form" before this
+// handler runs, but the raw union does not say so).
+function rawElicitParamsOf(params: ElicitRequestParams): RawElicitParams {
+  const p = params as { message: string; mode?: "form" | "url"; url?: string; elicitationId?: string; requestedSchema?: Record<string, unknown> };
+  return {
+    message: p.message,
+    ...(p.mode !== undefined ? { mode: p.mode } : {}),
+    ...(typeof p.url === "string" ? { url: p.url } : {}),
+    ...(typeof p.elicitationId === "string" ? { elicitationId: p.elicitationId } : {}),
+    ...(p.requestedSchema !== undefined ? { requestedSchema: p.requestedSchema } : {}),
+  };
+}
+
+// Registers `ask` as the handler for every `elicitation/create` a connected `Client` receives from
+// `serverName` -- a real server->client request (2025 era) or an embedded `input_required` request
+// the v2 client auto-fulfils (2026-07-28; see this file's WS-23 note). v2 keys handlers by METHOD
+// STRING rather than by v1's `ElicitRequestSchema` object, and wraps this one with request/result
+// validation of its own. The caller (mcp/client.ts) is responsible for constructing `client` with an
+// `elicitation` capability -- omitting it makes `setRequestHandler` throw synchronously ("Client
+// does not support elicitation capability"), unchanged from v1. Installed UNCONDITIONALLY (never
+// gated on whether a sender was configured) so a connected server is NEVER left without a registered
+// handler at the protocol level -- the deterministic-decline behavior lives inside `ask` itself (via
+// `createElicitationAsker`), not in whether a handler exists at all; this is what guarantees "never a
+// hang" all the way down to the wire, regardless of session configuration.
 export function installElicitationHandler(client: Client, serverName: string, ask: ElicitationAsker): void {
-  client.setRequestHandler(ElicitRequestSchema, async (request) => {
-    const payload = buildElicitationPayload(serverName, request.params);
+  client.setRequestHandler("elicitation/create", async (request) => {
+    const payload = buildElicitationPayload(serverName, rawElicitParamsOf(request.params));
     const result = await ask(payload);
-    return result.content !== undefined ? { action: result.action, content: result.content } : { action: result.action };
+    if (result.content === undefined) return { action: result.action };
+    const content = toWireElicitContent(result.content);
+    // The same "never forward garbage" rule `toResultPayload` applies to the action: content the
+    // protocol cannot carry declines deterministically instead of reaching the server.
+    return content !== undefined ? { action: result.action, content } : { action: DETERMINISTIC_DECLINE.action };
   });
+}
+
+type WireElicitValue = string | number | boolean | string[];
+
+// WS-23: the spec's accepted-content values are FLAT -- a string, number, boolean or string array
+// per field. The v2 SDK now types the handler's RETURN that way (v1's handler signature accepted the
+// looser record this file used to pass through) and validates the result against it before sending.
+// The host's answer arrives as an untyped record, so it is checked here rather than cast: one nested
+// object from a host callback would otherwise surface to the server as an SDK validation error in
+// place of an answer.
+function toWireElicitContent(content: Record<string, unknown>): Record<string, WireElicitValue> | undefined {
+  const out: Record<string, WireElicitValue> = {};
+  for (const [key, value] of Object.entries(content)) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
+    else if (Array.isArray(value) && value.every((v): v is string => typeof v === "string")) out[key] = value;
+    else return undefined;
+  }
+  return out;
 }

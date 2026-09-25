@@ -143,10 +143,25 @@ describe("thinking: represented, or refused before the request", () => {
     expect(with_.summary).toBe("detailed");
   });
 
-  test("no effort and no thinking asks for no continuation state at all", () => {
-    const plan = resolveReasoning(req(), descriptor());
-    expect(plan.wantsEncryptedContent).toBe(false);
-    expect(plan.effort).toBeUndefined();
+  test("no effort and no thinking asks for no continuation state — on a row whose continuation is NOT the opaque item", () => {
+    for (const continuation of ["none", "plaintext", "server-response-handle"] as const) {
+      const plan = resolveReasoning(req(), descriptor({ continuation }));
+      expect([continuation, plan.wantsEncryptedContent, plan.effort]).toEqual([continuation, false, undefined]);
+    }
+    // No descriptor at all (an unlisted gateway model) has no evidence to ask on either.
+    expect(resolveReasoning(req(), NO_DESCRIPTORS()).wantsEncryptedContent).toBe(false);
+  });
+
+  test("an OPAQUE-continuation row asks for its encrypted item on every reasoning turn, effort or not (WS-23 fix round 1, I3)", () => {
+    // Its state IS that item; with `store: false` nothing else carries the reasoning to the next turn.
+    const plan = resolveReasoning(req(), descriptor({ continuation: "opaque-provider-state" }));
+    expect([plan.wantsEncryptedContent, plan.effort, plan.enabled]).toEqual([true, undefined, true]);
+    // A knob-less row (no efforts, no default) is exactly the case: it can never be ASKED to reason.
+    expect(resolveReasoning(req(), descriptor({ continuation: "opaque-provider-state", efforts: [] })).wantsEncryptedContent).toBe(true);
+    // ...but reasoning switched OFF asks for nothing, opaque or not.
+    expect(resolveReasoning(req({ thinking: { type: "disabled" } }), descriptor({ continuation: "opaque-provider-state" })).wantsEncryptedContent).toBe(false);
+    // ...and a row whose reasoning is not supported has no item to ask for.
+    expect(resolveReasoning(req(), descriptor({ noReasoning: true })).wantsEncryptedContent).toBe(false);
   });
 });
 

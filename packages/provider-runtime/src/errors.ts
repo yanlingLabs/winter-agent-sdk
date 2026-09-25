@@ -7,7 +7,9 @@
 //      at all — its machine-readable value is `error.type` (`overloaded_error`, `rate_limit_error`,
 //      `not_found_error`, …) — and Gemini's `error.code` is the NUMERIC http status with the real
 //      value in `error.status` (`RESOURCE_EXHAUSTED`). Requiring a STRING `code` is what makes the
-//      fallthrough work by type rather than by sniffing which provider answered.
+//      fallthrough work by type rather than by sniffing which provider answered. WS-23 added a
+//      fourth, ADDITIVELY: xAI's flat `{code, error: "<message>"}` (`parseFlatError`), recognised only
+//      when `error` is a string, so the three structured envelopes read exactly as they did.
 //   2. `retryable` is computed here rather than left to a caller (R6-6's list: 408/409/429/5xx plus
 //      network/timeout), so exactly one place decides it.
 //   3. `toSdkAssistantMessageError` maps Winter's coarse taxonomy onto the pin's CLOSED 11-member
@@ -48,12 +50,65 @@ export function parseProviderErrorCode(body: string): string | undefined {
   }
   if (parsed === null || typeof parsed !== "object") return undefined;
   const err = (parsed as { error?: unknown }).error;
+  // xAI's FLAT dialect (WS-23; see `parseFlatError`): `error` is the message itself, and the code, when
+  // there is one, is the TOP-LEVEL `code`. Reached only when `error` is a string, so the structured
+  // envelope below — OpenAI's, Anthropic's, Gemini's — is read exactly as before.
+  if (typeof err === "string") return parseFlatError(body)?.code;
   if (err === null || typeof err !== "object") return undefined;
   const envelope = err as { code?: unknown; type?: unknown; status?: unknown };
   for (const candidate of [envelope.code, envelope.type, envelope.status]) {
     if (typeof candidate === "string" && candidate.length > 0) return candidate;
   }
   return undefined;
+}
+
+/**
+ * xAI's FLAT error body — a fourth dialect, added in WS-23 when the api-key `xai` provider moved onto
+ * the Responses adapter: `{"code": "<status text>", "error": "<message>"}`, where `error` is the human
+ * message ITSELF rather than OpenAI's `{message, type, code}` object. Observed from `api.x.ai`
+ * (a live 400 quoted verbatim at forum.cursor.com/t/grok-code-broken/142879:
+ * `{"code":"Client specified an invalid argument","error":"Incorrect API key provided: sk***kA. …"}`)
+ * and from xAI's subscription proxy (`{"error":"Invalid or expired credentials …"}`, no `code`;
+ * packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §4). xAI documents HTTP
+ * status meanings only, never a body schema (https://docs.x.ai/developers/debugging).
+ *
+ * `code` there is a gRPC status DESCRIPTION ("Client specified an invalid argument" is
+ * INVALID_ARGUMENT's), carried verbatim as `providerCode` like every other dialect's code — never
+ * translated into a name the body did not send.
+ *
+ * `undefined` for anything that is not EXACTLY this shape — the keys are `{error}` or `{error, code}`
+ * and nothing else (fix round 1, I1). A string `error` alone is not enough: a Fastify-style body
+ * (`{statusCode, code, error: "Bad Request", message: "<the real detail>"}`) also has one, and reading
+ * it as this dialect replaced the raw-body snippet with the bare reason phrase, dropping the detail
+ * for every adapter that shares this normalizer. Anything else keeps the pre-WS-23 reading.
+ */
+function parseFlatError(body: string): { message: string; code?: string } | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const record = parsed as { error?: unknown; code?: unknown };
+  if (typeof record.error !== "string" || record.error.length === 0) return undefined;
+  if (Object.keys(record).some((key) => key !== "error" && key !== "code")) return undefined;
+  return { message: record.error, ...(typeof record.code === "string" && record.code.length > 0 ? { code: record.code } : {}) };
+}
+
+/**
+ * xAI answers a WRONG KEY with HTTP 400, not 401 — the live body quoted at `parseFlatError` is a 400
+ * — reusing OpenAI's own sentence for it ("Incorrect API key provided", which OpenAI sends as a 401).
+ * By status alone that is `bad_request`, which tells a user their request was malformed when their
+ * key is wrong, and makes `validateViaModels` report an unreachable endpoint instead of an invalid
+ * credential. Matched ONLY on the flat dialect and only when the message BEGINS with this sentence
+ * (fix round 1, I2: unanchored, a 400 quoting the phrase mid-message — an invalid tool name, a
+ * validation error echoing input — was misread as a credential failure). A message heuristic, kept as
+ * narrow as the evidence it rests on (three independent reports of the same body), and a live-gate
+ * item (the WS-23 probe's bad-key step).
+ */
+function isFlatCredentialRejection(status: number, flat: { message: string } | undefined): boolean {
+  return status === 400 && flat !== undefined && /^\s*incorrect api key provided\b/i.test(flat.message);
 }
 
 /**
@@ -181,7 +236,11 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
   // code is the one part of the body a consumer needs, it is never itself a credential, and reading
   // it after a redaction pass would risk losing it to a coincidental overlap.
   const providerCode = parseProviderErrorCode(body);
-  const snippet = scrubbedSnippet(redactCredentialMaterial(body, secrets));
+  // The flat dialect's `error` IS the human message, so it is what the snippet shows — the whole body
+  // would spend the 200-char budget on the JSON punctuation and the status text first. Same redaction
+  // and scrub as the body gets. Every other dialect keeps the raw-body snippet, byte for byte.
+  const flat = parseFlatError(body);
+  const snippet = scrubbedSnippet(redactCredentialMaterial(flat?.message ?? body, secrets));
   const usage = status === 429 && providerCode !== undefined && providerCode.startsWith("usage_limit") ? parseUsageWindow(body) : {};
   const resetNote = usage.resetsInSeconds !== undefined ? ` — resets in ${Math.ceil(usage.resetsInSeconds / 60)} min` : "";
   const message = usage.resetsInSeconds !== undefined || usage.planType !== undefined
@@ -197,7 +256,7 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
   };
 
-  if (status === 401 || status === 403) return { code: "auth", message, status, retryable: false, ...extra };
+  if (status === 401 || status === 403 || isFlatCredentialRejection(status, flat)) return { code: "auth", message, status, retryable: false, ...extra };
   if (status === 429) {
     const billing = providerCode !== undefined && BILLING_CODES.has(providerCode);
     return { code: "rate_limit", message, status, retryable: !billing, ...extra };

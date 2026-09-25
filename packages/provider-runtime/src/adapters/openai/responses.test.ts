@@ -200,14 +200,31 @@ describe("mapResponsesInput", () => {
 });
 
 describe("buildResponsesBody", () => {
-  test("the five live-verified required fields are always present", () => {
-    const body = buildResponsesBody(req(), resolveReasoning(req(), descriptor()), descriptor());
+  test("the five live-verified required fields are always present ON THE CODEX BACKEND (`requireToolFields`)", () => {
+    const model = descriptor({ continuation: "none" });
+    const body = buildResponsesBody(req(), resolveReasoning(req(), model), model, { requireToolFields: true });
     expect(body.tools).toEqual([]);
     expect(body.tool_choice).toBe("auto");
     expect(body.parallel_tool_calls).toBe(true);
     expect(body.store).toBe(false);
     expect(body.include).toEqual([]);
     expect(body.stream).toBe(true);
+  });
+
+  test("everywhere else a TOOL-LESS request omits the tool trio entirely; `store`/`include`/`stream` stay (WS-23 fix round 1, M2)", () => {
+    const model = descriptor({ continuation: "none" });
+    const body = buildResponsesBody(req(), resolveReasoning(req(), model), model);
+    for (const field of ["tools", "tool_choice", "parallel_tool_calls"]) expect([field, field in body]).toEqual([field, false]);
+    expect([body.store, body.include, body.stream]).toEqual([false, [], true]);
+    // ...and a request WITH tools sends all three, as before.
+    const withTools = req({ tools: [{ name: "Read", description: "read", inputSchema: { type: "object" } }] });
+    const sent = buildResponsesBody(withTools, resolveReasoning(withTools, model), model);
+    expect([Array.isArray(sent.tools) && sent.tools.length, sent.tool_choice, sent.parallel_tool_calls]).toEqual([1, "auto", true]);
+  });
+
+  test("an opaque-continuation row asks for the encrypted item with NO effort, and sends no reasoning object (WS-23 fix round 1, I3)", () => {
+    const body = buildResponsesBody(req(), resolveReasoning(req(), descriptor()), descriptor());
+    expect([body.include, "reasoning" in body]).toEqual([["reasoning.encrypted_content"], false]);
   });
 
   test("`instructions` is sent only for a non-empty system prompt — no invented default", () => {
@@ -236,15 +253,18 @@ describe("buildResponsesBody", () => {
       [{ type: "any" }, "required"],
       [{ type: "tool", name: "Read" }, { type: "function", name: "Read" }],
     ];
+    // With a tool on the request: a tool-less one carries no `tool_choice` at all (fix round 1, M2).
+    const tools = [{ name: "Read", description: "read", inputSchema: { type: "object" } }];
     for (const [choice, expected] of arms) {
-      const r = req({ toolChoice: choice });
+      const r = req({ toolChoice: choice, tools });
       expect(buildResponsesBody(r, resolveReasoning(r, model), model).tool_choice).toEqual(expected);
     }
   });
 
   test("`parallel_tool_calls` follows the descriptor's evidence when it has any", () => {
     const model = descriptor({ parallelTools: false });
-    expect(buildResponsesBody(req(), resolveReasoning(req(), model), model).parallel_tool_calls).toBe(false);
+    const r = req({ tools: [{ name: "Read", description: "read", inputSchema: { type: "object" } }] });
+    expect(buildResponsesBody(r, resolveReasoning(r, model), model).parallel_tool_calls).toBe(false);
   });
 
   test("tools carry their schema verbatim under `parameters`", () => {
@@ -269,6 +289,24 @@ describe("ResponsesStreamMapper", () => {
       { type: "usage", inputTokens: 7, outputTokens: 3 },
       { type: "done", stopReason: "end_turn" },
     ]);
+  });
+
+  test("`response.reasoning_summary_text.delta` is a SUMMARY whatever the row claims (WS-23 fix round 1, M1)", () => {
+    for (const readable of ["none", "summary", "full-exposed"] as const) {
+      const events = drive(new ResponsesStreamMapper("response.completed", readable), [{ type: "response.reasoning_summary_text.delta", delta: "short version" }]);
+      expect([readable, events]).toEqual([readable, [{ type: "thinking_summary_delta", text: "short version" }]]);
+    }
+  });
+
+  test("`response.reasoning_text.delta` reaches the readable-reasoning path too — exposed only where the row says `full-exposed` (WS-23 fix round 1, M1)", () => {
+    // It used to be ignored, so a model streaming its readable reasoning on this channel (xAI's own
+    // example reads it for grok-4.7) surfaced nothing.
+    const frame = [{ type: "response.reasoning_text.delta", delta: "step one" }, { type: "response.reasoning_text.delta", delta: "" }];
+    expect(drive(new ResponsesStreamMapper(), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }]);
+    expect(drive(new ResponsesStreamMapper("response.completed", "summary"), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }]);
+    // The complete trace is a claim with consequences downstream (it can suppress a switch warning),
+    // so it is made only on the row's own evidence.
+    expect(drive(new ResponsesStreamMapper("response.completed", "full-exposed"), frame)).toEqual([{ type: "thinking_exposed_delta", text: "step one" }]);
   });
 
   test("continuation state comes from the DONE item only — the `added` copy is never used", () => {

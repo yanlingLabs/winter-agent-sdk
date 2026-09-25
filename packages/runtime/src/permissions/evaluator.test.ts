@@ -659,25 +659,24 @@ describe("Task 9 — the real hooks engine wired through createHookStage (WS-08 
   // input proceeds"); this is the same scenario's INTEGRATION re-verification at the real evaluator
   // level -- proving the void-both-decision-and-transform contract actually reaches evaluate()'s own
   // stage order, not merely runner.ts's own composite.
-  test("Item 8(c): an invalid transform (schema-rejected updatedInput) is that hook's own contract error at the REAL evaluator level -- the ORIGINAL input proceeds untouched, the rejected transform never applies", async () => {
+  test("Item 8(c), re-ruled by WS-23: an invalid transform (schema-rejected updatedInput) is a DENY naming the hook at the REAL evaluator level -- the rejected transform never applies and the ORIGINAL input does not run either", async () => {
     const registry = buildHookRegistry([preToolUseEntry("h1")]);
-    const rejecting: ToolInputValidator = { validate: () => ({ valid: false, reason: "does not match tool schema" }) };
+    const rejecting: ToolInputValidator = { validate: (_t, input) => (input["command"] === "rm -rf x" ? { valid: false, reason: "does not match tool schema" } : { valid: true }) };
     const invoker = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { command: "rm -rf x" } } });
     const ctx = baseCtx({
       hookStage: createHookStage({ registry, invoker, audit: noopAudit(), sessionId: "s1", validator: rejecting }),
       policy: policy({ mode: "default", rules: withRules(rule("Bash(rm *)", "deny")) }),
     });
     const record = await evaluate(call("Bash", { command: "some-arbitrary-tool" }), ctx);
-    // The hook's own "allow" decision is voided ALONG WITH its rejected transform (runner.ts's own
-    // interpretPreToolUse returns {kind:"error"} for the WHOLE output the instant the transform
-    // fails validation -- WS-07 §10.6-2 / WS-08 §3: "no decision, no transform survives"). evaluate()
-    // therefore proceeds exactly as if the hook had said nothing: the deny rule never even sees the
-    // rejected "rm -rf x" text (it never applied), and the ORIGINAL, unrecognized
-    // "some-arbitrary-tool" command falls through to the generic bottom-of-pipeline fallback
-    // (Ruling P2-I) -- denied, mechanism "mode", never "rule".
+    // WS-23 (brief item 6): the hook's own "allow" is replaced by a stage-1 DENY -- it binds ahead of
+    // every rule and mode (mechanism "hook"), carries no transform, and names the hook and the schema
+    // failure. Before WS-23 this was the hook's contract error and the ORIGINAL input ran.
     expect(record.transformedInput).toBeUndefined();
     expect(record.decision).toBe("deny");
-    expect(record.mechanism).toBe("mode");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("h1");
+    expect(record.message).toContain("does not match tool schema");
+    expect(record.message).toContain('"h1"');
   });
 
   test("multiple real hooks across sources still resolve deterministically through evaluate() (managed observes, sdk denies)", async () => {
