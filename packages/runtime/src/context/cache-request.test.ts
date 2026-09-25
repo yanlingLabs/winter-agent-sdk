@@ -64,3 +64,22 @@ describe("the system prompt's cache lifetime (WS-23 item 6)", () => {
     expect(usage.cache_creation).toEqual({ ephemeral_1h_input_tokens: 100, ephemeral_5m_input_tokens: 148 });
   });
 });
+
+describe("cache diagnostics through the engine (WS-23 item 8)", () => {
+  test("the first request opts in with `null`; each later main-loop request names the previous response", async () => {
+    const { requests } = await drive({ prompts: ["one", "two"], generate: (_req, i) => ({ kind: "text", text: "ok", responseId: `msg_${i}` }) });
+    expect(requests.map((r) => r.cacheDiagnostics)).toEqual([{ previousMessageId: null }, { previousMessageId: "msg_0" }]);
+  });
+
+  test("a turn's cache verdicts reach its result usage as `cache_misses`; a clean turn carries no such key", async () => {
+    const { results } = await drive({
+      prompts: ["one", "two"],
+      generate: (_req, i) =>
+        i === 1
+          ? { kind: "text", text: "ok", usage: { inputTokens: 42, outputTokens: 1, cacheMiss: { type: "system_changed", missedInputTokens: 41850 }, thinkingBlocksDropped: 2 } }
+          : { kind: "text", text: "ok", usage: { inputTokens: 42, outputTokens: 1 } },
+    });
+    expect(results[0]!["usage"]).not.toHaveProperty("cache_misses");
+    expect((results[1]!["usage"] as Record<string, unknown>)["cache_misses"]).toEqual([{ type: "system_changed", missed_input_tokens: 41850, thinking_blocks_dropped: 2 }]);
+  });
+});

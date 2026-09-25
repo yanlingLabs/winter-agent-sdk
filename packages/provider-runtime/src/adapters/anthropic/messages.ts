@@ -1031,6 +1031,40 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
     // than a merge -- a future second producer of `output_config` must merge into this key, not
     // overwrite it, exactly as a later reader of this comment is being told now.
     ...(thinking.outputConfigEffort !== undefined ? { output_config: { effort: thinking.outputConfigEffort } } : {}),
+    // WS-23: cache diagnostics, Claude API only ("Not available on Amazon Bedrock or Google Cloud",
+    // https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics) -- and not the
+    // Anthropic-DIALECT sibling rows either, which are other vendors' endpoints. GA, no header.
+    ...(req.cacheDiagnostics !== undefined && descriptor !== undefined && CLAUDE_API_PROVIDER_IDS.has(descriptor.providerId)
+      ? { diagnostics: { previous_message_id: req.cacheDiagnostics.previousMessageId } }
+      : {}),
+  };
+}
+
+/**
+ * WS-23: the catalog providers that ARE Anthropic's own Claude API -- where cache diagnostics exist:
+ * `anthropic` (an API key) and `console` (a Console profile's bearer). Spelled out rather than read
+ * off `ANTHROPIC_CONSOLE_PROVIDER_ID`, which names the credential space (`"anthropic"`), not the
+ * catalog's `console` rows.
+ */
+const CLAUDE_API_PROVIDER_IDS: ReadonlySet<string> = new Set(["anthropic", "console"]);
+
+/**
+ * WS-23: Anthropic's cache verdict for one response, read off `message_start.message` -- where both
+ * fields arrive when streaming ("In streaming responses, `diagnostics` appears on the `message_start`
+ * event"; `input_transformations` likewise, https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
+ * `cache_miss_reason: null` is an inconclusive pending comparison and `diagnostics: null` means no
+ * divergence, so neither reports a miss. Unknown entry types are ignored ("later checks add values").
+ */
+export function readCacheVerdict(message: Record<string, unknown> | undefined): { cacheMiss?: { type: string; missedInputTokens?: number }; thinkingBlocksDropped?: number } {
+  const diagnostics = message?.["diagnostics"];
+  const reason = diagnostics !== null && typeof diagnostics === "object" ? (diagnostics as Record<string, unknown>)["cache_miss_reason"] : undefined;
+  const type = reason !== null && typeof reason === "object" ? (reason as Record<string, unknown>)["type"] : undefined;
+  const missed = reason !== null && typeof reason === "object" ? (reason as Record<string, unknown>)["cache_missed_input_tokens"] : undefined;
+  const transformations = message?.["input_transformations"];
+  const dropped = Array.isArray(transformations) ? transformations.filter((t) => t !== null && typeof t === "object" && (t as Record<string, unknown>)["type"] === "thinking_dropped").length : 0;
+  return {
+    ...(typeof type === "string" ? { cacheMiss: { type, ...(typeof missed === "number" ? { missedInputTokens: missed } : {}) } } : {}),
+    ...(dropped > 0 ? { thinkingBlocksDropped: dropped } : {}),
   };
 }
 
@@ -1358,6 +1392,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let cacheReadTokens: number | undefined;
     let cacheWriteTokens: number | undefined;
     let cacheWrite1hTokens: number | undefined;
+    let cacheVerdict: ReturnType<typeof readCacheVerdict> = {};
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" = "end_turn";
     let sawMessageStop = false;
 
@@ -1385,6 +1420,21 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           case "message_start": {
             const message = payload["message"] as { id?: unknown; model?: unknown; usage?: Record<string, unknown> } | undefined;
             const usage = message?.usage;
+            cacheVerdict = readCacheVerdict(message as Record<string, unknown> | undefined);
+            // WS-23: ONE line per miss (and per dropped-thinking report) -- a closed-vocabulary type and
+            // token counts, never content.
+            if (cacheVerdict.cacheMiss !== undefined || cacheVerdict.thinkingBlocksDropped !== undefined) {
+              ctx.log({
+                kind: "provider.cache_miss",
+                providerId: ctx.connection.providerId,
+                model: req.model,
+                detail: {
+                  ...(cacheVerdict.cacheMiss !== undefined ? { type: cacheVerdict.cacheMiss.type } : {}),
+                  ...(cacheVerdict.cacheMiss?.missedInputTokens !== undefined ? { missedInputTokens: cacheVerdict.cacheMiss.missedInputTokens } : {}),
+                  ...(cacheVerdict.thinkingBlocksDropped !== undefined ? { thinkingBlocksDropped: cacheVerdict.thinkingBlocksDropped } : {}),
+                },
+              });
+            }
             if (typeof usage?.["input_tokens"] === "number") inputTokens = usage["input_tokens"];
             if (typeof usage?.["output_tokens"] === "number") outputTokens = usage["output_tokens"];
             // PROMPT-CACHING COUNTERS. Anthropic reports them as two separate fields on the same
@@ -1536,6 +1586,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
       ...(cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens } : {}),
+      ...cacheVerdict,
     };
     yield { type: "done", stopReason };
   }

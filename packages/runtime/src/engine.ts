@@ -613,6 +613,13 @@ export interface ProviderRequest {
   toolChoice?: TurnRequest["toolChoice"];
   /** WS-23: the system prompt's cache lifetime, sent only when the session asked for `"1h"` (`promptCacheTtlFor`). */
   cacheTtl?: "1h";
+  /**
+   * WS-23: cache diagnostics -- the previous MAIN-LOOP response's id on the same model, or `null` to
+   * opt in with nothing to compare against (a session's first request, after a compaction rewrote the
+   * history, after a model switch). Main-loop requests only: an auxiliary call in between would make
+   * the next comparison meaningless.
+   */
+  cacheDiagnostics?: { previousMessageId: string | null };
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -800,6 +807,10 @@ export interface ProviderUsage {
   cacheWriteTokens?: number;
   /** WS-23: the 1-hour-lifetime SUBSET of `cacheWriteTokens` (provider-runtime's `usage` event says why). */
   cacheWrite1hTokens?: number;
+  /** WS-23: the provider's own verdict on where this request's prefix diverged from the previous one. */
+  cacheMiss?: { type: string; missedInputTokens?: number };
+  /** WS-23: replayed thinking blocks the provider dropped (Anthropic's `input_transformations`). */
+  thinkingBlocksDropped?: number;
 }
 
 // Phase 6 Task 3 (R6-3): both production kinds gain `usage`/`stopReason`/`thinking`/`nativeState`,
@@ -810,8 +821,10 @@ export interface ProviderUsage {
 // utterance from the transcript with nothing failing anywhere. It persists as a LEADING text block
 // ahead of the tool_use blocks, which is the order the model produced it in.
 export type ProviderTurn =
-  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState };
+  // WS-23: `responseId` is the provider's own id for this response (Anthropic's `message.id`), which the
+  // next main-loop request names as `cacheDiagnostics.previousMessageId`.
+  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; responseId?: string }
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; responseId?: string };
   // Phase 6 Task 10 (R6-13): THE `rpc_probe` TURN KIND IS GONE.
   //
   // It was a P1-only scaffold whose whole purpose was to prove the runtime-originated control-RPC
@@ -2736,6 +2749,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   let perMessageEffortRejected = false;
   // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
   let generationEffort: { effort: string; perTurnEffort: string } | undefined;
+  // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
+  // `cacheDiagnostics.previousMessageId`. Cleared by a compaction (the history it fingerprinted is gone).
+  let lastMainResponse: { id: string; modelKey: string | undefined } | undefined;
   // WS-23: the last main-loop request's system, index-0 context and tools, for compaction to reuse.
   let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[] } | undefined;
   const applyPendingEffort = (): void => {
@@ -6316,6 +6332,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     messages.length = 0;
     messages.push({ role: "user", content: result.summary }, ...result.retained);
     lastCompactionTokens = contextAccountant.contextTokens();
+    // WS-23: the history the last fingerprint described is gone; the next request opts in afresh.
+    lastMainResponse = undefined;
 
     // Fix round 1 (M3): `preserved_messages` on the FRAME, built from the uuids the store just
     // minted -- previously unreachable, because `recordCompactBoundary` returned `void`, so a host
@@ -7315,6 +7333,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
     const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0 };
+    // WS-23: this turn's cache verdicts, surfaced on the result only when there is one.
+    const turnCacheMisses: NonNullable<WireResultUsage["cache_misses"]> = [];
     // claude's full `NonNullableUsage` shape around the four real counts (frames.ts's WireResultUsage
     // says what each filled field means).
     const resultUsage = (): WireResultUsage => ({
@@ -7330,6 +7350,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       inference_geo: "",
       iterations: [],
       speed: "standard",
+      ...(turnCacheMisses.length > 0 ? { cache_misses: [...turnCacheMisses] } : {}),
     });
 
     // --- Phase 5 Task 3 (R5-14): command resolution, BEFORE the model sees the prompt -------------
@@ -7505,6 +7526,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ...(effortPlan.topLevel !== undefined ? { effort: effortPlan.topLevel } : {}),
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
             ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
+            cacheDiagnostics: { previousMessageId: lastMainResponse !== undefined && lastMainResponse.modelKey === (currentProviderIdentity?.modelKey ?? currentModel) ? lastMainResponse.id : null },
             signal: turnAbort.signal,
             // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
             // the classifier, the advisor, countTokens) build their own requests elsewhere and get
@@ -7518,6 +7540,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break roundLoop;
         }
         turn = raced.value;
+        if ("responseId" in turn && turn.responseId !== undefined) lastMainResponse = { id: turn.responseId, modelKey: currentProviderIdentity?.modelKey ?? currentModel };
         // Phase 5 Task 2 (R5-3): the ONE place this run folds a generation's reported usage into
         // the session's context accounting. A provider that reports no usage (every P1/P3/P4 test
         // double, and any real provider family that omits it) simply leaves the accountant reading
@@ -7532,6 +7555,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           turnUsage.cache_read_input_tokens += turn.usage.cacheReadTokens ?? 0;
           turnUsage.cache_creation_input_tokens += turn.usage.cacheWriteTokens ?? 0;
           turnUsage.cache_creation_1h_input_tokens += Math.min(turn.usage.cacheWrite1hTokens ?? 0, turn.usage.cacheWriteTokens ?? 0);
+          if (turn.usage.cacheMiss !== undefined || turn.usage.thinkingBlocksDropped !== undefined) {
+            turnCacheMisses.push({
+              type: turn.usage.cacheMiss?.type ?? "thinking_dropped",
+              ...(turn.usage.cacheMiss?.missedInputTokens !== undefined ? { missed_input_tokens: turn.usage.cacheMiss.missedInputTokens } : {}),
+              ...(turn.usage.thinkingBlocksDropped !== undefined ? { thinking_blocks_dropped: turn.usage.thinkingBlocksDropped } : {}),
+            });
+          }
         }
         // --- Phase 6 Task 3 (R6-C): the pinned REFUSAL frames -----------------------------------
         //

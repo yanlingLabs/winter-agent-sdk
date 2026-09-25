@@ -330,3 +330,50 @@ describe("mid-conversation system reminders (WS-23 item 7)", () => {
     expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: switched, effort: "high" }, opus55(), {})).not.toThrow();
   });
 });
+
+// --- WS-23 item 8: cache diagnostics --------------------------------------------------------------------
+
+describe("cache diagnostics (WS-23 item 8)", () => {
+  test("the opt-in rides the body on Anthropic's own Claude API only -- `null` on a first request, the previous id after", () => {
+    const first = buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], cacheDiagnostics: { previousMessageId: null } }, opus55(), {});
+    expect(first["diagnostics"]).toEqual({ previous_message_id: null });
+    const next = buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], cacheDiagnostics: { previousMessageId: "msg_1" } }, opus55({ providerId: "console", key: "console/claude-opus-5-5" }), {});
+    expect(next["diagnostics"]).toEqual({ previous_message_id: "msg_1" });
+  });
+
+  test("never on an Anthropic-DIALECT sibling (another vendor's endpoint), and never unasked", () => {
+    const sibling = buildRequestBody({ model: "m", messages: [{ role: "user", content: "hi" }], cacheDiagnostics: { previousMessageId: null } }, opus55({ providerId: "deepseek-anthropic", key: "deepseek-anthropic/m" }), {});
+    expect(sibling).not.toHaveProperty("diagnostics");
+    expect(buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }] }, opus55(), {})).not.toHaveProperty("diagnostics");
+  });
+
+  test("the miss type, the tokens it cost and the dropped thinking blocks reach the usage event, with ONE log line of counts", async () => {
+    const message = {
+      diagnostics: { cache_miss_reason: { type: "tools_changed", cache_missed_input_tokens: 41850 } },
+      input_transformations: [
+        { type: "thinking_dropped", path: "messages.1.content.0", reason: "prefix_binding_mismatch" },
+        { type: "something_new", path: "messages.3", reason: "x" },
+      ],
+    };
+    await withSseServer(turnEvents({ input_tokens: 42, cache_read_input_tokens: 0, cache_creation_input_tokens: 41850 }, message), async (url) => {
+      const logs: Array<Record<string, unknown>> = [];
+      const events = await streamOnce(url, { model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }] }, opus55(), logs);
+      expect(events.find((e) => e.type === "usage")).toMatchObject({ cacheMiss: { type: "tools_changed", missedInputTokens: 41850 }, thinkingBlocksDropped: 1 });
+      expect(logs.filter((l) => l["kind"] === "provider.cache_miss")).toEqual([
+        { kind: "provider.cache_miss", providerId: "anthropic", model: "claude-opus-5-5", detail: { type: "tools_changed", missedInputTokens: 41850, thinkingBlocksDropped: 1 } },
+      ]);
+    });
+  });
+
+  test("`diagnostics: null` (no divergence) and a pending `cache_miss_reason: null` report nothing", async () => {
+    for (const diagnostics of [null, { cache_miss_reason: null }]) {
+      await withSseServer(turnEvents({ input_tokens: 1 }, { diagnostics }), async (url) => {
+        const logs: Array<Record<string, unknown>> = [];
+        const events = await streamOnce(url, { model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }] }, opus55(), logs);
+        const usage = events.find((e) => e.type === "usage") as Record<string, unknown>;
+        expect(usage).not.toHaveProperty("cacheMiss");
+        expect(logs.some((l) => l["kind"] === "provider.cache_miss")).toBe(false);
+      });
+    }
+  });
+});

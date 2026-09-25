@@ -221,6 +221,13 @@ export interface TurnRequest {
    * adapter with no such control ignores it.
    */
   cacheTtl?: "5m" | "1h";
+  /**
+   * WS-23: Anthropic's cache diagnostics opt-in -- the PREVIOUS main-loop response's id, or `null` on
+   * a session's first request ("pass `previous_message_id: null` to opt in without a prior message to
+   * compare against", https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics). GA,
+   * no beta header, Claude API only; an adapter or provider without it ignores the field.
+   */
+  cacheDiagnostics?: { previousMessageId: string | null };
 }
 
 /**
@@ -254,7 +261,21 @@ export type ProviderEvent =
   // (Anthropic's `usage.cache_creation.ephemeral_1h_input_tokens`; `cache_creation_input_tokens` is
   // the sum of both lifetimes). A SUBSET, never added on top -- it exists so a 1-hour write is priced
   // at its own rate. Absent means every write was at the default lifetime.
-  | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; cacheWrite1hTokens?: number }
+  //
+  // WS-23: `cacheMiss` is the provider's own verdict on where this request's prefix diverged from the
+  // previous one (Anthropic's `diagnostics.cache_miss_reason`: its `type` and the estimated
+  // `cache_missed_input_tokens`), and `thinkingBlocksDropped` counts the replayed thinking blocks the
+  // provider dropped (Anthropic's `input_transformations`). Both absent when there is nothing to say.
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      cacheWrite1hTokens?: number;
+      cacheMiss?: { type: string; missedInputTokens?: number };
+      thinkingBlocksDropped?: number;
+    }
   /**
    * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the `kind` discriminant is what says so at the type
    * level. An HTTP 429 is NOT this event — capture (G) proved the pinned runtime emits zero
@@ -320,8 +341,12 @@ export interface ProviderContext {
   credentials: CredentialStore;
   authRef: CredentialRef;
   stallTimeoutMs: number;
-  /** Telemetry: provider/model identifiers and byte COUNTS only. Never content, never credential material, never opaque state (Global Constraints). */
-  log: (event: { kind: string; providerId: string; model?: string; bytes?: number }) => void;
+  /**
+   * Telemetry: provider/model identifiers and byte COUNTS only. Never content, never credential material, never opaque state (Global Constraints).
+   * WS-23: `detail` carries a closed-vocabulary label and token COUNTS (a cache-miss type and the
+   * tokens it cost) -- the same "identifiers and counts" rule, never text from the conversation.
+   */
+  log: (event: { kind: string; providerId: string; model?: string; bytes?: number; detail?: Record<string, string | number> }) => void;
 }
 
 export interface DiscoveryContext extends ProviderContext {
