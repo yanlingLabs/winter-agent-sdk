@@ -125,54 +125,66 @@ export interface HookRegistry {
 // trust-gated.
 const SOURCE_RANK: Record<HookSource, number> = { managed: 0, user: 1, project: 2, local: 3, sdk: 4, plugin: 5 };
 
-// --- WS-23: REGEX MATCHERS ---------------------------------------------------------------------------
+// --- WS-23: CLAUDE'S MATCHER LANGUAGE ----------------------------------------------------------------
 //
-// The glob grammar above was the WHOLE matcher language, and claude's own matcher language is a
-// regular expression: a claude-format plugin or settings hook written `Edit|Write`, `mcp__.*` or `.*`
-// matched NOTHING here, silently -- so a user's deny hook never fired (inv-hooks-mcp A2, measured).
-// Both languages are honoured now, in this order, compiled ONCE per entry at registry build:
+// The glob grammar above was the WHOLE matcher language, and claude's own matcher language is not: a
+// claude-format plugin or settings hook written `Edit|Write`, `mcp__.*` or `.*` matched NOTHING here,
+// silently -- so a user's deny hook never fired (inv-hooks-mcp A2, measured). Winter's plugins ARE
+// claude's layout, so the matcher follows claude 2.1.282's semantics (ecosystem compatibility, ruling
+// R3), compiled ONCE per distinct pattern at registry build, in this order:
 //
-//   1. absent or ""                   -> every occurrence (claude's own "" = all).
-//   2. no regex-only metacharacter    -> the WS-08 §2.1 glob path above, UNCHANGED: an exact name,
-//      (letters, digits, `_`, `-`, `*`;  `*`, `mcp__srv__*`, `Tool(*)`. Deliberately first: read as a regex,
-//      a trailing `(*)` is allowed)
-//                                        `mcp__srv__*` would mean "mcp__srv_" plus any run of `_`,
-//                                        which is not what anyone who wrote it meant.
-//   3. anything else                  -> a RegExp over the WHOLE tool name, `^(?:<pattern>)$`.
-//
-// ANCHORED, a stated divergence: claude tests an unanchored `new RegExp(pattern)`, under which
-// `Write` inside a larger pattern also matches `NotebookWrite`-style names nobody listed. A hook
-// matcher SELECTS which calls a hook gates, so "matches exactly the names the pattern spells" is the
-// predictable reading; `.*` and `mcp__.*` mean the same either way.
+//   1. absent, "" or "*"               -> every occurrence (claude's own reading of all three).
+//   2. only [A-Za-z0-9_|]              -> EXACT names, `|`-separated alternatives (claude: a pattern of
+//                                         only those characters is a name list, never a regex). So
+//                                         `Edit` matches Edit and never NotebookEdit, and `Edit|Write`
+//                                         matches exactly those two.
+//   3. Winter's existing globs         -> the WS-08 §2.1 glob path above, UNCHANGED: `mcp__srv__*`,
+//      (name characters plus `*` and       `Tool(*)`. Kept because the WS-23 brief requires the existing
+//      `-`, optionally ending `(*)`)       globs to keep working. On real tool names claude's regex
+//                                         reading agrees with the glob -- except that claude's also
+//                                         matches a server whose name merely starts with `srv_`, and
+//                                         `Tool(*)` does not compile as a regex at all. The glob is the
+//                                         narrower, documented reading.
+//   4. anything else                   -> an UNANCHORED regular-expression test, exactly as claude does
+//                                         it: `mcp__.*github` matches `mcp__github__create_issue`.
 //
 // A pattern that will not compile logs ONE warning (at build, so once per registry, never per call)
-// and matches NOTHING -- the same inert posture a malformed glob always had, now said out loud.
-const REGEX_ONLY_METACHARACTERS = /[.()[\]{}+?^$|\\]/;
+// and matches NOTHING -- unless its hook is FAIL-CLOSED (review I2): a security hook whose matcher is
+// broken must not silently stop gating, so it runs for EVERY call of its event instead, and says so.
+const NAME_LIST_MATCHER = /^[A-Za-z0-9_|]+$/;
+const WINTER_GLOB_MATCHER = /^[A-Za-z0-9_*-]+(\(\*\))?$/;
 
-type CompiledMatcher = (toolName: string) => boolean;
+interface CompiledMatcher {
+  test: (toolName: string) => boolean;
+  /** The pattern did not compile. Matches nothing -- or everything, for a fail-closed hook. */
+  invalid: boolean;
+}
 
 function compileMatcher(matcher: string, warn: (line: string) => void): CompiledMatcher {
-  // `Tool(*)` is the permission grammar's own bare-equivalent spelling (WS-07 §3), not a regex group
-  // -- read as a regex `(*)` does not even compile -- so its trailing `(*)` is not evidence of regex.
-  if (!REGEX_ONLY_METACHARACTERS.test(matcher.replace(/\(\*\)$/, ""))) {
+  if (matcher === "*") return { test: () => true, invalid: false };
+  if (NAME_LIST_MATCHER.test(matcher)) {
+    const names = new Set(matcher.split("|").filter((n) => n.length > 0));
+    return { test: (toolName) => names.has(toolName), invalid: false };
+  }
+  if (WINTER_GLOB_MATCHER.test(matcher)) {
     const parsed = parseRule(matcher);
-    if (!parsed.isBareEquivalent) return () => false; // unreachable without `(`, kept as the grammar's own inert answer
-    return (toolName) => matchesRule(parsed, { toolName, input: {} }, { direction: "denyAsk" });
+    if (parsed.isBareEquivalent) return { test: (toolName) => matchesRule(parsed, { toolName, input: {} }, { direction: "denyAsk" }), invalid: false };
   }
   let re: RegExp;
   try {
-    re = new RegExp(`^(?:${matcher})$`);
+    re = new RegExp(matcher);
   } catch (err) {
     warn(`winter: hook matcher ${JSON.stringify(matcher)} is not a valid regular expression, so its hooks will never run: ${err instanceof Error ? err.message : String(err)}`);
-    return () => false;
+    return { test: () => false, invalid: true };
   }
-  return (toolName) => re.test(toolName);
+  return { test: (toolName) => re.test(toolName), invalid: false };
 }
 
-function matcherApplies(compiled: CompiledMatcher | undefined, toolName: string | undefined): boolean {
+function matcherApplies(entry: SourcedHookEntry, compiled: CompiledMatcher | undefined, toolName: string | undefined): boolean {
   if (compiled === undefined) return true; // WS-08 §2.1: "absent = matches every occurrence."
+  if (compiled.invalid && entry.failClosed === true) return true; // review I2: a broken fail-closed matcher gates everything, never nothing
   if (toolName === undefined) return false; // defensive: a tool-scoped call with no known tool name never matches a SCOPED matcher.
-  return compiled(toolName);
+  return compiled.test(toolName);
 }
 
 // Finding 4 (P2 fix-wave, IMPORTANT): WS-08 §2's own table binds project-sourced hooks to "the same
@@ -240,14 +252,20 @@ export function buildHookRegistry(entries: SourcedHookEntry[], opts?: HookRegist
     }
     return compiled;
   };
-  for (const entry of sorted) if (isToolScopedHookEvent(entry.event) || MATCHER_SUBJECT_FIELD[entry.event] !== undefined) compiledFor(entry.matcher);
+  for (const entry of sorted) {
+    if (!isToolScopedHookEvent(entry.event) && MATCHER_SUBJECT_FIELD[entry.event] === undefined) continue;
+    const compiled = compiledFor(entry.matcher);
+    if (compiled?.invalid === true && entry.failClosed === true) {
+      warn(`winter: hook ${entry.id} is fail-closed and its matcher ${JSON.stringify(entry.matcher)} does not compile, so it runs for EVERY ${entry.event} call instead of none -- fix the matcher to narrow it`);
+    }
+  }
 
   return {
     matching(event, toolName) {
       const forEvent = sorted.filter((e) => e.event === event);
-      if (isToolScopedHookEvent(event)) return forEvent.filter((e) => matcherApplies(compiledFor(e.matcher), toolName));
+      if (isToolScopedHookEvent(event)) return forEvent.filter((e) => matcherApplies(e, compiledFor(e.matcher), toolName));
       // WS-23: a lifecycle event with a subject, and the caller named one -- see MATCHER_SUBJECT_FIELD.
-      if (MATCHER_SUBJECT_FIELD[event] !== undefined && toolName !== undefined) return forEvent.filter((e) => matcherApplies(compiledFor(e.matcher), toolName));
+      if (MATCHER_SUBJECT_FIELD[event] !== undefined && toolName !== undefined) return forEvent.filter((e) => matcherApplies(e, compiledFor(e.matcher), toolName));
       return forEvent; // §1.3: matcher never consulted for these.
     },
   };

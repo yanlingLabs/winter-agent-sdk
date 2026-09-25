@@ -103,14 +103,15 @@ describe("WS-23 fail-closed: opt-in per hook, PreToolUse/PermissionRequest only"
     const composite = await runHooks("PreToolUse", call, ctx([reg("floor", "PreToolUse", "Bash", { failClosed: true, name: "escapeFloor" })], throwing("boom")));
     expect(composite.decision).toBe("deny");
     expect(composite.message).toContain('"escapeFloor"');
-    expect(composite.message).toContain("boom");
+    expect(composite.message).toContain("(hook_error)"); // a failure CODE -- review M3
+    expect(composite.message).not.toContain("boom"); // never the thrower's own text
   });
 
   test("a fail-closed hook that TIMES OUT denies", async () => {
     const hanging: HookInvoker = { invoke: () => new Promise(() => {}) };
     const composite = await runHooks("PreToolUse", call, ctx([reg("floor", "PreToolUse", undefined, { failClosed: true, timeoutMs: 20 })], hanging));
     expect(composite.decision).toBe("deny");
-    expect(composite.message).toContain("timed out");
+    expect(composite.message).toContain("(timeout)");
   });
 
   test("a fail-closed hook with MALFORMED output denies (non-object, and a bad permissionDecision)", async () => {
@@ -283,5 +284,89 @@ describe("WS-23 loaders: failClosed and pluginRoot reach the entries", () => {
     const { entries } = pluginHookEntries([{ name: "p", path: "/plugins/p", hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "${CLAUDE_PLUGIN_ROOT}/x.sh" }] }] } } as never]);
     expect(entries[0]?.pluginRoot).toBe("/plugins/p");
     expect(entries[0]?.command).toBe("${CLAUDE_PLUGIN_ROOT}/x.sh"); // substituted at run time, not at load
+  });
+});
+
+// --- WS-23 fix round 1 -----------------------------------------------------------------------------
+
+describe("WS-23 fix round 1 (M5): claude's matcher semantics", () => {
+  const registry = (matcher: string, extra: Partial<SourcedHookEntry> = {}, warnings: string[] = []) =>
+    buildHookRegistry([reg("h", "PreToolUse", matcher, extra)], { warn: (l) => warnings.push(l) });
+
+  test("a pattern of only [A-Za-z0-9_|] is exact names -- `Edit` never matches NotebookEdit, `Edit|Write` only those two", () => {
+    expect(ids(registry("Edit").matching("PreToolUse", "NotebookEdit"))).toEqual([]);
+    expect(ids(registry("Edit").matching("PreToolUse", "Edit"))).toEqual(["h"]);
+    expect(ids(registry("Edit|Write").matching("PreToolUse", "NotebookEdit"))).toEqual([]);
+    expect(ids(registry("Edit|MultiEdit").matching("PreToolUse", "MultiEdit"))).toEqual(["h"]);
+  });
+
+  test("anything else is an UNANCHORED regex test, as in claude: `mcp__.*github` matches mcp__github__create_issue", () => {
+    expect(ids(registry("mcp__.*github").matching("PreToolUse", "mcp__github__create_issue"))).toEqual(["h"]);
+    expect(ids(registry("^Bash$").matching("PreToolUse", "Bash"))).toEqual(["h"]);
+    expect(ids(registry("^Bash$").matching("PreToolUse", "BashOutput"))).toEqual([]);
+  });
+
+  test("a FAIL-CLOSED hook whose matcher will not compile runs for EVERY call, with a warning naming it", () => {
+    const warnings: string[] = [];
+    const r = registry("Edit|(Write", { failClosed: true }, warnings);
+    expect(ids(r.matching("PreToolUse", "Bash"))).toEqual(["h"]);
+    expect(warnings.some((w) => w.includes("fail-closed") && w.includes("EVERY"))).toBe(true);
+  });
+});
+
+describe("WS-23 fix round 1 (I2): a fail-closed gating hook is held to a readable shape", () => {
+  const call = { toolName: "Bash", toolUseID: "tu", input: { command: "ls" } };
+  const closed = (raw: unknown) => runHooks("PreToolUse", call, ctx([reg("floor", "PreToolUse", undefined, { failClosed: true })], answering(raw)));
+
+  test("a hookSpecificOutput naming ANOTHER event (its deny would be ignored) denies", async () => {
+    const composite = await closed({ hookSpecificOutput: { hookEventName: "PostToolUse", permissionDecision: "deny" } });
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toContain("(malformed_output)");
+  });
+
+  test("an `async` answer denies", async () => {
+    expect((await closed({ async: true })).decision).toBe("deny");
+  });
+
+  test("`{}` is still the floor's ALLOW -- no decision, nothing denied", async () => {
+    expect((await closed({})).decision).toBeUndefined();
+  });
+
+  test("the same shapes from an ORDINARY hook stay no-opinion (the default is unchanged)", async () => {
+    const composite = await runHooks("PreToolUse", call, ctx([reg("plain", "PreToolUse")], answering({ async: true })));
+    expect(composite.decision).toBeUndefined();
+  });
+});
+
+describe("WS-23 fix round 1 (C1): every text contribution is bounded, with a visible marker", () => {
+  test("a 5 MB additionalContext / block reason / systemMessage is cut to the bound and says so", async () => {
+    const { MAX_HOOK_TEXT_CHARS, hookTruncationMarker } = await import("./bounds.ts");
+    const big = "A".repeat(5 * 1024 * 1024);
+    const composite = await runHooks("Stop", {}, ctx([reg("s", "Stop")], answering({ decision: "block", reason: big, systemMessage: big, hookSpecificOutput: { hookEventName: "Stop", additionalContext: big } })));
+    for (const text of [composite.blockReasons![0]!.context, composite.systemMessages![0]!.context, composite.extraContext![0]!.context] as string[]) {
+      expect(text.length).toBe(MAX_HOOK_TEXT_CHARS + hookTruncationMarker(MAX_HOOK_TEXT_CHARS).length);
+      expect(text.endsWith(hookTruncationMarker(MAX_HOOK_TEXT_CHARS))).toBe(true);
+    }
+  });
+});
+
+describe("WS-23 fix round 1 (M1): the WebSearch floor and a model's own invalid query", () => {
+  test("original {query:'x'} (too short) + the floor's rewrite -> no deny; the call runs with the ORIGINAL so WebSearch reports its own error", async () => {
+    await import("../tools/descriptors/index.ts");
+    const validator = createRegistryToolInputValidator();
+    expect(validator.validate("WebSearch", { query: "x" }).valid).toBe(false); // the premise: the model's own input is already invalid
+    const floorRewrite = { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "x", blocked_domains: ["pastebin.com"] } } };
+    const composite = await runHooks("PreToolUse", { toolName: "WebSearch", input: { query: "x" } }, ctx([reg("floor", "PreToolUse", "WebSearch", { failClosed: true })], answering(floorRewrite), { validator }));
+    expect(composite.decision).toBeUndefined();
+    expect(composite.transformedInput).toBeUndefined();
+  });
+
+  test("a VALID original + the same rewrite shape stays a valid transform", async () => {
+    await import("../tools/descriptors/index.ts");
+    const validator = createRegistryToolInputValidator();
+    const floorRewrite = { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "news today", blocked_domains: ["pastebin.com"] } } };
+    const composite = await runHooks("PreToolUse", { toolName: "WebSearch", input: { query: "news today" } }, ctx([reg("floor", "PreToolUse", "WebSearch", { failClosed: true })], answering(floorRewrite), { validator }));
+    expect(composite.decision).toBeUndefined();
+    expect(composite.transformedInput).toEqual({ query: "news today", blocked_domains: ["pastebin.com"] });
   });
 });

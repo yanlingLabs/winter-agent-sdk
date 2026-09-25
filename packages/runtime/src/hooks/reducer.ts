@@ -123,7 +123,10 @@ export type HookOutcome =
   // "error" and "timeout" are DISTINCT kinds (never collapsed) because P2-A's audit vocabulary
   // requires the fine-grained distinction on the lifecycle record even though they reduce
   // IDENTICALLY here (both contribute nothing).
-  | { kind: "error"; reason?: string }
+  // WS-23 fix round 1 (M3): `code` is the machine-readable class of the failure (`timeout`,
+  // `hook_threw`, `exit_code_3`, `malformed_output`, ...) -- what a fail-closed denial tells the
+  // model. `reason` stays diagnostic-only and never reaches model-facing text.
+  | { kind: "error"; reason?: string; code?: string }
   | { kind: "timeout" }
   // Never invoked at all — WS-08 §4 rule 2's short-circuit: a committed `deny` earlier in the
   // merged order means every later hook for this event is skipped, not run.

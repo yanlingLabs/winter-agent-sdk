@@ -661,7 +661,7 @@ describe("Task 9 — the real hooks engine wired through createHookStage (WS-08 
   // stage order, not merely runner.ts's own composite.
   test("Item 8(c), re-ruled by WS-23: an invalid transform (schema-rejected updatedInput) is a DENY naming the hook at the REAL evaluator level -- the rejected transform never applies and the ORIGINAL input does not run either", async () => {
     const registry = buildHookRegistry([preToolUseEntry("h1")]);
-    const rejecting: ToolInputValidator = { validate: () => ({ valid: false, reason: "does not match tool schema" }) };
+    const rejecting: ToolInputValidator = { validate: (_t, input) => (input["command"] === "rm -rf x" ? { valid: false, reason: "does not match tool schema" } : { valid: true }) };
     const invoker = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { command: "rm -rf x" } } });
     const ctx = baseCtx({
       hookStage: createHookStage({ registry, invoker, audit: noopAudit(), sessionId: "s1", validator: rejecting }),

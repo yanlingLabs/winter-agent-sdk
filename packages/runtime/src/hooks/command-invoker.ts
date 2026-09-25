@@ -41,9 +41,11 @@
 //                             `{kind: "error"}` -- unless the hook is fail-closed (runner.ts).
 //
 // ENVIRONMENT: `CLAUDE_PROJECT_DIR` (and its brand-named twin, `<PREFIX>PROJECT_DIR`) for every hook;
-// `CLAUDE_PLUGIN_ROOT` (and `<PREFIX>PLUGIN_ROOT`) for a plugin's hook, whose `${CLAUDE_PLUGIN_ROOT}`
-// in the command string is also substituted before the shell sees it -- claude-format plugins spell
-// their script paths that way. The TRUSTED-WORKSPACE gate is unchanged and still not here:
+// `CLAUDE_PLUGIN_ROOT` (and `<PREFIX>PLUGIN_ROOT`) for a plugin's hook. A claude-format command
+// spelled `${CLAUDE_PLUGIN_ROOT}/hooks/run.sh` is expanded by `/bin/sh` itself from that exported
+// variable -- never by splicing the path into the command text first (fix round 1, M4: a `$(...)`,
+// a backtick or a `"` in the plugin's directory name would otherwise be re-parsed as shell syntax).
+// The TRUSTED-WORKSPACE gate is unchanged and still not here:
 // `buildHookRegistry` drops project/local entries wholesale in an untrusted workspace, so an entry
 // this invoker is asked to run has already passed it.
 //
@@ -55,7 +57,8 @@
 // kills in `finally` on every path, so an abandoned hook process can never outlive its invocation.
 import { spawn } from "node:child_process";
 import { envName, type BrandProfile, type HookEvent } from "@yanlinglabs/winter-agent-sdk";
-import { HOOK_PROCESS_OUTPUT, type HookInvocationRequest, type HookInvoker, type HookProcessOutput } from "./runner.ts";
+import { FAIL_CLOSED_EVENTS, HOOK_PROCESS_OUTPUT, type HookInvocationRequest, type HookInvoker, type HookProcessOutput } from "./runner.ts";
+import { MAX_HOOK_STDOUT_CAPTURE } from "./bounds.ts";
 import type { SourcedHookEntry } from "./registry.ts";
 
 /** Grace between SIGTERM and SIGKILL. Short: by the time this fires the runner has already given up on the hook. */
@@ -67,14 +70,18 @@ const MAX_STDERR_CAPTURE = 4096;
 const MAX_STDOUT_ECHO = 16_384;
 
 export class CommandHookError extends Error {
+  /** Fix round 1 (M3): the failure's machine-readable class -- what a fail-closed denial names instead of this error's message (which embeds the command line). */
+  readonly code: string;
   constructor(
     message: string,
     readonly exitCode: number | null,
     readonly stderr: string,
     stdout = "",
+    code?: string,
   ) {
     super(message);
     this.name = "CommandHookError";
+    this.code = code ?? (exitCode === null ? "terminated" : `exit_code_${exitCode}`);
     // WS-23: the process output rides the error too, so a FAILED hook's stderr still reaches the
     // host's `hook_response` frame (runner.ts reads it off the rejection).
     Object.defineProperty(this, HOOK_PROCESS_OUTPUT, { value: { stdout, stderr, exitCode } satisfies HookProcessOutput, enumerable: false });
@@ -109,9 +116,11 @@ export interface CommandHookInvokerOptions {
  * immutable for the life of a run" contract -- a run builds both from the same entries.
  */
 export function createCommandHookInvoker(entries: readonly SourcedHookEntry[], opts: CommandHookInvokerOptions): HookInvoker {
-  const commandsById = new Map<string, { command: string; pluginRoot?: string }>();
+  const commandsById = new Map<string, { command: string; pluginRoot?: string; failClosed: boolean }>();
   for (const entry of entries) {
-    if (entry.command !== undefined && entry.command.length > 0) commandsById.set(entry.id, { command: entry.command, ...(entry.pluginRoot !== undefined ? { pluginRoot: entry.pluginRoot } : {}) });
+    if (entry.command !== undefined && entry.command.length > 0) {
+      commandsById.set(entry.id, { command: entry.command, ...(entry.pluginRoot !== undefined ? { pluginRoot: entry.pluginRoot } : {}), failClosed: entry.failClosed === true });
+    }
   }
   const killGraceMs = opts.killGraceMs ?? COMMAND_HOOK_KILL_GRACE_MS;
   const shellPath = opts.shellPath ?? "/bin/sh";
@@ -124,21 +133,11 @@ export function createCommandHookInvoker(entries: readonly SourcedHookEntry[], o
       const env = commandHookEnv(opts.env ?? process.env, { projectDir, ...(target.pluginRoot !== undefined ? { pluginRoot: target.pluginRoot } : {}), ...(opts.brand !== undefined ? { brand: opts.brand } : {}) });
       const permissionMode = opts.permissionMode?.();
       const input = commandHookInput(request, { cwd: opts.cwd, transcriptPath: opts.transcriptPath ?? "", ...(permissionMode !== undefined ? { permissionMode } : {}) });
-      const command = target.pluginRoot !== undefined ? substitutePluginRoot(target.command, target.pluginRoot) : target.command;
-      return runCommandHook(command, request.event, input, invokeOpts.signal, { cwd: opts.cwd, env, shellPath, killGraceMs });
+      // Fix round 1 (I2): a fail-closed hook on a gating event must answer in JSON (see runCommandHook).
+      const strictJson = target.failClosed && FAIL_CLOSED_EVENTS.has(request.event);
+      return runCommandHook(target.command, request.event, input, invokeOpts.signal, { cwd: opts.cwd, env, shellPath, killGraceMs, strictJson });
     },
   };
-}
-
-/**
- * claude's `${CLAUDE_PLUGIN_ROOT}` substitution. Plain text replacement BEFORE the shell sees the
- * string, exactly as claude does it -- the variable is also exported, so a script that re-reads it
- * from its environment agrees. The root is an absolute path Winter resolved itself (the plugin
- * loader's `bundle.path`), never model or repository input, so splicing it into the command is not
- * an injection surface the command itself did not already have.
- */
-export function substitutePluginRoot(command: string, pluginRoot: string): string {
-  return command.split("${CLAUDE_PLUGIN_ROOT}").join(pluginRoot);
 }
 
 function commandHookEnv(
@@ -208,7 +207,7 @@ async function runCommandHook(
   event: HookEvent,
   input: Record<string, unknown>,
   signal: AbortSignal,
-  cfg: { cwd: string; env: Record<string, string | undefined>; shellPath: string; killGraceMs: number },
+  cfg: { cwd: string; env: Record<string, string | undefined>; shellPath: string; killGraceMs: number; strictJson: boolean },
 ): Promise<unknown> {
   // ARGV FORM, never `shell: true`. The command itself is an author-supplied shell string (that is
   // what a `{type:"command"}` block IS), so a shell interprets it -- but it is passed as an ARGUMENT
@@ -256,7 +255,9 @@ async function runCommandHook(
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
+      // Fix round 1 (C1): bounded like stderr (hooks/bounds.ts's MAX_HOOK_STDOUT_CAPTURE). A script
+      // that floods stdout costs a bounded buffer; a JSON answer cut here fails to parse -- its error.
+      if (stdout.length < MAX_HOOK_STDOUT_CAPTURE) stdout += chunk.slice(0, MAX_HOOK_STDOUT_CAPTURE - stdout.length);
     });
     child.stderr.on("data", (chunk: string) => {
       if (stderr.length < MAX_STDERR_CAPTURE) stderr += chunk;
@@ -296,12 +297,17 @@ async function runCommandHook(
     if (trimmed.length === 0) return withProcessOutput({}, processOutput); // acknowledgement: ran, said nothing
     // claude's rule: output that does not even START like a JSON object is plain text, not a broken
     // JSON document. Only a `{`-led stdout that fails to parse is the malformed-output error.
-    if (!trimmed.startsWith("{")) return withProcessOutput(plainStdoutOutput(event, trimmed), processOutput);
+    if (!trimmed.startsWith("{")) {
+      // Fix round 1 (I2): for a FAIL-CLOSED PreToolUse/PermissionRequest hook, prose on stdout is not
+      // an answer -- malformed, so the runner denies. Everyone else keeps claude's plain-text reading.
+      if (cfg.strictJson) throw new CommandHookError(`fail-closed hook command answered with non-JSON stdout: ${command}`, exit.code, boundedStderr, processOutput.stdout, "malformed_output");
+      return withProcessOutput(plainStdoutOutput(event, trimmed), processOutput);
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      throw new CommandHookError(`hook command produced unparseable output (WS-08 §8: a malformed output is an error of that hook): ${command}`, exit.code, boundedStderr, processOutput.stdout);
+      throw new CommandHookError(`hook command produced unparseable output (WS-08 §8: a malformed output is an error of that hook): ${command}`, exit.code, boundedStderr, processOutput.stdout, "malformed_output");
     }
     return typeof parsed === "object" && parsed !== null ? withProcessOutput(parsed, processOutput) : parsed;
   } finally {

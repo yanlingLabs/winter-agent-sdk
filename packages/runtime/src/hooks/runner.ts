@@ -41,6 +41,7 @@ import { randomUUID } from "node:crypto";
 import type { HookEvent, HookPermissionDecision, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import { MATCHER_SUBJECT_FIELD, type HookRegistry, type SourcedHookEntry } from "./registry.ts";
 import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
+import { capHookText } from "./bounds.ts";
 
 // --- HookInvoker — the T10 swap point (WS-08 §10, verbatim request shape) -------------------------
 
@@ -306,7 +307,7 @@ const VALID_PERMISSION_DECISIONS: ReadonlySet<string> = new Set(["allow", "ask",
 // (hook-stage.ts's own adapter, evaluator.ts's stage 1). Durable-approval parking is engine.ts's
 // job once evaluate() reports "defer"; this function's only remaining responsibility for the value
 // is the malformed-shape/invalid-defer checks already above/below it (unchanged).
-function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName: string; hookLabel: string }): HookOutcome {
+function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName: string; hookLabel: string; originalInput?: Record<string, unknown> }): HookOutcome {
   const hso = hookSpecificOutputOf(sync);
   const pre = hso !== undefined && hso["hookEventName"] === "PreToolUse" ? hso : undefined;
 
@@ -325,6 +326,13 @@ function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: T
       // WS-23 (was WS-07 §10.6-2's "the ORIGINAL input proceeds"): a DENY naming the hook. See this
       // file's header for why running the un-rewritten original is the wrong direction. The denial
       // carries no transform, so nothing of the invalid input reaches an executor either way.
+      //
+      // Fix round 1 (M1): ONLY when the original was itself valid. A rewrite that merely carried the
+      // MODEL's own mistake along (the daemon's WebSearch floor copies `query` verbatim, so a
+      // `{query: "x"}` stays one character short) is not the hook's failure: the transform is dropped
+      // and the call runs with the original, so the tool reports its own error to the model instead
+      // of a policy denial it cannot act on.
+      if (!originalIsValid(opts)) return withoutTransform(sync, pre, opts);
       return { kind: "decision", decision: "deny", message: invalidUpdatedInputMessage(opts.hookLabel, opts.toolName, check.reason) };
     }
     transformedInput = rawUpdatedInput;
@@ -376,6 +384,18 @@ function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: T
     ...(extraContext !== undefined ? { extraContext } : {}),
     ...(message !== undefined ? { message } : {}),
   };
+}
+
+function originalIsValid(opts: { validator: ToolInputValidator; toolName?: string; originalInput?: Record<string, unknown> }): boolean {
+  return opts.originalInput === undefined || opts.validator.validate(opts.toolName ?? "", opts.originalInput).valid;
+}
+
+// M1's "run with the original": the SAME output re-read with its `updatedInput` removed, so the hook's
+// decision, reason and context all still count -- only the rewrite (which would carry the model's own
+// invalid input into a policy denial) is gone.
+function withoutTransform(sync: Record<string, unknown>, pre: Record<string, unknown> | undefined, opts: { validator: ToolInputValidator; toolName: string; hookLabel: string }): HookOutcome {
+  const { updatedInput: _dropped, ...rest } = pre ?? {};
+  return interpretPreToolUse({ ...sync, hookSpecificOutput: rest }, opts);
 }
 
 // PostToolUse (WS-08 §5, derived-shapes item (b)): contribution-capable ONLY — structurally, this
@@ -474,7 +494,7 @@ function interpretGeneric(sync: Record<string, unknown>): HookOutcome {
 // error, no audit distinction, a genuine under-enforcement bug caught by T9's own review before this
 // task wired PermissionRequest at all (a hook that means to ANSWER would be silently ignored, and
 // evaluate() would fall through to canUseTool as though no hook had opined).
-function interpretPermissionRequest(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string }): HookOutcome {
+function interpretPermissionRequest(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string; originalInput?: Record<string, unknown> }): HookOutcome {
   const hso = hookSpecificOutputOf(sync);
   const pr = hso !== undefined && hso["hookEventName"] === "PermissionRequest" ? hso : undefined;
   // Mismatched/absent hookEventName -- "none", matching every other interpreter's own silent-none
@@ -512,8 +532,13 @@ function interpretPermissionRequest(sync: Record<string, unknown>, opts: { valid
       // WS-23: the same schema gate PreToolUse's transform passes through, and the same answer on
       // failure -- a deny naming the hook, never the allow running an input nobody validated.
       const check = opts.validator.validate(opts.toolName ?? "", rawUpdatedInput);
-      if (!check.valid) return { kind: "decision", decision: "deny", message: invalidUpdatedInputMessage(opts.hookLabel, opts.toolName ?? "", check.reason) };
-      transformedInput = rawUpdatedInput;
+      if (!check.valid) {
+        // Fix round 1 (M1): as for PreToolUse -- deny only when the original was valid; otherwise the
+        // allow stands on the ORIGINAL input and the tool reports the model's own mistake.
+        if (originalIsValid(opts)) return { kind: "decision", decision: "deny", message: invalidUpdatedInputMessage(opts.hookLabel, opts.toolName ?? "", check.reason) };
+      } else {
+        transformedInput = rawUpdatedInput;
+      }
     }
     const rawUpdatedPermissions = rawDecision["updatedPermissions"];
     let updatedPermissions: PermissionUpdate[] | undefined;
@@ -552,7 +577,7 @@ function interpretPermissionRequest(sync: Record<string, unknown>, opts: { valid
   return { kind: "error", reason: `PermissionRequest decision.behavior is not "allow" or "deny": ${JSON.stringify(behavior)}` };
 }
 
-type HookInterpreterFn = (sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string }) => HookOutcome;
+type HookInterpreterFn = (sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string; originalInput?: Record<string, unknown> }) => HookOutcome;
 
 function invalidUpdatedInputMessage(hookLabel: string, toolName: string, reason: string | undefined): string {
   return `Denied: hook ${hookLabel} returned an updatedInput that does not match ${toolName.length > 0 ? `${toolName}'s` : "the tool's"} input schema (${reason ?? "schema validation failed"}), so the call was not run with it.`;
@@ -576,7 +601,7 @@ function invalidUpdatedInputMessage(hookLabel: string, toolName: string, reason:
 // individually below maps EXPLICITLY to `interpretGeneric`, recorded once, here — never an implicit
 // "whatever's left" default.
 const HOOK_EVENT_INTERPRETERS = {
-  PreToolUse: (sync, opts) => interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "", hookLabel: opts.hookLabel }),
+  PreToolUse: (sync, opts) => interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "", hookLabel: opts.hookLabel, ...(opts.originalInput !== undefined ? { originalInput: opts.originalInput } : {}) }),
   PostToolUse: interpretPostToolUse,
   PostToolUseFailure: interpretPostToolUseFailure,
   PermissionRequest: interpretPermissionRequest,
@@ -614,7 +639,7 @@ const HOOK_EVENT_INTERPRETERS = {
   DirectoryAdded: interpretGeneric,
 } satisfies Record<HookEvent, HookInterpreterFn>;
 
-function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string }): HookOutcome {
+function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string; hookLabel: string; originalInput?: Record<string, unknown> }): HookOutcome {
   if (hasInvalidDefer(hookSpecificOutputOf(sync), event)) {
     return { kind: "error", reason: `defer is invalid on ${event} (non-suspendable event, WS-08 §7)` };
   }
@@ -627,37 +652,60 @@ function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, op
 // error/timeout contributes nothing, per the §8 failure matrix. Wrong-typed fields are ignored rather
 // than turned into the hook's error -- none of them is a decision, and a hook that sends
 // `systemMessage: 42` should not lose the permission answer it also sent.
+//
+// Fix round 1 (C1): also the ONE place every text contribution is BOUNDED (hooks/bounds.ts says why
+// and how much) -- the interpreters above read the fields, this caps what they read, so no event's
+// reader can forget. `transformedOutput` is capped where it becomes a tool result (engine.ts).
 function applyEnvelope(outcome: HookOutcome, sync: Record<string, unknown>): HookOutcome {
   if (outcome.kind !== "decision" && outcome.kind !== "none") return outcome;
-  const stopReason = typeof sync["stopReason"] === "string" && sync["stopReason"].length > 0 ? sync["stopReason"] : undefined;
-  const systemMessage = typeof sync["systemMessage"] === "string" && sync["systemMessage"].length > 0 ? sync["systemMessage"] : undefined;
+  const stopReason = typeof sync["stopReason"] === "string" && sync["stopReason"].length > 0 ? capHookText(sync["stopReason"]) : undefined;
+  const systemMessage = typeof sync["systemMessage"] === "string" && sync["systemMessage"].length > 0 ? capHookText(sync["systemMessage"]) : undefined;
   return {
     ...outcome,
+    ...(typeof outcome.extraContext === "string" ? { extraContext: capHookText(outcome.extraContext) } : {}),
+    ...(outcome.classifierContext !== undefined ? { classifierContext: capHookText(outcome.classifierContext) } : {}),
+    ...(outcome.blockReason !== undefined ? { blockReason: capHookText(outcome.blockReason) } : {}),
+    ...(outcome.message !== undefined ? { message: capHookText(outcome.message) } : {}),
     ...(sync["continue"] === false ? { preventContinuation: true, ...(stopReason !== undefined ? { stopReason } : {}) } : {}),
     ...(systemMessage !== undefined ? { systemMessage } : {}),
     ...(sync["suppressOutput"] === true ? { suppressOutput: true } : {}),
   };
 }
 
+function mismatchedEventName(sync: Record<string, unknown>, event: HookEvent): boolean {
+  const hso = hookSpecificOutputOf(sync);
+  return hso !== undefined && hso["hookEventName"] !== event;
+}
+
 // WS-23: the events on which FAIL CLOSED means anything -- the two that decide whether a call runs.
 // Every other event is observational (or, for Stop/UserPromptSubmit, blocks through an explicit
 // `decision`, never through the absence of one), so a failing fail-closed hook there stays the
 // ordinary non-blocking error.
-const FAIL_CLOSED_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse", "PermissionRequest"]);
+export const FAIL_CLOSED_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse", "PermissionRequest"]);
 
 function hookLabelOf(entry: SourcedHookEntry): string {
   return entry.name !== undefined && entry.name.length > 0 ? `"${entry.name}" (${entry.id})` : `"${entry.id}"`;
 }
 
-/** Bounded, because the reason reaches the model in the denial text and a host callback's error message is not ours to size. */
-const MAX_FAIL_CLOSED_REASON = 300;
+// Fix round 1 (M3): the denial names the hook and a failure CODE -- never the failure's own text. A
+// host callback's error message and a command hook's error (which embeds the command line) are not
+// ours to put in front of the model: they can carry paths, arguments, or whatever the thrower chose.
+// The full reason stays on the audit/diagnostic side (`HookOutcome.reason`), where it always was.
+function failClosedDenial(entry: SourcedHookEntry, event: HookEvent, failure: { kind: "error"; code?: string } | { kind: "timeout" }): HookOutcome {
+  const code = failure.kind === "timeout" ? "timeout" : (failure.code ?? "hook_error");
+  return { kind: "decision", decision: "deny", message: `Denied: the ${event} hook ${hookLabelOf(entry)} failed (${code}), and it is fail-closed, so the call was not allowed to proceed without its answer.` };
+}
 
-function failClosedDenial(entry: SourcedHookEntry, event: HookEvent, failure: { kind: "error"; reason?: string } | { kind: "timeout" }): HookOutcome {
-  const what =
-    failure.kind === "timeout"
-      ? "timed out"
-      : `failed${failure.reason !== undefined && failure.reason.length > 0 ? ` (${failure.reason.length > MAX_FAIL_CLOSED_REASON ? `${failure.reason.slice(0, MAX_FAIL_CLOSED_REASON)}…` : failure.reason})` : ""}`;
-  return { kind: "decision", decision: "deny", message: `Denied: the ${event} hook ${hookLabelOf(entry)} ${what}, and it is fail-closed, so the call was not allowed to proceed without its answer.` };
+/** A machine-readable class for a rejected invocation: the RPC error's own code, a command hook's exit status, or `hook_error`. */
+function failureCodeOf(err: unknown): string {
+  if (typeof err === "object" && err !== null) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code)) return code;
+    const exitCode = (err as { exitCode?: unknown }).exitCode;
+    if (typeof exitCode === "number") return `exit_code_${exitCode}`;
+    if (exitCode === null && (err as { name?: unknown }).name === "CommandHookError") return "terminated";
+  }
+  return "hook_error";
 }
 
 function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext, currentInput: Record<string, unknown> | undefined): HookInvocationRequest {
@@ -677,7 +725,7 @@ function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksC
   };
 }
 
-type InvocationResult = { kind: "resolved"; value: unknown } | { kind: "rejected"; reason?: string; processOutput?: HookProcessOutput } | { kind: "timeout" };
+type InvocationResult = { kind: "resolved"; value: unknown } | { kind: "rejected"; reason?: string; code: string; processOutput?: HookProcessOutput } | { kind: "timeout" };
 
 // Races the invoker against a hard timer that ALWAYS resolves (never rejects) — the invoker's own
 // promise is defensively `.catch()`-ed into a determinate value too, so this function itself never
@@ -704,7 +752,7 @@ async function invokeWithTimeout(invoker: HookInvoker, request: HookInvocationRe
     .catch((err: unknown): InvocationResult => {
       const reason = err instanceof Error ? err.message : typeof err === "string" ? err : undefined;
       const processOutput = processOutputOf(err);
-      return { kind: "rejected", ...(reason !== undefined ? { reason } : {}), ...(processOutput !== undefined ? { processOutput } : {}) };
+      return { kind: "rejected", code: failureCodeOf(err), ...(reason !== undefined ? { reason } : {}), ...(processOutput !== undefined ? { processOutput } : {}) };
     });
   try {
     return await Promise.race([invokePromise, timeoutPromise]);
@@ -775,16 +823,32 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
     const invocation = await invokeWithTimeout(ctx.invoker, request, timeoutMs);
     const durationMs = Date.now() - started;
 
+    // Fix round 1 (I2): a fail-closed hook on a gating event is held to a STRICTER shape. Shapes
+    // that are merely "no opinion" for an ordinary hook -- an `async` answer, a `hookSpecificOutput`
+    // naming another event (so its deny is silently ignored), a command hook's non-JSON stdout
+    // (command-invoker.ts refuses it for such a hook) -- are MALFORMED here: a security hook that
+    // answers in a shape the runner cannot read has not answered. `{}` stays a valid allow: it is
+    // exactly how a floor with nothing to object to answers.
+    const strict = entry.failClosed === true && FAIL_CLOSED_EVENTS.has(event);
     let outcome: HookOutcome;
     if (invocation.kind === "timeout") {
       outcome = { kind: "timeout" };
     } else if (invocation.kind === "rejected") {
-      outcome = { kind: "error", ...(invocation.reason !== undefined ? { reason: invocation.reason } : {}) };
+      outcome = { kind: "error", code: invocation.code, ...(invocation.reason !== undefined ? { reason: invocation.reason } : {}) };
     } else {
       const classified = classifyRawOutput(invocation.value);
-      if (classified.kind === "malformed") outcome = { kind: "error", reason: "malformed hook output" };
-      else if (classified.kind === "async") outcome = { kind: "none" }; // Open Question 3 -- see this file's own header
-      else outcome = interpretSyncOutput(event, classified.value, { validator, ...(call.toolName !== undefined ? { toolName: call.toolName } : {}), hookLabel: hookLabelOf(entry) });
+      if (classified.kind === "malformed") outcome = { kind: "error", code: "malformed_output", reason: "malformed hook output" };
+      else if (classified.kind === "async") outcome = strict ? { kind: "error", code: "malformed_output", reason: "async answer from a fail-closed gating hook" } : { kind: "none" }; // Open Question 3 -- see this file's own header
+      else if (strict && mismatchedEventName(classified.value, event)) outcome = { kind: "error", code: "malformed_output", reason: "hookSpecificOutput names another event" };
+      else {
+        outcome = interpretSyncOutput(event, classified.value, {
+          validator,
+          ...(call.toolName !== undefined ? { toolName: call.toolName } : {}),
+          hookLabel: hookLabelOf(entry),
+          ...(call.input !== undefined ? { originalInput: call.input } : {}),
+        });
+        if (outcome.kind === "error" && outcome.code === undefined) outcome = { ...outcome, code: "malformed_output" };
+      }
     }
     // The lifecycle frame reports what the hook actually DID -- an error stays an error there even
     // when fail-closed turns it into a deny below (the deny is the policy's answer, not the hook's).

@@ -379,3 +379,70 @@ describe("command-invoker: abort kills the process (the runner's timeout, made e
     expect(existsSync(marker), "a backgrounded grandchild outlived the hook").toBe(false);
   }, 15_000);
 });
+
+describe("command-invoker: WS-23 fix round 1", () => {
+  test("M4: the plugin root is expanded by the SHELL from the exported variable, never spliced into the command -- a `$(...)` in the directory name does not run", async () => {
+    const dir = fixtureDir();
+    const { mkdirSync } = await import("node:fs");
+    const pwned = join(dir, "pwned");
+    const pluginRoot = join(dir, `weird $(touch ${pwned})`);
+    mkdirSync(join(pluginRoot, "hooks"), { recursive: true });
+    script(join(pluginRoot, "hooks"), "run.sh", `printf '{"ran":true}'`);
+    const invoker = createCommandHookInvoker([entry({ command: `"\${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"`, pluginRoot })], {
+      next: recordingNext().invoker,
+      cwd: dir,
+      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+    });
+    expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({ ran: true });
+    expect(existsSync(pwned)).toBe(false);
+  });
+
+  test("I2: a FAIL-CLOSED PreToolUse command hook's plain-text stdout is malformed (a deny through runHooks); an ordinary hook's stays an acknowledgement", async () => {
+    const dir = fixtureDir();
+    const strict = [entry({ command: "echo looks fine to me", failClosed: true })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: { command: "ls" } }, {
+      registry: buildHookRegistry(strict, { trustedWorkspace: true }),
+      invoker: createCommandHookInvoker(strict, { next: recordingNext().invoker, cwd: dir }),
+      audit: { record: () => {} },
+      sessionId: "s-1",
+      policyVersion: 1,
+    });
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toContain("(malformed_output)");
+    expect(composite.message).not.toContain("echo looks fine"); // M3: never the command line
+    const plain = createCommandHookInvoker([entry({ command: "echo looks fine to me" })], { next: recordingNext().invoker, cwd: dir });
+    expect(await plain.invoke(REQUEST, freshSignal())).toEqual({});
+  });
+
+  test("M3: a fail-closed command hook's non-zero exit is denied with its exit CODE, never its command line or stderr", async () => {
+    const dir = fixtureDir();
+    const failing = [entry({ command: "echo 'secret-ish detail' >&2; exit 7", failClosed: true })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: { command: "ls" } }, {
+      registry: buildHookRegistry(failing, { trustedWorkspace: true }),
+      invoker: createCommandHookInvoker(failing, { next: recordingNext().invoker, cwd: dir }),
+      audit: { record: () => {} },
+      sessionId: "s-1",
+      policyVersion: 1,
+    });
+    expect(composite.message).toContain("(exit_code_7)");
+    expect(composite.message).not.toContain("secret-ish");
+    expect(composite.message).not.toContain("exit 7");
+  });
+
+  test("C1: stdout capture is bounded -- a flooding script costs a bounded buffer, and its cut JSON is that hook's error", async () => {
+    const dir = fixtureDir();
+    const { MAX_HOOK_STDOUT_CAPTURE } = await import("./bounds.ts");
+    const responses: Array<{ stdout?: string }> = [];
+    const flood = [entry({ command: `printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"'; head -c 3000000 /dev/zero | tr '\\0' A; printf '"}}'` })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, {
+      registry: buildHookRegistry(flood, { trustedWorkspace: true }),
+      invoker: createCommandHookInvoker(flood, { next: recordingNext().invoker, cwd: dir }),
+      audit: { record: () => {} },
+      sessionId: "s-1",
+      policyVersion: 1,
+      lifecycle: { started: () => {}, response: (i) => { responses.push(i.stdout !== undefined ? { stdout: i.stdout } : {}); } },
+    });
+    expect(composite.extraContext).toBeUndefined(); // truncated at capture -> unparseable -> the hook's error, contributing nothing
+    expect((responses[0]?.stdout ?? "").length).toBeLessThanOrEqual(MAX_HOOK_STDOUT_CAPTURE);
+  }, 15_000);
+});

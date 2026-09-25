@@ -367,7 +367,9 @@ describe("runHooks -- schema-validation seam (WS-23: an invalid transform is a D
   });
 
   test("a rejecting validator turns an invalid PreToolUse transform into a DENY naming the hook -- no transform survives and every later hook is skipped", async () => {
-    const rejecting: ToolInputValidator = { validate: () => ({ valid: false, reason: "does not match tool schema" }) };
+    // Rejects the hook's rewrite only: the ORIGINAL input is valid, so the invalid rewrite is the
+    // hook's own failure (fix round 1, M1).
+    const rejecting: ToolInputValidator = { validate: (_t, input) => (input["command"] === "invalid-shape" ? { valid: false, reason: "does not match tool schema" } : { valid: true }) };
     const { invoker, requests } = sequenceInvoker([
       { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { command: "invalid-shape" } } },
       { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } },
@@ -389,7 +391,7 @@ describe("runHooks -- schema-validation seam (WS-23: an invalid transform is a D
   });
 
   test("a PermissionRequest allow whose updatedInput fails the schema is a DENY too -- never an allow running an unvalidated input", async () => {
-    const rejecting: ToolInputValidator = { validate: () => ({ valid: false, reason: "bad shape" }) };
+    const rejecting: ToolInputValidator = { validate: (_t, input) => (input["command"] === "x" ? { valid: false, reason: "bad shape" } : { valid: true }) };
     const { invoker } = sequenceInvoker([{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput: { command: "x" } } } }]);
     const composite = await runHooks(
       "PermissionRequest",
@@ -399,6 +401,15 @@ describe("runHooks -- schema-validation seam (WS-23: an invalid transform is a D
     expect(composite.decision).toBe("deny");
     expect(composite.transformedInput).toBeUndefined();
     expect(composite.message).toContain("bad shape");
+  });
+
+  test("fix round 1 (M1): when the ORIGINAL input is already invalid, an invalid rewrite is dropped, not denied -- the call runs with the original and the tool reports its own error", async () => {
+    const rejectsEverything: ToolInputValidator = { validate: () => ({ valid: false, reason: "missing query" }) };
+    const { invoker } = sequenceInvoker([{ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { query: "x", blocked_domains: ["a.com"] }, additionalContext: "kept" } }]);
+    const composite = await runHooks("PreToolUse", { toolName: "WebSearch", input: { query: "x" } }, ctxWith({ registry: fakeRegistry([entry("floor", "PreToolUse")]), invoker, validator: rejectsEverything }));
+    expect(composite.decision).toBeUndefined();
+    expect(composite.transformedInput).toBeUndefined();
+    expect(composite.extraContext?.map((c) => c.context)).toEqual(["kept"]); // the rest of the hook's answer still counts
   });
 });
 
