@@ -205,7 +205,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-05T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -362,7 +364,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -522,7 +525,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -637,7 +641,9 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled",
+        "thinking.type.disabled"
       ],
       "status": "candidate"
     },
@@ -733,7 +739,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -845,7 +853,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -1069,7 +1079,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -1184,7 +1195,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -1297,7 +1309,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -4173,6 +4187,7 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
+        "defaultEffort": "medium",
         "readableState": {
           "value": "summary",
           "source": "official-doc",
@@ -6268,7 +6283,7 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "low",
+        "defaultEffort": "medium",
         "readableState": {
           "value": "summary",
           "source": "official-doc",
@@ -6574,7 +6589,12 @@
         "confidence": "declared",
         "observedAt": "2026-09-08T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.enabled",
+        "thinking.type.disabled",
+        "tool_choice.any",
+        "tool_choice.tool"
+      ],
       "status": "candidate"
     },
     {
@@ -7351,7 +7371,9 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled",
+        "thinking.type.disabled"
       ],
       "status": "candidate"
     },
@@ -7499,7 +7521,12 @@
         "confidence": "declared",
         "observedAt": "2026-09-16T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.enabled",
+        "thinking.type.disabled",
+        "tool_choice.any",
+        "tool_choice.tool"
+      ],
       "status": "candidate"
     },
     {
@@ -7594,7 +7621,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-16T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -7689,7 +7718,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -7801,7 +7832,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -8025,7 +8058,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -8140,7 +8174,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -8298,7 +8333,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -8411,7 +8447,9 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.adaptive"
+      ],
       "status": "candidate"
     },
     {
@@ -8680,7 +8718,8 @@
       "unsupportedParameters": [
         "temperature",
         "top_p",
-        "top_k"
+        "top_k",
+        "thinking.type.enabled"
       ],
       "status": "candidate"
     },
@@ -33777,7 +33816,7 @@
         "observedAt": "2026-09-25T09:52:37Z"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi/mimo-v2.5",
@@ -33875,7 +33914,7 @@
         "observedAt": "2026-09-25T09:52:37Z"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-anthropic/mimo-v2.6-pro",
@@ -34264,7 +34303,7 @@
         "observedAt": "2026-09-25T09:52:37Z"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-anthropic/mimo-v2.5",
@@ -34362,7 +34401,7 @@
         "observedAt": "2026-09-25T09:52:37Z"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan/mimo-v2.6-pro",
@@ -34968,7 +35007,7 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-cn/mimo-v2.5-pro",
@@ -35052,7 +35091,7 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-eu/mimo-v2.5-pro",
@@ -35136,7 +35175,7 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan/mimo-v2.5",
@@ -35223,7 +35262,7 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-cn/mimo-v2.5",
@@ -35310,7 +35349,7 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-eu/mimo-v2.5",
@@ -35397,7 +35436,7 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-anthropic/mimo-v2.6-pro",
@@ -36003,7 +36042,7 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-cn-anthropic/mimo-v2.5-pro",
@@ -36087,7 +36126,7 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-eu-anthropic/mimo-v2.5-pro",
@@ -36171,7 +36210,7 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-anthropic/mimo-v2.5",
@@ -36258,7 +36297,7 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-cn-anthropic/mimo-v2.5",
@@ -36345,7 +36384,7 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "xiaomi-token-plan-eu-anthropic/mimo-v2.5",
@@ -36432,7 +36471,7 @@
         "continuation": "none"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "qianfan/ernie-5.1",
@@ -47209,7 +47248,12 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.enabled",
+        "thinking.type.disabled",
+        "tool_choice.any",
+        "tool_choice.tool"
+      ],
       "status": "candidate"
     },
     {
@@ -47365,7 +47409,12 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.enabled",
+        "thinking.type.disabled",
+        "tool_choice.any",
+        "tool_choice.tool"
+      ],
       "status": "candidate"
     },
     {
