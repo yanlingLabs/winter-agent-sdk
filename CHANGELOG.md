@@ -4,6 +4,39 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### xAI on the Responses API
+
+- The api-key `xai` provider (`https://api.x.ai/v1`) now runs on `winter.openai-responses` instead of
+  `winter.openai-chat-completions`. xAI calls Responses its preferred API and Chat Completions "a legacy
+  endpoint"; only Responses returns reasoning as a replayable encrypted item. Winter stays stateless on it:
+  `store: false`, full history replayed each turn, never `previous_response_id`. `xai-oauth` is unchanged
+  (still Chat Completions): its proxy's `/v1/responses` has never been probed.
+- Every reasoning-capable `xai` row now records `continuation: "opaque-provider-state"`: reasoning carries
+  across turns and tool loops as the encrypted item. `grok-4.7` alone also records a readable summary
+  (`reasoning.summary`, sent as `detailed`). `grok-4.20-0309-reasoning` and `grok-build-0.1` keep an empty
+  effort vocabulary because xAI documents no effort knob for them.
+- New row `xai/grok-4.20-multi-agent-0309` (alias `grok-4.20-multi-agent`), Responses-only. Its effort picks
+  the agent count (low/medium = 4, high/xhigh = 16). A `tools` array or an output cap is refused before
+  the request, since xAI supports neither on this model.
+
+### Responses adapter
+
+- Each provider on the adapter now gets its own endpoint from its catalog row. A connection with no
+  `baseUrl` for any provider other than `openai` used to fall back to `api.openai.com`, which would have
+  sent an xAI key to OpenAI. It now reaches that provider's own host, or is refused with a typed
+  `capability` error when the catalog names no host for it. Sessions built by the runtime are
+  unaffected: they already copy each multi-provider row's endpoint into the connection.
+
+### Errors
+
+- `normalizeHttpError` also reads xAI's flat error body (`{"code": "<status text>", "error": "<message>"}`),
+  alongside the structured `{error: {…}}` envelopes, whose handling is unchanged. The flat body's `code`
+  becomes `providerCode`, and its message becomes the snippet. A wrong key, which xAI answers with HTTP 400
+  "Incorrect API key provided", is now classified `auth`, so credential validation reports an invalid key
+  instead of an unreachable endpoint.
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus
