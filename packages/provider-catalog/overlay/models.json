@@ -347,6 +347,15 @@
           "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact (§4.4's replay rules and its worked request). Why the domain is NARROW: \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is this model alone, never the Anthropic provider.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -508,6 +517,15 @@
           "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: §4.4 requires the model's own assistant blocks — `thinking` with its signature, `redacted_thinking` — replayed unchanged and in order across a tool loop. Why the domain is NARROW: Anthropic documents model switching as a boundary at which those blocks are STRIPPED, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -624,7 +642,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -839,7 +866,16 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -951,7 +987,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -1062,7 +1107,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -1178,7 +1232,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -1407,7 +1470,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -6575,6 +6647,15 @@
           "sourceRef": "continuity report §4.4, BOTH halves, applied per anthropic/claude-opus-5's own evidence. Own-state acceptance: a Claude model's own thinking blocks are replayed to it unchanged, in order, with signatures intact. Why the domain is NARROW: prior thinking/redacted_thinking blocks are tied to the model that produced them, so \"same provider\" is not automatically \"same continuation domain\" — the domain is this model alone.",
           "confidence": "declared",
           "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -7354,7 +7435,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -7507,6 +7597,15 @@
           "sourceRef": "continuity report §4.4, BOTH halves, applied per anthropic/claude-opus-5's own evidence. Own-state acceptance: a Claude model's own thinking blocks are replayed to it unchanged, in order, with signatures intact. Why the domain is NARROW: prior thinking/redacted_thinking blocks are tied to the model that produced them, so \"same provider\" is not automatically \"same continuation domain\" — the domain is this model alone.",
           "confidence": "declared",
           "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -7818,7 +7917,16 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -7930,7 +8038,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -8041,7 +8158,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -8157,7 +8283,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -8316,6 +8451,15 @@
           "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact (§4.4's replay rules and its worked request). Why the domain is NARROW: \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is this model alone, never the Anthropic provider.",
           "confidence": "declared",
           "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -8545,7 +8689,16 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        }
       },
       "pricing": {
         "value": {
@@ -8701,6 +8854,15 @@
           "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: §4.4 requires the model's own assistant blocks — `thinking` with its signature, `redacted_thinking` — replayed unchanged and in order across a tool loop. Why the domain is NARROW: Anthropic documents model switching as a boundary at which those blocks are STRIPPED, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone.",
           "confidence": "declared",
           "observedAt": "2026-09-16T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -47234,6 +47396,15 @@
           "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
@@ -47395,6 +47566,15 @@
           "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T12:30:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
         }
       },
       "pricing": {
