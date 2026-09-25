@@ -3403,7 +3403,7 @@
         "openai-chat-completions",
         "openai-responses"
       ],
-      "$comment": "Meta's first-party hosted API since the Llama API public preview was retired on 2026-07-06 (see the `meta-llama` row). Serves the Muse family. The `-contributor` model variants (cheaper, but they opt the caller's data into Meta model training) are deliberately NOT catalogued: a data-sharing opt-in must not appear as an ordinary model choice.",
+      "$comment": "Meta's first-party hosted API since the Llama API public preview was retired on 2026-07-06 (see the `meta-llama` row). Serves the Muse family. The `-contributor` model variants are catalogued at the user's request (2026-09-25): they cost less because Meta may train on their prompts and completions (https://dev.meta.ai/docs/models), which their display names state.",
       "authKinds": [
         "api-key"
       ],

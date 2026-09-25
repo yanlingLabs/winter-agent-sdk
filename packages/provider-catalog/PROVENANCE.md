@@ -8,7 +8,7 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
 | upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 539 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 125 providers, 582 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 125 providers, 584 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in

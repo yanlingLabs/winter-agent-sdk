@@ -9,7 +9,7 @@ corpus of committed golden traces rather than asserted in prose.
 | Package | What it is | Registries |
 | --- | --- | --- |
 | [`@yanlinglabs/winter-agent-sdk`](packages/sdk) | The wrapper: `query()`, the `Options` surface, session management, settings, the transcript store, the brand profile. | npm + GitHub Packages |
-| [`@yanlinglabs/winter-provider-catalog`](packages/provider-catalog) | The provider/model catalog as inert validated data — 213 providers, 998 models, with provenance. | npm + GitHub Packages |
+| [`@yanlinglabs/winter-provider-catalog`](packages/provider-catalog) | The provider/model catalog as inert validated data — 213 providers, 1000 models, with provenance. | npm + GitHub Packages |
 | [`@yanlinglabs/winter-provider-runtime`](packages/provider-runtime) | The provider layer: adapters, credential refs, endpoint policy, retry and identity headers. | npm + GitHub Packages |
 | [`@yanlinglabs/winter-conformance`](packages/conformance) | The drop-in conformance corpus: trace normalizer, goldens, pinned-upstream mechanics. | npm + GitHub Packages |
 | [`@yanlinglabs/winter-provider-conformance`](packages/provider-conformance) | The provider-layer conformance harness and its loopback fakes. Bun only. | npm + GitHub Packages |

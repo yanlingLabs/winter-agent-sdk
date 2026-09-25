@@ -6,7 +6,7 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## 0.0.23
 
-The 2026-09-25 first-party provider/model catalog refresh: 213 providers (was 171), 998 models (was
+The 2026-09-25 first-party provider/model catalog refresh: 213 providers (was 171), 1000 models (was
 691), 22 model families (was 17). Every refreshed row carries per-field evidence (vendor URL, what the
 page says, the retrieval instant); per-model values were mapped from the vendors' own docs and reviewed
 row by row.
@@ -34,7 +34,8 @@ row by row.
 
 - Added across GPT (GPT-6 Sol/Luna on `openai` and `codex-oauth`), Claude (Opus 5.5), Gemini (3.5/3.6
   Flash, Gemma 4 on the Gemini API), Grok (4.7, 4.5), GLM, MiniMax, Qwen (3.8 Flash, coder models),
-  MiMo, ERNIE, Hunyuan (Hy4 preview, Hy3), Mistral (pinned ids, Ministral 3), Muse Spark, Nemotron,
+  MiMo, ERNIE, Hunyuan (Hy4 preview, Hy3), Mistral (pinned ids, Ministral 3), Muse Spark (standard and
+  the cheaper Contributor tier, on which Meta may train on your data — named so in the row), Nemotron,
   Command A+ and Amazon Nova.
 - `deprecated` (vendor-retired; listings and slots drop the row, the registry still resolves the key):
   `zai/glm-5-turbo`, `zai-anthropic/glm-5-turbo`, `mistral/devstral-latest`, and the Hunyuan ids retired
