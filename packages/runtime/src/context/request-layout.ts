@@ -87,7 +87,8 @@ function toBlocks(content: string | ContentBlock[]): ContentBlock[] {
 }
 
 function isUserRole(message: ProviderMessage): boolean {
-  return message.role !== "assistant";
+  // WS-23: a `system` message is its own wire entry and must never be merged into a user turn.
+  return message.role !== "assistant" && message.role !== "system";
 }
 
 /** claude's `SJn` stopping point: an assistant message, or a user message whose FIRST block is a `tool_result`. */
@@ -214,6 +215,76 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
     out[out.length - 1] = { role, content: merged };
   }
   return out;
+}
+
+// --- WS-23: per-message effort markers ----------------------------------------------------------------
+//
+// On a model whose row documents per-message effort, the top-level `output_config.effort` stays FROZEN
+// and every change rides an effort-only `system` message placed between the previous assistant reply
+// and the user message it applies to -- the documented placement
+// (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta:
+// "The new level takes effect from the next `user` turn"). Changing the top-level value instead
+// "doesn't preserve cached prefixes from earlier turns" (same page).
+//
+// THE MARKERS ARE DERIVED, NEVER STORED. Every assistant message carries the level that was in force
+// for its turn (`perTurnEffort`), and the markers are a pure function of those annotations, the frozen
+// top-level value and the live level -- so turn N+1 re-derives turn N's markers byte-identically, and a
+// resumed session (whose rebuilt messages carry the same two fields off the transcript) derives them at
+// the same positions. That is claude's own resume rule (its bundle's `Gyo`/`lRt`: each user message
+// takes the effort of the assistant reply after it, `perTurnEffort ?? effort`, and a marker is emitted
+// only where the level changes), applied to live requests too so there is one code path.
+//
+// DIVERGENCE FROM claude 2.1.282, deliberate: claude attaches the effort to the system message it sends
+// AFTER the user message (its `# Environment` turn), and on the same request also moves the top-level
+// value -- the loopback capture shows both. After-the-user placement would apply the level from the
+// FOLLOWING user turn (a tool-result turn), not to the reply the user is waiting for, and moving the
+// top-level value restarts the cache; Winter follows the vendor's documented placement instead.
+
+/**
+ * `messages` (the outbound list, after `buildRequestMessages`) with an effort-only `system` marker
+ * before every user turn whose level differs from the one in force before it. `topLevel` is the value
+ * the request sends at the top level; `live` is the level for the turn being generated now.
+ * `accepts` filters levels the target row cannot take (a history written on another family can carry
+ * another vocabulary) -- such a turn simply gets no marker, which is deterministic and so still
+ * byte-stable. A turn with no annotated reply (a host-supplied or pre-WS-23 history, an interrupted
+ * turn) is left alone for the same reason.
+ */
+export function withEffortMarkers(messages: readonly ProviderMessage[], topLevel: string, live: string, accepts: (effort: string) => boolean): ProviderMessage[] {
+  const isTurnStart = (m: ProviderMessage): boolean => m.role === "user" && m.isMeta !== true;
+  const out: ProviderMessage[] = [];
+  let running = topLevel;
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (isTurnStart(message)) {
+      let level: string | undefined;
+      let sawAssistant = false;
+      let j = i + 1;
+      for (; j < messages.length && !isTurnStart(messages[j]!); j++) {
+        const next = messages[j]!;
+        if (next.role !== "assistant") continue;
+        sawAssistant = true;
+        level = next.perTurnEffort ?? next.effort;
+        break;
+      }
+      // The turn being generated right now has no reply yet: it runs at the live level.
+      if (!sawAssistant && j >= messages.length) level = live;
+      if (level !== undefined && level !== running && accepts(level)) {
+        out.push({ role: "system", content: [], outputConfig: { effort: level } });
+        running = level;
+      }
+    }
+    out.push(message);
+  }
+  return out;
+}
+
+/** The top-level effort the previous request sent: the newest assistant message's own `effort` annotation. */
+export function lastTopLevelEffort(history: readonly ProviderMessage[]): string | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]!;
+    if (m.role === "assistant" && m.effort !== undefined) return m.effort;
+  }
+  return undefined;
 }
 
 // --- the last request, per session (for the fork lane) ---------------------------------------------

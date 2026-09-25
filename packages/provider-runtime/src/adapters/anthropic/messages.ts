@@ -209,7 +209,9 @@ function normalizeContent(content: string | ContentBlockLike[]): Record<string, 
  * decorated: correct per message, wire-invalid once merged.
  */
 interface WireEntryBuckets {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
+  /** WS-23: a `system` entry's own `output_config` (the per-message effort change). Never set on another role. */
+  outputConfig?: { effort: string };
   /** `tool_result` blocks. This endpoint requires them at the START of the turn they ride. */
   results: Record<string, unknown>[];
   /** The LEADING run of in-dialect thinking blocks. With thinking enabled, no text may precede them. */
@@ -237,11 +239,25 @@ function fileBlocks(entry: WireEntryBuckets, blocks: Record<string, unknown>[]):
   for (; at < nonResults.length; at++) entry.rest.push(nonResults[at]!);
 }
 
-export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
+/** One wire message. `output_config` rides only on a `system` entry (WS-23's per-message effort). */
+export type WireMessage = { role: "user" | "assistant" | "system"; content: Record<string, unknown>[]; output_config?: { effort: string } };
+
+export function toWireMessages(messages: ProviderMessageLike[]): WireMessage[] {
   const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
-    const role: "user" | "assistant" = message.role === "assistant" ? "assistant" : "user";
+    const role: WireEntryBuckets["role"] = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
     const own = normalizeContent(message.content);
+    // WS-23: a `system` message is its OWN wire entry, never merged into a neighbour and never merged
+    // with another `system` message either. An effort-only marker has no content at all and is still
+    // sent -- its `output_config` IS the message
+    // (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta).
+    // Merging one into the user turn after it (the pre-WS-23 `role !== "assistant"` rule) would have
+    // turned an operator instruction into user text and dropped the effort change entirely.
+    if (role === "system") {
+      if (own.length === 0 && message.outputConfig === undefined) continue;
+      entries.push({ role, ...(message.outputConfig !== undefined ? { outputConfig: { effort: message.outputConfig.effort } } : {}), results: [], leading: [], decorations: [], rest: own });
+      continue;
+    }
     if (own.length === 0 && message.decoration === undefined) continue;
 
     const last = entries[entries.length - 1];
@@ -268,8 +284,12 @@ export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "
   // constraints first -- `tool_result` blocks at the start of their turn, in-dialect thinking ahead
   // of any text -- then the decorations in message order, then ordinary content.
   return entries
-    .map((entry) => ({ role: entry.role, content: [...entry.results, ...entry.leading, ...entry.decorations, ...entry.rest] }))
-    .filter((entry) => entry.content.length > 0);
+    .map((entry): WireMessage => ({
+      role: entry.role,
+      content: [...entry.results, ...entry.leading, ...entry.decorations, ...entry.rest],
+      ...(entry.outputConfig !== undefined ? { output_config: entry.outputConfig } : {}),
+    }))
+    .filter((entry) => entry.content.length > 0 || entry.output_config !== undefined);
 }
 
 // --- prompt caching (0.0.16 request layout) -------------------------------------------------------
@@ -310,19 +330,29 @@ export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: 
     .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...EPHEMERAL_CACHE_CONTROL } } : {}) }));
 }
 
-/** The message-level breakpoint: a copy of `messages` whose last message's last block carries the marker. */
-export function withMessageCacheMarker(messages: Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }>): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
-  if (messages.length === 0) return messages;
+/**
+ * The message-level breakpoint: a copy of `messages` whose last CONTENT-BEARING message's last block
+ * carries the marker.
+ *
+ * WS-23: the last message is not always content-bearing any more. An effort-only `system` marker has
+ * empty `content` and nothing to hang a breakpoint on, so the marker walks back to the block before
+ * it -- the same prefix position, since an effort-only message renders nothing at its position
+ * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
+ */
+export function withMessageCacheMarker(messages: WireMessage[]): WireMessage[] {
   const out = messages.slice();
-  const last = out[out.length - 1]!;
-  if (last.content.length === 0) return out;
-  const content = last.content.slice();
-  const tail = content[content.length - 1]!;
-  // An in-dialect thinking block cannot carry a cache marker; claude never ends a request on one
-  // either (the final message is the user's), so this only guards a host-supplied history.
-  if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return out;
-  content[content.length - 1] = { ...tail, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
-  out[out.length - 1] = { ...last, content };
+  for (let i = out.length - 1; i >= 0; i--) {
+    const message = out[i]!;
+    if (message.content.length === 0) continue;
+    const content = message.content.slice();
+    const tail = content[content.length - 1]!;
+    // An in-dialect thinking block cannot carry a cache marker; claude never ends a request on one
+    // either (the final message is the user's), so this only guards a host-supplied history.
+    if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return out;
+    content[content.length - 1] = { ...tail, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
+    out[i] = { ...message, content };
+    return out;
+  }
   return out;
 }
 
@@ -661,6 +691,55 @@ export function anthropicWireModelId(id: string): string {
   return id.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, "$1-$2");
 }
 
+/** WS-23: an effort-only `system` marker -- no content, only `output_config`. */
+function isEffortOnlyMarker(message: ProviderMessageLike): boolean {
+  return message.role === "system" && message.outputConfig !== undefined && (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0);
+}
+
+/**
+ * WS-23: the per-message effort gate. A `system` message carrying `output_config` is refused BEFORE
+ * the request unless the row's own `reasoning.perMessageEffort` evidence documents the shape, and its
+ * level must be one of the row's own `reasoning.efforts` -- the vendor's own error for a model
+ * without the feature is a 400 ("output_config.effort requires a model that supports per-turn effort",
+ * https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta),
+ * and this file turns every documented 400 it can foresee into a typed local refusal (decision 1).
+ * The engine only ever produces a marker for a row with the evidence, so this fires on a wiring bug,
+ * never on an ordinary session.
+ */
+function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
+  const efforts = descriptor?.reasoning?.efforts ?? [];
+  for (const message of req.messages) {
+    if (message.role !== "system" || message.outputConfig === undefined) continue;
+    if (descriptor?.reasoning?.perMessageEffort === undefined) {
+      throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document per-message effort (no \`reasoning.perMessageEffort\` evidence), so a mid-conversation \`output_config.effort\` is refused before the request rather than sent and rejected upstream`);
+    }
+    if (!efforts.includes(message.outputConfig.effort)) {
+      throw capabilityRefusal(`per-message effort "${message.outputConfig.effort}" is not in model "${descriptor.key}"'s verified vocabulary (${efforts.join(", ")})`);
+    }
+  }
+}
+
+/**
+ * The per-message effort beta, or `undefined` -- derived from the BODY `buildRequestBody` produced,
+ * the same one-decision rule `blockBindingBetaFor` states: the header rides exactly when a message in
+ * the body carries `output_config`.
+ *
+ * The DOCUMENTED value (`mid-conversation-output-config-2026-07-01`), read off the row's evidence.
+ * claude 2.1.282 sends the older alias `per-turn-control-2026-07-01` (its binary maps
+ * `per_message_effort` to it, and the loopback capture shows it on the wire); the effort page names
+ * only the new value, so Winter sends that one and does not depend on an undocumented alias.
+ */
+export function perMessageEffortBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
+  const messages = body["messages"];
+  if (!Array.isArray(messages) || !messages.some((m) => typeof m === "object" && m !== null && "output_config" in m)) return undefined;
+  return descriptor?.reasoning?.perMessageEffort?.value.beta;
+}
+
+/** Every body-derived beta, in a fixed order. One list, so `prepare()` and `countTokens()` cannot disagree about which ride. */
+function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string[] {
+  return [perMessageEffortBetaFor(body, descriptor)].filter((b): b is string => b !== undefined);
+}
+
 /**
  * The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the
  * network.
@@ -723,6 +802,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
 
   const thinking = buildThinking(req, descriptor);
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
+  assertPerMessageEffort(req, descriptor);
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.
@@ -759,7 +839,9 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
     // this adapter has no fixture proving it against.
     return {
       model: anthropicWireModelId(req.model),
-      messages: toWireMessages(req.messages),
+      // An effort-only marker renders nothing and `output_config` is deliberately off a count body
+      // (above), so the markers are dropped here rather than sent to an endpoint with no fixture.
+      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m))),
       ...(req.system !== undefined ? { system: req.system } : {}),
       ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) } : {}),
       ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
@@ -885,7 +967,18 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
  * -- including this beta and its dedupe against `opts.betas` -- is otherwise unreachable without a
  * real or faked HTTP round trip, and `messages.test.ts` asserts it directly.
  */
-export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: string | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
+export async function buildHeaders(
+  ctx: ProviderContext,
+  blockBindingBeta: string | undefined,
+  policy: EndpointPolicy,
+  opts: AnthropicAdapterOptions,
+  json: boolean,
+  identity: Record<string, string> = {},
+  // WS-23: further BODY-DERIVED betas (per-message effort, ...), each computed by its own `*BetaFor`
+  // from the body the caller already built -- the same one-decision rule as `blockBindingBeta`.
+  // Trailing and defaulted, so every existing call site is unchanged.
+  extraBetas: readonly string[] = [],
+): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
   // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
   // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
@@ -934,6 +1027,7 @@ export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: strin
     ...(opts.betas ?? []),
     ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : []),
     ...(blockBindingBeta !== undefined ? [blockBindingBeta] : []),
+    ...extraBetas,
   ].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
@@ -1043,7 +1137,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);
-    const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx), bodyBetas(body, descriptor));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1294,7 +1388,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx), bodyBetas(body, descriptor));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,

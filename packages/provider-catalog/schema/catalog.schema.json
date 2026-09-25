@@ -69,6 +69,17 @@
         }
       }
     },
+    "evidencePerMessageEffort": {
+      "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
+      "properties": {
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["beta"],
+          "properties": { "beta": { "enum": ["mid-conversation-output-config-2026-07-01"] } }
+        }
+      }
+    },
     "evidenceSummaryRequest": {
       "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
       "properties": {
@@ -208,7 +219,8 @@
             "completionEvent": { "$ref": "#/$defs/evidenceString" },
             "toolLoopRequirement": { "$ref": "#/$defs/evidenceToolLoopRequirement" },
             "effortRequest": { "$ref": "#/$defs/evidenceEffortRequest" },
-            "blockBinding": { "$ref": "#/$defs/evidenceBlockBinding" }
+            "blockBinding": { "$ref": "#/$defs/evidenceBlockBinding" },
+            "perMessageEffort": { "$ref": "#/$defs/evidencePerMessageEffort" }
           }
         },
         "unsupportedParameters": { "type": "array", "items": { "type": "string", "minLength": 1 } },

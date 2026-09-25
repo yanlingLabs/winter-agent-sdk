@@ -205,11 +205,13 @@ import {
   clearSessionRequestLayout,
   getSessionRequestLayout,
   joinSystemBlocks,
+  lastTopLevelEffort,
   recordSessionRequestLayout,
   registerSessionContextReload,
   renderSystemContext,
   renderUserContext,
   unregisterSessionContextReload,
+  withEffortMarkers,
   type ContextEntry,
   type SessionRequestLayout,
 } from "./context/request-layout.ts";
@@ -394,8 +396,26 @@ export type ContentBlock =
 // results ride a "user" message, matching WS-03 §8 / the official SDK), but keeping tool results
 // on their own role here keeps accumulation/tool-round assertions simple and unambiguous.
 export interface ProviderMessage {
-  role: "user" | "assistant" | "tool";
+  /**
+   * `system` (WS-23) exists ONLY on an outbound request, never in this engine's own history: an
+   * effort-only marker (`outputConfig`) or, later, a mid-conversation system reminder, each inserted by
+   * the request layout for a model whose catalog row documents the shape. See `ProviderMessageLike`.
+   */
+  role: "user" | "assistant" | "tool" | "system";
   content: string | ContentBlock[];
+  /** WS-23: a `system` marker's per-message effort change. Never set on another role. */
+  outputConfig?: { effort: string };
+  /**
+   * WS-23 (claude's own transcript fields, `effort`/`perTurnEffort` on an assistant entry): the
+   * TOP-LEVEL effort the request that produced this assistant message sent, and the level actually IN
+   * FORCE for its turn. They differ only on a model with per-message effort, where the top-level value
+   * stays frozen and a change rides a `system` marker. Set on assistant messages only, and only when
+   * the session has a named effort at all -- so a session with none stays byte-identical. The markers
+   * of every later request are DERIVED from these two fields (`withEffortMarkers`), live and resumed
+   * alike, which is what keeps the cached prefix byte-stable across turns.
+   */
+  effort?: string;
+  perTurnEffort?: string;
   // --- Phase 6 Task 3 (R6-3): the per-message continuation annotations -----------------------------
   //
   // All four OPTIONAL and ADDITIVE: every pre-existing `{role, content}` literal in this repo (and
@@ -483,6 +503,42 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
       return typeof block.content === "string" ? block.content : providerMessageContentToText(block.content);
     })
     .join("\n");
+}
+
+/**
+ * WS-23: a provider 400 that refuses the per-message effort shape -- the beta header itself ("Unexpected
+ * value(s) `mid-conversation-output-config-2026-07-01` for the `anthropic-beta` header", the beta-headers
+ * page's own error) or the marker ("output_config.effort requires a model that supports per-turn
+ * effort", the effort page's). Matched on the bounded, credential-scrubbed message the adapter
+ * normalised; a false positive costs one retried request with no marker, never a wrong answer.
+ */
+function isPerMessageEffortRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || err.status !== 400) return false;
+  return /mid-conversation-output-config|per-turn effort|output_config/i.test(err instanceof Error ? err.message : "");
+}
+
+/** WS-23: a named effort tier -- the string half of `TurnRequest["effort"]`. */
+const NAMED_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export function isNamedEffort(value: unknown): value is (typeof NAMED_EFFORTS)[number] {
+  return typeof value === "string" && (NAMED_EFFORTS as readonly string[]).includes(value);
+}
+
+/**
+ * WS-23: the catalog facts about a model's WIRE that the engine's request layout keys on. Each is a
+ * catalog-evidence flag the production wiring reads off the model's row (`describeCatalogModel`);
+ * absent means "today's layout", which is every scripted double and every row without the evidence.
+ */
+export interface ModelWireFeatures {
+  /** `reasoning.perMessageEffort`: an effort change rides a `system` marker while the top-level value stays frozen. */
+  perMessageEffort?: true;
+}
+
+/** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
+export interface ModelDescription {
+  displayName?: string;
+  /** The row's own `reasoning.efforts`, verbatim -- `set_effort` validates a requested level against it. */
+  efforts?: string[];
+  wire?: ModelWireFeatures;
 }
 
 // --- Phase 5 Task 2 (R5-3): the provider seam extension -------------------------------------------
@@ -1189,7 +1245,7 @@ export interface EngineOptions {
    * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
    * knows one (production wiring answers from the catalog). Absent => the bare-id line.
    */
-  describeModel?: (model: string, providerId?: string) => { displayName?: string } | undefined;
+  describeModel?: (model: string, providerId?: string) => ModelDescription | undefined;
   /** SDK 0.0.16: the engine's clock for the `currentDate` entry and the `date_change` fold. Tests only; absent => `new Date()`. */
   now?: () => Date;
   /**
@@ -2620,6 +2676,25 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The engine's OWN turn history. Declared HERE (fix wave) rather than beside the resume fold
   // below, because the pump can service a `set_model` before that point and the switch reads it.
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
+  // --- WS-23: effort as a LIVE session value ----------------------------------------------------------
+  //
+  // `config.effort` is where the session STARTED; `liveEffort` is the level in force now. A `set_effort`
+  // arriving mid-turn is PARKED in `pendingEffort` and applied at the same quiescent boundary as a
+  // parked `set_model`, so one turn never runs at two levels -- which is also what lets every assistant
+  // message of a turn carry one `perTurnEffort`, the invariant `withEffortMarkers` derives from.
+  let liveEffort: TurnRequest["effort"] | undefined = config.effort;
+  let pendingEffort: { effort: TurnRequest["effort"] | undefined } | undefined;
+  // Sticky for the session: the API refused the per-message beta with a 400 (it may be limited to
+  // allowlisted accounts), so every later request changes the TOP-LEVEL value instead. See the
+  // generation catch.
+  let perMessageEffortRejected = false;
+  // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
+  let generationEffort: { effort: string; perTurnEffort: string } | undefined;
+  const applyPendingEffort = (): void => {
+    if (pendingEffort === undefined) return;
+    liveEffort = pendingEffort.effort;
+    pendingEffort = undefined;
+  };
   // P6 fix wave (Ruling E-2): the session's continuation chain AS THE ENGINE KNOWS IT -- the resumed
   // half (folded back by `attachContinuationChain`) plus every record this run wrote. The portable
   // handoff reads a source message's `summary` off it; nothing else does, and opaque native state is
@@ -3481,7 +3556,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // override, or the placeholder base); these are what a bare child model id resolves against and
       // what the child's own provider-state records identify themselves with.
       ...(currentProviderIdentity !== undefined ? { provider: { ...currentProviderIdentity } } : {}),
-      ...(config.effort !== undefined ? { effectiveEffort: config.effort } : {}),
+      // WS-23: the LIVE level, so a child spawned after a `set_effort` inherits what the parent runs at now.
+      ...(liveEffort !== undefined ? { effectiveEffort: liveEffort } : {}),
       ...(config.thinking !== undefined ? { effectiveThinking: config.thinking } : {}),
       sessionRoot,
     };
@@ -5282,6 +5358,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // `set_model` was waiting for has arrived early -- apply it now rather than leaving the
             // session on a model the host has already asked it to leave.
             applyPendingModelSwitch("interrupt");
+            applyPendingEffort();
             continue;
           }
           // --- Phase 6 Task 3 (R6-I): `set_model` ------------------------------------------------
@@ -5332,6 +5409,48 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // so the switch takes effect immediately rather than waiting for a next envelope that may
             // never come. `interruptCurrentTurn.current` is non-null exactly while a turn is running.
             if (interruptCurrentTurn.current === null) applyPendingModelSwitch("set_model");
+            continue;
+          }
+          // --- WS-23: `set_effort` -------------------------------------------------------------------
+          //
+          // Winter-only (claude 2.1.282 changes effort through its `apply_flag_settings {effortLevel}`
+          // control request; Winter gives it a subtype of its own, the same shape as `set_model`):
+          // `{ effort?: string | null }`, where omitted, `null` and the literal `'default'` all reset to
+          // the level the session started with. VALIDATED HERE, not at request time: a level the
+          // current model does not document would otherwise surface later as a `capability` refusal
+          // that ends a turn, when the right answer is a typed refusal of this request.
+          //
+          // PARKED like `set_model`: a turn never runs at two levels, so every assistant message of a
+          // turn carries one `perTurnEffort` -- the invariant `withEffortMarkers` derives from.
+          if (cf.subtype === "set_effort") {
+            const payload = cf.payload;
+            const requested = typeof payload === "object" && payload !== null ? (payload as { effort?: unknown }).effort : payload;
+            const reset = requested === undefined || requested === null || requested === "default";
+            if (!reset && !isNamedEffort(requested)) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_effort", message: `invalid effort: ${JSON.stringify(requested)} (expected one of low, medium, high, xhigh, max)` } });
+              continue;
+            }
+            const target: TurnRequest["effort"] | undefined = reset ? config.effort : (requested as TurnRequest["effort"]);
+            const liveKey = currentProviderIdentity?.modelKey ?? currentModel;
+            const vocabulary = liveKey !== undefined ? describeModel?.(liveKey, currentProviderIdentity?.providerId)?.efforts : undefined;
+            if (typeof target === "string" && vocabulary !== undefined && !vocabulary.includes(target)) {
+              output.write({
+                type: "control_response",
+                requestId: cf.requestId,
+                ok: false,
+                error: { code: "invalid_effort", message: `effort "${target}" is not in model "${liveKey}"'s verified vocabulary (${vocabulary.join(", ")})` },
+              });
+              continue;
+            }
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true });
+            // A parked change back to the level already in force nets to nothing.
+            if (target === liveEffort) {
+              pendingEffort = undefined;
+              continue;
+            }
+            pendingEffort = { effort: target };
+            // IDLE is itself a quiescent boundary, exactly as for `set_model`.
+            if (interruptCurrentTurn.current === null) applyPendingEffort();
             continue;
           }
           // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
@@ -5813,7 +5932,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ADVISOR_TOOL_NAME,
       createAdvisorExecutor({
         transcriptSource: {
-          getEntries: (): TranscriptEntry[] => messages.map((m) => ({ role: m.role, text: providerMessageContentToText(m.content) })),
+          // WS-23: a `system` message is outbound-only and never in `messages`; the flatMap keeps the
+          // reviewer's three-role transcript type honest without a cast.
+          getEntries: (): TranscriptEntry[] => messages.flatMap((m) => (m.role === "system" ? [] : [{ role: m.role, text: providerMessageContentToText(m.content) }])),
         },
         // The LIVE model key, not the session's start model: the per-family default is a statement
         // about the family the session is on NOW (D30 reads the session's model, and R13c-4 makes a
@@ -6326,6 +6447,36 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
   const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText);
+
+  /**
+   * WS-23: this generation's effort as the wire carries it.
+   *
+   * On a model whose row documents per-message effort (`describeModel(...).wire.perMessageEffort`) the
+   * TOP-LEVEL value stays what the previous request sent (the newest assistant message's own `effort`
+   * annotation -- which also restores it on a resumed session), and the live level rides effort-only
+   * `system` markers (`withEffortMarkers`). Everywhere else -- no evidence, a numeric effort (a child
+   * definition's), or after the API refused the beta -- a change is a new top-level value, which is the
+   * only option those models have. A session with no effort at all sends none, exactly as before.
+   *
+   * RESUME RULE, decided here: when a resumed session's `config.effort` differs from the transcript's
+   * last top-level value, the transcript's value keeps the top-level slot (so the cached prefix can
+   * still match) and the host's requested level applies to the new turn through a marker.
+   */
+  const planEffort = (): { topLevel: TurnRequest["effort"] | undefined; markers?: { topLevel: string; live: string; accepts: (effort: string) => boolean } } => {
+    const live = liveEffort;
+    if (live === undefined) return { topLevel: undefined };
+    if (typeof live !== "string" || perMessageEffortRejected) return { topLevel: live };
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    const described = key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId) : undefined;
+    if (described?.wire?.perMessageEffort !== true) return { topLevel: live };
+    const vocabulary = described.efforts ?? [];
+    const accepts = (effort: string): boolean => vocabulary.includes(effort);
+    const previous = lastTopLevelEffort(messages);
+    // A previous top-level value this row cannot take (the history was written on another family) is
+    // not carried: the live level becomes the new frozen value, since the cache is cold after a switch.
+    const topLevel = previous !== undefined && accepts(previous) && isNamedEffort(previous) ? previous : live;
+    return { topLevel, markers: { topLevel, live, accepts } };
+  };
 
   // --- the skill listing's session state (claude's `sentSkillNames`) -------------------------------
   //
@@ -7022,6 +7173,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // unless a parked `set_model` supersedes it.
     restorePrimaryAfterFallback();
     applyPendingModelSwitch("set_model");
+    // WS-23: a parked `set_effort` lands at the same boundary, before this envelope's user message.
+    applyPendingEffort();
 
     // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
     // derived-shapes doc calls "the record to trust ... the array is the ledger" (permission_denied
@@ -7176,10 +7329,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       await maybeAutoCompact();
 
       let turn: ProviderTurn;
+      // WS-23: whether THIS generation carried per-message effort markers -- read by the catch's
+      // beta-rejection fallback, which must never fire for a request that sent none.
+      let sentEffortMarkers = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
-        const outboundMessages = requestMessages(context);
+        const effortPlan = planEffort();
+        const outboundMessages = effortPlan.markers !== undefined ? withEffortMarkers(requestMessages(context), effortPlan.markers.topLevel, effortPlan.markers.live, effortPlan.markers.accepts) : requestMessages(context);
+        generationEffort = typeof effortPlan.topLevel === "string" && typeof liveEffort === "string" ? { effort: effortPlan.topLevel, perTurnEffort: liveEffort } : undefined;
+        sentEffortMarkers = outboundMessages.some((m) => m.role === "system" && m.outputConfig !== undefined);
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
@@ -7211,7 +7370,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // nothing), and a session with no tools is the shape every P1-P5 fixture uses.
             ...(toolSpecs.length > 0 ? { tools: toolSpecs } : {}),
             ...(currentModel !== undefined ? { model: currentModel } : {}),
-            ...(config.effort !== undefined ? { effort: config.effort } : {}),
+            // WS-23: the PLANNED top-level value (frozen on a per-message-effort row), never
+            // `config.effort` directly -- a `set_effort` moves the live level.
+            ...(effortPlan.topLevel !== undefined ? { effort: effortPlan.topLevel } : {}),
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
             signal: turnAbort.signal,
             // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
@@ -7280,6 +7441,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // as it is for `withRetry` (retry.ts's first-byte rule): the host may already have been shown
         // text, and a second model re-answering behind it is the replay R6-6 forbids. Such a failure
         // ends the turn on R6-F, as it does for a session with no fallback at all.
+        // WS-23: the per-message effort beta REFUSED (it may be limited to allowlisted accounts). A 400
+        // is pre-first-byte, so re-running the round is a fresh request, never a replay; the session
+        // then changes the TOP-LEVEL value for the rest of its life, the only form left, and says so
+        // once. Sticky, so a second refusal cannot loop -- it surfaces like any other failure.
+        if (sentEffortMarkers && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
+          perMessageEffortRejected = true;
+          console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
+          continue roundLoop;
+        }
         if (isProviderTurnError(err) && err.retryable === true && err.committed !== true && engageFallback()) continue roundLoop;
         const text = err instanceof Error ? err.message : String(err);
         // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
@@ -7315,7 +7485,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // assistant message's `uuid` -- that agreement is what the continuation chain is keyed on,
         // and resume.test.ts's continuous-vs-split fidelity test pins it.
         const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
-        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn) });
+        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         break roundLoop;
       }
@@ -7343,7 +7513,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
       const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn));
-      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn) });
+      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
 
       const resultBlocks: ContentBlock[] = [];
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own

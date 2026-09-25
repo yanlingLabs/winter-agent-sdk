@@ -1,7 +1,9 @@
 // The provider-runtime seam — every adapter lane's import surface.
 //
 // FROZEN as of P6 T2's merge (R6-12): lanes ADD files under `adapters/<family>/`, never edit this
-// one. A lane that needs a change here stops with NEEDS_CONTEXT.
+// one. A lane that needs a change here stops with NEEDS_CONTEXT. WS-23's anthropic-cache lane was
+// assigned this file explicitly (the `system` message role, `outputConfig`, the cache fields on
+// `TurnRequest` and the richer `usage` event); every change it made is ADDITIVE and optional.
 //
 // STRUCTURAL RULE (R6-4): this package NEVER imports `winter-agent-runtime`. The engine's
 // `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay defined in `engine.ts`, the runtime-side
@@ -138,8 +140,21 @@ export type ContentBlockLike =
   | { type: "tool_reference"; tool_names: string[] };
 
 export interface ProviderMessageLike {
-  role: "user" | "assistant" | "tool";
+  /**
+   * `system` (WS-23) is a MID-CONVERSATION system message: Anthropic's `role: "system"` entry inside
+   * `messages` (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages).
+   * The engine produces one only in an OUTBOUND request, never in its history, and only for a model
+   * whose catalog row documents it -- so an adapter for any other family never receives one.
+   */
+  role: "user" | "assistant" | "tool" | "system";
   content: string | ContentBlockLike[];
+  /**
+   * WS-23: a `system` message's own `output_config` -- the per-message effort change
+   * (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta).
+   * An effort-only marker has EMPTY `content` and applies "from the next `user` turn". Only ever set on
+   * a `system` message, and only for a row whose `reasoning.perMessageEffort` evidence documents it.
+   */
+  outputConfig?: { effort: string };
   uuid?: string;
   origin?: MessageOrigin;
   nativeState?: ProviderNativeState;

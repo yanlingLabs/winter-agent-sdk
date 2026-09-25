@@ -116,6 +116,16 @@ export interface ReasoningCapabilities {
    * vocabulary (`CATALOG_VOCABULARIES.blockBindingBetas`).
    */
   blockBinding?: CapabilityEvidence<{ beta: "thinking-binding-controls-2026-08-01" }>;
+  /**
+   * The model takes a PER-MESSAGE effort change (WS-23, 2026-09-25): a `role: "system"` message with
+   * empty `content` and `output_config.effort` inside `messages`, applied "from the next `user` turn"
+   * while the top-level `output_config.effort` stays fixed, so the cached prefix survives the switch
+   * (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta).
+   * Documented for Claude Fable 5.1, Mythos 5.1, Opus 5.5 and Opus 5; Claude Fable 5 returns a 400.
+   * ABSENT means a change is a new top-level value, which restarts the cache. `beta` is the header
+   * value, a closed vocabulary (`CATALOG_VOCABULARIES.perMessageEffortBetas`).
+   */
+  perMessageEffort?: CapabilityEvidence<{ beta: "mid-conversation-output-config-2026-07-01" }>;
 }
 
 /** List prices, USD per million tokens. R6-H: the ONLY price source Winter has — an unpriced model reports `0` / `costBasis: "unknown"`, never an invented number. */

@@ -98,7 +98,7 @@ import { rowsForCanonicalId, type WinterCatalog } from "@yanlinglabs/winter-prov
  * something to ask for.
  */
 const LISTING_PROBE_SLOT_NAME = "probe";
-import type { AttachmentProducer, EngineOptions, PricedUsage, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "./engine.ts";
+import type { AttachmentProducer, EngineOptions, ModelDescription, ModelWireFeatures, PricedUsage, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -685,7 +685,7 @@ export interface ProductionWiring {
  *     when it is one (a key names its provider), and a bare id or alias only when exactly ONE row in
  *     the whole catalog answers to it. Ambiguous -> nothing, and the line keeps the bare id.
  */
-export function describeCatalogModel(catalog: WinterCatalog, model: string, providerId?: string): { displayName?: string } | undefined {
+export function describeCatalogModel(catalog: WinterCatalog, model: string, providerId?: string): ModelDescription | undefined {
   let row: WinterCatalog["models"][number] | undefined;
   if (providerId !== undefined) {
     const own = catalog.models.filter((m) => m.providerId === providerId);
@@ -697,7 +697,18 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
       row = bare.length === 1 ? bare[0] : undefined;
     }
   }
-  return row !== undefined && row.displayName.length > 0 ? { displayName: row.displayName } : undefined;
+  if (row === undefined) return undefined;
+  // WS-23: the row's effort vocabulary and its catalog-evidenced wire features ride beside the display
+  // name, so the engine's request layout keys on the SAME row the adapter reads -- never a second copy.
+  const wire: ModelWireFeatures = {
+    ...(row.reasoning?.perMessageEffort !== undefined ? { perMessageEffort: true as const } : {}),
+  };
+  const description: ModelDescription = {
+    ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),
+    ...(row.reasoning !== undefined && row.reasoning.efforts.length > 0 ? { efforts: [...row.reasoning.efforts] } : {}),
+    ...(Object.keys(wire).length > 0 ? { wire } : {}),
+  };
+  return Object.keys(description).length > 0 ? description : undefined;
 }
 
 /**
@@ -1313,7 +1324,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // SDK 0.0.16: the `# Environment` model line names the model the way the catalog does -- under the
   // session's OWN provider (E4, see `describeCatalogModel`). An unlisted model (the reserved test
   // namespace included) keeps the bare-id line.
-  const describeModel = (model: string, providerId?: string): { displayName?: string } | undefined => describeCatalogModel(slotCatalog, model, providerId);
+  const describeModel = (model: string, providerId?: string): ModelDescription | undefined => describeCatalogModel(slotCatalog, model, providerId);
 
   /**
    * WHETHER THIS SESSION HAS A SLOT SURFACE AT ALL.

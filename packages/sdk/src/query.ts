@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { AccountInfo, AgentInfo, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
+import type { AccountInfo, AgentInfo, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
 import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
@@ -156,6 +156,20 @@ export interface SessionMessagingFacet {
 export interface Query extends AsyncGenerator<SdkMessage> {
   interrupt(): Promise<void>;
   setModel(model?: string): Promise<void>;
+  /**
+   * WS-23 -- WINTER-ONLY, additive: change the session's effort level while it runs. Applied at the
+   * next quiescent boundary (immediately when idle), exactly like `setModel`. Omitted, `null` or
+   * `'default'` resets to the level the session started with.
+   *
+   * On a model whose catalog row documents per-message effort (Claude Fable 5.1, Opus 5.5, Opus 5)
+   * the change rides a mid-conversation `system` message and the cached prompt prefix survives it;
+   * elsewhere it is a new top-level value, which restarts the provider's prompt cache. A level the
+   * current model does not document rejects with an `invalid_effort` error.
+   *
+   * claude 2.1.282 has no method for this (it changes effort through its `apply_flag_settings`
+   * control request); it rides Winter's own `set_effort` control subtype.
+   */
+  setEffort(effort?: EffortLevel | null): Promise<void>;
   /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *
@@ -1194,6 +1208,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // value on the wire that no host wrote.
   gen.setModel = async (model?: string) => {
     await sendControlRequest("set_model", model !== undefined ? { model } : {});
+  };
+  // WS-23: the same object payload shape as `set_model` -- an omitted argument stays omitted.
+  gen.setEffort = async (effort?: EffortLevel | null) => {
+    await sendControlRequest("set_effort", effort !== undefined ? { effort } : {});
   };
   // Phase 6 Task 10: the pinned payload-free `list_models` (`sdk.d.ts:3855`) and Winter's own
   // `account_info`. A malformed/absent runtime payload degrades to an empty answer rather than a
