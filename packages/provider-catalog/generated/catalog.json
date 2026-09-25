@@ -3507,7 +3507,7 @@
     },
     {
       "id": "minimax-cn",
-      "displayName": "Minimax (China)",
+      "displayName": "MiniMax China (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -3515,8 +3515,8 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://api.minimaxi.com/v1",
-        "models": "https://api.minimaxi.com/v1/models"
+        "api": "https://api.minimax.cn/v1",
+        "models": "https://api.minimax.cn/v1/models"
       },
       "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
@@ -3533,16 +3533,131 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Host migrated from api.minimaxi.com to api.minimax.cn per the current docs; a key issued before the migration has not been probed against the new host."
         ]
       },
       "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.minimaxi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.minimaxi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
-        "tier": "pinned-upstream"
+        "tier": "fetched-document",
+        "citation": "https://platform.minimax.cn/docs/api-reference/text-openai-api — MiniMax China OpenAI-compatible API reference, retrieved 2026-09-25: base `https://api.minimax.cn/v1` with an `sk-api-` key; CNY per-token billing (https://platform.minimax.cn/docs/guides/pricing-paygo)."
       }
+    },
+    {
+      "id": "minimax-cn-anthropic",
+      "displayName": "MiniMax China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.minimax.cn/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe.",
+          "The Anthropic root string was read by the research pass but not re-exposed on a later fetch; it follows the documented OpenAI host migration."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.minimax.cn/docs/api-reference/text-anthropic-api — MiniMax China Anthropic-compatible API reference, retrieved 2026-09-25: Anthropic Messages at `https://api.minimax.cn/anthropic` for all eight text models, `sk-api-` key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "minimax-cn-token-plan",
+      "displayName": "MiniMax China Token Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.minimax.cn/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.minimax.cn/docs/token-plan/intro — MiniMax China Token Plan documentation, retrieved 2026-09-25: the China plan (sk-cp- key) is used against the China hosts `https://api.minimax.cn/v1` and `https://api.minimax.cn/anthropic`; billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "minimax-cn-token-plan-anthropic",
+      "displayName": "MiniMax China Token Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.minimax.cn/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.minimax.cn/docs/token-plan/intro — MiniMax China Token Plan documentation, retrieved 2026-09-25: the China plan (sk-cp- key) is used against the China hosts `https://api.minimax.cn/v1` and `https://api.minimax.cn/anthropic`; billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
     },
     {
       "id": "minimax-token-plan",
@@ -36583,47 +36698,1568 @@
       "modelFamily": "minimax"
     },
     {
-      "key": "minimax-cn/MiniMax-M2.5",
-      "providerId": "minimax-cn",
-      "upstreamId": "MiniMax-M2.5",
-      "displayName": "MiniMax M2.5",
+      "key": "minimax-cn-anthropic/MiniMax-M2",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2",
+      "displayName": "MiniMax-M2 (CN Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/models-intro — M2 maximum output 128K including CoT",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
       },
       "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M2.1",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2.1",
+      "displayName": "MiniMax-M2.1 (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.1 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M2.1-highspeed",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2.1-highspeed",
+      "displayName": "MiniMax-M2.1-highspeed (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.1-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6258,
+          "outputPerMTokUsd": 2.5032,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M2.5",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2.5",
+      "displayName": "MiniMax-M2.5 (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.5 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M2.5-highspeed",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2.5-highspeed",
+      "displayName": "MiniMax-M2.5-highspeed (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.5-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6258,
+          "outputPerMTokUsd": 2.5032,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.5-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M2.7",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2.7",
+      "displayName": "MiniMax-M2.7 (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.06258,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7 standard CNY/MTok input 2.1, output 8.4, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M2.7-highspeed",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M2.7-highspeed",
+      "displayName": "MiniMax-M2.7-highspeed (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6258,
+          "outputPerMTokUsd": 2.5032,
+          "cacheReadPerMTokUsd": 0.06258,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-anthropic/MiniMax-M3",
+      "providerId": "minimax-cn-anthropic",
+      "upstreamId": "MiniMax-M3",
+      "displayName": "MiniMax-M3 (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M3 context window 1,000,000",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 adaptive thinking can be enabled; omitted defaults off",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.06258
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M3 standard CNY/MTok input 2.1, output 8.4, cache read 0.42; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-token-plan-anthropic/MiniMax-M2.7",
+      "providerId": "minimax-cn-token-plan-anthropic",
+      "upstreamId": "MiniMax-M2.7",
+      "displayName": "MiniMax-M2.7 (CN Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-token-plan-anthropic/MiniMax-M2.7-highspeed",
+      "providerId": "minimax-cn-token-plan-anthropic",
+      "upstreamId": "MiniMax-M2.7-highspeed",
+      "displayName": "MiniMax-M2.7-highspeed (CN Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-token-plan-anthropic/MiniMax-M3",
+      "providerId": "minimax-cn-token-plan-anthropic",
+      "upstreamId": "MiniMax-M3",
+      "displayName": "MiniMax-M3 (CN Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M3 context window 1,000,000",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 adaptive thinking can be enabled; omitted defaults off",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-token-plan/MiniMax-M2.7",
+      "providerId": "minimax-cn-token-plan",
+      "upstreamId": "MiniMax-M2.7",
+      "displayName": "MiniMax-M2.7 (CN Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-token-plan/MiniMax-M2.7-highspeed",
+      "providerId": "minimax-cn-token-plan",
+      "upstreamId": "MiniMax-M2.7-highspeed",
+      "displayName": "MiniMax-M2.7-highspeed (CN Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn-token-plan/MiniMax-M3",
+      "providerId": "minimax-cn-token-plan",
+      "upstreamId": "MiniMax-M3",
+      "displayName": "MiniMax-M3 (CN Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M3 context window 1,000,000",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 thinking on by default; can disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn/MiniMax-M2",
+      "providerId": "minimax-cn",
+      "upstreamId": "MiniMax-M2",
+      "displayName": "MiniMax-M2 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/models-intro — M2 maximum output 128K including CoT",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn/MiniMax-M2.1",
+      "providerId": "minimax-cn",
+      "upstreamId": "MiniMax-M2.1",
+      "displayName": "MiniMax-M2.1 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.1 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn/MiniMax-M2.1-highspeed",
+      "providerId": "minimax-cn",
+      "upstreamId": "MiniMax-M2.1-highspeed",
+      "displayName": "MiniMax-M2.1-highspeed (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.1-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6258,
+          "outputPerMTokUsd": 2.5032,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-cn/MiniMax-M2.5",
+      "providerId": "minimax-cn",
+      "upstreamId": "MiniMax-M2.5",
+      "displayName": "MiniMax-M2.5 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.5 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m2.5",
       "modelFamily": "minimax"
@@ -36632,44 +38268,90 @@
       "key": "minimax-cn/MiniMax-M2.5-highspeed",
       "providerId": "minimax-cn",
       "upstreamId": "MiniMax-M2.5-highspeed",
-      "displayName": "MiniMax M2.5 Highspeed",
+      "displayName": "MiniMax-M2.5-highspeed (CN)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.5-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5-highspeed — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.5-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6258,
+          "outputPerMTokUsd": 2.5032,
+          "cacheReadPerMTokUsd": 0.03129,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m2.5-highspeed",
       "modelFamily": "minimax"
@@ -36678,44 +38360,90 @@
       "key": "minimax-cn/MiniMax-M2.7",
       "providerId": "minimax-cn",
       "upstreamId": "MiniMax-M2.7",
-      "displayName": "MiniMax M2.7",
+      "displayName": "MiniMax-M2.7 (CN)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.06258,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7 standard CNY/MTok input 2.1, output 8.4, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m2.7",
       "modelFamily": "minimax"
@@ -36724,44 +38452,90 @@
       "key": "minimax-cn/MiniMax-M2.7-highspeed",
       "providerId": "minimax-cn",
       "upstreamId": "MiniMax-M2.7-highspeed",
-      "displayName": "MiniMax M2.7 Highspeed",
+      "displayName": "MiniMax-M2.7-highspeed (CN)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7-highspeed — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M2.7-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6258,
+          "outputPerMTokUsd": 2.5032,
+          "cacheReadPerMTokUsd": 0.06258,
+          "cacheWritePerMTokUsd": 0.391125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m2.7-highspeed",
       "modelFamily": "minimax"
@@ -36770,52 +38544,91 @@
       "key": "minimax-cn/MiniMax-M3",
       "providerId": "minimax-cn",
       "upstreamId": "MiniMax-M3",
-      "displayName": "MiniMax M3",
+      "displayName": "MiniMax-M3 (CN)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1048576,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M3 context window 1,000,000",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/cn/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 thinking on by default; can disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3129,
+          "outputPerMTokUsd": 1.2516,
+          "cacheReadPerMTokUsd": 0.06258
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M3 standard CNY/MTok input 2.1, output 8.4, cache read 0.42; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m3",
       "modelFamily": "minimax"
@@ -38455,6 +40268,463 @@
         "observedAt": "2026-09-25T08:45:47Z"
       },
       "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "moonshot-cn-anthropic/kimi-k3",
+      "providerId": "moonshot-cn-anthropic",
+      "upstreamId": "kimi-k3",
+      "displayName": "Kimi K3 (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 has a 1M-token (1048576) context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "maxOutputTokens": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 max_completion_tokens can be set up to 1048576",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/api/messages — Messages API defines tools/tool_choice and tool_use blocks",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/api/messages — native function/tool use documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/api/messages — output_config.format supports json_schema",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/context-caching — K3 supports cache writes and reads (5m and 1h TTL)",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 always thinks",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "max",
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2.98,
+          "outputPerMTokUsd": 14.9,
+          "cacheReadPerMTokUsd": 0.298,
+          "cacheWritePerMTokUsd": 2.98
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.com/ — kimi-k3 CN homepage price per MTok: CNY 20 input, 100 output, 2 cache hit, 20 cache write; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "moonshot-cn/kimi-k2.6",
+      "providerId": "moonshot-cn",
+      "upstreamId": "kimi-k2.6",
+      "displayName": "Kimi K2.6 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code, HighSpeed, and K2.6 have 256K-token (262144) context windows",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code multi-step tool calling documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — native function/tool use documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K2 price table has cache-hit input pricing; no cache-write fee listed",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/models-overview — K2.7 Code thinking is always on; K2.6 supports enabled/disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.9685,
+          "outputPerMTokUsd": 4.023,
+          "cacheReadPerMTokUsd": 0.1639
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.com/ — kimi-k2.6 CN homepage price per MTok: CNY 6.5 input, 27 output, 1.1 cache hit; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "reasoning_effort"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "moonshot-cn/kimi-k2.7-code",
+      "providerId": "moonshot-cn",
+      "upstreamId": "kimi-k2.7-code",
+      "displayName": "Kimi K2.7 Code (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code, HighSpeed, and K2.6 have 256K-token (262144) context windows",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code multi-step tool calling documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — native function/tool use documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K2 price table has cache-hit input pricing; no cache-write fee listed",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/models-overview — K2.7 Code thinking is always on; K2.6 supports enabled/disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.9685,
+          "outputPerMTokUsd": 4.023,
+          "cacheReadPerMTokUsd": 0.1937
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.com/ — kimi-k2.7-code CN homepage price per MTok: CNY 6.5 input, 27 output, 1.3 cache hit; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "reasoning_effort"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "moonshot-cn/kimi-k2.7-code-highspeed",
+      "providerId": "moonshot-cn",
+      "upstreamId": "kimi-k2.7-code-highspeed",
+      "displayName": "Kimi K2.7 Code HighSpeed (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code, HighSpeed, and K2.6 have 256K-token (262144) context windows",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — K2.7 Code multi-step tool calling documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart — native function/tool use documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/pricing/chat — K2 price table has cache-hit input pricing; no cache-write fee listed",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/models-overview — K2.7 Code thinking is always on; K2.6 supports enabled/disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "reasoning_effort"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code-highspeed",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "moonshot-cn/kimi-k3",
+      "providerId": "moonshot-cn",
+      "upstreamId": "kimi-k3",
+      "displayName": "Kimi K3 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 has a 1M-token (1048576) context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "maxOutputTokens": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 max_completion_tokens can be set up to 1048576",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/use-kimi-vision-model — lists all four IDs as understanding images and video, alongside text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — examples generate text responses; no generated image/audio/video claim",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 custom tools / tool_choice examples",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — native function/tool use documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 response_format json_schema strict example",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.ai/docs/guide/context-caching — K3 supports cache writes and reads (5m and 1h TTL)",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:45:47Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart — K3 always thinks",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:45:47Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "max",
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2.98,
+          "outputPerMTokUsd": 14.9,
+          "cacheReadPerMTokUsd": 0.298,
+          "cacheWritePerMTokUsd": 2.98
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.kimi.com/ — kimi-k3 CN homepage price per MTok: CNY 20 input, 100 output, 2 cache hit, 20 cache write; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:13:37Z"
+      },
+      "unsupportedParameters": [
+        "thinking"
+      ],
       "status": "candidate",
       "canonicalModelId": "kimi-k3",
       "modelFamily": "kimi"
