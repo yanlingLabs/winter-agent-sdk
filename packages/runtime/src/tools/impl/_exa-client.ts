@@ -238,7 +238,9 @@ function classifyError(err: unknown): Classified {
  *   - an error the SDK raised LOCALLY (`SdkError`, string code): only a closed or unsendable
  *     connection is a transport failure (v1 spelled this as the JSON-RPC-shaped `-32000`);
  *   - a JSON-RPC error the server sent (`ProtocolError`, numeric code): the backend answered -- final;
- *   - anything else, with no code at all, is a socket-level failure (`fetch failed` et al.).
+ *   - anything else WITHOUT a numeric code is a socket-level failure: `fetch failed` has none, and
+ *     Bun's own fetch errors carry a STRING code (`ConnectionRefused`, `ECONNRESET`) -- exactly v1's
+ *     `typeof code !== "number"` reading, kept.
  */
 function isTransportFailure(err: unknown): boolean {
   if (err instanceof McpConnectError) return false;
@@ -246,7 +248,7 @@ function isTransportFailure(err: unknown): boolean {
   if (status !== undefined) return status === 404;
   if (err instanceof SdkError) return err.code === SdkErrorCode.ConnectionClosed || err.code === SdkErrorCode.SendFailed || err.code === SdkErrorCode.NotConnected;
   const code = (err as { code?: unknown } | null)?.code;
-  return code === undefined;
+  return typeof code !== "number";
 }
 
 /**
