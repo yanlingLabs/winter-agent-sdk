@@ -758,6 +758,10 @@ export interface Provider {
   generate(input: ProviderRequest): Promise<ProviderTurn>;
 }
 
+/** WS-23 (M-7): the tool result a call gets when its turn stopped at the output limit, so the call was never run. */
+export const OUTPUT_LIMIT_TRUNCATED_CALL_TEXT =
+  "Error: this tool call was not run. Your response hit the output token limit (max_tokens) before the call's input was complete, so its arguments may be truncated. Issue the call again; if its input is large (a whole file, a long command), split it into smaller calls.";
+
 /** WS-23: the most times one user envelope re-sends a `pause_turn` response before ending typed. The vendor's own handling guide caps continuations at 5. */
 export const MAX_PAUSE_TURN_CONTINUATIONS = 5;
 
@@ -7527,7 +7531,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // exhausted). Its own flag rather than a re-derivation from `finalResult`, for exactly the
       // reason `toolThrowText` above is one -- `finalResult` has several other producers.
       let structuredTerminated = false;
+      // WS-23 (review M-7): a `tool_use` turn the provider cut off at its OUTPUT LIMIT (`max_tokens`)
+      // carries at least one call whose arguments stopped mid-stream -- the fold parses what arrived,
+      // or wraps it as `__winter_unparsed_arguments`, and the tool would run on a truncated input (a
+      // half-written file, a cut-off command). NONE of the round's calls runs: each gets an error
+      // result saying why, and the round loop continues so the model re-issues the call with room to
+      // finish it (splitting a large write if it has to). Counted as a round like any other, so
+      // `maxTurns` still bounds a model that keeps overrunning.
+      const truncatedByOutputLimit = turn.stopReason === "max_tokens";
       for (const call of turn.calls) {
+        if (truncatedByOutputLimit) {
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: OUTPUT_LIMIT_TRUNCATED_CALL_TEXT, is_error: true });
+          continue;
+        }
         // --- Phase 5 Task 3 (R5-10): the host-generated StructuredOutput tool -----------------------
         //
         // Handled BEFORE every other execution-boundary check, and deliberately outside the try:

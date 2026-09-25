@@ -398,3 +398,28 @@ describe("WS-23: `RuntimeConfig.maxOutputTokens` reaches the wire and wins over 
     expect(String(result(run.messages)["result"])).toContain("declared maximum of 128000");
   });
 });
+
+// --- review M-7: a call cut off at the output limit never runs ------------------------------------------
+
+describe("WS-23 M-7: a `tool_use` turn stopped by `max_tokens` executes nothing and lets the model retry", () => {
+  test("the truncated call gets an error result, the next request carries it, and the model's retry runs", async () => {
+    const executed: unknown[] = [];
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      engine: { tools: { execute: async (req: { name: string; input: unknown }) => (executed.push(req.input), { output: "wrote it" }) } },
+      script: (index) =>
+        index === 0
+          ? { blocks: [{ type: "tool_use", id: "toolu_cut", name: "Glob", input: { pattern: "half" } }], stopReason: "max_tokens" }
+          : index === 1
+            ? { blocks: [{ type: "tool_use", id: "toolu_again", name: "Glob", input: { pattern: "whole" } }], stopReason: "tool_use" }
+            : { blocks: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+    });
+    // Only the retried call ran.
+    expect(executed).toEqual([{ pattern: "whole" }]);
+    expect(run.fake.requests).toHaveLength(3);
+    const toolResult = (run.fake.requests[1]!.body["messages"] as Array<{ role: string; content: Array<Record<string, unknown>> }>).at(-1)!.content[0]!;
+    expect(toolResult).toMatchObject({ type: "tool_result", tool_use_id: "toolu_cut", is_error: true });
+    expect(JSON.stringify(toolResult["content"])).toContain("output token limit");
+    expect(result(run.messages)).toMatchObject({ is_error: false, result: "done" });
+  });
+});
