@@ -166,6 +166,7 @@
           "webSearchRequests": 0,
           "costUSD": 0.0000242,
           "contextWindow": 1048576,
+          "maxOutputTokens": 65536,
           "canonicalModel": "google/gemini-2.5-flash",
           "costBasis": "list"
         }
