@@ -6,7 +6,7 @@
 // network or a Keychain.
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, splitFrames, type Options, type SdkMessage, type SpawnedRuntimeProcess, type SpawnRuntimeOptions, type WinterFrame, type WinterMcpServerInstance } from "@yanlinglabs/winter-agent-sdk";
@@ -20,6 +20,7 @@ import { EMBEDDED_ABORT_END_INPUT_REQUEST_ID, EMBEDDED_ABORT_INTERRUPT_REQUEST_I
 
 const WORKER_ENTRY = join(import.meta.dir, "embedded-worker.ts");
 const THROWING_WORKER_ENTRY = join(import.meta.dir, "embedded-throw.fixture.ts");
+const CRASH_WORKER_ENTRY = join(import.meta.dir, "embedded-crash.fixture.ts");
 const TEMP_ROOTS: string[] = [];
 afterAll(() => {
   for (const dir of TEMP_ROOTS) rmSync(dir, { recursive: true, force: true });
@@ -371,6 +372,102 @@ describe("spawnEmbeddedWorker (one Worker per session)", () => {
     await Bun.sleep(200); // the fixture spins synchronously on a `--spin` start
     proc.kill();
     expect(await proc.exited).toEqual({ code: null, signal: "SIGKILL" });
+  }, 30_000);
+});
+
+describe("review round 1: cwd, crashes mid-session, process-wide fences, held start", () => {
+  /** A hanging session in the REAL embedded-worker.ts (via the crash fixture), with its user frame sent. */
+  function hangingCrashSession(mode: string): { proc: ReturnType<typeof spawnEmbeddedWorker>; out: string[]; err: string[]; reading: Promise<void> } {
+    const sessionId = crypto.randomUUID();
+    const proc = spawnEmbeddedWorker({
+      workerEntry: CRASH_WORKER_ENTRY,
+      spawn: { command: "winter", args: configArgv({ sessionId, cwd: tempDir("cwd"), model: "winter-test/hang" }), cwd: "/", env: sessionEnv({ WINTER_EMBEDDED_CRASH_FIXTURE: mode }) },
+      killGraceMs: 500,
+    });
+    const out: string[] = [];
+    const err: string[] = [];
+    const reading = Promise.all([
+      (async () => { for await (const c of proc.stdout) out.push(c); })(),
+      (async () => { for await (const c of proc.stderr!) err.push(c); })(),
+    ]).then(() => {});
+    proc.stdin.write(JSON.stringify({ type: "user", text: "hang please" }) + "\n");
+    return { proc, out, err, reading };
+  }
+
+  for (const [mode, message] of [["throw", "fixture: thrown during an embedded session"], ["reject", "fixture: rejected during an embedded session"]] as const) {
+    test(`an ${mode === "throw" ? "uncaught throw" : "unhandled rejection"} DURING a session is an error exit with the reason on stderr; the host survives`, async () => {
+      const { proc, out, err, reading } = hangingCrashSession(mode);
+      expect(await proc.exited).toEqual({ code: 1, signal: null });
+      await reading;
+      // The session WAS running when it died: its init frame reached the host first.
+      expect(out.join("")).toContain('"subtype":"init"');
+      expect(err.join("")).toContain("embedded runtime worker failed");
+      expect(err.join("")).toContain(message);
+    }, 30_000);
+  }
+
+  test("process.chdir and process.umask(mask) throw inside an embedded session; the host's cwd and umask are untouched", async () => {
+    const cwdBefore = process.cwd();
+    const umaskBefore = process.umask();
+    const { proc, err, reading } = hangingCrashSession("fences");
+    const deadline = Date.now() + 10_000;
+    while (!err.join("").includes("fence umask-read") && Date.now() < deadline) await Bun.sleep(20);
+    proc.kill();
+    await proc.exited;
+    await reading;
+    const text = err.join("");
+    expect(text).toContain("fence chdir: refused (process.chdir(\"/\") is refused inside an embedded Winter session");
+    expect(text).toContain("fence umask: refused (process.umask(mask) is refused inside an embedded Winter session");
+    expect(text).toContain("fence umask-read: number");
+    expect(text).not.toContain("ALLOWED");
+    expect(process.cwd()).toBe(cwdBefore);
+    expect(process.umask()).toBe(umaskBefore);
+  }, 30_000);
+
+  test("I-1: an embedded session's stdio MCP server starts in the SESSION cwd, not the host's", async () => {
+    const cwd = realpathSync(tempDir("session-cwd"));
+    const marker = join(tempDir("marker"), "server-cwd");
+    expect(cwd).not.toBe(realpathSync(process.cwd()));
+    await drain(
+      query({
+        prompt: "go",
+        options: {
+          model: "winter-test/echo",
+          cwd,
+          env: sessionEnv(),
+          // Not an MCP server at all: it records where it was started, then idles. The session's
+          // first-turn wait gives up on it, which is irrelevant -- the spawn is what is under test.
+          mcpServers: { cwdprobe: { command: "/bin/sh", args: ["-c", `pwd -P > '${marker}'; sleep 1`] } },
+          spawnClaudeCodeProcess: (o) => spawnEmbeddedWorker({ workerEntry: WORKER_ENTRY, spawn: o }),
+        },
+      }),
+    );
+    const deadline = Date.now() + 5000;
+    while (!existsSync(marker) && Date.now() < deadline) await Bun.sleep(20);
+    expect(readFileSync(marker, "utf8").trim()).toBe(cwd);
+  }, 30_000);
+
+  test("I-2: startAfter holds the engine -- a Worker's session does not start until the given promise settles", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const sessionId = crypto.randomUUID();
+    const proc = spawnEmbeddedWorker({
+      workerEntry: WORKER_ENTRY,
+      spawn: { command: "winter", args: configArgv({ sessionId, cwd: tempDir("cwd"), model: "winter-test/echo" }), cwd: "/", env: sessionEnv() },
+      startAfter: gate,
+    });
+    const out: string[] = [];
+    const reading = (async () => { for await (const c of proc.stdout) out.push(c); })();
+    proc.stdin.write(JSON.stringify({ type: "user", text: "hi" }) + "\n");
+    await Bun.sleep(1500); // ample time for a Worker that HAD started to write its init frame
+    expect(out).toEqual([]);
+    release();
+    const deadline = Date.now() + 10_000;
+    while (!out.join("").includes('"type":"result"') && Date.now() < deadline) await Bun.sleep(20);
+    expect(out.join("")).toContain('"subtype":"init"');
+    proc.stdin.end();
+    expect(await proc.exited).toEqual({ code: 0, signal: null });
+    await reading;
   }, 30_000);
 });
 

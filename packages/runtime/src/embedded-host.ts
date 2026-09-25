@@ -56,6 +56,13 @@ export interface SpawnEmbeddedWorkerOptions {
   killGraceMs?: number;
   /** Test seam over the Worker constructor. The default is `new Worker(entry, { env })`. */
   createWorker?: (entry: string, env: Record<string, string>) => Worker;
+  /**
+   * Hold the `start` message until this settles (either way). The Worker is constructed at once and
+   * buffers stdin meanwhile, but NO engine runs until then. For a host that must not overlap two
+   * incarnations of one session on one transcript: every Worker shares the host's pid, so the
+   * transcript lease cannot keep them apart -- the host passes the previous incarnation's `exited`.
+   */
+  startAfter?: Promise<unknown>;
 }
 
 export interface EmbeddedWorkerProcess extends SpawnedRuntimeProcess {
@@ -181,7 +188,11 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   });
   worker.addEventListener("close", onClosed);
 
-  send({ kind: "start", argv: [...opts.spawn.args], ...(opts.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: opts.workflowWorkerCommand } : {}) });
+  const start: EmbeddedHostMessage = { kind: "start", argv: [...opts.spawn.args], ...(opts.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: opts.workflowWorkerCommand } : {}) };
+  if (opts.startAfter === undefined) send(start);
+  // Messages to a Worker are ordered, and the Worker entry buffers `stdin`/`stdin-end`/`abort` that
+  // arrive before `start` -- so holding `start` alone holds the engine without losing anything.
+  else void opts.startAfter.then(() => send(start), () => send(start));
 
   const kill = (_signal?: string): void => {
     if (state !== "running") {

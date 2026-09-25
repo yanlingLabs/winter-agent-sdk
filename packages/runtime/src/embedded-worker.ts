@@ -31,7 +31,26 @@ function post(message: EmbeddedWorkerMessage): void {
   postMessage(message);
 }
 
+/**
+ * M-1 (WS-23 review): `process.chdir` and the SETTER form of `process.umask` are PROCESS-wide even
+ * inside a Worker (measured: a Worker's `chdir` moved the host daemon's cwd). Nothing in the runtime,
+ * provider-runtime or sdk sources calls either (`embedded-guards.test.ts` greps for it); inside an
+ * embedded session they throw, so a future call -- or a plugin's -- fails loudly in its own session
+ * instead of silently moving every other session and the host. The umask GETTER still works.
+ */
+function fenceProcessWideState(): void {
+  const readUmask = process.umask.bind(process) as () => number;
+  process.chdir = ((directory: string): void => {
+    throw new Error(`process.chdir(${JSON.stringify(directory)}) is refused inside an embedded Winter session: the working directory is process-wide and the host daemon's; pass the session cwd explicitly instead`);
+  }) as typeof process.chdir;
+  process.umask = ((mask?: string | number): number => {
+    if (mask !== undefined) throw new Error("process.umask(mask) is refused inside an embedded Winter session: the file-mode mask is process-wide and the host daemon's");
+    return readUmask();
+  }) as typeof process.umask;
+}
+
 function installEmbeddedWorker(): void {
+  fenceProcessWideState();
   const input = new Queue<string>();
   const abort = new AbortController();
   let started = false;
