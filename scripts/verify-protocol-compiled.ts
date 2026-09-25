@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { buildRuntime } from "./build-runtime.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { encodeFrame, splitFrames, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import { SCENARIO_FINAL_TEXT, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "winter-agent-runtime";
+import { SCENARIO_FINAL_TEXT, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "@yanlinglabs/winter-agent-runtime";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 

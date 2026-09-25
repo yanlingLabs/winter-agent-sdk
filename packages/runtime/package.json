@@ -1,16 +1,105 @@
 {
-  "name": "winter-agent-runtime",
+  "name": "@yanlinglabs/winter-agent-runtime",
   "version": "0.0.24",
   "license": "MIT",
-  "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+  "engines": {
+    "bun": ">=1.3"
   },
-  "bin": {
-    "winter": "./src/main.ts"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanlingLabs/winter-agent-sdk.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://github.com/yanlingLabs/winter-agent-sdk",
+  "bugs": {
+    "url": "https://github.com/yanlingLabs/winter-agent-sdk/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "bun": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    },
+    "./embedded": {
+      "types": "./dist/embedded.d.ts",
+      "bun": "./src/embedded.ts",
+      "default": "./dist/embedded.js"
+    },
+    "./embedded-host": {
+      "types": "./dist/embedded-host.d.ts",
+      "bun": "./src/embedded-host.ts",
+      "default": "./dist/embedded-host.js"
+    },
+    "./embedded-worker": {
+      "types": "./dist/embedded-worker.d.ts",
+      "bun": "./src/embedded-worker.ts",
+      "default": "./dist/embedded-worker.js"
+    },
+    "./workflow-worker": {
+      "types": "./dist/workflows/subprocess-entry.d.ts",
+      "bun": "./src/workflows/subprocess-entry.ts",
+      "default": "./dist/workflows/subprocess-entry.js"
+    },
+    "./version": {
+      "types": "./dist/version.d.ts",
+      "bun": "./src/version.ts",
+      "default": "./dist/version.js"
+    }
+  },
+  "files": [
+    "dist",
+    "NOTICE",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node -e \"if(!/\\bpnpm\\//.test(process.env.npm_config_user_agent||''))throw new Error('pack/publish this package with pnpm. publishConfig.exports is a pnpm-only feature: under npm the override is ignored, so the packed manifest keeps a bun condition pointing at src/ -- which files does not ship -- and the tarball is broken for every Bun consumer while installing fine under Node. See RELEASING.md.')\""
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./testing": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      },
+      "./embedded": {
+        "types": "./dist/embedded.d.ts",
+        "default": "./dist/embedded.js"
+      },
+      "./embedded-host": {
+        "types": "./dist/embedded-host.d.ts",
+        "default": "./dist/embedded-host.js"
+      },
+      "./embedded-worker": {
+        "types": "./dist/embedded-worker.d.ts",
+        "default": "./dist/embedded-worker.js"
+      },
+      "./workflow-worker": {
+        "types": "./dist/workflows/subprocess-entry.d.ts",
+        "default": "./dist/workflows/subprocess-entry.js"
+      },
+      "./version": {
+        "types": "./dist/version.d.ts",
+        "default": "./dist/version.js"
+      }
+    }
+  },
+  "winter": {
+    "publish": {
+      "npm": true
+    }
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

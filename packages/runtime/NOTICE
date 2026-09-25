@@ -1,0 +1,41 @@
+NOTICE
+======
+
+Third-party attributions for the Winter agent SDK.
+
+This file records material that Winter DERIVED FROM third-party artifacts. Winter copies no source
+code from any of them; what it takes is protocol facts — endpoint URLs, form-field names, client
+identifiers and scope strings — which it needs in order to speak to a vendor's service at all. Each
+entry names the exact commit the values were read at, so the derivation is re-checkable.
+
+
+-------------------------------------------------------------------------------
+xai-org/grok-build
+-------------------------------------------------------------------------------
+
+    Repository:  https://github.com/xai-org/grok-build
+    Commit:      72a61251fcffb464bcc687aeb5a998e5a98ec0c9
+    License:     Apache License, Version 2.0
+                 https://www.apache.org/licenses/LICENSE-2.0
+    Copyright:   Copyright 2023-2026 SpaceXAI
+
+Winter's `xai-oauth` provider derives the following constants and request shapes from this
+repository's authentication module, in order to perform its own OAuth 2.0 device authorization
+grant (RFC 8628) against xAI's public, secret-less OAuth client:
+
+  - the public OAuth client identifier
+  - the OAuth issuer, device-authorization endpoint and token endpoint
+  - the requested scope set
+  - the name of the form field the flow carries a client identity in
+  - the shape (field names) of the device-authorization and token requests
+
+No source code from this repository is copied into Winter, and no part of Winter is a derivative
+work of it. The derivation is recorded, with per-value line citations, in:
+
+    packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md
+
+Winter identifies ITSELF in that flow. It sends its own `User-Agent` (`winter-agent-sdk/<version>`)
+and its own name in the flow's identity field, and it does not send xAI's product-identity or
+telemetry headers. Winter is not affiliated with or endorsed by SpaceXAI, and "Grok" and "Grok Build"
+are the marks of their owner; they appear here and in the capture solely to identify the artifact
+these values were derived from.

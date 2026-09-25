@@ -18,7 +18,7 @@ export function computeSyncedManifests(version: string, manifests: Manifest[]): 
 }
 
 /**
- * `RUNTIME_ENGINE_VERSION` and `SDK_VERSION`, the version strings that are not in a manifest.
+ * `RUNTIME_ENGINE_VERSION`, `RUNTIME_VERSION` and `SDK_VERSION`, the version strings that are not in a manifest.
  *
  * `packages/runtime/src/store/dialect.ts` hardcodes the runtime's engine version, and
  * `packages/sdk/src/version.ts` hardcodes the sdk's own version, rather than reading their
@@ -56,6 +56,9 @@ if (import.meta.main) {
   const targets: Array<{ path: string; name: string; label: string }> = [
     { path: `${cwd}/packages/runtime/src/store/dialect.ts`, name: "RUNTIME_ENGINE_VERSION", label: "RUNTIME_ENGINE_VERSION" },
     { path: `${cwd}/packages/sdk/src/version.ts`, name: "SDK_VERSION", label: "SDK_VERSION" },
+    // WS-23: the runtime package's own side-effect-free version module -- what an embedding host reads
+    // on its main thread for its boot-time version-equality assert (see that file's header).
+    { path: `${cwd}/packages/runtime/src/version.ts`, name: "RUNTIME_VERSION", label: "RUNTIME_VERSION" },
   ];
   for (const t of targets) {
     const before = readFileSync(t.path, "utf8");

@@ -961,7 +961,7 @@ const PHASE_7A_ROWS: ConformanceRow[] = [
     bullet: "the publish pipeline packs, scans the TARBALL's contents, and imports every publishable package's every declared exports subpath from a real installed tarball",
     status: "new",
     citations: [
-      { file: `${SCRIPTS}/release-pack.test.ts`, testName: "the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) -- excludes only the private runtime" },
+      { file: `${SCRIPTS}/release-pack.test.ts`, testName: "the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) PLUS the runtime (WS-23)" },
       { file: `${SCRIPTS}/release-pack.test.ts`, testName: "catches all seven categories in one pass over one fixture" },
       { file: `${SCRIPTS}/release-pack.test.ts`, testName: "P7a fix wave (item 9): NO tarball ships a test file -- verified via `tar -tzf`, independently of the scanner" },
       { file: `${SCRIPTS}/smoke-installed.test.ts`, testName: "every publishable package's OWN exports map is fully covered -- no subpath silently skipped" },

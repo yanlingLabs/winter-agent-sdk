@@ -8,8 +8,8 @@ import { resolveRuntimeExecutable, defaultSpawn, type SpawnedRuntimeProcess } fr
 import { WinterSDKError, CLIConnectionError, ProcessError, ProtocolDecodeError, AbortError } from "./errors.ts";
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
-import { inMemoryProcess } from "winter-agent-runtime/testing";
-import type { ProviderTurn } from "winter-agent-runtime";
+import { inMemoryProcess } from "@yanlinglabs/winter-agent-runtime/testing";
+import type { ProviderTurn } from "@yanlinglabs/winter-agent-runtime";
 
 // --- test doubles -----------------------------------------------------------------------------
 // Hand-scripted SpawnedRuntimeProcess doubles: emit exact byte chunks (encoded frames) so
