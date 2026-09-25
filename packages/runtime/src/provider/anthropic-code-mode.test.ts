@@ -6,7 +6,8 @@
 // wire serializer and the history renderer all touch the same blocks on the way through.
 import { describe, expect, test } from "bun:test";
 import type { ProtocolSdkMessage as SdkMessage, RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, WinterProviderResolutionError, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type ContentBlock } from "../engine.ts";
 import { stubExecutor } from "./mock.ts";
@@ -299,5 +300,83 @@ describe("WS-23 item 2: `pause_turn` continues the turn", () => {
     const run = await runSession({ model: "anthropic/claude-sonnet-5", script: () => ({ blocks: [{ type: "text", text: "still going" }], stopReason: "pause_turn" }) });
     expect(run.fake.requests).toHaveLength(6);
     expect(result(run.messages)).toMatchObject({ is_error: true, terminal_reason: "pause_turn_limit" });
+  });
+});
+
+// --- review I-3: a CROSS-PROVIDER Console target resolves to the broker's `anthropic:console` record ---
+
+describe("WS-23 I-3: a GPT session reaching a Console model (advisor reviewer, stated auxiliary model, subagent) uses `anthropic:console`", () => {
+  const SERVICE = "com.winter.test.hermetic";
+  const CONSOLE = { kind: "keychain" as const, account: ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, service: SERVICE };
+
+  /** A GPT session whose only Console material is the broker's record, with api.anthropic.com answered IN-PROCESS (never reached). */
+  async function withGptSession(fn: (wiring: ReturnType<typeof buildSessionProvider>, seen: Array<{ url: string; headers: Headers }>) => Promise<void>, extra: Partial<RuntimeConfig> = {}): Promise<void> {
+    const config = { sessionId: "ws23-i3", cwd: "/tmp/ws23", model: "openai/gpt-4.1", persistSession: false, keychainService: SERVICE, provider: { providerId: "openai", authRef: { kind: "inline", value: "fixture" } }, ...extra } as RuntimeConfig;
+    const credentials = createMemoryCredentialStore([[CONSOLE, { kind: "bearer", token: "fixture-console-bearer" }]]);
+    const wiring = buildSessionProvider({ config, env: {}, catalog: loadCatalog(), credentials });
+    const seen: Array<{ url: string; headers: Headers }> = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!url.startsWith("https://api.anthropic.com/")) throw new Error(`hermetic fixture: refused ${new URL(url).origin}`);
+      seen.push({ url, headers: new Headers(init?.headers) });
+      const frames = [
+        { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-sonnet-5", content: [], usage: { input_tokens: 1, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+        { type: "message_stop" },
+      ];
+      return new Response(frames.map((f) => `event: ${f.type}\ndata: ${JSON.stringify(f)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    try {
+      await fn(wiring, seen);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  const expectConsoleBearer = (seen: Array<{ headers: Headers }>) => {
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.headers.get("authorization")).toBe("Bearer fixture-console-bearer");
+    expect(seen[0]!.headers.get("anthropic-beta") ?? "").toContain("oauth-2025-04-20");
+  };
+
+  test("advisor reviewer (`config.advisor.model` on Console): resolves to the broker's record and its generation carries the Console bearer", async () => {
+    await withGptSession(async (wiring, seen) => {
+      const reviewer = wiring.resolveReviewer?.();
+      if (reviewer === undefined) throw new Error("no reviewer resolved");
+      expect(reviewer.model).toBe("console/claude-sonnet-5");
+      await reviewer.provider.generate({ messages: [{ role: "user", content: "hi" }] });
+      expectConsoleBearer(seen);
+    }, { advisor: { model: "console/claude-sonnet-5" } });
+  });
+
+  test("an in-runtime `set_model` GPT -> Console stays R6-K's typed `provider-mismatch` (a cross-provider switch is a new incarnation, never this seam)", async () => {
+    await withGptSession(async (wiring) => {
+      expect(wiring.resolveModelSwitch("console/claude-sonnet-5")).toMatchObject({ refused: true, code: "provider-mismatch" });
+    });
+  });
+
+  test("a stated auxiliary model on Console (e.g. WebFetch's digest pin): resolves to the same record", async () => {
+    await withGptSession(async (wiring, seen) => {
+      const aux = wiring.resolveAuxiliaryModel!("console/claude-sonnet-5");
+      if (!aux.ok) throw new Error(`refused: ${aux.code}`);
+      await aux.provider.generate({ messages: [{ role: "user", content: "hi" }] });
+      expectConsoleBearer(seen);
+    });
+  });
+
+  test("subagent (a child on `console`): the target material is the broker's record, and it is present", async () => {
+    await withGptSession(async (wiring, seen) => {
+      const resolved = wiring.registry.resolve({ model: "console/claude-sonnet-5" });
+      if (resolved instanceof WinterProviderResolutionError) throw resolved;
+      const material = wiring.describeTargetMaterial(resolved);
+      expect(material).toMatchObject({ source: "provider-record", authRef: CONSOLE });
+      expect(await wiring.credentials.get(material.authRef)).not.toBeNull();
+      await wiring.buildProvider(resolved).generate({ messages: [{ role: "user", content: "hi" }] });
+      expectConsoleBearer(seen);
+    });
   });
 });
