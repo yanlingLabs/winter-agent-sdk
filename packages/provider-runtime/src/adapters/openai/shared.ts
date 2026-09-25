@@ -82,6 +82,21 @@ export interface OpenAiAdapterOptions {
    */
   generatedBaseUrl?: string;
   /**
+   * The reviewed endpoint PER PROVIDER, for an adapter that serves several (WS-23).
+   *
+   * `generatedBaseUrl` is one URL, which is only an answer while an adapter serves one provider.
+   * The moment `xai` joined `openai` on `winter.openai-responses` there was no single answer, and
+   * the adapter fell through to its compiled-in `api.openai.com` — so a turn on a connection with
+   * no `baseUrl` sent an xAI key to OpenAI. This lookup is `createShippedAdapters`' answer: each
+   * provider's own `defaultEndpoints.api`, off its own catalog row.
+   *
+   * AUTHORITATIVE WHEN PRESENT: a provider it does not know has NO generated endpoint, and the turn
+   * is refused typed (`resolveEndpoint`'s "has no endpoint") rather than handed to the adapter's
+   * vendor constant. Consulted only when `generatedBaseUrl` is absent, so a fixture that points the
+   * adapter at a loopback fake is unaffected.
+   */
+  generatedBaseUrls?: (providerId: string) => string | undefined;
+  /**
    * REQUIRED — omitting it is a compile error, and that is the fail-closed mechanism (ruling on
    * finding I3).
    *
@@ -176,7 +191,10 @@ function trimSlash(url: string): string {
  */
 export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOptions, fallbackGeneratedBaseUrl?: string): ResolvedEndpoint {
   const userBase = ctx.connection.baseUrl;
-  const generatedBase = options.generatedBaseUrl ?? fallbackGeneratedBaseUrl;
+  // WS-23: a per-provider lookup, when the wiring supplied one, REPLACES the vendor fallback rather
+  // than preceding it — a miss is "this provider has no reviewed endpoint", which refuses below, and
+  // never "so use the adapter's own vendor's host" (see `generatedBaseUrls`).
+  const generatedBase = options.generatedBaseUrl ?? (options.generatedBaseUrls !== undefined ? options.generatedBaseUrls(ctx.connection.providerId) : fallbackGeneratedBaseUrl);
   if (userBase !== undefined && userBase.length > 0) {
     // P7a: `generated` is the PROFILE's answer now, not this line's assumption -- a reviewed
     // endpoint the runtime copied in stays generated, a host-entered one is a user endpoint.

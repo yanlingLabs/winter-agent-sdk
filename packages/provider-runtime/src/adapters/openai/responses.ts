@@ -59,6 +59,20 @@ import {
 
 export const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
 
+/**
+ * The adapter's compiled-in vendor endpoint, for THIS turn's provider — which is only ever OpenAI's.
+ *
+ * WS-23: `winter.openai-responses` serves more than one provider now (`openai`, `xai`), so
+ * "the adapter's own default" stopped meaning "the provider's own endpoint". `api.openai.com` is
+ * OpenAI's host; handing it to an `xai` connection with no `baseUrl` sent an xAI key to OpenAI,
+ * silently, which is the no-silent-fallback rule broken at its most expensive. Every other provider
+ * gets NO fallback: its endpoint comes from its own catalog row (`generatedBaseUrls`, wired by
+ * `createShippedAdapters`) or its connection profile, and with neither the turn is refused typed.
+ */
+function vendorFallbackFor(ctx: ProviderContext): string | undefined {
+  return ctx.connection.providerId === "openai" ? OPENAI_API_BASE_URL : undefined;
+}
+
 // --- request mapping --------------------------------------------------------------------------------
 
 /**
@@ -567,21 +581,21 @@ export function createResponsesAdapter(options: OpenAiAdapterOptions): ProviderA
     protocol: "openai-responses",
 
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
-      const endpoint = resolveEndpoint(ctx, options, OPENAI_API_BASE_URL);
+      const endpoint = resolveEndpoint(ctx, options, vendorFallbackFor(ctx));
       const auth = await resolveAuth(ctx, "bearer");
       const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return validateViaModels(ref, ctx, endpoint, headers, options, auth.material !== null);
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
-      const endpoint = resolveEndpoint(ctx, options, OPENAI_API_BASE_URL);
+      const endpoint = resolveEndpoint(ctx, options, vendorFallbackFor(ctx));
       const auth = await resolveAuth(ctx, "bearer");
       const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return fetchOpenAiModels(ctx, endpoint, headers, options);
     },
 
     streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncIterable<ProviderEvent> {
-      return responsesTurn(req, ctx, options, OPENAI_API_BASE_URL, (base) => `${base}/responses`);
+      return responsesTurn(req, ctx, options, vendorFallbackFor(ctx), (base) => `${base}/responses`);
     },
 
     mapEffort(effort: TurnRequest["effort"], model: WinterModelDescriptor) {
