@@ -157,3 +157,45 @@ describe("WS-23 item 3: `max_tokens` defaults to 64K capped at the row, never th
     expect(buildRequestBody({ model: "claude-unlisted", messages: [{ role: "user", content: "hi" }] }, undefined, {})["max_tokens"]).toBe(4_096);
   });
 });
+
+describe("WS-23 item 4: a mid-stream `overloaded_error` BEFORE any content retries under the adapter's own policy", () => {
+  const overloadedFrame = frame("error", { type: "error", error: { type: "overloaded_error", message: "Overloaded" } });
+
+  test("after `message_start` (+ ping), before any block: replayed -- one retry event, then the real stream; nothing from the failed attempt leaks", async () => {
+    const s = start((i) => sse(i === 0 ? messageStart + frame("ping", { type: "ping" }) + overloadedFrame : messageStart + textBlock(0, "second try") + ending("end_turn")));
+    const events = await collect(s.url);
+    expect(s.requests).toHaveLength(2);
+    const retries = events.filter((e) => e.type === "retry");
+    expect(retries).toEqual([{ type: "retry", attempt: 1, maxRetries: 3, retryDelayMs: 0, error: "overloaded" }]);
+    // Exactly ONE message_start reached the consumer -- the committed attempt's.
+    expect(events.filter((e) => e.type === "message_start")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "text_delta").map((e) => (e as { text: string }).text)).toEqual(["second try"]);
+    expect(done(events)?.stopReason).toBe("end_turn");
+    // Retry events precede every stream event.
+    expect(events[0]!.type).toBe("retry");
+  });
+
+  test("bounded: an endpoint that stays overloaded exhausts the budget and fails TYPED -- retryable, so the engine's fallback may engage", async () => {
+    const s = start(() => sse(messageStart + overloadedFrame));
+    const events = await collect(s.url);
+    expect(s.requests).toHaveLength(4); // 1 + maxRetries (3)
+    expect(events.filter((e) => e.type === "retry")).toHaveLength(3);
+    expect(error(events)?.error).toMatchObject({ code: "server", providerCode: "overloaded_error", retryable: true });
+    expect(events.some((e) => e.type === "message_start" || e.type === "text_delta")).toBe(false);
+  });
+
+  test("AFTER content was streamed the same frame is final: one request, a typed non-retryable error, no replay", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "half an answer") + overloadedFrame));
+    const events = await collect(s.url);
+    expect(s.requests).toHaveLength(1);
+    expect(events.some((e) => e.type === "retry")).toBe(false);
+    expect(error(events)?.error).toMatchObject({ code: "server", providerCode: "overloaded_error", retryable: false });
+  });
+
+  test("any OTHER pre-content error frame is not replayed (only the documented transient state is)", async () => {
+    const s = start(() => sse(messageStart + frame("error", { type: "error", error: { type: "api_error", message: "internal" } })));
+    const events = await collect(s.url);
+    expect(s.requests).toHaveLength(1);
+    expect(error(events)?.error).toMatchObject({ code: "server", providerCode: "api_error", retryable: false });
+  });
+});

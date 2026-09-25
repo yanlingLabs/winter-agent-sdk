@@ -39,11 +39,14 @@
 //      replayed byte-identically. `requestSummary` therefore only sets the descriptor's own
 //      `thinking.display` field -- it never re-routes the reasoning to another channel.
 //
-//   5. **Retry stops at the first byte, and the retry OBSERVATIONS still reach the consumer.**
-//      `withRetry` wraps only the fetch; `parseSse` runs outside it, so nothing past the first byte
-//      can be replayed (WS-13 §13). `withRetry`'s callback cannot `yield`, so its events are
-//      buffered and flushed ahead of the first stream event -- the same order a consumer would have
-//      seen, since every retry precedes the stream by construction.
+//   5. **Retry stops at the first COMMITTED frame, and the retry OBSERVATIONS still reach the consumer.**
+//      `withRetry` wraps the fetch AND the read up to the stream's first content-bearing frame
+//      (WS-23 item 4, `openCommittedStream`): `message_start` and `ping` show nobody anything, so an
+//      `overloaded_error` frame that arrives before any content is replayed under the same policy as
+//      a 529 status would be. Nothing past that line can be replayed (WS-13 §13). `withRetry`'s
+//      callback cannot `yield`, so its events are buffered and flushed ahead of the first stream event
+//      -- the same order a consumer would have seen, since every retry precedes the stream by
+//      construction.
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
@@ -54,7 +57,7 @@ import { hostHeaders } from "../privileged-headers.ts";
 import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
-import { parseSse } from "../../sse.ts";
+import { parseSse, type SseEvent } from "../../sse.ts";
 import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_BEARER } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
@@ -1107,6 +1110,53 @@ export function anthropicCaptureEvent(descriptor: WinterModelDescriptor | undefi
   return "block-stop";
 }
 
+/**
+ * WS-23 (item 4): reads an opened stream up to its FIRST COMMITTING frame and returns what it read.
+ *
+ * A committing frame is anything that is not `message_start` or `ping`: a content block, a
+ * `message_delta`, `message_stop`, or an `error` the retry policy cannot help. Up to it nothing has
+ * been shown to anyone -- `message_start` carries an id and a usage count, `ping` carries nothing --
+ * so a failure there is still safe to replay. Exactly ONE such failure is turned into a retryable
+ * throw: an `error` frame whose type is `overloaded_error` (the vendor's documented transient state,
+ * HTTP 529 when it arrives as a status; https://platform.claude.com/docs/en/api/errors). Everything
+ * else is handed back, buffered, for the stream loop to treat exactly as it always has -- an
+ * unparseable frame, an ordinary content stream, a stream that ended early.
+ *
+ * On the retryable throw the abandoned stream is closed first (`return()` runs `parseSse`'s own
+ * `finally`, which cancels the reader), so a replay never leaves a connection draining behind it.
+ */
+async function openCommittedStream(stream: AsyncGenerator<SseEvent>): Promise<{ frames: AsyncGenerator<SseEvent>; buffered: SseEvent[] }> {
+  const buffered: SseEvent[] = [];
+  for (;;) {
+    const next = await stream.next();
+    if (next.done === true) return { frames: stream, buffered };
+    const sse = next.value;
+    buffered.push(sse);
+    if (sse.event === "ping") continue;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(sse.data) as Record<string, unknown>;
+    } catch {
+      return { frames: stream, buffered };
+    }
+    const type = typeof payload["type"] === "string" ? payload["type"] : sse.event;
+    if (type === "message_start") continue;
+    if (type === "error") {
+      const error = (payload["error"] ?? {}) as Record<string, unknown>;
+      if (error["type"] === "overloaded_error") {
+        await stream.return(undefined).catch(() => {});
+        throw new ProviderRequestError({
+          code: "server",
+          message: "the provider reported overloaded_error before any content was streamed",
+          providerCode: "overloaded_error",
+          retryable: true,
+        });
+      }
+    }
+    return { frames: stream, buffered };
+  }
+}
+
 function malformed(detail: string): ProviderError {
   return { code: "bad_request", message: `the provider stream carried a frame this adapter could not decode: ${detail}`, retryable: false };
 }
@@ -1160,9 +1210,16 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
 
     const policy = createRetryPolicy(opts.retry ?? {});
     const retryEvents: Array<Extract<ProviderEvent, { type: "retry" }>> = [];
-    let response: Response;
+    let bytes = 0;
+    // WS-23 (item 4): THE FIRST-BYTE LINE MOVED TO THE FIRST CONTENT FRAME. The stream is opened INSIDE
+    // `withRetry` and read up to its first committing frame (see `openCommittedStream`); a mid-stream
+    // `overloaded_error` that arrives before it -- after `message_start`, before any content block --
+    // is thrown there as a RETRYABLE failure, so the same policy (same budget, same backoff, same
+    // `retry` events) replays the request. Nothing had been yielded: `message_start` and `ping` are
+    // buffered, never forwarded, until the stream commits. Past that point every failure is final.
+    let opened: { frames: AsyncGenerator<SseEvent>; buffered: SseEvent[] };
     try {
-      response = await withRetry(
+      opened = await withRetry(
         async () => {
           const res = await boundedFetch(`${endpoint.base}/v1/messages`, {
             method: "POST",
@@ -1180,9 +1237,19 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             // the engine's reactive compaction reads a flag rather than re-parsing a capped message.
             throw isAnthropicPromptTooLong(res.status, text) ? Object.assign(new ProviderRequestError(normalized), { contextOverflow: true as const }) : new ProviderRequestError(normalized);
           }
-          // THE FIRST-BYTE LINE. Past this point `withRetry` refuses to replay, whatever fails.
+          if (res.body === null) throw new ProviderRequestError(malformed("a 200 response with no body at all"));
+          const opened = await openCommittedStream(
+            parseSse(res.body, {
+              stallTimeoutMs: ctx.stallTimeoutMs,
+              ...(req.signal !== undefined ? { signal: req.signal } : {}),
+              onBytes: (n) => {
+                bytes += n;
+              },
+            }),
+          );
+          // THE COMMIT LINE. Past this point `withRetry` refuses to replay, whatever fails.
           policy.commit();
-          return res;
+          return opened;
         },
         policy,
         (event) => retryEvents.push(event),
@@ -1195,12 +1262,6 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     }
     for (const event of retryEvents) yield event;
 
-    if (response.body === null) {
-      yield { type: "error", error: malformed("a 200 response with no body at all") };
-      return;
-    }
-
-    let bytes = 0;
     const blocks = new Map<number, OpenBlock>();
     /** Completed in-dialect blocks, in wire order, when the descriptor defers the capture to `message_stop`. */
     const heldThinking: unknown[] = [];
@@ -1212,14 +1273,14 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let stopDetails: { category: string | null; explanation: string | null } | undefined;
     let sawMessageStop = false;
 
+    const { frames, buffered } = opened;
+    async function* replayThenRest(): AsyncGenerator<SseEvent> {
+      yield* buffered;
+      yield* frames;
+    }
+
     try {
-      for await (const sse of parseSse(response.body, {
-        stallTimeoutMs: ctx.stallTimeoutMs,
-        ...(req.signal !== undefined ? { signal: req.signal } : {}),
-        onBytes: (n) => {
-          bytes += n;
-        },
-      })) {
+      for await (const sse of replayThenRest()) {
         // `ping` NEVER reaches the consumer -- capture (F) observed the pinned runtime filtering it,
         // and the SSE layer's own stall clock already reset on its bytes.
         if (sse.event === "ping") continue;
@@ -1343,8 +1404,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               type: "error",
               error: {
                 // A mid-stream `error` frame is a SERVER-side failure of an already-started
-                // generation. It is never retryable here whatever it says: bytes have been consumed
-                // and R6-6 forbids replaying an effectful turn.
+                // generation. It is never retryable HERE whatever it says: content has been streamed
+                // and R6-6 forbids replaying an effectful turn. (An `overloaded_error` that arrives
+                // BEFORE any content never reaches this case -- `openCommittedStream` replays it.)
                 code: "server",
                 message: `the provider ended the stream with an error frame${providerCode !== undefined ? ` (${providerCode})` : ""}`,
                 retryable: false,
