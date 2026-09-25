@@ -28,7 +28,7 @@
         },
         {
           "name": "opus",
-          "canonicalModelId": "claude-opus-5",
+          "canonicalModelId": "claude-opus-5.5",
           "description": "very capable on complex, multi-step engineering; the demanding-work default.",
           "reason": "Second: near the top on capability at a lower price.",
           "basis": "winter-curated",
@@ -100,7 +100,8 @@
       "vendor": "Baidu",
       "vendorProviders": [
         "baidu",
-        "qianfan"
+        "qianfan",
+        "qianfan-anthropic"
       ],
       "matchers": [
         {
@@ -146,7 +147,8 @@
       "vendor": "Google",
       "vendorProviders": [
         "google",
-        "vertex"
+        "vertex",
+        "google-openai"
       ],
       "$comment": "The family §9 uses to make D26's point: position is NOT a strength claim. Flash is documented as the stronger model and Pro still leads the list, because the user's framing is that Pro is described by what it is GOOD AT rather than by rank.",
       "matchers": [
@@ -192,7 +194,9 @@
       "displayName": "Gemma",
       "vendor": "Google",
       "vendorProviders": [
-        "vertex"
+        "google",
+        "vertex",
+        "google-openai"
       ],
       "matchers": [
         {
@@ -220,7 +224,9 @@
       "vendor": "Z.AI",
       "vendorProviders": [
         "zai",
-        "zai-anthropic"
+        "zai-anthropic",
+        "zhipu",
+        "zhipu-anthropic"
       ],
       "matchers": [
         {
@@ -278,7 +284,7 @@
         },
         {
           "name": "sol",
-          "canonicalModelId": "gpt-5.6-sol",
+          "canonicalModelId": "gpt-6-sol",
           "description": "a highly capable model for VERY complex novelty tasks; already overkill for most work.",
           "reason": "Second: the ceiling before Astra.",
           "basis": "user-ruling",
@@ -296,7 +302,7 @@
         },
         {
           "name": "luna",
-          "canonicalModelId": "gpt-5.6-luna",
+          "canonicalModelId": "gpt-6-luna",
           "description": "not far from Terra on implementation capability, and probably the best cheap implementer on the market.",
           "reason": "Fourth: cost.",
           "basis": "user-ruling",
@@ -387,7 +393,13 @@
       "vendor": "Moonshot AI",
       "vendorProviders": [
         "kimi-coding",
-        "moonshot"
+        "moonshot",
+        "kimi-coding-openai",
+        "kimi-coding-intl",
+        "kimi-coding-intl-openai",
+        "moonshot-anthropic",
+        "moonshot-cn",
+        "moonshot-cn-anthropic"
       ],
       "$comment": "The coding plan spells its ids differently from the platform (`k3`, not `kimi-k3`), which is what the per-row `canonicalModelId` override in overlay/models.json exists for — without it `kimi-coding/k3` would be its own canonical model and the `k3` slot would not see it. VENDORPROVIDERS DIVERGE FROM §9's PRINTED LIST, deliberately (controller ruling R-6c-15, fix r1): §9 prints `moonshot, kimi-coding`, but §4 step 3-i requires a configured SUBSCRIPTION row before a token row of the same vendor, and in this catalog `kimi-coding` is `pricingBasis: subscription` while `moonshot` is `token` — kimi was the only family where the two disagreed (`gpt` and `grok` already put the subscription first). §9 is amended by the controller; a §9<->overlay diff must read this row as the ruling, not as drift.",
       "matchers": [
@@ -470,7 +482,11 @@
       "vendor": "MiniMax",
       "vendorProviders": [
         "minimax",
-        "minimax-anthropic"
+        "minimax-anthropic",
+        "minimax-token-plan",
+        "minimax-token-plan-anthropic",
+        "minimax-cn",
+        "minimax-cn-anthropic"
       ],
       "matchers": [
         {
@@ -579,15 +595,6 @@
           "status": "candidate"
         },
         {
-          "name": "devstral",
-          "canonicalModelId": "devstral-latest",
-          "description": "the agentic-coding model.",
-          "reason": "Third: implementation.",
-          "basis": "winter-curated",
-          "citation": "spec:WS-13c §9",
-          "status": "candidate"
-        },
-        {
           "name": "small",
           "canonicalModelId": "mistral-small-latest",
           "description": "the cheap implementer.",
@@ -641,7 +648,14 @@
         "qwen-cloud",
         "qwen-cloud-token-plan",
         "alibaba",
-        "alibaba-cn"
+        "alibaba-cn",
+        "alibaba-anthropic",
+        "alibaba-cn-anthropic",
+        "qwen-token-plan-anthropic",
+        "qwen-coding",
+        "qwen-coding-anthropic",
+        "qwen-coding-cn",
+        "qwen-coding-cn-anthropic"
       ],
       "matchers": [
         {
@@ -678,6 +692,102 @@
           "status": "candidate"
         }
       ],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "muse",
+      "displayName": "Muse",
+      "vendor": "Meta",
+      "vendorProviders": [
+        "meta"
+      ],
+      "matchers": [
+        {
+          "pattern": "^muse-",
+          "note": "Meta Superintelligence Labs' Muse line on the Meta Model API (`muse-spark-1.3`)"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "mimo",
+      "displayName": "MiMo",
+      "vendor": "Xiaomi",
+      "vendorProviders": [
+        "xiaomi-token-plan",
+        "xiaomi",
+        "xiaomi-token-plan-anthropic",
+        "xiaomi-anthropic",
+        "xiaomi-token-plan-cn",
+        "xiaomi-token-plan-cn-anthropic",
+        "xiaomi-token-plan-eu",
+        "xiaomi-token-plan-eu-anthropic"
+      ],
+      "matchers": [
+        {
+          "pattern": "^mimo-",
+          "note": "Xiaomi MiMo (`mimo-v2.6-pro`); a reseller's `xiaomimimo/` namespace is not stripped, so those rows stay in `other`"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "command",
+      "displayName": "Command",
+      "vendor": "Cohere",
+      "vendorProviders": [
+        "cohere"
+      ],
+      "matchers": [
+        {
+          "pattern": "^command-",
+          "note": "Cohere Command (`command-a-plus-05-2026`, `command-r-08-2024`)"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "hunyuan",
+      "displayName": "Hunyuan",
+      "vendor": "Tencent",
+      "vendorProviders": [
+        "tencent-tokenhub",
+        "tencent-tokenhub-intl",
+        "tencent-tokenhub-anthropic",
+        "tencent-tokenhub-intl-anthropic",
+        "tencent"
+      ],
+      "matchers": [
+        {
+          "pattern": "^(?:hunyuan-|hy[0-9])",
+          "note": "Tencent Hunyuan: legacy `hunyuan-*` ids and the TokenHub Hy line (`hy3`, `hy4-preview`); `hy-mt*`/`hy-role` are not matched"
+        }
+      ],
+      "slots": [],
+      "status": "candidate",
+      "citation": "spec:WS-13c §9"
+    },
+    {
+      "id": "nova",
+      "displayName": "Amazon Nova",
+      "vendor": "Amazon",
+      "vendorProviders": [
+        "bedrock"
+      ],
+      "matchers": [
+        {
+          "pattern": "^(?:amazon\\.)?nova-",
+          "note": "Bedrock ids keep the `amazon.` vendor prefix after the region/`-v1:0` strip (`amazon.nova-pro`); `amazon.` is not in BEDROCK_PREFIXES, so the matcher allows it"
+        }
+      ],
+      "slots": [],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     }

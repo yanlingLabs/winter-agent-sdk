@@ -4441,6 +4441,45 @@
         "citation": "https://platform.minimax.cn/docs/api-reference/text-openai-api — MiniMax China OpenAI-compatible API reference, retrieved 2026-09-25: base `https://api.minimax.cn/v1` with an `sk-api-` key; CNY per-token billing (https://platform.minimax.cn/docs/guides/pricing-paygo)."
       },
       "$comment": "2026-09-25 refresh: MiniMax's China docs moved from platform.minimaxi.com (now a 302 to platform.minimax.cn) and the current OpenAI reference names `https://api.minimax.cn/v1`; the old `api.minimaxi.com` host survives only in older material (the MiniMax CLI README). Endpoint switched to the documented host."
+    },
+    {
+      "id": "mistral",
+      "displayName": "Mistral",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.mistral.ai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/mistral/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://docs.mistral.ai/models and https://docs.mistral.ai/inference/pricing — Mistral La Plateforme model and pricing documentation, retrieved 2026-09-25: OpenAI-style Chat Completions at `https://api.mistral.ai/v1` with a La Plateforme API key; per-token billing."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Mistral's fetched docs (tier fetched-document). Devstral and Magistral are retired (folded into Mistral Medium 3.5 / Small 4). Codestral's old dedicated host (codestral.mistral.ai) still answers but current docs show only the metered La Plateforme FIM route, so it is not a separate provider."
     }
   ]
 }
