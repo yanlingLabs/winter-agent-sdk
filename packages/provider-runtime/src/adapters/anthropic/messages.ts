@@ -334,14 +334,19 @@ export function findDescriptor(catalog: WinterCatalog, providerId: string, model
 }
 
 /**
+ * PLAINLY: `value` ALONE IS NOT A COMPLETE WIRE OBJECT for a row that documents `reasoning.effortRequest`
+ * -- this endpoint's top-level `output_config.effort` is a SIBLING of `thinking`, not a field inside
+ * it, and it rides in `outputConfigEffort`, not in `value`. Reading only `value` from an `ok:true`
+ * result silently drops the `output_config` half of what such a row actually sends.
+ *
  * `value` is the THINKING arm this effort resolves to -- `"adaptive"` for a row that takes effort on
  * its own wire field (2026-09-25, `output_config.effort`, GA, no beta header:
  * https://platform.claude.com/docs/en/build-with-claude/effort) and does not also reject adaptive
  * thinking, `"enabled"` with a budget otherwise (the pre-existing ladder). `outputConfigEffort` rides
  * ALONGSIDE it -- present only when the row's own `reasoning.effortRequest` evidence says this model
- * takes `output_config.effort` at all, so a row with none keeps the exact old shape (no such key).
- * `value` alone therefore no longer says everything a caller sends on the wire for such a row; the two
- * fields together do, which is what "agrees with what streamTurn sends" means for `mapEffort` below.
+ * takes `output_config.effort` at all, so a row with none keeps the exact old shape (no such key, and
+ * `value` alone WAS the complete wire contribution, same as before this field existed). Together the
+ * two fields are what "agrees with what streamTurn sends" means for `mapEffort` below.
  */
 export type EffortMapping =
   | { ok: true; value: { type: "enabled"; budget_tokens: number } | { type: "adaptive" }; outputConfigEffort?: string }
@@ -406,7 +411,15 @@ export function mapAnthropicEffort(effort: TurnRequest["effort"], descriptor: Wi
   return { ok: true, value: { type: "enabled", budget_tokens: budget }, ...(effortRequest !== undefined ? { outputConfigEffort: tier } : {}) };
 }
 
-type WireThinking = { type: "disabled" } | { type: "enabled"; budget_tokens?: number; display?: string } | { type: "adaptive"; display?: string };
+/**
+ * `block_binding` (2026-09-25): the documented escape for a row whose `reasoning.blockBinding`
+ * evidence says the vendor binds a replayed thinking block to the conversation prefix it was produced
+ * under -- see `buildThinking`'s own comment on the merge site for the full citation.
+ */
+type WireThinking =
+  | { type: "disabled" }
+  | { type: "enabled"; budget_tokens?: number; display?: string; block_binding?: { prefix_mismatch_behavior: "drop_block" } }
+  | { type: "adaptive"; display?: string; block_binding?: { prefix_mismatch_behavior: "drop_block" } };
 
 /** What `buildThinking` decided, plus the SIBLING `output_config.effort` value (independent of which thinking arm won -- see `mapAnthropicEffort`'s own doc comment). */
 type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEffort?: string } | { ok: false; reason: string };
@@ -439,11 +452,29 @@ type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEf
  *
  * `display` comes from the DESCRIPTOR'S OWN `summaryRequest` evidence (`field: "thinking.display"`),
  * never from a hard-coded string, and only when the caller asked for a summary.
+ *
+ * TWO CASES SEND AN OTHERWISE-OMITTED FIELD ANYWAY, on an always-on row (one that rejects
+ * `thinking.type.disabled`) where nothing else decided the field (2026-09-25 fix round 1):
+ *
+ *   - the caller asked for a summary (`requestSummary`). Omitting `thinking` is equivalent to
+ *     `{type:"adaptive"}` on these models (Anthropic's own statement), but equivalence stops at the
+ *     WIRE SHAPE: the short progress text the model writes between tool calls arrives INSIDE thinking
+ *     blocks on Opus 5.5/Fable 5.1, and without a `display` value that defaults to `"omitted"` -- there
+ *     is no field to attach `display` to unless one is actually sent.
+ *   - the row documents `reasoning.blockBinding` (below): the `block_binding` opt-in can only ride on
+ *     a real `thinking` object, and these rows carry the replay-binding risk on EVERY request, not
+ *     only one that also asks for a summary.
+ *
+ * Gated on the SAME always-on check either way, per the reviewer's own example: a 4.6/4.7-shaped row
+ * has thinking OFF by default, and sending `{type:"adaptive"}` there would TURN THINKING ON -- a
+ * capability change this file must never make unasked.
  */
 function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ThinkingBuild {
   const reasoning = descriptor?.reasoning;
   const supported = reasoning?.supported.value === true;
   const unsupported = new Set(descriptor?.unsupportedParameters ?? []);
+  const alwaysOn = unsupported.has("thinking.type.disabled");
+  const blockBinding = reasoning?.blockBinding?.value;
 
   let base: WireThinking | undefined;
   // Tracks whether `req.thinking` decided the FIELD (including deciding to omit it) -- as opposed to
@@ -506,6 +537,18 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     if (!thinkingFieldDecided) base = mapped.value;
   }
 
+  // The two "send an otherwise-omitted field anyway" cases (doc comment above). Both require an
+  // ALWAYS-ON row (never on a 4.6/4.7-shaped row, where this would turn thinking on unasked) and that
+  // nothing above already decided the field -- an explicit arm, or an effort's own mapping, still wins.
+  // `!thinkingFieldDecided`, NOT merely `base === undefined`: an explicit `disabled` on an always-on
+  // row also leaves `base` undefined (the omission a few lines up), and that is a DECIDED omission --
+  // the caller asked for something this endpoint cannot represent, Winter honoured it by sending
+  // nothing, and this fallback exists for the OPPOSITE situation (nobody asked for anything at all),
+  // not to second-guess a decision the explicit-thinking branch already made on purpose.
+  if (base === undefined && !thinkingFieldDecided && alwaysOn && (req.requestSummary === true || blockBinding !== undefined)) {
+    base = { type: "adaptive" };
+  }
+
   if (base === undefined) return { ok: true, value: undefined, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
 
   if (req.requestSummary === true && base.type !== "disabled") {
@@ -514,17 +557,27 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
       base = { ...base, display: "summarized" };
     }
   }
+
+  // Block binding (2026-09-25 fix round 1):
+  // https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting ("A 400 error says
+  // a thinking block signature is invalid") -- on a row that documents `reasoning.blockBinding`, a
+  // replayed thinking block is bound to the conversation prefix (the `system` prompt, the `tools`
+  // array, every earlier message) it was produced under, and is rejected once that prefix changes.
+  // Winter's own tool list legitimately grows mid-session (an MCP server connecting after spawn, a
+  // ToolSearch-loaded deferred tool), so this is not a hypothetical for a long-lived session. The
+  // documented escape is `block_binding.prefix_mismatch_behavior: "drop_block"` on WHATEVER thinking
+  // object this request ends up sending -- never invented on its own, only merged onto a `base` some
+  // earlier step already decided to send -- plus the matching beta header (`buildHeaders`, same
+  // evidence). Applied unconditionally past this point: every arm above that can still be here
+  // (explicit, effort-derived, or the always-on fallback just above) gets it, which is what "whenever
+  // the request carries a thinking object" means.
+  if (blockBinding !== undefined && base.type !== "disabled") {
+    base = { ...base, block_binding: { prefix_mismatch_behavior: "drop_block" } };
+  }
+
   return { ok: true, value: base, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
 }
 
-/** The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the network. */
-/**
- * `purpose` exists for ONE reason (Minor 4): a token COUNT has no output allowance, so running the
- * "does the thinking budget fit inside `max_tokens`?" check for it refuses a count against a
- * generation limit the count was never going to be subject to. The count path used to build the full
- * body and then delete `max_tokens`/`stream` — which meant the check ran on a field that was about to
- * be thrown away.
- */
 /**
  * `TurnRequest.toolChoice` -> the wire `tool_choice`, downgrading a FORCED choice to `auto` on a row
  * that documents rejecting it.
@@ -542,6 +595,14 @@ function resolveToolChoice(toolChoice: NonNullable<TurnRequest["toolChoice"]>, u
   return toolChoice.type === "tool" ? { type: "tool", name: toolChoice.name } : { type: toolChoice.type };
 }
 
+/** The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the network. */
+/**
+ * `purpose` exists for ONE reason (Minor 4): a token COUNT has no output allowance, so running the
+ * "does the thinking budget fit inside `max_tokens`?" check for it refuses a count against a
+ * generation limit the count was never going to be subject to. The count path used to build the full
+ * body and then delete `max_tokens`/`stream` — which meant the check ran on a field that was about to
+ * be thrown away.
+ */
 // EXPORTED (relative-import only, same convention as `promptCachingLayout`): the REQUEST BODY is what
 // a fixture-catalog test asserts against for the effort/thinking/tool_choice envelope, without needing
 // a fetch fake -- `messages.test.ts` reads the return value directly rather than a loopback server's
@@ -601,7 +662,19 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // budget, which cannot fit inside a 4k fallback, so an effort request that named no output budget
   // was rejected as "over the limit" by a number the CALLER never chose. A declared or requested
   // ceiling is a real limit and a budget that overruns it is a real refusal; the fallback is not a
-  // limit at all, so it GROWS to hold the reasoning plus a full answer's worth of output.
+  // limit at all, so it GROWS to hold the reasoning plus a full answer's worth of output -- ON THE
+  // BUDGET-CARRYING `enabled` ARM ONLY, since `budget` below is that arm's own number and there is
+  // nothing else for the fallback to grow BY.
+  //
+  // THE `adaptive` ARM CARRIES NO NUMBER AT ALL (2026-09-25): `output_config.effort`-driven rows send
+  // `thinking:{type:"adaptive",...}` far more often now, and an adaptive model's own reasoning length
+  // is not a quantity this adapter has ever been told -- inventing a bigger fallback for it would be
+  // exactly the unevidenced capability claim `ANTHROPIC_DEFAULT_MAX_TOKENS`'s own comment refuses to
+  // make. In PRACTICE this rarely bites: every real Claude row in the catalog declares its own
+  // `maxOutputTokens` (128K on the 2026-09-25 rows), so `declaredMax` is populated before the fallback
+  // is ever reached, and the flat, undeclared-only fallback below is reserved for an `allowUnlisted`
+  // passthrough or a descriptor missing that one field -- exactly the situations `maxOutputTokens`
+  // evidence exists to be threaded through instead of this adapter guessing at a ceiling.
   const declaredMax = req.maxOutputTokens ?? descriptor?.maxOutputTokens?.value;
   const fallbackMax = opts.defaultMaxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
   const budget = thinking.value !== undefined && thinking.value.type === "enabled" ? thinking.value.budget_tokens : undefined;
@@ -714,7 +787,16 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
   return await ctx.credentials.get(ctx.authRef);
 }
 
-async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
+/**
+ * `descriptor` is OPTIONAL and only ever supplies a beta: `validateCredential`/`listModels` hit
+ * `/v1/models`, not a model-specific endpoint, and pass `undefined` -- there is no row to read a beta
+ * off, and no model-specific beta belongs on a request that names no model.
+ *
+ * EXPORTED (relative-import only, same convention as `buildRequestBody`): the `anthropic-beta` header
+ * -- including the row's own `blockBinding` beta and its dedupe against `opts.betas` -- is otherwise
+ * unreachable without a real or faked HTTP round trip, and `messages.test.ts` asserts it directly.
+ */
+export async function buildHeaders(ctx: ProviderContext, descriptor: WinterModelDescriptor | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
   // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
   // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
@@ -749,9 +831,19 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
   // kinds, and the ORIGINAL `oauth`-only gate silently excluded the one credential shape this leg
   // actually produces post-P10a-1. Scoped to `isConsoleProvider(ctx)` exactly as before: a sibling
   // row's `bearer` material still gets no vendor beta.
-  const betas = [...(opts.betas ?? []), ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : [])].filter(
-    (value, index, all) => all.indexOf(value) === index,
-  );
+  //
+  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: the row's own
+  // `reasoning.blockBinding.value.beta` (`buildThinking`'s own comment has the full citation). Present
+  // only for a descriptor that documents it (Opus 5.5, Fable 5.1 today) -- absent for every other row,
+  // so this adds nothing where the row carries no such evidence. Merged into the SAME array the other
+  // two sources feed, then deduped by the SAME filter below -- there is only one beta list and one
+  // dedupe, never a second header-building path a future beta source could bypass.
+  const blockBindingBeta = descriptor?.reasoning?.blockBinding?.value?.beta;
+  const betas = [
+    ...(opts.betas ?? []),
+    ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : []),
+    ...(blockBindingBeta !== undefined ? [blockBindingBeta] : []),
+  ].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
   // surfaces as an unexplained upstream 400 rather than as anything local.
@@ -860,7 +952,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);
-    const headers = await buildHeaders(ctx, endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, descriptor, endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1111,7 +1203,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, descriptor, endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,
@@ -1155,7 +1247,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
         return { ok: false, code: "unsupported", message: `the Anthropic Messages adapter cannot validate credential material of kind "${material.kind}"` };
       }
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-      const headers = await buildHeaders({ ...ctx, authRef: ref }, endpoint.policy, opts, false, identityFor(ctx));
+      const headers = await buildHeaders({ ...ctx, authRef: ref }, undefined, endpoint.policy, opts, false, identityFor(ctx));
       try {
         const res = await boundedFetch(`${endpoint.base}/v1/models?limit=1`, { method: "GET", headers, timeoutMs, maxBodyBytes: 1024 * 1024, policy: endpoint.policy });
         const text = await res.text();
@@ -1178,7 +1270,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
      */
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-      const headers = await buildHeaders(ctx, endpoint.policy, opts, false, identityFor(ctx));
+      const headers = await buildHeaders(ctx, undefined, endpoint.policy, opts, false, identityFor(ctx));
       const models: ModelCatalogResult["models"] = [];
       const warnings: string[] = [];
       let after: string | undefined;
