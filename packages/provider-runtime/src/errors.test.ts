@@ -328,3 +328,63 @@ describe("Codex usage limit (2026-09-16 field report)", () => {
     expect(err.retryAfterMs).toBe(5000);
   });
 });
+
+describe("xAI's FLAT error dialect (WS-23): `{code, error: \"<message>\"}` beside OpenAI's structured envelope", () => {
+  // The body a live `api.x.ai` 400 carried for a wrong key, verbatim apart from the masked key
+  // (forum.cursor.com/t/grok-code-broken/142879) — a 400, not a 401, reusing OpenAI's own sentence.
+  const WRONG_KEY = JSON.stringify({ code: "Client specified an invalid argument", error: "Incorrect API key provided: xa***Jm. You can obtain an API key from https://console.x.ai." });
+
+  test("parseProviderErrorCode reads the flat dialect's TOP-LEVEL code, verbatim, and still nothing from a flat body that has none", () => {
+    expect(parseProviderErrorCode(WRONG_KEY)).toBe("Client specified an invalid argument");
+    // xAI's subscription proxy shape (derived-shapes-p6b-xai.md §4): no `code` at all.
+    expect(parseProviderErrorCode(JSON.stringify({ error: "Invalid or expired credentials (reason=no auth context)" }))).toBeUndefined();
+  });
+
+  test("a wrong key answered with HTTP 400 is `auth` — and the message is xAI's sentence, not the JSON around it", () => {
+    const err = normalizeHttpError(400, h(), WRONG_KEY);
+    expect([err.code, err.retryable, err.status, err.providerCode]).toEqual(["auth", false, 400, "Client specified an invalid argument"]);
+    expect(err.message).toBe("HTTP 400 — Incorrect API key provided: xa***Jm. You can obtain an API key from https://console.x.ai.");
+    expect(toSdkAssistantMessageError(err)).toBe("authentication_failed");
+  });
+
+  test("any OTHER flat 400 stays `bad_request`: the credential reading is keyed on the sentence, not on the dialect", () => {
+    const err = normalizeHttpError(400, h(), JSON.stringify({ code: "Client specified an invalid argument", error: "Model grok-9 does not exist or your team does not have access to it." }));
+    expect([err.code, err.retryable, err.providerCode]).toEqual(["bad_request", false, "Client specified an invalid argument"]);
+    expect(err.message).toBe("HTTP 400 — Model grok-9 does not exist or your team does not have access to it.");
+    expect(toSdkAssistantMessageError(err)).toBe("invalid_request");
+  });
+
+  test("a flat 401 with no code is `auth` with NO providerCode — never an empty string", () => {
+    const err = normalizeHttpError(401, h(), JSON.stringify({ error: "Invalid or expired credentials" }));
+    expect(err.code).toBe("auth");
+    expect("providerCode" in err).toBe(false);
+    expect(err.message).toBe("HTTP 401 — Invalid or expired credentials");
+  });
+
+  test("a flat 429 is a retryable rate limit carrying its status text as the provider code", () => {
+    const err = normalizeHttpError(429, h({ "retry-after": "3" }), JSON.stringify({ code: "Some resource has been exhausted", error: "Too many requests" }));
+    expect([err.code, err.retryable, err.retryAfterMs, err.providerCode]).toEqual(["rate_limit", true, 3000, "Some resource has been exhausted"]);
+  });
+
+  test("the flat message gets the same redaction and scrub a raw body gets", () => {
+    const exact = normalizeHttpError(400, h(), JSON.stringify({ code: "x", error: "echoing xai-SECRETSECRETSECRET back" }), ["xai-SECRETSECRETSECRET"]);
+    expect(exact.message).not.toContain("SECRETSECRET");
+    const shaped = `sk-proj-${"A".repeat(48)}`;
+    expect(scanForSecrets(shaped).length).toBeGreaterThan(0);
+    const scanned = normalizeHttpError(400, h(), JSON.stringify({ error: `bad key ${shaped}` }));
+    expect(scanned.message).not.toContain(shaped);
+    expect(scanned.message).toContain("redacted");
+  });
+
+  test("OpenAI's STRUCTURED envelope classifies exactly as before — raw-body snippet, `error.code`, status-only classification", () => {
+    const invalidKey = JSON.stringify({ error: { message: "Incorrect API key provided: sk-***. You can find your API key at https://platform.openai.com/account/api-keys.", type: "invalid_request_error", param: null, code: "invalid_api_key" } });
+    const at401 = normalizeHttpError(401, h(), invalidKey);
+    expect([at401.code, at401.retryable, at401.providerCode]).toEqual(["auth", false, "invalid_api_key"]);
+    expect(at401.message).toBe(`HTTP 401 — ${invalidKey.slice(0, 200)}`);
+    // The SAME sentence inside the structured envelope at a 400 is still a 400: the credential reading
+    // exists for the flat dialect only, so no OpenAI-shaped body changes bucket.
+    const at400 = normalizeHttpError(400, h(), invalidKey);
+    expect([at400.code, at400.providerCode]).toEqual(["bad_request", "invalid_api_key"]);
+    expect(at400.message).toBe(`HTTP 400 — ${invalidKey.slice(0, 200)}`);
+  });
+});
