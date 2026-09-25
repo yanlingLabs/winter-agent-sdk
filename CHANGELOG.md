@@ -28,14 +28,27 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   sent an xAI key to OpenAI. It now reaches that provider's own host, or is refused with a typed
   `capability` error when the catalog names no host for it. Sessions built by the runtime are
   unaffected: they already copy each multi-provider row's endpoint into the connection.
+- A row whose continuation is the encrypted reasoning item (`opaque-provider-state`) now asks for it
+  (`include: ["reasoning.encrypted_content"]`) on every turn that does not switch reasoning off, even
+  when no effort is named. Before, an effortless turn on such a model kept no reasoning for the next
+  turn. This also applies to the opaque `openai/*` and `codex-oauth/*` rows (include only; no
+  `reasoning` object is added).
+- `response.reasoning_text.delta` now reaches the readable-reasoning channel as well as
+  `response.reasoning_summary_text.delta`. It is treated as a summary unless the row records full
+  exposed reasoning.
+- A request with no tools no longer sends `tools`, `tool_choice` or `parallel_tool_calls`. The codex
+  backend is the exception: it rejects a request missing them, so it still gets all three.
+- `OpenAI-Organization` / `OpenAI-Project` are sent only on `openai` turns, never on another provider
+  sharing the adapter.
 
 ### Errors
 
 - `normalizeHttpError` also reads xAI's flat error body (`{"code": "<status text>", "error": "<message>"}`),
-  alongside the structured `{error: {…}}` envelopes, whose handling is unchanged. The flat body's `code`
-  becomes `providerCode`, and its message becomes the snippet. A wrong key, which xAI answers with HTTP 400
-  "Incorrect API key provided", is now classified `auth`, so credential validation reports an invalid key
-  instead of an unreachable endpoint.
+  alongside the structured `{error: {…}}` envelopes, whose handling is unchanged. Only a body whose keys
+  are exactly `{error}` or `{error, code}` counts. The flat body's `code` becomes `providerCode`, and
+  its message becomes the snippet. A wrong key, which xAI answers with HTTP 400 and a message starting
+  "Incorrect API key provided", is now classified `auth`, so credential validation reports an invalid
+  key instead of an unreachable endpoint.
 
 ## 0.0.24
 
