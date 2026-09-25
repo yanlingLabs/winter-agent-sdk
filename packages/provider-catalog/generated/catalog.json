@@ -4534,15 +4534,16 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Hosted endpoints are trial/rate-limited developer access; NVIDIA marks some model endpoints deprecated without a date."
         ]
       },
       "scope": "llm",
       "pricingBasis": "free",
       "admission": {
         "basis": "api-key",
-        "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
-        "tier": "pinned-upstream"
+        "tier": "fetched-document",
+        "citation": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — NVIDIA build.nvidia.com model page, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1` with an NVIDIA API key; Free Endpoint (rate-limited trial access, no per-token billing)."
       }
     },
     {
@@ -47293,37 +47294,55 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications show 131K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications explicitly tag function calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-llama-3_3-nemotron-super-49b-v1_5 — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-llama-3_3-nemotron-super-49b-v1_5 — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47380,53 +47399,60 @@
       "key": "nvidia/nvidia/nemotron-3-nano-30b-a3b",
       "providerId": "nvidia",
       "upstreamId": "nvidia/nemotron-3-nano-30b-a3b",
-      "displayName": "Nemotron 3 Nano 30B A3B",
+      "displayName": "Nemotron 3 Nano 30B",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — hosted specifications show 262K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-30b-a3b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-30b-a3b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-30b-a3b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-30b-a3b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-30b-a3b",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "official-doc",
+          "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47437,54 +47463,70 @@
       "key": "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "providerId": "nvidia",
       "upstreamId": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "displayName": "Nemotron 3 Nano Omni 30B A3B Reasoning",
+      "displayName": "Nemotron 3 Nano Omni 30B",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — hosted specifications show 262K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "audio",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — hosted specifications list text, image, audio, video input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — model card says supports JSON output format",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "official-doc",
+          "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47495,42 +47537,60 @@
       "key": "nvidia/nvidia/nemotron-3-super-120b-a12b",
       "providerId": "nvidia",
       "upstreamId": "nvidia/nemotron-3-super-120b-a12b",
-      "displayName": "Nemotron 3 Super 120B A12B",
+      "displayName": "Nemotron 3 Super 120B",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — hosted specifications show 1M context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-super-120b-a12b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-super-120b-a12b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-super-120b-a12b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-super-120b-a12b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47546,37 +47606,55 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — hosted specifications show 1M context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-ultra-550b-a55b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-ultra-550b-a55b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-ultra-550b-a55b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-ultra-550b-a55b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47737,53 +47815,60 @@
       "key": "nvidia/nvidia/nvidia-nemotron-nano-9b-v2",
       "providerId": "nvidia",
       "upstreamId": "nvidia/nvidia-nemotron-nano-9b-v2",
-      "displayName": "NVIDIA Nemotron Nano 9B v2",
+      "displayName": "Nemotron Nano 9B v2",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — hosted specifications show 131K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nvidia-nemotron-nano-9b-v2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nvidia-nemotron-nano-9b-v2 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nvidia-nemotron-nano-9b-v2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nvidia-nemotron-nano-9b-v2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nvidia-nemotron-nano-9b-v2",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "source": "official-doc",
+          "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — model card/specifications document reasoning or thinking capability",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T10:41:30Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",

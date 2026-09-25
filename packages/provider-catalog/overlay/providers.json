@@ -4557,6 +4557,46 @@
         "tier": "fetched-document"
       },
       "scope": "llm"
+    },
+    {
+      "id": "nvidia",
+      "displayName": "NVIDIA NIM",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://integrate.api.nvidia.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/nvidia/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Hosted endpoints are trial/rate-limited developer access; NVIDIA marks some model endpoints deprecated without a date."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — NVIDIA build.nvidia.com model page, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1` with an NVIDIA API key; Free Endpoint (rate-limited trial access, no per-token billing)."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on NVIDIA's fetched build.nvidia.com model pages (tier fetched-document). `free` stays correct: NVIDIA retired the credit system for build.nvidia.com in favour of per-model trial rate limits (staff reply 2025-09-10, https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567) and publishes no per-token price table. Several Nemotron pages mark their Free Endpoint DEPRECATED with no shutdown date."
     }
   ]
 }

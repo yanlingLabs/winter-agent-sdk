@@ -48566,6 +48566,394 @@
         "inference_geo"
       ],
       "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-3-ultra-550b-a55b",
+      "displayName": "Nemotron 3 Ultra 550B",
+      "aliases": [],
+      "$comment": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — Free Endpoint Available on 2026-09-25. https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — reasoning control: extra_body.chat_template_kwargs.enable_thinking true/false. No documented reasoning_effort literal on this hosted wire; efforts intentionally empty. https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567 — NVIDIA staff said on 2025-09-10 that build.nvidia.com no longer uses a credit system; trial usage uses model-specific rate limits. No per-token hosted price found, so pricing omitted.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — hosted specifications show 1M context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-3-super-120b-a12b",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-3-super-120b-a12b",
+      "displayName": "Nemotron 3 Super 120B",
+      "aliases": [],
+      "$comment": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — Free Endpoint Available on 2026-09-25. https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — reasoning control: extra_body.chat_template_kwargs.enable_thinking true/false. No documented reasoning_effort literal on this hosted wire; efforts intentionally empty. https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567 — NVIDIA staff said on 2025-09-10 that build.nvidia.com no longer uses a credit system; trial usage uses model-specific rate limits. No per-token hosted price found, so pricing omitted.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — hosted specifications show 1M context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-3-nano-30b-a3b",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-3-nano-30b-a3b",
+      "displayName": "Nemotron 3 Nano 30B",
+      "aliases": [],
+      "$comment": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — Free Endpoint Deprecated on 2026-09-25. NVIDIA does not give a shutdown date on this page; keep candidate pending a live probe or retirement notice. https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — reasoning control: chat template enable_thinking on/off in self-hosted docs; hosted acceptance not independently verified. No documented reasoning_effort literal on this hosted wire; efforts intentionally empty. https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567 — NVIDIA staff said on 2025-09-10 that build.nvidia.com no longer uses a credit system; trial usage uses model-specific rate limits. No per-token hosted price found, so pricing omitted.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — hosted specifications show 262K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "displayName": "Nemotron 3 Nano Omni 30B",
+      "aliases": [],
+      "$comment": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — Free Endpoint Available on 2026-09-25. https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — reasoning control: chat_template_kwargs.enable_thinking false turns off; reasoning_budget and thinking_token_budget tune token budget, not reasoning_effort. No documented reasoning_effort literal on this hosted wire; efforts intentionally empty. https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567 — NVIDIA staff said on 2025-09-10 that build.nvidia.com no longer uses a credit system; trial usage uses model-specific rate limits. No per-token hosted price found, so pricing omitted. https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — raw PDF not accepted; render pages to images. Hosted sample uses reasoning_budget=16384 and max_tokens=65536; no separate model output cap proven.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 262144,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — hosted specifications show 262K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "audio",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — hosted specifications list text, image, audio, video input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — model card says supports JSON output format",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning/modelcard — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      "displayName": "Llama 3.3 Nemotron Super 49B v1.5",
+      "aliases": [],
+      "$comment": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — Free Endpoint Deprecated on 2026-09-25. NVIDIA does not give a shutdown date on this page; keep candidate pending a live probe or retirement notice. https://docs.api.nvidia.com/nim/reference/nvidia-llama-3_3-nemotron-super-49b-v1_5 — reasoning control: system prompt detailed thinking on/off; not a reasoning_effort API value. No documented reasoning_effort literal on this hosted wire; efforts intentionally empty. https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567 — NVIDIA staff said on 2025-09-10 that build.nvidia.com no longer uses a credit system; trial usage uses model-specific rate limits. No per-token hosted price found, so pricing omitted.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications show 131K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5 — hosted specifications explicitly tag function calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-llama-3_3-nemotron-super-49b-v1_5 — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-llama-3_3-nemotron-super-49b-v1_5 — model card/specifications document reasoning or thinking capability",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nvidia-nemotron-nano-9b-v2",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nvidia-nemotron-nano-9b-v2",
+      "displayName": "Nemotron Nano 9B v2",
+      "aliases": [],
+      "$comment": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — Free Endpoint Deprecated on 2026-09-25. NVIDIA does not give a shutdown date on this page; keep candidate pending a live probe or retirement notice. https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — reasoning control: thinking budget / reasoning control is model-specific; no hosted reasoning_effort literal documented. No documented reasoning_effort literal on this hosted wire; efforts intentionally empty. https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567 — NVIDIA staff said on 2025-09-10 that build.nvidia.com no longer uses a credit system; trial usage uses model-specific rate limits. No per-token hosted price found, so pricing omitted.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — hosted specifications show 131K context; integer expands rounded display to power-of-two tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — hosted specifications list text input modalities",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2 — hosted specifications list text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — model card/reference describes tool/function calling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — tool/function calling is documented for model family",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:41:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.api.nvidia.com/nim/reference/nvidia-nvidia-nemotron-nano-9b-v2 — model card/specifications document reasoning or thinking capability",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T10:41:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
     }
   ]
 }
