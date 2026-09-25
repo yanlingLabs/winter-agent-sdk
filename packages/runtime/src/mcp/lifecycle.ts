@@ -293,6 +293,13 @@ interface ConnectionSlot {
   // first use" outcome. `inflight` lets every concurrent on-demand caller share the ONE real attempt
   // already in progress instead of starting a second that would invalidate the first's own gen.
   inflight?: Promise<boolean> | undefined;
+  // WS-23 (listChanged): the server said its tool list changed while this slot could not be
+  // refreshed -- its connection not yet committed and marked `connected` (the initial `tools/list`
+  // may still be in flight), or disabled (enableSlot restores `savedTools`, which the change just
+  // made stale). `refreshServerTools` refuses any non-connected slot, so the signal is PARKED here
+  // and replayed the moment the slot reaches `connected` (connectOneServer's success path,
+  // enableSlot's instant restore) rather than lost.
+  toolListStale?: boolean | undefined;
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
@@ -710,10 +717,48 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     return ++slot.gen;
   }
 
+  // WS-23 (listChanged, protocol revision 2026-07-28 / 2025 `notifications/tools/list_changed`): a
+  // server that advertises `tools.listChanged` and then says its list changed gets its tools
+  // re-registered through `refreshServerTools` -- the SAME staleness-guarded path RefreshMcpTools
+  // already uses (gen snapshot, set-replace registration, executor reinstall, a state notify), never
+  // a second registration path of its own. The signal is bound to the CONNECTION that raised it: a
+  // notification from a client this slot no longer holds (replaced by addAndConnect, torn down by
+  // reconnect/remove) is dropped, so a closing connection can never refresh its successor.
+  function onToolListChangedFor(slot: ConnectionSlot, connection: () => ConnectedMcpClient | undefined): () => void {
+    return () => {
+      if (slots.get(slot.name) !== slot) return; // the slot itself was replaced or removed
+      const client = connection();
+      // A committed client that is not this one: this notification came from a superseded connection.
+      if (slot.client !== undefined && client !== undefined && slot.client !== client) return;
+      if (slot.state === "connected" && client !== undefined && slot.client === client) {
+        refreshAfterListChanged(slot.name);
+        return;
+      }
+      slot.toolListStale = true;
+    };
+  }
+
+  function refreshAfterListChanged(name: string): void {
+    void refreshServerTools(name).then((result) => {
+      if (!result.ok) console.error(`winter: mcp: server "${name}" reported a tool list change, but the refresh failed: ${result.reason}`);
+    });
+  }
+
+  // Called wherever a slot has just reached `connected`: replays a change parked while it could not
+  // be refreshed (see `toolListStale`).
+  function replayParkedToolListChange(slot: ConnectionSlot): void {
+    if (slot.toolListStale !== true) return;
+    slot.toolListStale = false;
+    refreshAfterListChanged(slot.name);
+  }
+
   // Returns whether it actually committed (`false` means a caller-visible supersede happened while
   // this attempt was connecting -- disable/remove/reconnect/on-demand-replace) -- every caller MUST
   // branch on this rather than assuming a resolved promise means "connected."
   async function connectSlotForReal(slot: ConnectionSlot, gen: number): Promise<boolean> {
+    let connection: ConnectedMcpClient | undefined;
+    // A fresh connection's own initial `tools/list` (below) supersedes anything parked for an older one.
+    slot.toolListStale = false;
     const client = await connectMcpServer({
       name: slot.name,
       config: slot.config,
@@ -721,8 +766,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       // tool-call timeout; see client.ts's own header).
       connectTimeoutMs: deps.envConfig.timeoutMs,
       elicitationAsk: deps.elicitationAsk,
+      onToolListChanged: onToolListChangedFor(slot, () => connection),
       ...(deps.inProcessServers?.[slot.name] !== undefined ? { inProcessServer: deps.inProcessServers[slot.name] } : {}),
     });
+    connection = client;
     const tools = await client.listTools();
     if (!isCurrentAttempt(slot, gen)) {
       // Superseded while connecting -- whatever superseded this attempt (disableSlot, removeSlot,
@@ -774,6 +821,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         // ordering ever changes.
         if (!committed || !isCurrentAttempt(slot, gen)) return;
         setSlotState(slot.name, "connected", { toolNames: slot.toolNames });
+        replayParkedToolListChange(slot);
       },
       (err: unknown) => {
         // A stale FAILURE must never stomp a slot that has since moved on (e.g. disabled, or a
@@ -961,6 +1009,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         });
         installExecutorsForSlot(slot, tools);
         setSlotState(name, "connected", { toolNames: tools.map((t) => t.name) });
+        // WS-23: `savedTools` is what the server listed BEFORE the toggle; a change it announced
+        // while disabled was parked, and is applied now rather than left stale until the next one.
+        replayParkedToolListChange(slot);
         return;
       }
       // Rare/edge case, disclosed: the connection died on its own while disabled (or this server
