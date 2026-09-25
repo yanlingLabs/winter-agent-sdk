@@ -3018,7 +3018,7 @@
     },
     {
       "id": "qwen-token-plan-anthropic",
-      "displayName": "Qwen Token Plan (Anthropic dialect)",
+      "displayName": "Alibaba Cloud Token Plan (Anthropic dialect)",
       "protocols": [
         "anthropic-messages"
       ],
@@ -3049,84 +3049,7 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://help.aliyun.com/en/model-studio/token-plan-overview and https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Token Plan documentation, retrieved 2026-09-25: the international Token Plan host `token-plan.ap-southeast-1.maas.aliyuncs.com` serves `/compatible-mode/v1` and `/apps/anthropic` for the plan key; billing is plan credits.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
-      "id": "qwen-token-plan-cn",
-      "displayName": "Qwen Token Plan China (OpenAI dialect)",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "$comment": "China-region twin of `qwen-cloud-token-plan`.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
-        ]
-      },
-      "pricingBasis": "subscription",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://help.aliyun.com/en/model-studio/token-plan-overview and https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Token Plan documentation, retrieved 2026-09-25: the China Token Plan host `token-plan.cn-beijing.maas.aliyuncs.com` serves `/compatible-mode/v1` and `/apps/anthropic` for the plan key.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
-      "id": "qwen-token-plan-cn-anthropic",
-      "displayName": "Qwen Token Plan China (Anthropic dialect)",
-      "protocols": [
-        "anthropic-messages"
-      ],
-      "$comment": "Dialect sibling of `qwen-token-plan-cn`.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.anthropic-messages",
-      "family": "anthropic",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
-        ]
-      },
-      "pricingBasis": "subscription",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://help.aliyun.com/en/model-studio/token-plan-overview and https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Token Plan documentation, retrieved 2026-09-25: China Token Plan Anthropic root `https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic`.",
+        "citation": "https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-overview and https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start — Alibaba Cloud Token Plan (Personal) documentation, retrieved 2026-09-25: Anthropic base `https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic` with the plan key; Singapore-only; billing is plan credits.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -3733,6 +3656,128 @@
         "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)",
         "tier": "fetched-document"
       }
+    },
+    {
+      "id": "qwen-cloud-token-plan",
+      "displayName": "Alibaba Cloud Token Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/qwen-cloud-token-plan/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-overview and https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start — Alibaba Cloud Token Plan (Personal) documentation, retrieved 2026-09-25: Singapore-only subscription plan; OpenAI-compatible base `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` and Anthropic base `.../apps/anthropic` with the plan key; billing is plan credits."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on fetched Alibaba documentation (tier fetched-document) and corrected to `subscription` — the Token Plan is a credits subscription, so its models carry no per-token price. Alibaba's Sep 23/25 pages state the plan is available ONLY in the Singapore region (the cn-beijing host on the base-url page is not a launched product)."
+    },
+    {
+      "id": "alibaba",
+      "displayName": "Alibaba Cloud Model Studio",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "models": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/alibaba/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Singapore (international) OpenAI-compatible base `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`; per-token billing (https://www.alibabacloud.com/help/en/model-studio/model-pricing)."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document). Model Studio also serves OpenAI Responses at `/compatible-mode/v1/responses` on this host and key (https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-responses) — listed as a protocol, but rows stay `chat` until adapter-level Responses support lands."
+    },
+    {
+      "id": "alibaba-cn",
+      "displayName": "Alibaba Cloud Bailian China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "models": "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/alibaba/cn/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Beijing (China) OpenAI-compatible base `https://dashscope.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document); CNY per-token billing (https://help.aliyun.com/zh/model-studio/model-pricing)."
     }
   ]
 }
