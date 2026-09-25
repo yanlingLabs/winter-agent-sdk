@@ -369,30 +369,104 @@ export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: 
     .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...EPHEMERAL_CACHE_CONTROL } } : {}) }));
 }
 
+/** Anthropic's own ceiling on `cache_control` breakpoints per request (https://platform.claude.com/docs/en/build-with-claude/prompt-caching). */
+export const MAX_CACHE_BREAKPOINTS = 4;
+
 /**
- * The message-level breakpoint: a copy of `messages` whose last CONTENT-BEARING message's last block
- * carries the marker.
- *
- * WS-23: the last message is not always content-bearing any more. An effort-only `system` marker has
- * empty `content` and nothing to hang a breakpoint on, so the marker walks back to the block before
- * it -- the same prefix position, since an effort-only message renders nothing at its position
- * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
+ * WS-23: how many block POSITIONS a request may add after the previous request's write before the
+ * rolling breakpoint alone stops finding it. The API "checks at most 20 positions per breakpoint,
+ * counting the breakpoint itself", and "a run of consecutive `tool_use` blocks counts as one position,
+ * and so does a run of consecutive `tool_result` blocks"
+ * (https://platform.claude.com/docs/en/build-with-claude/prompt-caching, "The lookback window is 20
+ * blocks"). 15 leaves margin for a count that disagrees with the server's by a block or two.
  */
-export function withMessageCacheMarker(messages: WireMessage[]): WireMessage[] {
-  const out = messages.slice();
-  for (let i = out.length - 1; i >= 0; i--) {
-    const message = out[i]!;
-    if (message.content.length === 0) continue;
-    const content = message.content.slice();
+export const LOOKBACK_MARGIN_POSITIONS = 15;
+
+/** Where a breakpoint can go: message `m`'s block `b`. */
+interface BlockAt {
+  m: number;
+  b: number;
+}
+
+/**
+ * The last block in `messages[0..end)` a breakpoint may carry: the last block of the last
+ * CONTENT-BEARING message. An effort-only `system` marker has no content and is skipped -- it renders
+ * nothing at its position (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
+ * An in-dialect thinking block cannot carry a marker; claude never ends a request on one either (the
+ * final message is the user's), so that only guards a host-supplied history.
+ */
+function lastMarkable(messages: readonly WireMessage[], end: number): BlockAt | undefined {
+  for (let m = end - 1; m >= 0; m--) {
+    const content = messages[m]!.content;
+    if (content.length === 0) continue;
     const tail = content[content.length - 1]!;
-    // An in-dialect thinking block cannot carry a cache marker; claude never ends a request on one
-    // either (the final message is the user's), so this only guards a host-supplied history.
-    if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return out;
-    content[content.length - 1] = { ...tail, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
-    out[i] = { ...message, content };
-    return out;
+    if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return undefined;
+    return { m, b: content.length - 1 };
   }
+  return undefined;
+}
+
+/** The lookback's own count of positions strictly after `from` up to and including `to` (runs of `tool_use` / `tool_result` count once). */
+function positionsBetween(messages: readonly WireMessage[], from: BlockAt, to: BlockAt): number {
+  let count = 0;
+  let previousType: unknown;
+  for (let m = from.m; m <= to.m; m++) {
+    const content = messages[m]!.content;
+    const first = m === from.m ? from.b + 1 : 0;
+    const last = m === to.m ? to.b : content.length - 1;
+    for (let b = first; b <= last; b++) {
+      const type = content[b]!["type"];
+      if ((type === "tool_use" || type === "tool_result") && type === previousType) continue;
+      previousType = type;
+      count++;
+    }
+  }
+  return count;
+}
+
+function markAt(messages: WireMessage[], at: BlockAt): void {
+  const message = messages[at.m]!;
+  const content = message.content.slice();
+  content[at.b] = { ...content[at.b]!, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
+  messages[at.m] = { ...message, content };
+}
+
+/**
+ * The message-level breakpoints, within the `budget` the system blocks left.
+ *
+ *   - The ROLLING breakpoint on the last block of the last content-bearing message -- whatever the
+ *     engine appended last (tool results, a reminder, a hook's `additionalContext`) is the true tail.
+ *   - WS-23, the LOOKBACK breakpoint: exactly on the block the PREVIOUS request's rolling breakpoint
+ *     wrote -- the last markable block before the newest assistant message, since the previous
+ *     request ended right there -- when this request appended more than
+ *     `LOOKBACK_MARGIN_POSITIONS` positions after it. Past 20 the rolling breakpoint's lookback cannot
+ *     reach the previous write and the whole conversation is re-written; a breakpoint ON the previous
+ *     write is a guaranteed read ("a second breakpoint ... starts a second lookback window there",
+ *     same page), and it costs nothing extra: a breakpoint over an already-cached prefix is a read.
+ */
+export function withMessageCacheMarkers(messages: WireMessage[], budget: number): WireMessage[] {
+  const out = messages.slice();
+  if (budget <= 0) return out;
+  const tail = lastMarkable(out, out.length);
+  if (tail === undefined) return out;
+  markAt(out, tail);
+  if (budget < 2) return out;
+  let lastAssistant = -1;
+  for (let m = tail.m; m >= 0; m--) {
+    if (out[m]!.role === "assistant") {
+      lastAssistant = m;
+      break;
+    }
+  }
+  if (lastAssistant <= 0) return out;
+  const previousWrite = lastMarkable(out, lastAssistant);
+  if (previousWrite !== undefined && positionsBetween(out, previousWrite, tail) > LOOKBACK_MARGIN_POSITIONS) markAt(out, previousWrite);
   return out;
+}
+
+/** The single rolling message breakpoint (the pre-WS-23 behaviour, and the one a tight budget leaves). */
+export function withMessageCacheMarker(messages: WireMessage[]): WireMessage[] {
+  return withMessageCacheMarkers(messages, 1);
 }
 
 // --- capability resolution ------------------------------------------------------------------------
@@ -921,12 +995,16 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
 
   const caching = promptCachingLayout(req, descriptor);
   const wireMessages = toWireMessages(req.messages, { referableTools });
+  // The system blocks' own breakpoints (at most two: the static prefix and the dynamic rest) come out
+  // of the request's budget of four first; the messages get what is left.
+  const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks) : undefined;
+  const systemBreakpoints = wireSystem?.filter((block) => "cache_control" in block).length ?? 0;
   return {
     model: anthropicWireModelId(req.model),
     max_tokens: maxTokens,
-    messages: caching ? withMessageCacheMarker(wireMessages) : wireMessages,
+    messages: caching ? withMessageCacheMarkers(wireMessages, MAX_CACHE_BREAKPOINTS - systemBreakpoints) : wireMessages,
     stream: true,
-    ...(caching && req.systemBlocks !== undefined ? { system: toWireSystemBlocks(req.systemBlocks) } : req.system !== undefined ? { system: req.system } : {}),
+    ...(wireSystem !== undefined ? { system: wireSystem } : req.system !== undefined ? { system: req.system } : {}),
     ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
     ...(req.toolChoice !== undefined ? { tool_choice: resolveToolChoice(req.toolChoice, unsupported) } : {}),
     ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),

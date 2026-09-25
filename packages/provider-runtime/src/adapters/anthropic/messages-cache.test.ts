@@ -4,7 +4,7 @@
 // anthropic-hardening lane's edits to `messages.test.ts` never collide with these.
 import { describe, expect, test } from "bun:test";
 import { ANTHROPIC_DEFAULT_BASE_URL } from "./index.ts";
-import { buildHeaders, buildRequestBody, perMessageEffortBetaFor, toWireMessages, withMessageCacheMarker } from "./messages.ts";
+import { buildHeaders, buildRequestBody, LOOKBACK_MARGIN_POSITIONS, perMessageEffortBetaFor, toWireMessages, withMessageCacheMarker, withMessageCacheMarkers } from "./messages.ts";
 import { ProviderRequestError } from "../../http.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext, ProviderMessageLike, TurnRequest } from "../../types.ts";
@@ -186,5 +186,65 @@ describe("deferred tools and tool_reference (WS-23 item 3)", () => {
   test("a `defer_loading` tool on a row without the evidence, or a request with NO eager tool, is refused before the request", () => {
     expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], tools: [tool("Bash"), tool("X", true)] }, opus55(), {})).toThrow(/deferred tool loading/);
     expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], tools: [tool("X", true)] }, deferredRow(), {})).toThrow(/at least one tool without `defer_loading`/);
+  });
+});
+
+// --- WS-23 item 5: breakpoints ------------------------------------------------------------------------
+
+const countMarkers = (value: unknown): number => JSON.stringify(value).split('"cache_control"').length - 1;
+const markedAt = (wire: Array<{ content: Array<Record<string, unknown>> }>): Array<[number, number]> =>
+  wire.flatMap((m, i) => m.content.flatMap((b, j) => ("cache_control" in b ? [[i, j] as [number, number]] : [])));
+
+describe("cache breakpoints (WS-23 item 5)", () => {
+  test("the rolling breakpoint lands on the TRUE last block -- text appended after the tool results (a hook's additionalContext) included", () => {
+    const wire = withMessageCacheMarkers(
+      toWireMessages([
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] },
+        { role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }, { type: "text", text: "<hook additionalContext>" }] },
+      ]),
+      2,
+    );
+    expect(markedAt(wire)).toEqual([[2, 1]]);
+  });
+
+  const bigRound = (blocks: number): ProviderMessageLike[] => [
+    { role: "user", content: "go" },
+    { role: "assistant", content: "first" },
+    { role: "user", content: "next" },
+    // One assistant turn with many separately-counted positions (text blocks), then its tool results.
+    { role: "assistant", content: [...Array.from({ length: blocks }, (_, i) => ({ type: "text" as const, text: `step ${i}` })), { type: "tool_use", id: "t", name: "Bash", input: {} }] },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] },
+  ];
+
+  test("a request that appends MORE than the lookback margin since the previous write gets a breakpoint exactly ON that write", () => {
+    const wire = withMessageCacheMarkers(toWireMessages(bigRound(LOOKBACK_MARGIN_POSITIONS + 2)), 2);
+    // [2,0] is the previous request's own tail ("next"); [4,0] the rolling tail.
+    expect(markedAt(wire)).toEqual([
+      [2, 0],
+      [4, 0],
+    ]);
+  });
+
+  test("within the margin, and when the budget is spent, only the rolling breakpoint is placed", () => {
+    expect(markedAt(withMessageCacheMarkers(toWireMessages(bigRound(3)), 2))).toEqual([[4, 0]]);
+    expect(markedAt(withMessageCacheMarkers(toWireMessages(bigRound(LOOKBACK_MARGIN_POSITIONS + 2)), 1))).toEqual([[4, 0]]);
+  });
+
+  test("a run of parallel tool calls and its run of results each count as ONE position, as the API counts them", () => {
+    const calls = Array.from({ length: 30 }, (_, i) => ({ type: "tool_use" as const, id: `t${i}`, name: "Read", input: {} }));
+    const results = calls.map((c) => ({ type: "tool_result" as const, tool_use_id: c.id, content: "ok" }));
+    const wire = withMessageCacheMarkers(toWireMessages([{ role: "user", content: "go" }, { role: "assistant", content: calls }, { role: "tool", content: results }]), 2);
+    expect(markedAt(wire)).toEqual([[2, 29]]);
+  });
+
+  test("the whole request never exceeds Anthropic's four breakpoints: two system blocks + rolling + lookback", () => {
+    const body = buildRequestBody(
+      { model: "claude-opus-5-5", messages: bigRound(LOOKBACK_MARGIN_POSITIONS + 2), systemBlocks: [{ text: "static", cacheScope: "global" }, { text: "dynamic", cacheScope: "org" }], system: "static\n\ndynamic" },
+      opus55(),
+      {},
+    );
+    expect(countMarkers(body["system"])).toBe(2);
+    expect(countMarkers(body["messages"])).toBe(2);
   });
 });
