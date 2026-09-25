@@ -14547,6 +14547,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T12:30:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        },
+        "blockBinding": {
+          "value": {
+            "beta": "thinking-binding-controls-2026-08-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T13:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
         }
       },
       "pricing": {
@@ -15579,6 +15588,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T12:30:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        },
+        "blockBinding": {
+          "value": {
+            "beta": "thinking-binding-controls-2026-08-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T13:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
         }
       },
       "pricing": {
@@ -26634,6 +26652,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T12:30:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        },
+        "blockBinding": {
+          "value": {
+            "beta": "thinking-binding-controls-2026-08-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T13:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
         }
       },
       "pricing": {
@@ -27666,6 +27693,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T12:30:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        },
+        "blockBinding": {
+          "value": {
+            "beta": "thinking-binding-controls-2026-08-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T13:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
         }
       },
       "pricing": {
