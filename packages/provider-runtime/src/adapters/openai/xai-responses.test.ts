@@ -15,6 +15,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderAdapter, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
+import { classifySwitch } from "../../continuity/warnings.ts";
 import { createShippedAdapters } from "../index.ts";
 import { createResponsesAdapter } from "./responses.ts";
 import { TEST_API_KEY, collect, soleError, testContext } from "./testing.ts";
@@ -26,6 +27,9 @@ interface Recorded {
   url: string;
   method: string;
   authorization: string | null;
+  /** The two OpenAI account headers — recorded so a test can prove they never reach xAI. */
+  organization: string | null;
+  project: string | null;
   body: Record<string, unknown> | undefined;
 }
 
@@ -46,6 +50,8 @@ function stubFetch(respond: (request: Recorded, n: number) => Response): Recorde
       url: typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
       method: init?.method ?? "GET",
       authorization: headers.get("authorization"),
+      organization: headers.get("openai-organization"),
+      project: headers.get("openai-project"),
       body: raw !== undefined ? (JSON.parse(raw) as Record<string, unknown>) : undefined,
     };
     requests.push(recorded);
@@ -66,8 +72,9 @@ function sse(events: Array<Record<string, unknown>>): Response {
 }
 
 /** One whole Responses turn: an optional reasoning item, some text, `response.completed` with usage. */
-function turnStream(opts: { encrypted?: string; text?: string; usage?: Record<string, unknown> } = {}): Response {
+function turnStream(opts: { encrypted?: string; text?: string; usage?: Record<string, unknown>; reasoningText?: string } = {}): Response {
   const events: Array<Record<string, unknown>> = [{ type: "response.created", response: { id: "resp_1", model: "grok-4.7" } }];
+  if (opts.reasoningText !== undefined) events.push({ type: "response.reasoning_text.delta", delta: opts.reasoningText });
   if (opts.encrypted !== undefined) {
     // xAI's own example reasoning item has an EMPTY `id` and a `summary` array (Responses reference).
     events.push({
@@ -124,6 +131,22 @@ describe("the base URL is the PROVIDER's own, never the adapter's vendor's (WS-2
     expect(requests).toEqual([]);
     await collect(handWired.streamTurn(ask({ model: "gpt-4.1" }), testContext({ providerId: "openai" })));
     expect(requests.map((r) => r.url)).toEqual(["https://api.openai.com/v1/responses"]);
+  });
+
+  test("OpenAI's account headers ride ONLY an `openai` turn — never an `xai` one on the same adapter (fix round 1, M5)", async () => {
+    // A host that configures `organization`/`project` does so for its OpenAI account. xAI's endpoint is
+    // a REVIEWED one, so the endpoint gate would have let them through; the provider gate does not.
+    const endpoints: Record<string, string> = { openai: "https://api.openai.com/v1", xai: "https://api.x.ai/v1" };
+    const adapter = createResponsesAdapter({ descriptors: () => undefined, organization: "org-test-ws23", project: "proj-test-ws23", generatedBaseUrls: (id) => endpoints[id] });
+    const requests = stubFetch((request) => (request.method === "GET" ? new Response(JSON.stringify({ data: [] }), { status: 200 }) : turnStream()));
+    await collect(adapter.streamTurn(ask({}), xaiCtx()));
+    await adapter.validateCredential({ kind: "keychain", account: "openai:test" }, xaiCtx());
+    await collect(adapter.streamTurn(ask({ model: "gpt-4.1" }), testContext({ providerId: "openai" })));
+    expect(requests.map((r) => [new URL(r.url).host, r.organization, r.project])).toEqual([
+      ["api.x.ai", null, null],
+      ["api.x.ai", null, null],
+      ["api.openai.com", "org-test-ws23", "proj-test-ws23"],
+    ]);
   });
 
   test("an operator's own baseUrl still wins verbatim", async () => {
@@ -205,11 +228,40 @@ describe("encrypted reasoning REPLAYS across turns (WS-23 item 5)", () => {
     ]);
   });
 
-  test("grok-4.7 returns the encrypted item even UNASKED (xAI: \"whether or not `include` lists it\"), and it is captured all the same", async () => {
-    const requests = stubFetch(() => turnStream({ encrypted: "ENC-UNASKED" }));
+  test("an EFFORTLESS turn still asks for the encrypted item on every opaque xai row — the knob-less two included (fix round 1, I3)", async () => {
+    // `grok-build-0.1` and `grok-4.20-0309-reasoning` take no effort, so no turn could ASK them to
+    // reason; before I3 they declared a continuation domain the adapter never filled.
+    for (const model of ["grok-4.7", "grok-4.20-0309-reasoning", "grok-build-0.1"]) {
+      const requests = stubFetch(() => turnStream({ encrypted: `ENC-${model}` }));
+      const events = await collect(responsesAdapter().streamTurn(ask({ model }), xaiCtx()));
+      restore?.();
+      expect([model, requests[0]!.body!.include, "reasoning" in requests[0]!.body!]).toEqual([model, ["reasoning.encrypted_content"], false]);
+      expect([model, events.find((e) => e.type === "native_state")]).toEqual([model, { type: "native_state", items: [expect.objectContaining({ encrypted_content: `ENC-${model}` })] }]);
+    }
+  });
+
+  test("the switch warning a knob-less row raises now describes state the adapter CAPTURED, not state it never asked for (fix round 1, I3)", () => {
+    // The classifier is capability-driven (`continuation !== "none"` means "may hold state"), so the
+    // warning on leaving these rows stands — what I3 changes is that it is TRUE: the turn above asked
+    // for the item and the row's domain holds it. Pinned so the two facts cannot drift apart again.
+    const adapter = responsesAdapter();
+    for (const key of ["xai/grok-4.20-0309-reasoning", "xai/grok-build-0.1"]) {
+      const from = catalog.models.find((m) => m.key === key)!;
+      const to = catalog.models.find((m) => m.key === "openai/gpt-4.1")!;
+      const fromCaps = adapter.capabilities(from);
+      expect(fromCaps.continuationDomain).toBe(key);
+      const verdict = classifySwitch(
+        { providerId: "xai", modelKey: key, family: "openai", continuationDomain: fromCaps.continuationDomain, readableState: fromCaps.readableState, continuation: from.reasoning!.continuation },
+        { providerId: "openai", modelKey: to.key, family: "openai", readableState: "none", continuation: "none" },
+      );
+      expect([key, verdict.lossClass]).toEqual([key, "warned-lossy"]);
+    }
+  });
+
+  test("a reasoning-TEXT delta from grok-4.7 surfaces as its readable summary (fix round 1, M1)", async () => {
+    stubFetch(() => turnStream({ reasoningText: "weighing it" }));
     const events = await collect(responsesAdapter().streamTurn(ask({}), xaiCtx()));
-    expect([requests[0]!.body!.include, "reasoning" in requests[0]!.body!]).toEqual([[], false]);
-    expect(events.find((e) => e.type === "native_state")).toMatchObject({ items: [{ encrypted_content: "ENC-UNASKED" }] });
+    expect(events.filter((e) => e.type === "thinking_summary_delta")).toEqual([{ type: "thinking_summary_delta", text: "weighing it" }]);
   });
 });
 
@@ -220,8 +272,9 @@ describe("the Responses-only MULTI-AGENT row (WS-23 item 1)", () => {
     const requests = stubFetch(() => turnStream());
     await collect(responsesAdapter().streamTurn(ask({ model: MODEL, effort: "low" }), xaiCtx()));
     const body = requests[0]!.body!;
-    expect([body.model, body.reasoning, body.tools]).toEqual([MODEL, { effort: "low" }, []]);
-    expect("max_output_tokens" in body).toBe(false);
+    expect([body.model, body.reasoning, body.include]).toEqual([MODEL, { effort: "low" }, ["reasoning.encrypted_content"]]);
+    // No client tools, so no tool surface at all — not even an empty one (fix round 1, M2).
+    for (const field of ["tools", "tool_choice", "parallel_tool_calls", "max_output_tokens"]) expect([field, field in body]).toEqual([field, false]);
   });
 
   test("a `tools` array is refused BEFORE the request — xAI supports no client-side function calling on this model", async () => {

@@ -160,14 +160,15 @@ export function createShippedAdapters(catalog: WinterCatalog): ProviderAdapter[]
     return url !== undefined ? { generatedBaseUrl: url } : {};
   };
   return [
-    // Lane A — the OpenAI family. The Responses adapter serves `openai` AND `xai` (WS-23), so it also
-    // gets each provider's own endpoint — without it, a connection with no `baseUrl` fell back to
-    // OpenAI's host whatever the provider.
+    // Lane A — the OpenAI family. The Responses adapter serves `openai` AND `xai` (WS-23), so it gets
+    // each provider's own endpoint — without it, a connection with no `baseUrl` fell back to OpenAI's
+    // host whatever the provider. NO single `generatedBaseUrl` beside it (fix round 1, M4): that option
+    // takes precedence in `resolveEndpoint`, so passing both would let one URL answer for every
+    // provider the day the catalog shrank back to one — the per-provider lookup is the only authority.
     createResponsesAdapter({
       descriptors: lookup("winter.openai-responses"),
       identityHeaders,
       generatedBaseUrls: generatedBaseUrlsForAdapter(catalog, "winter.openai-responses"),
-      ...generated(catalog, "winter.openai-responses"),
     }),
     createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), identityHeaders, ...generated(catalog, "winter.openai-chat-completions") }),
     createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), identityHeaders, ...generated(catalog, "winter.codex-oauth") }),
