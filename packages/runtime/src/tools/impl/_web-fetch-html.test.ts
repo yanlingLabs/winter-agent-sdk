@@ -275,37 +275,57 @@ describe("convertFetchedHtml -- security review finding N2: nesting-driven outpu
   }
 
   function measureRssMb<T>(fn: () => T): { result: T; ms: number; peakRssMb: number } {
+    // WHY a delta, not an absolute: every test file in a full-repo `bun test` shares one
+    // process, so absolute RSS already sits at 1.2-1.3 GB from earlier files and an absolute
+    // < 1000 MB guard fails on a warm process. The guard's intent is "no 7+ GB spike from THIS
+    // conversion" (pre-fix peak ~7,400 MB), so only rss-after-minus-rss-before can catch a real
+    // regression without failing on shared-process warmth. A forced GC first keeps the baseline
+    // from carrying one test's garbage into the next test's delta.
     const t0 = Date.now();
+    collectGarbageForRss();
     const before = process.memoryUsage().rss;
     const result = fn();
     const after = process.memoryUsage().rss;
-    return { result, ms: Date.now() - t0, peakRssMb: Math.round(Math.max(before, after) / (1024 * 1024)) };
+    const deltaMb = Math.max(0, Math.round((after - before) / (1024 * 1024)));
+    return { result, ms: Date.now() - t0, peakRssMb: deltaMb };
+  }
+
+  function collectGarbageForRss(): void {
+    try {
+      (Bun as unknown as { gc?: (force: boolean) => void }).gc?.(true);
+    } catch {
+      // No GC hook (non-Bun runner?) -- the delta still reads correctly, just noisier.
+    }
   }
 
   test("512 nested <blockquote> around ~200k <br> lines: bounded time, bounded output, no 7+ GB RSS spike", async () => {
     const html = bq512BrLines();
+    collectGarbageForRss();
+    const before = process.memoryUsage().rss;
     const t0 = Date.now();
     const out = await convertFetchedHtml(html);
     const ms = Date.now() - t0;
-    const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    const rssMb = Math.max(0, Math.round((process.memoryUsage().rss - before) / (1024 * 1024)));
     // eslint-disable-next-line no-console
-    console.log(`[N2 bq512-br-lines] html=${html.length} ms=${ms} out=${out.length} rssMB=${rssMb}`);
+    console.log(`[N2 bq512-br-lines] html=${html.length} ms=${ms} out=${out.length} rssDeltaMB=${rssMb}`);
     expect(ms).toBeLessThan(5000); // pre-fix: 37,700ms
     expect(out.length).toBeLessThan(2_000_000); // pre-fix: 214,000,000+ chars
-    expect(rssMb).toBeLessThan(1000); // pre-fix: ~7,400 MB peak
+    expect(rssMb).toBeLessThan(1000); // pre-fix: ~7,400 MB spike; a delta, so shared-process warmth can't trip it
   });
 
   test("500 nested <blockquote> around a 400,000-line <pre>: bounded time, bounded output, no 7+ GB RSS spike", async () => {
     const html = preInBq500Lines();
+    collectGarbageForRss();
+    const before = process.memoryUsage().rss;
     const t0 = Date.now();
     const out = await convertFetchedHtml(html);
     const ms = Date.now() - t0;
-    const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    const rssMb = Math.max(0, Math.round((process.memoryUsage().rss - before) / (1024 * 1024)));
     // eslint-disable-next-line no-console
-    console.log(`[N2 pre-in-bq500-lines] html=${html.length} ms=${ms} out=${out.length} rssMB=${rssMb}`);
+    console.log(`[N2 pre-in-bq500-lines] html=${html.length} ms=${ms} out=${out.length} rssDeltaMB=${rssMb}`);
     expect(ms).toBeLessThan(5000); // pre-fix: 40,800ms
     expect(out.length).toBeLessThan(4_000_000); // pre-fix: 402,000,000+ chars
-    expect(rssMb).toBeLessThan(1000); // pre-fix: ~7,500 MB peak
+    expect(rssMb).toBeLessThan(1000); // pre-fix: ~7,500 MB spike; a delta, so shared-process warmth can't trip it
   });
 
   test("a budget-exceeding conversion falls back to raw HTML (claude's own turndown-throws rule), never propagates the throw", async () => {
