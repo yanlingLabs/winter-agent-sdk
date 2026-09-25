@@ -208,7 +208,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-opus-5",
@@ -385,7 +392,14 @@
         "top_k",
         "thinking.type.enabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-sonnet-5",
@@ -681,7 +695,14 @@
         "thinking.type.enabled",
         "thinking.type.disabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-haiku-4.5",
@@ -778,7 +799,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-opus-4.5",
@@ -901,7 +929,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-opus-4.6",
@@ -1020,7 +1055,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-opus-4.7",
@@ -1145,7 +1187,14 @@
         "top_k",
         "thinking.type.enabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-opus-4.8",
@@ -1270,7 +1319,14 @@
         "top_k",
         "thinking.type.enabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-sonnet-4.5",
@@ -1384,7 +1440,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "anthropic/claude-sonnet-4.6",
@@ -1503,7 +1566,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "arcee-ai/trinity-large-thinking",
@@ -6736,7 +6806,14 @@
         "tool_choice.any",
         "tool_choice.tool"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "google/gemini-3.8-flash",
@@ -7525,7 +7602,14 @@
         "thinking.type.enabled",
         "thinking.type.disabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-fable-5-1",
@@ -7704,7 +7788,14 @@
         "tool_choice.any",
         "tool_choice.tool"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-haiku-4-5-20251001",
@@ -7801,7 +7892,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-haiku-4.5",
@@ -7898,7 +7996,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-opus-4.5",
@@ -8021,7 +8126,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-opus-4.6",
@@ -8140,7 +8252,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-opus-4.7",
@@ -8265,7 +8384,14 @@
         "top_k",
         "thinking.type.enabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-opus-4.8",
@@ -8390,7 +8516,14 @@
         "top_k",
         "thinking.type.enabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-opus-5",
@@ -8567,7 +8700,14 @@
         "top_k",
         "thinking.type.enabled"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-sonnet-4.5",
@@ -8681,7 +8821,14 @@
       "unsupportedParameters": [
         "thinking.type.adaptive"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-sonnet-4.6",
@@ -8800,7 +8947,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-sonnet-5",
@@ -48006,7 +48160,14 @@
         "tool_choice.any",
         "tool_choice.tool"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "console/claude-opus-5-5",
@@ -48194,7 +48355,14 @@
         "tool_choice.any",
         "tool_choice.tool"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      }
     },
     {
       "key": "mistral/mistral-large-2512",

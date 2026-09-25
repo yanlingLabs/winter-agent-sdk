@@ -150,7 +150,39 @@ function capabilityRefusal(reason: string): ProviderRequestError {
  * because that is what "Anthropic-family blocks ride in-dialect with their real signatures" (R6-8)
  * means at the only place it can be enforced. Nothing here strips, re-signs or normalizes them.
  */
-function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
+/**
+ * WS-23: the names a request may reference with `tool_reference` -- the tools it declares with
+ * `defer_loading: true`. A reference to anything else is not expandable ("Every tool referenced must
+ * have a corresponding tool definition in the top-level `tools` parameter", and an undeclared name is a
+ * 400 `tool_reference_unresolved`), so it is never sent.
+ */
+type Referable = ReadonlySet<string>;
+const NOTHING_REFERABLE: Referable = new Set();
+
+/** The wire `tool_reference` block for each referable name, in order, deduplicated. */
+function toolReferences(names: readonly string[], referable: Referable): Record<string, unknown>[] {
+  return [...new Set(names)].filter((name) => referable.has(name)).map((name) => ({ type: "tool_reference", tool_name: name }));
+}
+
+/** A `tool_reference` block's names, in either spelling: Winter's streaming `tool_names[]` or claude's own `tool_name` (a claude-written transcript on resume). */
+function referenceNames(block: Record<string, unknown>): string[] {
+  if (Array.isArray(block["tool_names"])) return (block["tool_names"] as unknown[]).filter((n): n is string => typeof n === "string");
+  return typeof block["tool_name"] === "string" ? [block["tool_name"]] : [];
+}
+
+function toWireBlocks(block: ContentBlockLike, referable: Referable): Record<string, unknown>[] {
+  if (block.type !== "tool_reference") return [toWireBlock(block, referable)];
+  // WS-23: no longer a refusal. A `tool_reference` whose tool this request declares deferred is
+  // Anthropic's own block and goes on the wire as one per name; anything else (a claude-written
+  // transcript resumed on a row without the evidence, or a tool no longer deferred) degrades to the
+  // same legible note every other serializer in this repo writes for it, never to a silent drop.
+  const names = referenceNames(block as unknown as Record<string, unknown>);
+  const wire = toolReferences(names, referable);
+  const rest = names.filter((name) => !referable.has(name));
+  return [...wire, ...(rest.length > 0 ? [{ type: "text", text: `[tools now callable: ${rest.join(", ")}]` }] : [])];
+}
+
+function toWireBlock(block: ContentBlockLike, referable: Referable = NOTHING_REFERABLE): Record<string, unknown> {
   switch (block.type) {
     case "text":
       return { type: "text", text: block.text };
@@ -164,7 +196,16 @@ function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
     case "redacted_thinking":
       return { type: "redacted_thinking", data: block.data };
     case "tool_result": {
-      const content = Array.isArray(block.content) ? block.content.map(toWireBlock) : block.content;
+      // WS-23: a ToolSearch result's `loadedTools` becomes Anthropic's `tool_reference` blocks inside
+      // this result -- the documented "custom tool search implementation"
+      // (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) -- so the API
+      // expands the deferred definitions in place and `tools` never changes. Only for names this
+      // request declares deferred; with none, the result is byte-identical to before.
+      const rawLoaded = block["loadedTools"];
+      const loaded = Array.isArray(rawLoaded) ? rawLoaded.filter((n): n is string => typeof n === "string") : [];
+      const references = toolReferences(loaded, referable);
+      const inner = Array.isArray(block.content) ? block.content.flatMap((b) => toWireBlocks(b, referable)) : block.content;
+      const content = references.length === 0 ? inner : [...(typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner), ...references];
       // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING,
       // not wire fields: the result's own content already carries what the model needs to read. Only
       // `error` has a wire counterpart, and dropping it would tell the model a failed call succeeded.
@@ -174,17 +215,14 @@ function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
       return { type: "tool_result", tool_use_id: block.tool_use_id, content, ...(isError ? { is_error: true } : {}) };
     }
     case "tool_reference":
-      // A Winter-owned, STREAMING-ONLY block (engine.ts writes it straight to the output frame
-      // stream and never into a `ProviderMessage`). It has no wire counterpart, so it is a typed
-      // refusal rather than a silent drop -- the lane's "no silent tool-dropping" rule applies to
-      // history as much as to calls.
-      throw capabilityRefusal("a `tool_reference` block reached the Anthropic serializer; it is a Winter streaming-only block with no wire counterpart and is never silently dropped");
+      // Reached only through `toWireBlocks`, which expands a reference into one block per name.
+      return toWireBlocks(block, referable)[0] ?? { type: "text", text: "[tools now callable]" };
   }
 }
 
-function normalizeContent(content: string | ContentBlockLike[]): Record<string, unknown>[] {
+function normalizeContent(content: string | ContentBlockLike[], referable: Referable = NOTHING_REFERABLE): Record<string, unknown>[] {
   if (typeof content === "string") return content.length > 0 ? [{ type: "text", text: content }] : [];
-  return content.map(toWireBlock);
+  return content.flatMap((block) => toWireBlocks(block, referable));
 }
 
 /**
@@ -242,11 +280,12 @@ function fileBlocks(entry: WireEntryBuckets, blocks: Record<string, unknown>[]):
 /** One wire message. `output_config` rides only on a `system` entry (WS-23's per-message effort). */
 export type WireMessage = { role: "user" | "assistant" | "system"; content: Record<string, unknown>[]; output_config?: { effort: string } };
 
-export function toWireMessages(messages: ProviderMessageLike[]): WireMessage[] {
+export function toWireMessages(messages: ProviderMessageLike[], opts: { referableTools?: ReadonlySet<string> } = {}): WireMessage[] {
+  const referable = opts.referableTools ?? NOTHING_REFERABLE;
   const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
     const role: WireEntryBuckets["role"] = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
-    const own = normalizeContent(message.content);
+    const own = normalizeContent(message.content, referable);
     // WS-23: a `system` message is its OWN wire entry, never merged into a neighbour and never merged
     // with another `system` message either. An effort-only marker has no content at all and is still
     // sent -- its `output_config` IS the message
@@ -691,6 +730,31 @@ export function anthropicWireModelId(id: string): string {
   return id.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, "$1-$2");
 }
 
+/** One tool as the wire declares it; `defer_loading` only for a tool the engine withheld (WS-23). */
+function toWireTool(tool: NonNullable<TurnRequest["tools"]>[number]): Record<string, unknown> {
+  return { name: tool.name, description: tool.description, input_schema: tool.inputSchema, ...(tool.deferLoading === true ? { defer_loading: true } : {}) };
+}
+
+/**
+ * WS-23: the tools this request declares deferred -- the only names a `tool_reference` may name.
+ *
+ * Gated like every other capability here: a `defer_loading` tool on a row whose `deferredToolLoading`
+ * evidence does not document it, or a tool list with NO non-deferred tool ("At least one tool must
+ * have defer_loading=false", the tool-search page's own 400), is refused before the request. The
+ * engine never builds either, so this fires on a wiring bug only.
+ */
+function deferredToolNames(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ReadonlySet<string> {
+  const deferred = (req.tools ?? []).filter((t) => t.deferLoading === true);
+  if (deferred.length === 0) return NOTHING_REFERABLE;
+  if (descriptor?.deferredToolLoading?.value !== true) {
+    throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document deferred tool loading (no \`deferredToolLoading\` evidence), so ${deferred.length} \`defer_loading\` tool(s) are refused before the request rather than sent and rejected upstream`);
+  }
+  if (deferred.length === req.tools!.length) {
+    throw capabilityRefusal("every tool in this request is deferred; Anthropic requires at least one tool without `defer_loading`");
+  }
+  return new Set(deferred.map((t) => t.name));
+}
+
 /** WS-23: an effort-only `system` marker -- no content, only `output_config`. */
 function isEffortOnlyMarker(message: ProviderMessageLike): boolean {
   return message.role === "system" && message.outputConfig !== undefined && (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0);
@@ -799,6 +863,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // descriptor)` unchanged from before this token vocabulary existed; a row's `unsupportedParameters`
   // is small, so the duplicate construction is not worth widening that signature for.
   const unsupported = new Set(descriptor?.unsupportedParameters ?? []);
+  const referableTools = deferredToolNames(req, descriptor);
 
   const thinking = buildThinking(req, descriptor);
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
@@ -841,9 +906,9 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
       model: anthropicWireModelId(req.model),
       // An effort-only marker renders nothing and `output_config` is deliberately off a count body
       // (above), so the markers are dropped here rather than sent to an endpoint with no fixture.
-      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m))),
+      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m)), { referableTools }),
       ...(req.system !== undefined ? { system: req.system } : {}),
-      ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) } : {}),
+      ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
       ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
     };
   }
@@ -855,16 +920,14 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   }
 
   const caching = promptCachingLayout(req, descriptor);
-  const wireMessages = toWireMessages(req.messages);
+  const wireMessages = toWireMessages(req.messages, { referableTools });
   return {
     model: anthropicWireModelId(req.model),
     max_tokens: maxTokens,
     messages: caching ? withMessageCacheMarker(wireMessages) : wireMessages,
     stream: true,
     ...(caching && req.systemBlocks !== undefined ? { system: toWireSystemBlocks(req.systemBlocks) } : req.system !== undefined ? { system: req.system } : {}),
-    ...(req.tools !== undefined && req.tools.length > 0
-      ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) }
-      : {}),
+    ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
     ...(req.toolChoice !== undefined ? { tool_choice: resolveToolChoice(req.toolChoice, unsupported) } : {}),
     ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
     // `output_config` is Anthropic's own top-level effort field (GA, no beta header:

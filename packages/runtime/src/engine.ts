@@ -207,6 +207,7 @@ import {
   joinSystemBlocks,
   lastTopLevelEffort,
   recordSessionRequestLayout,
+  referencedToolNames,
   registerSessionContextReload,
   renderSystemContext,
   renderUserContext,
@@ -369,7 +370,14 @@ export type ContentBlock =
   // above -- it is claude's own wire field, set on a REAL tool_result whose executor reported
   // `isError: true` (every provider adapter maps it: Anthropic/Bedrock carry it natively, the
   // OpenAI/Google families have no such field and keep the error text).
-  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean }
+  //
+  // WS-23: `loadedTools` is a fourth piece of Winter bookkeeping -- the ADVERTISED names a ToolSearch
+  // call loaded. On a model whose row documents deferred tool loading the Anthropic adapter turns it
+  // into Anthropic's own `tool_reference` blocks inside this result (the "custom tool search"
+  // pattern), which is what surfaces a `defer_loading` tool without touching `tools`; every other
+  // adapter ignores it, like the markers above. Persisted with the block, so a resumed session keeps
+  // the references at the same positions and re-seeds its loaded set from them.
+  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean; loadedTools?: string[] }
   // --- Phase 6 Task 3 (R6-3, derived-shapes-p6.md item (f)): the variants a real provider produces --
   //
   // NOT declared by the pinned artifact: `redacted_thinking`, a `type: 'thinking'` literal and
@@ -517,6 +525,12 @@ function isPerMessageEffortRejection(err: unknown): boolean {
   return /mid-conversation-output-config|per-turn effort|output_config/i.test(err instanceof Error ? err.message : "");
 }
 
+/** WS-23: a tool_result without its `loadedTools` bookkeeping (see the tool-round frame write). */
+function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }>): ContentBlock {
+  const { loadedTools: _loaded, ...rest } = block;
+  return rest;
+}
+
 /** WS-23: a named effort tier -- the string half of `TurnRequest["effort"]`. */
 const NAMED_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export function isNamedEffort(value: unknown): value is (typeof NAMED_EFFORTS)[number] {
@@ -531,6 +545,8 @@ export function isNamedEffort(value: unknown): value is (typeof NAMED_EFFORTS)[n
 export interface ModelWireFeatures {
   /** `reasoning.perMessageEffort`: an effort change rides a `system` marker while the top-level value stays frozen. */
   perMessageEffort?: true;
+  /** `deferredToolLoading`: every deferred tool is declared up front with `defer_loading: true`, and ToolSearch surfaces one by reference. */
+  deferredToolLoading?: true;
 }
 
 /** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
@@ -610,6 +626,12 @@ export interface ProviderToolSpec {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * WS-23: declared up front but WITHHELD from the model until a `tool_reference` surfaces it
+   * (Anthropic's `defer_loading: true`). Set only for a model whose row documents deferred tool
+   * loading (`ModelWireFeatures.deferredToolLoading`), so no other adapter ever receives one.
+   */
+  deferLoading?: true;
 }
 
 /**
@@ -3649,6 +3671,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // own `messages` reference already uses in this same function).
       emitToolReference: (names: string[]): void => {
         loadedToolSet.load(names);
+        // WS-23: remembered for the call in flight, so its tool_result can carry `loadedTools`.
+        toolReferenceCollector?.push(...names);
         output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "tool_reference", tool_names: names }] } } });
       },
       session: {
@@ -4691,6 +4715,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return { eager: partition.eager.filter(ownServerTool), deferred: partition.deferred.filter(ownServerTool), hidden: partition.hidden.filter(ownServerTool) };
   };
   let advertisedPartition = computeAdvertisedPartition();
+  // WS-23: the names a ToolSearch call loaded, collected while that one call runs (see the execute site).
+  let toolReferenceCollector: string[] | undefined;
+  /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
+  const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
+    if (canonical === undefined || canonical.length === 0) return [];
+    const byCanonical = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.canonicalName, d.advertisedName] as const));
+    return [...new Set(canonical.map((name) => byCanonical.get(name) ?? name))];
+  };
+  // WS-23: a RESUMED history's ToolSearch results name the tools they loaded (`loadedTools`); the
+  // loaded set is re-seeded from them, so a tool the history already surfaced by reference stays
+  // callable after a resume instead of being refused as "deferred, not loaded".
+  {
+    const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d.canonicalName] as const));
+    const seeded = [...referencedToolNames(messages)].map((name) => byAdvertised.get(name) ?? name);
+    if (seeded.length > 0) loadedToolSet.load(seeded);
+  }
   const refreshAdvertisedPartition = (): void => {
     advertisedPartition = computeAdvertisedPartition();
     currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
@@ -6454,6 +6494,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
   const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText);
 
+  /** WS-23: the LIVE model's catalog description (its effort vocabulary and wire features), or `undefined` for a scripted double. */
+  const currentModelDescription = (): ModelDescription | undefined => {
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    return key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId) : undefined;
+  };
+
   /**
    * WS-23: this generation's effort as the wire carries it.
    *
@@ -6472,8 +6518,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const live = liveEffort;
     if (live === undefined) return { topLevel: undefined };
     if (typeof live !== "string" || perMessageEffortRejected) return { topLevel: live };
-    const key = currentProviderIdentity?.modelKey ?? currentModel;
-    const described = key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId) : undefined;
+    const described = currentModelDescription();
     if (described?.wire?.perMessageEffort !== true) return { topLevel: live };
     const vocabulary = described.efforts ?? [];
     const accepts = (effort: string): boolean => vocabulary.includes(effort);
@@ -6778,10 +6823,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     for (const descriptor of advertisedPartition.eager) {
       specs.push(toolSpecFor(descriptor));
     }
+    // WS-23: on a model whose row documents deferred tool loading, EVERY deferred tool is declared up
+    // front with `defer_loading: true` and ToolSearch surfaces one by reference (the result's
+    // `loadedTools`, which the adapter turns into `tool_reference` blocks) -- so loading a tool no
+    // longer changes `tools`, which sits first in the cached prefix and whose every change invalidates
+    // the whole cache (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching).
+    // "At least one tool must have defer_loading=false" (the tool-search page): with no eager tool at
+    // all (a narrow child pool) the old shape stands. A tool loaded with NO reference left in the
+    // history (a compaction summarised it away, or it was loaded on another model) is sent plainly --
+    // nothing would surface it otherwise.
+    const declareDeferred = specs.length > 0 && currentModelDescription()?.wire?.deferredToolLoading === true;
+    const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
     for (const descriptor of advertisedPartition.deferred) {
-      if (!loadedToolSet.isLoaded(descriptor.canonicalName)) continue;
-      specs.push(toolSpecFor(descriptor));
+      const loaded = loadedToolSet.isLoaded(descriptor.canonicalName);
+      if (referenced === undefined) {
+        if (!loaded) continue;
+        specs.push(toolSpecFor(descriptor));
+        continue;
+      }
+      const spec = toolSpecFor(descriptor);
+      specs.push(!loaded || referenced.has(spec.name) ? { ...spec, deferLoading: true } : spec);
     }
+    // WS-23: a DETERMINISTIC order, by name (UTF-16 code units, locale-independent). Registration
+    // order moves with MCP connect order and module load order, so two processes -- or a session and
+    // its own resume -- could send the same set in a different order, and a reordered `tools` array is
+    // a whole-cache miss (the cache-diagnostics page's `tools_changed`: "tools were added, removed, or
+    // reordered"). claude 2.1.282 sends its own tools alphabetically too (loopback capture).
+    specs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     offeredThisRequest = new Set([
       ...specs.map((spec) => spec.name),
       ...[...advertisedPartition.eager, ...advertisedPartition.deferred].flatMap((d) => [d.advertisedName, d.canonicalName]),
@@ -7986,14 +8054,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
           // turn promptly; the signal is what stops the work the race walked away from.
           // The decision's explicit-approval marker rides to the executor's context beside the signal.
+          // WS-23: tool calls run one at a time, so a per-call collector is exact.
+          toolReferenceCollector = [];
           const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
+          const loadedTools = advertisedNamesFor(toolReferenceCollector);
+          toolReferenceCollector = undefined;
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
           }
           // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
           // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}) });
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}), ...(loadedTools.length > 0 ? { loadedTools } : {}) });
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have
@@ -8113,7 +8185,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // contract ("buffered data of the interrupted turn, then its terminal result").
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
-      output.write({ type: "data", message: { type: "user", message: { content: resultBlocks } } });
+      // WS-23: `loadedTools` is history/transcript bookkeeping for the wire's `tool_reference` blocks; a
+      // host already hears about the load through the streaming `tool_reference` frame, so the
+      // host-visible frame stays exactly as it was before the field existed.
+      output.write({ type: "data", message: { type: "user", message: { content: resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b)) } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
 

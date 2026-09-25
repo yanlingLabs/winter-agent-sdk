@@ -278,6 +278,22 @@ export function withEffortMarkers(messages: readonly ProviderMessage[], topLevel
   return out;
 }
 
+/**
+ * WS-23: every tool name a ToolSearch result in `history` surfaced (`tool_result.loadedTools`, advertised
+ * names). A deferred tool in this set is referenced somewhere in the history, so it can stay declared
+ * `defer_loading: true`; a loaded tool outside it would be invisible to the model and is sent plainly.
+ */
+export function referencedToolNames(history: readonly ProviderMessage[]): Set<string> {
+  const names = new Set<string>();
+  for (const message of history) {
+    if (typeof message.content === "string") continue;
+    for (const block of message.content) {
+      if (block.type === "tool_result" && block.loadedTools !== undefined) for (const name of block.loadedTools) names.add(name);
+    }
+  }
+  return names;
+}
+
 /** The top-level effort the previous request sent: the newest assistant message's own `effort` annotation. */
 export function lastTopLevelEffort(history: readonly ProviderMessage[]): string | undefined {
   for (let i = history.length - 1; i >= 0; i--) {

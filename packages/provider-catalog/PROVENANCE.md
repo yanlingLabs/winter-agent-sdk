@@ -83,6 +83,7 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `*.pricing` | official-doc derived | **overlay only**, from the vendors' pricing pages with the URL and observation instant |
 | `*.classifierEligible` | live-probe proven | **never set** by extraction or overlay (R6-14) |
 | `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` / `effortRequest` / `blockBinding` / `perMessageEffort` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
+| `model.deferredToolLoading` | official-doc derived | **overlay only**; Anthropic's tool-search model-compatibility table (custom `tool_reference` + `defer_loading`) |
 
 ### Two tiers of admission citation
 

@@ -702,6 +702,7 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
   // name, so the engine's request layout keys on the SAME row the adapter reads -- never a second copy.
   const wire: ModelWireFeatures = {
     ...(row.reasoning?.perMessageEffort !== undefined ? { perMessageEffort: true as const } : {}),
+    ...(row.deferredToolLoading?.value === true ? { deferredToolLoading: true as const } : {}),
   };
   const description: ModelDescription = {
     ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),

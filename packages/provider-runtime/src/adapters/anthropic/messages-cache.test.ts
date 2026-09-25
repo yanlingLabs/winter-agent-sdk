@@ -135,3 +135,56 @@ describe("per-message effort (WS-23 item 1)", () => {
     expect((body["messages"] as Array<{ role: string }>).map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 });
+
+// --- WS-23 item 3: a stable tool list ---------------------------------------------------------------
+
+const tool = (name: string, deferLoading?: true) => ({ name, description: `${name} tool`, inputSchema: { type: "object" }, ...(deferLoading === true ? { deferLoading } : {}) });
+
+describe("deferred tools and tool_reference (WS-23 item 3)", () => {
+  const deferredRow = (): WinterModelDescriptor => opus55({ deferredToolLoading: evidence(true) });
+  const searchResult = (loadedTools: string[]): ProviderMessageLike[] => [
+    { role: "user", content: "find the notebook tool" },
+    { role: "assistant", content: [{ type: "tool_use", id: "ts1", name: "ToolSearch", input: { query: "notebook" } }] },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "ts1", content: '{"matches":["NotebookEdit"]}', loadedTools }] },
+  ];
+
+  test("a deferred tool is declared with `defer_loading: true`; an eager one is not", () => {
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    expect(body["tools"]).toEqual([
+      { name: "Bash", description: "Bash tool", input_schema: { type: "object" } },
+      { name: "NotebookEdit", description: "NotebookEdit tool", input_schema: { type: "object" }, defer_loading: true },
+    ]);
+  });
+
+  test("a ToolSearch result's `loadedTools` becomes Anthropic's tool_reference blocks inside that result -- only for names declared deferred", () => {
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: searchResult(["NotebookEdit", "Bash", "Nope"]), tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    const result = (body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content[0]!;
+    expect(result).toEqual({
+      type: "tool_result",
+      tool_use_id: "ts1",
+      content: [{ type: "text", text: '{"matches":["NotebookEdit"]}' }, { type: "tool_reference", tool_name: "NotebookEdit" }],
+    });
+  });
+
+  test("with no deferred tool in the request, the same history serialises byte-identically to before (the bookkeeping field never reaches the wire)", () => {
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: searchResult(["NotebookEdit"]), tools: [tool("Bash"), tool("NotebookEdit")] }, opus55(), {});
+    expect((body["messages"] as Array<{ content: unknown[] }>)[2]!.content[0]).toEqual({ type: "tool_result", tool_use_id: "ts1", content: '{"matches":["NotebookEdit"]}' });
+  });
+
+  test("a claude-written `tool_reference` inside a resumed tool_result stays a reference when the tool is deferred, and becomes a legible note when it is not", () => {
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t", name: "ToolSearch", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t", content: [{ type: "tool_reference", tool_name: "NotebookEdit" } as never] }] },
+    ];
+    const deferred = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    expect((deferred["messages"] as Array<{ content: Array<{ content: unknown }> }>)[2]!.content[0]!.content).toEqual([{ type: "tool_reference", tool_name: "NotebookEdit" }]);
+    const plain = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash"), tool("NotebookEdit")] }, opus55(), {});
+    expect((plain["messages"] as Array<{ content: Array<{ content: unknown }> }>)[2]!.content[0]!.content).toEqual([{ type: "text", text: "[tools now callable: NotebookEdit]" }]);
+  });
+
+  test("a `defer_loading` tool on a row without the evidence, or a request with NO eager tool, is refused before the request", () => {
+    expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], tools: [tool("Bash"), tool("X", true)] }, opus55(), {})).toThrow(/deferred tool loading/);
+    expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], tools: [tool("X", true)] }, deferredRow(), {})).toThrow(/at least one tool without `defer_loading`/);
+  });
+});

@@ -237,6 +237,15 @@ export interface WinterModelDescriptor {
   parallelTools?: CapabilityEvidence<boolean>;
   structuredOutput?: CapabilityEvidence<boolean>;
   promptCaching?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23: the model takes tools declared with `defer_loading: true` and expands the `tool_reference`
+   * blocks a client's own tool-search tool returns inside a `tool_result` -- Anthropic's "custom tool
+   * search implementation" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool).
+   * A deferred tool stays out of the rendered prompt prefix until it is referenced, so loading one no
+   * longer changes `tools` and no longer invalidates the prompt cache. `true` is the only meaningful
+   * value; absent keeps today's shape (a loaded deferred tool is appended to `tools`).
+   */
+  deferredToolLoading?: CapabilityEvidence<boolean>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

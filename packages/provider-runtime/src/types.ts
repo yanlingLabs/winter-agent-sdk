@@ -194,7 +194,12 @@ export interface TurnRequest {
    */
   systemBlocks?: SystemPromptBlock[];
   messages: ProviderMessageLike[];
-  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  /**
+   * `deferLoading` (WS-23): declared but withheld until a `tool_reference` surfaces it (Anthropic's
+   * `defer_loading: true`). The engine sets it only for a row whose catalog evidence documents
+   * deferred tool loading, so no other family's adapter ever receives one.
+   */
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; deferLoading?: true }>;
   toolChoice?: { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
   /**
    * KEEPS `number`, unlike `Options.effort` (R6-E): a child carries numeric effort
