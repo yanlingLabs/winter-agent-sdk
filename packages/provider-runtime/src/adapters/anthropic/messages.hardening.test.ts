@@ -1,0 +1,120 @@
+// WS-23: the Anthropic adapter's code-mode hardening, on the WIRE -- a loopback server this file owns
+// answers with real Messages SSE shapes, and each case asserts on the events the adapter yielded and
+// the requests the server received. Scoped to what the other two test homes cannot see: the pure half
+// (`messages.test.ts`) has no stream, and the conformance corpus is the frozen WS-13 case list.
+//
+// Hermetic: 127.0.0.1:0 only, an inline `fixture` key, and the compiled catalog's own Claude rows.
+import { afterEach, describe, expect, test } from "bun:test";
+import { serve } from "bun";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { createAnthropicMessagesAdapter } from "./messages.ts";
+import { createMemoryCredentialStore } from "../../credentials/memory.ts";
+import type { ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
+
+type Answer = { status: number; body: string; contentType?: string };
+
+interface Server {
+  url: string;
+  requests: Array<{ headers: Record<string, string>; body: Record<string, unknown> }>;
+  stop(): Promise<void>;
+}
+
+const servers: Server[] = [];
+afterEach(async () => {
+  for (const s of servers.splice(0)) await s.stop();
+});
+
+function start(answer: (index: number) => Answer): Server {
+  const requests: Server["requests"] = [];
+  const server = serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const headers: Record<string, string> = {};
+      req.headers.forEach((v, k) => (headers[k.toLowerCase()] = k.toLowerCase() === "x-api-key" || k.toLowerCase() === "authorization" ? "<redacted>" : v));
+      const text = await req.text();
+      requests.push({ headers, body: text.length > 0 ? (JSON.parse(text) as Record<string, unknown>) : {} });
+      const a = answer(requests.length - 1);
+      return new Response(a.body, { status: a.status, headers: { "content-type": a.contentType ?? "text/event-stream" } });
+    },
+  });
+  const s = { url: `http://127.0.0.1:${server.port}`, requests, stop: async () => void (await server.stop(true)) };
+  servers.push(s);
+  return s;
+}
+
+const frame = (event: string, payload: unknown): string => `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+const messageStart = frame("message_start", { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-sonnet-5", content: [], usage: { input_tokens: 5, output_tokens: 1 } } });
+const textBlock = (index: number, text: string): string =>
+  frame("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } }) +
+  frame("content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text } }) +
+  frame("content_block_stop", { type: "content_block_stop", index });
+const ending = (stopReason: string, extra: Record<string, unknown> = {}): string =>
+  frame("message_delta", { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null, ...extra }, usage: { output_tokens: 3 } }) + frame("message_stop", { type: "message_stop" });
+
+const sse = (body: string): Answer => ({ status: 200, body });
+
+function ctx(url: string): ProviderContext {
+  return {
+    connection: { providerId: "anthropic", baseUrl: url, local: true },
+    credentials: createMemoryCredentialStore(),
+    authRef: { kind: "inline", value: "fixture" },
+    stallTimeoutMs: 2_000,
+    log: () => {},
+  };
+}
+
+const adapter = () => createAnthropicMessagesAdapter({ catalog: loadCatalog(), retry: { maxRetries: 3, random: () => 0, sleep: async () => {} } });
+
+async function collect(url: string, req: Partial<TurnRequest> = {}): Promise<ProviderEvent[]> {
+  const events: ProviderEvent[] = [];
+  for await (const e of adapter().streamTurn({ model: "claude-sonnet-5", messages: [{ role: "user", content: "hi" }], ...req }, ctx(url))) events.push(e);
+  return events;
+}
+
+const done = (events: ProviderEvent[]) => events.find((e) => e.type === "done") as Extract<ProviderEvent, { type: "done" }> | undefined;
+const error = (events: ProviderEvent[]) => events.find((e) => e.type === "error") as Extract<ProviderEvent, { type: "error" }> | undefined;
+
+describe("WS-23 item 2: stop reasons that are not an end of turn", () => {
+  test("`pause_turn` and `model_context_window_exceeded` reach the seam as themselves, never as `end_turn`", async () => {
+    for (const reason of ["pause_turn", "model_context_window_exceeded"] as const) {
+      const s = start(() => sse(messageStart + textBlock(0, "partial") + ending(reason)));
+      expect(done(await collect(s.url))?.stopReason).toBe(reason);
+    }
+  });
+
+  test("`stop_sequence` and an unknown reason still read as an ordinary end of turn", async () => {
+    const s = start((i) => sse(messageStart + textBlock(0, "x") + ending(i === 0 ? "stop_sequence" : "some_future_reason")));
+    expect(done(await collect(s.url))?.stopReason).toBe("end_turn");
+    expect(done(await collect(s.url))?.stopReason).toBe("end_turn");
+  });
+
+  test("a refusal carries its `stop_details` (category + explanation) on `done`; a null category stays null", async () => {
+    const s = start((i) =>
+      sse(messageStart + ending("refusal", { stop_details: i === 0 ? { type: "refusal", category: "cyber", explanation: "declined: cyber" } : { type: "refusal", category: null, explanation: null } })),
+    );
+    expect(done(await collect(s.url))).toEqual({ type: "done", stopReason: "refusal", stopDetails: { category: "cyber", explanation: "declined: cyber" } });
+    expect(done(await collect(s.url))).toEqual({ type: "done", stopReason: "refusal", stopDetails: { category: null, explanation: null } });
+  });
+
+  test("`stop_details` on a NON-refusal is not forwarded (the vendor documents it null there)", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn", { stop_details: { type: "refusal", category: "bio", explanation: "x" } })));
+    expect(done(await collect(s.url))).toEqual({ type: "done", stopReason: "end_turn" });
+  });
+});
+
+describe("WS-23 item 2: the context-overflow 400 is typed at the adapter", () => {
+  test("`prompt is too long` -> an error event flagged `contextOverflow`, never retried (a 400 is not transient)", async () => {
+    const s = start(() => ({ status: 400, contentType: "application/json", body: JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 1000123 tokens > 1000000 maximum" } }) }));
+    const events = await collect(s.url);
+    expect(error(events)?.error).toMatchObject({ code: "bad_request", status: 400, providerCode: "invalid_request_error", retryable: false, contextOverflow: true });
+    expect(s.requests).toHaveLength(1);
+  });
+
+  test("any OTHER 400 carries no overflow flag", async () => {
+    const s = start(() => ({ status: 400, contentType: "application/json", body: JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "messages.0.content: text content blocks must be non-empty" } }) }));
+    const failure = error(await collect(s.url))?.error;
+    expect(failure?.code).toBe("bad_request");
+    expect("contextOverflow" in (failure ?? {})).toBe(false);
+  });
+});

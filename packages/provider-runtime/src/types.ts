@@ -241,7 +241,15 @@ export type ProviderEvent =
   | { type: "retry"; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus?: number; error: SdkAssistantMessageError }
   /** A LOGIN-FLOW progress channel (codex-oauth login/refresh only), never the credential-failure frame — a bad key is a `ProviderError` with `code: "auth"`. */
   | { type: "auth_status"; isAuthenticating: boolean; output?: string[]; error?: string }
-  | { type: "done"; stopReason: "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal" }
+  /**
+   * WS-23: two Anthropic stop reasons join the vocabulary, and neither is an ordinary end of turn.
+   * `pause_turn` -- the server paused a long server-side tool loop and the turn CONTINUES by re-sending
+   * it; `model_context_window_exceeded` -- the generation filled the model's context window (distinct
+   * from `max_tokens`, the requested output cap), which the engine answers with a reactive compaction
+   * and one retry. `stopDetails` rides a `refusal` only: the vendor's policy category and its
+   * human-readable explanation (display prose, never parsed), each `null` when the response carried none.
+   */
+  | { type: "done"; stopReason: "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal" | "pause_turn" | "model_context_window_exceeded"; stopDetails?: { category: string | null; explanation: string | null } }
   | { type: "error"; error: ProviderError };
 
 /**
@@ -261,6 +269,13 @@ export interface ProviderError {
   providerCode?: string;
   retryAfterMs?: number;
   retryable: boolean;
+  /**
+   * WS-23: the request was REFUSED because its prompt does not fit the model's context window --
+   * Anthropic's 400 "prompt is too long". Set by the adapter that recognised it, never inferred by a
+   * consumer from `message` text; its one reader is the engine's reactive compaction. Absent, never
+   * `false`, when the failure is anything else.
+   */
+  contextOverflow?: true;
 }
 
 /**

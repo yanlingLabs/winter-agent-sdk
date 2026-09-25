@@ -167,3 +167,137 @@ describe("WS-23 item 1: [thinking, text, thinking, tool_use] keeps its order acr
     expect(run.recorded[1]).toEqual([{ type: "text", text: "ok" }]);
   });
 });
+
+// --- item 2: overflow recovery, refusal, pause_turn ---------------------------------------------------
+
+/** A compaction controller that never fires on its own and folds everything but the last message into "S". */
+function scriptedCompaction(): { controller: { shouldCompact: () => boolean; compact: (input: { messages: unknown[] }) => Promise<unknown> }; calls: number } {
+  const state = { calls: 0 };
+  return {
+    get calls() {
+      return state.calls;
+    },
+    controller: {
+      shouldCompact: () => false,
+      async compact(input: { messages: unknown[] }) {
+        state.calls++;
+        return { summary: "SUMMARY-OF-EARLIER-TURNS", retained: input.messages.slice(-1), preTokens: 1234, evidencedToolNames: [] };
+      },
+    },
+  } as never;
+}
+
+const PROMPT_TOO_LONG: FakeResponse = { status: 400, error: { type: "invalid_request_error", message: "prompt is too long: 1000321 tokens > 1000000 maximum" } };
+const TEXT = (text: string): FakeResponse => ({ blocks: [{ type: "text", text }], stopReason: "end_turn" });
+
+describe("WS-23 item 2: context overflow -> reactive compaction -> ONE retry", () => {
+  test("a 400 `prompt is too long` compacts through the engine's own compaction and retries the round on the compacted history", async () => {
+    const compaction = scriptedCompaction();
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      prompts: ["first", "second"],
+      engine: { compactionController: compaction.controller },
+      script: (index) => (index === 0 ? TEXT("one") : index === 1 ? PROMPT_TOO_LONG : TEXT("recovered")),
+    });
+    expect(compaction.calls).toBe(1);
+    expect(run.fake.requests).toHaveLength(3);
+    // The retry carries the summary, not the history it replaced.
+    expect(JSON.stringify(run.fake.requests[2]!.body["messages"])).toContain("SUMMARY-OF-EARLIER-TURNS");
+    expect(JSON.stringify(run.fake.requests[2]!.body["messages"])).not.toContain('"one"');
+    // The boundary is announced exactly as an auto compaction's is.
+    expect(run.messages.some((m) => (m as { subtype?: string }).subtype === "compact_boundary")).toBe(true);
+    const results = run.messages.filter((m) => m.type === "result") as Array<Record<string, unknown>>;
+    expect(results.at(-1)).toMatchObject({ subtype: "success", is_error: false, result: "recovered" });
+  });
+
+  test("`stop_reason: model_context_window_exceeded` takes the same path, and the overflowed partial output is DISCARDED, never persisted", async () => {
+    const compaction = scriptedCompaction();
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      prompts: ["first", "second"],
+      engine: { compactionController: compaction.controller },
+      script: (index) =>
+        index === 0 ? TEXT("one") : index === 1 ? { blocks: [{ type: "text", text: "HALF-WRITTEN" }], stopReason: "model_context_window_exceeded" } : TEXT("recovered"),
+    });
+    expect(compaction.calls).toBe(1);
+    expect(run.recorded.flat().some((b) => JSON.stringify(b).includes("HALF-WRITTEN"))).toBe(false);
+    expect(JSON.stringify(run.fake.requests[2]!.body["messages"])).not.toContain("HALF-WRITTEN");
+    expect((run.messages.filter((m) => m.type === "result") as Array<Record<string, unknown>>).at(-1)).toMatchObject({ is_error: false, result: "recovered" });
+  });
+
+  test("the retry overflowing AGAIN ends the turn typed (`terminal_reason: prompt_too_long`) after exactly one compaction", async () => {
+    const compaction = scriptedCompaction();
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      prompts: ["first", "second"],
+      engine: { compactionController: compaction.controller },
+      script: (index) => (index === 0 ? TEXT("one") : PROMPT_TOO_LONG),
+    });
+    expect(compaction.calls).toBe(1);
+    expect(run.fake.requests).toHaveLength(3);
+    expect((run.messages.filter((m) => m.type === "result") as Array<Record<string, unknown>>).at(-1)).toMatchObject({ subtype: "success", is_error: true, terminal_reason: "prompt_too_long", api_error_status: 400 });
+  });
+
+  test("no compaction controller -> typed `prompt_too_long` at once, one request, no retry", async () => {
+    const run = await runSession({ model: "anthropic/claude-sonnet-5", script: () => PROMPT_TOO_LONG });
+    expect(run.fake.requests).toHaveLength(1);
+    expect(result(run.messages)).toMatchObject({ is_error: true, terminal_reason: "prompt_too_long" });
+    expect(String(result(run.messages)["result"])).toContain("No compaction controller");
+  });
+
+  test("an ordinary 400 is still an ordinary api_error -- no compaction, no retry", async () => {
+    const compaction = scriptedCompaction();
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      engine: { compactionController: compaction.controller },
+      script: () => ({ status: 400, error: { type: "invalid_request_error", message: "tools.0: bad schema" } }),
+    });
+    expect(compaction.calls).toBe(0);
+    expect(run.fake.requests).toHaveLength(1);
+    expect(result(run.messages)).toMatchObject({ is_error: true, terminal_reason: "api_error", api_error_status: 400 });
+  });
+});
+
+describe("WS-23 item 2: a refusal is surfaced TYPED and its output is not kept", () => {
+  test("text refusal: typed result, the refusal frame carries the vendor's category/explanation, nothing reaches the transcript", async () => {
+    const run = await runSession({
+      model: "anthropic/claude-opus-5-5",
+      script: () => ({ blocks: [{ type: "text", text: "I can't help" }], stopReason: "refusal", stopDetails: { type: "refusal", category: "cyber", explanation: "declined for cyber" } }),
+    });
+    expect(result(run.messages)).toMatchObject({ subtype: "success", is_error: true, terminal_reason: "refusal", result: "I can't help" });
+    const refusal = run.messages.find((m) => (m as { subtype?: string }).subtype === "model_refusal_no_fallback") as Record<string, unknown>;
+    expect(refusal).toMatchObject({ api_refusal_category: "cyber", api_refusal_explanation: "declined for cyber", content: "I can't help" });
+    expect(run.recorded).toHaveLength(0);
+    expect(run.messages.some((m) => m.type === "assistant")).toBe(false);
+  });
+
+  test("a refusal that cut off mid-call NEVER executes the half-streamed call", async () => {
+    let executed = 0;
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      engine: { tools: { execute: async () => (executed++, { output: "ran" }) } },
+      script: () => ({ blocks: [{ type: "tool_use", id: "toolu_r", name: "Glob", input: { pattern: "*" } }], stopReason: "refusal" }),
+    });
+    expect(executed).toBe(0);
+    expect(run.fake.requests).toHaveLength(1);
+    expect(result(run.messages)).toMatchObject({ is_error: true, terminal_reason: "refusal", result: "The model declined to respond to this request." });
+  });
+});
+
+describe("WS-23 item 2: `pause_turn` continues the turn", () => {
+  test("the paused response is persisted and sent back; the turn ends on the resumed answer", async () => {
+    const run = await runSession({
+      model: "anthropic/claude-sonnet-5",
+      script: (index) => (index === 0 ? { blocks: [{ type: "text", text: "working on it" }], stopReason: "pause_turn" } : TEXT("finished")),
+    });
+    expect(run.fake.requests).toHaveLength(2);
+    expect(assistantTurns(run.fake.requests[1]!.body)[0]!.content).toEqual([{ type: "text", text: "working on it" }]);
+    expect(result(run.messages)).toMatchObject({ is_error: false, result: "finished" });
+  });
+
+  test("bounded: a model that pauses forever ends typed after MAX_PAUSE_TURN_CONTINUATIONS resends", async () => {
+    const run = await runSession({ model: "anthropic/claude-sonnet-5", script: () => ({ blocks: [{ type: "text", text: "still going" }], stopReason: "pause_turn" }) });
+    expect(run.fake.requests).toHaveLength(6);
+    expect(result(run.messages)).toMatchObject({ is_error: true, terminal_reason: "pause_turn_limit" });
+  });
+});

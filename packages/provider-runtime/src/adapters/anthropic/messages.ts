@@ -981,8 +981,20 @@ interface OpenBlock {
   toolId: string | undefined;
 }
 
-/** Anthropic's stop reasons -> the seam's five. `stop_sequence` and anything unknown are an ordinary end of turn. */
-function toStopReason(raw: unknown): "end_turn" | "tool_use" | "max_tokens" | "refusal" {
+type AnthropicStopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "pause_turn" | "model_context_window_exceeded";
+
+/**
+ * Anthropic's stop reasons -> the seam's. `stop_sequence` and anything unknown are an ordinary end of turn.
+ *
+ * WS-23: `pause_turn` and `model_context_window_exceeded` used to fall into that default, and neither
+ * is one. Anthropic's own handling guide
+ * (https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons): `pause_turn` means the
+ * server paused a long-running server-tool loop and the turn resumes when the paused response is sent
+ * back; `model_context_window_exceeded` (4.5 and later) means the generation reached the model's
+ * CONTEXT WINDOW -- not `max_tokens`, the requested output cap -- and the conversation must be compacted
+ * before it can continue. Reporting either as `end_turn` ended a long code turn silently, mid-thought.
+ */
+function toStopReason(raw: unknown): AnthropicStopReason {
   switch (raw) {
     case "tool_use":
       return "tool_use";
@@ -990,8 +1002,46 @@ function toStopReason(raw: unknown): "end_turn" | "tool_use" | "max_tokens" | "r
       return "max_tokens";
     case "refusal":
       return "refusal";
+    case "pause_turn":
+      return "pause_turn";
+    case "model_context_window_exceeded":
+      return "model_context_window_exceeded";
     default:
       return "end_turn";
+  }
+}
+
+/**
+ * A refusal's `stop_details` (`message_delta.delta.stop_details`: `{type: "refusal", category,
+ * explanation}`, both nullable per the vendor's own SDK types), or `undefined` when the frame carried
+ * none. `category` is an OPEN set on the wire (new categories ship ahead of any schema), so it is kept
+ * as a string rather than narrowed; `explanation` is display prose and is never parsed.
+ */
+function readStopDetails(raw: unknown): { category: string | null; explanation: string | null } | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const details = raw as { category?: unknown; explanation?: unknown };
+  return {
+    category: typeof details.category === "string" ? details.category : null,
+    explanation: typeof details.explanation === "string" ? details.explanation : null,
+  };
+}
+
+/**
+ * Anthropic's context-overflow 400, recognised on the FULL body before any snippet is taken.
+ *
+ * The API reports it as `invalid_request_error` -- the same structured code as every other malformed
+ * request -- with the message `prompt is too long: <n> tokens > <max> maximum`. The message IS the
+ * discriminator, so this reads the envelope's own `error.message` (never the scrubbed/capped snippet,
+ * which could truncate it away) and matches its documented leading phrase only.
+ */
+export function isAnthropicPromptTooLong(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  try {
+    const parsed = JSON.parse(body) as { error?: { type?: unknown; message?: unknown } };
+    const message = parsed?.error?.message;
+    return typeof message === "string" && /^prompt is too long\b/i.test(message.trim());
+  } catch {
+    return false;
   }
 }
 
@@ -1076,7 +1126,13 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             policy: endpoint.policy,
             ...(req.signal !== undefined ? { signal: req.signal } : {}),
           });
-          if (!res.ok) throw new ProviderRequestError(normalizeHttpError(res.status, res.headers, await res.text()));
+          if (!res.ok) {
+            const text = await res.text();
+            const normalized = normalizeHttpError(res.status, res.headers, text);
+            // WS-23: the context-overflow 400 is TYPED here, where the full body is still in hand, so
+            // the engine's reactive compaction reads a flag rather than re-parsing a capped message.
+            throw isAnthropicPromptTooLong(res.status, text) ? Object.assign(new ProviderRequestError(normalized), { contextOverflow: true as const }) : new ProviderRequestError(normalized);
+          }
           // THE FIRST-BYTE LINE. Past this point `withRetry` refuses to replay, whatever fails.
           policy.commit();
           return res;
@@ -1105,7 +1161,8 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
     let cacheWriteTokens: number | undefined;
-    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" = "end_turn";
+    let stopReason: AnthropicStopReason = "end_turn";
+    let stopDetails: { category: string | null; explanation: string | null } | undefined;
     let sawMessageStop = false;
 
     try {
@@ -1218,6 +1275,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           case "message_delta": {
             const delta = (payload["delta"] ?? {}) as Record<string, unknown>;
             stopReason = toStopReason(delta["stop_reason"]);
+            stopDetails = readStopDetails(delta["stop_details"]);
             const usage = payload["usage"] as Record<string, unknown> | undefined;
             if (typeof usage?.["output_tokens"] === "number") outputTokens = usage["output_tokens"];
             if (typeof usage?.["input_tokens"] === "number") inputTokens = usage["input_tokens"];
@@ -1275,7 +1333,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     };
-    yield { type: "done", stopReason };
+    // `stopDetails` rides a refusal ONLY: the vendor documents the field as populated for
+    // `stop_reason: "refusal"` and `null` for every other reason.
+    yield { type: "done", stopReason, ...(stopReason === "refusal" && stopDetails !== undefined ? { stopDetails } : {}) };
   }
 
   return {

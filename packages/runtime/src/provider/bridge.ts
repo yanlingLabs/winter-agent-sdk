@@ -272,6 +272,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   let orderedTextOpen = false;
   let usage: ProviderUsage | undefined;
   let stopReason: ProviderStopReason | undefined;
+  let stopDetails: { category: string | null; explanation: string | null } | undefined;
   let nativeState: ProviderNativeState | undefined;
   const emitter = new StreamEventEmitter(sink);
   // Fix wave round 2 (R-E2): has the STREAM begun? Every event except the pre-stream observations
@@ -377,6 +378,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           break;
         case "done":
           stopReason = event.stopReason;
+          stopDetails = event.stopDetails;
           emitter.messageStop(event.stopReason);
           break;
         case "error":
@@ -434,6 +436,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   const common = {
     ...(usage !== undefined ? { usage } : {}),
     ...(stopReason !== undefined ? { stopReason } : {}),
+    ...(stopDetails !== undefined ? { stopDetails } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(nativeState !== undefined ? { nativeState } : {}),
     ...(content.length > 0 ? { content } : {}),
@@ -575,6 +578,9 @@ function providerErrorToTurnError(error: ProviderError, committed = false): Prov
     code: error.code,
     retryable: error.retryable,
     committed,
+    // WS-23: the adapter's own context-overflow verdict, carried as a flag -- the engine's reactive
+    // compaction reads it, never the (capped, redacted) message text.
+    ...(error.contextOverflow === true ? { contextOverflow: true } : {}),
   });
 }
 
