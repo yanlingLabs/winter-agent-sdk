@@ -439,9 +439,12 @@ type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEf
  *
  *   - `enabled` on a row that rejects it -> `{type:"adaptive"}`, budget dropped (claude's own mapping,
  *     now evidenced rather than merely observed once).
- *   - `disabled` on a row that rejects it -> the field is OMITTED. These models cannot be turned off,
- *     and the vendor page's advice for an always-on model is to omit `thinking` rather than send a
- *     value it will reject.
+ *   - `disabled` on a row that rejects it -> the field is OMITTED, UNLESS the row also documents
+ *     `reasoning.blockBinding` (fix round 2), in which case it becomes `{type:"adaptive"}` instead --
+ *     see that branch's own comment for why a decided omission is the one case the block-binding
+ *     fallback below is allowed to override. A row with no such evidence keeps the plain omission:
+ *     these models cannot be turned off, and the vendor page's advice for an always-on model with no
+ *     other reason to send the field is to omit `thinking` rather than send a value it will reject.
  *   - `adaptive` on a row that rejects it -> a typed refusal before the request. No row observed so far
  *     rejects `adaptive` while also being an "adaptive only" model (that would be self-contradictory),
  *     so this arm exists for the Sonnet-4.5/Opus-4.5-shaped `enabled`-only rows, which is exactly what
@@ -453,21 +456,27 @@ type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEf
  * `display` comes from the DESCRIPTOR'S OWN `summaryRequest` evidence (`field: "thinking.display"`),
  * never from a hard-coded string, and only when the caller asked for a summary.
  *
- * TWO CASES SEND AN OTHERWISE-OMITTED FIELD ANYWAY, on an always-on row (one that rejects
- * `thinking.type.disabled`) where nothing else decided the field (2026-09-25 fix round 1):
+ * THREE CASES SEND AN OTHERWISE-OMITTED FIELD ANYWAY, all on an always-on row (one that rejects
+ * `thinking.type.disabled`) and all gated on the SAME always-on check (a 4.6/4.7-shaped row has
+ * thinking OFF by default, and sending `{type:"adaptive"}` there would TURN THINKING ON -- a
+ * capability change this file must never make unasked):
  *
- *   - the caller asked for a summary (`requestSummary`). Omitting `thinking` is equivalent to
+ *   - nothing else decided the field, and the row's own evidence can actually PRODUCE a display value
+ *     for a requested summary (2026-09-25 fix round 1, tightened round 2: `req.requestSummary === true`
+ *     alone is not enough -- a row with no `summaryRequest` evidence would get a BARE `{type:"adaptive"}`
+ *     with nothing attached, a wire change accomplishing nothing). Omitting `thinking` is equivalent to
  *     `{type:"adaptive"}` on these models (Anthropic's own statement), but equivalence stops at the
  *     WIRE SHAPE: the short progress text the model writes between tool calls arrives INSIDE thinking
  *     blocks on Opus 5.5/Fable 5.1, and without a `display` value that defaults to `"omitted"` -- there
  *     is no field to attach `display` to unless one is actually sent.
- *   - the row documents `reasoning.blockBinding` (below): the `block_binding` opt-in can only ride on
- *     a real `thinking` object, and these rows carry the replay-binding risk on EVERY request, not
- *     only one that also asks for a summary.
- *
- * Gated on the SAME always-on check either way, per the reviewer's own example: a 4.6/4.7-shaped row
- * has thinking OFF by default, and sending `{type:"adaptive"}` there would TURN THINKING ON -- a
- * capability change this file must never make unasked.
+ *   - nothing else decided the field, and the row documents `reasoning.blockBinding` (below): the
+ *     `block_binding` opt-in can only ride on a real `thinking` object, and these rows carry the
+ *     replay-binding risk on EVERY request, not only one that also asks for a summary.
+ *   - an explicit `disabled` WAS decided (the branch above), but the row documents `blockBinding` --
+ *     the one case where a decided omission is overridden, because the equivalence the omission relies
+ *     on ("omitting means adaptive") is exactly what makes overriding it safe: the caller gets what
+ *     they asked for either way, plus the opt-in the row needs on every request regardless of what any
+ *     one turn's field said.
  */
 function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ThinkingBuild {
   const reasoning = descriptor?.reasoning;
@@ -496,7 +505,18 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     if (req.thinking.type === "enabled" && unsupported.has("thinking.type.enabled")) {
       base = { type: "adaptive" };
     } else if (req.thinking.type === "disabled" && unsupported.has("thinking.type.disabled")) {
-      base = undefined;
+      // CRITICAL FIX (fix round 2): an ALWAYS-ON row cannot honour "disabled" literally, and omitting
+      // the field is equivalent to `{type:"adaptive"}` (Anthropic's own statement) -- but ONLY when
+      // nothing depends on the field actually EXISTING on the wire. A row that also documents
+      // `blockBinding` is always producing and replaying thinking blocks regardless of what any one
+      // turn's `thinking` field says (`Options.thinking`/`maxThinkingTokens: 0` forwards `disabled` on
+      // EVERY generation, including forks, so this is not a rare caller choice), and the block-binding
+      // opt-in can only ride on a real thinking object -- omitting it here left a live session sending
+      // unprotected requests forever, then 400ing the moment a later turn's tools/prefix changed,
+      // exactly what `blockBinding` exists to prevent. Sending `{type:"adaptive"}` means exactly what
+      // the caller got anyway (the equivalence still holds), plus the opt-in this row needs on every
+      // request. A row with NO `blockBinding` evidence keeps the plain omission, unchanged.
+      base = blockBinding !== undefined ? { type: "adaptive" } : undefined;
     } else if (req.thinking.type === "adaptive" && unsupported.has("thinking.type.adaptive")) {
       return {
         ok: false,
@@ -532,30 +552,41 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     // An explicit `thinking` wins: the pin says the same about `thinking` vs `maxThinkingTokens`
     // ("`thinking`, when set, takes precedence"), and effort is the coarser dial of the two. This must
     // be gated on `thinkingFieldDecided`, not merely `base === undefined` -- an explicit `disabled` on
-    // an always-on row (above) leaves `base` undefined ON PURPOSE, and falling through here would
-    // silently replace that omission with the effort's own thinking value.
+    // an always-on row (above) leaves `base` undefined ON PURPOSE (or, on a `blockBinding` row, already
+    // DECIDES it as `{type:"adaptive"}` on purpose), and falling through here would silently replace
+    // either decision with the effort's own thinking value.
     if (!thinkingFieldDecided) base = mapped.value;
   }
 
-  // The two "send an otherwise-omitted field anyway" cases (doc comment above). Both require an
-  // ALWAYS-ON row (never on a 4.6/4.7-shaped row, where this would turn thinking on unasked) and that
-  // nothing above already decided the field -- an explicit arm, or an effort's own mapping, still wins.
+  // Computed ONCE, shared by the fallback gate below AND the display step further down (fix round 2,
+  // Minor 2): whether this row's OWN evidence can actually produce a `display` value for a requested
+  // summary. `req.requestSummary === true` alone is not enough to justify sending an otherwise-omitted
+  // field -- a row with no `summaryRequest` evidence (Fable 5's shape) would get a BARE
+  // `{type:"adaptive"}` with nothing attached to it, a wire change with no purpose: no display (no
+  // evidence for one) and no block_binding (checked separately below).
+  const summaryRequest = reasoning?.summaryRequest?.value;
+  const canAttachDisplay = req.requestSummary === true && summaryRequest !== undefined && summaryRequest.field === "thinking.display" && summaryRequest.values.includes("summarized");
+
+  // TWO of the THREE "send an otherwise-omitted field anyway" cases (doc comment above; the third is
+  // the `blockBinding` arm of the explicit-`disabled` branch, above). Both require an
+  // ALWAYS-ON row (never on a 4.6/4.7-shaped row, where this would turn thinking on unasked), that
+  // nothing above already decided the field -- an explicit arm, or an effort's own mapping, still wins
+  // -- AND that sending the field actually accomplishes something (`canAttachDisplay` or
+  // `blockBinding`): a bare `{type:"adaptive"}` with neither is exactly the same to the model as
+  // omitting it, so it is not sent.
   // `!thinkingFieldDecided`, NOT merely `base === undefined`: an explicit `disabled` on an always-on
   // row also leaves `base` undefined (the omission a few lines up), and that is a DECIDED omission --
   // the caller asked for something this endpoint cannot represent, Winter honoured it by sending
   // nothing, and this fallback exists for the OPPOSITE situation (nobody asked for anything at all),
   // not to second-guess a decision the explicit-thinking branch already made on purpose.
-  if (base === undefined && !thinkingFieldDecided && alwaysOn && (req.requestSummary === true || blockBinding !== undefined)) {
+  if (base === undefined && !thinkingFieldDecided && alwaysOn && (canAttachDisplay || blockBinding !== undefined)) {
     base = { type: "adaptive" };
   }
 
   if (base === undefined) return { ok: true, value: undefined, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
 
-  if (req.requestSummary === true && base.type !== "disabled") {
-    const summaryRequest = reasoning?.summaryRequest?.value;
-    if (summaryRequest !== undefined && summaryRequest.field === "thinking.display" && summaryRequest.values.includes("summarized")) {
-      base = { ...base, display: "summarized" };
-    }
+  if (canAttachDisplay && base.type !== "disabled") {
+    base = { ...base, display: "summarized" };
   }
 
   // Block binding (2026-09-25 fix round 1):
@@ -595,19 +626,22 @@ function resolveToolChoice(toolChoice: NonNullable<TurnRequest["toolChoice"]>, u
   return toolChoice.type === "tool" ? { type: "tool", name: toolChoice.name } : { type: toolChoice.type };
 }
 
-/** The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the network. */
 /**
+ * The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the
+ * network.
+ *
  * `purpose` exists for ONE reason (Minor 4): a token COUNT has no output allowance, so running the
  * "does the thinking budget fit inside `max_tokens`?" check for it refuses a count against a
  * generation limit the count was never going to be subject to. The count path used to build the full
  * body and then delete `max_tokens`/`stream` — which meant the check ran on a field that was about to
  * be thrown away.
+ *
+ * EXPORTED (relative-import only, same convention as `promptCachingLayout`): the REQUEST BODY is what
+ * a fixture-catalog test asserts against for the effort/thinking/tool_choice envelope, without needing
+ * a fetch fake -- `messages.test.ts` reads the return value directly rather than a loopback server's
+ * `fake.requests`, which is `provider-conformance`'s job for the actual wire proof (this file's own
+ * header comment).
  */
-// EXPORTED (relative-import only, same convention as `promptCachingLayout`): the REQUEST BODY is what
-// a fixture-catalog test asserts against for the effort/thinking/tool_choice envelope, without needing
-// a fetch fake -- `messages.test.ts` reads the return value directly rather than a loopback server's
-// `fake.requests`, which is `provider-conformance`'s job for the actual wire proof (this file's own
-// header comment).
 export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
   // Tools: WS-13 §8.1's three states. `emulated` is disabled for agent modes and `none` fails
   // negotiation -- neither is a reason to drop the tools and continue as plain chat.
@@ -725,6 +759,25 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   };
 }
 
+/**
+ * The `anthropic-beta` value for `reasoning.blockBinding`, or `undefined` -- derived from the BODY
+ * `buildRequestBody` actually produced, never independently from the descriptor.
+ *
+ * FIX ROUND 2's OWN BUG: `buildHeaders` used to read `descriptor?.reasoning?.blockBinding` directly,
+ * which let the header claim an opt-in the body never sent -- an explicit
+ * `thinking:{type:"disabled"}` used to OMIT the thinking field entirely even on a blockBinding row
+ * (the pre-round-2 `buildThinking` never overrode a decided omission), while the header still carried
+ * the beta regardless. The header and the body's own `block_binding` key must be ONE decision, made
+ * once, from the one place that actually knows what the body contains -- here, called from
+ * `prepare()`/`countTokens()` against the body they already built, so the two structurally cannot
+ * disagree again.
+ */
+export function blockBindingBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
+  const thinking = body["thinking"];
+  if (thinking === null || typeof thinking !== "object" || !("block_binding" in thinking)) return undefined;
+  return descriptor?.reasoning?.blockBinding?.value?.beta;
+}
+
 // --- endpoint + headers ---------------------------------------------------------------------------
 
 interface Endpoint {
@@ -788,15 +841,16 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
 }
 
 /**
- * `descriptor` is OPTIONAL and only ever supplies a beta: `validateCredential`/`listModels` hit
- * `/v1/models`, not a model-specific endpoint, and pass `undefined` -- there is no row to read a beta
- * off, and no model-specific beta belongs on a request that names no model.
+ * `blockBindingBeta` is OPTIONAL, and it is a VALUE the caller computed, never a descriptor this
+ * function reads for itself (fix round 2: see `blockBindingBetaFor`'s own comment for the bug that
+ * made). `validateCredential`/`listModels` hit `/v1/models`, not a model-specific endpoint, and pass
+ * `undefined` -- there is no row and no body to have derived a beta from.
  *
  * EXPORTED (relative-import only, same convention as `buildRequestBody`): the `anthropic-beta` header
- * -- including the row's own `blockBinding` beta and its dedupe against `opts.betas` -- is otherwise
- * unreachable without a real or faked HTTP round trip, and `messages.test.ts` asserts it directly.
+ * -- including this beta and its dedupe against `opts.betas` -- is otherwise unreachable without a
+ * real or faked HTTP round trip, and `messages.test.ts` asserts it directly.
  */
-export async function buildHeaders(ctx: ProviderContext, descriptor: WinterModelDescriptor | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
+export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: string | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
   // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
   // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
@@ -832,13 +886,15 @@ export async function buildHeaders(ctx: ProviderContext, descriptor: WinterModel
   // actually produces post-P10a-1. Scoped to `isConsoleProvider(ctx)` exactly as before: a sibling
   // row's `bearer` material still gets no vendor beta.
   //
-  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: the row's own
-  // `reasoning.blockBinding.value.beta` (`buildThinking`'s own comment has the full citation). Present
-  // only for a descriptor that documents it (Opus 5.5, Fable 5.1 today) -- absent for every other row,
-  // so this adds nothing where the row carries no such evidence. Merged into the SAME array the other
-  // two sources feed, then deduped by the SAME filter below -- there is only one beta list and one
-  // dedupe, never a second header-building path a future beta source could bypass.
-  const blockBindingBeta = descriptor?.reasoning?.blockBinding?.value?.beta;
+  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: `blockBindingBeta`, the
+  // caller's OWN precomputed decision (`blockBindingBetaFor`, called from `prepare()`/`countTokens()`
+  // against the ACTUAL body those functions built) -- never re-derived from a descriptor here, which
+  // is exactly the fix round 2 bug (this function used to read `descriptor?.reasoning?.blockBinding`
+  // directly, so the header could claim an opt-in the body never sent: an explicit
+  // `thinking:{type:"disabled"}` used to omit the field entirely even on a blockBinding row, while this
+  // line still added the beta). Merged into the SAME array the other two sources feed, then deduped by
+  // the SAME filter below -- there is only one beta list and one dedupe, never a second header-building
+  // path a future beta source could bypass.
   const betas = [
     ...(opts.betas ?? []),
     ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : []),
@@ -952,7 +1008,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);
-    const headers = await buildHeaders(ctx, descriptor, endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1203,7 +1259,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, descriptor, endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,
