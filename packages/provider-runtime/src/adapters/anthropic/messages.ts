@@ -455,7 +455,7 @@ type WireThinking =
   | { type: "adaptive"; display?: string; block_binding?: { prefix_mismatch_behavior: "drop_block" } };
 
 /** What `buildThinking` decided, plus the SIBLING `output_config.effort` value (independent of which thinking arm won -- see `mapAnthropicEffort`'s own doc comment). */
-type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEffort?: string } | { ok: false; reason: string };
+type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEffort?: string; rewroteDisabled?: true } | { ok: false; reason: string };
 
 /**
  * The `thinking` envelope (and, on a row that documents one, the sibling `output_config.effort`
@@ -606,8 +606,10 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
   // typed failure for a combination the caller never chose as a pair. Opus 5's thinking is ON by
   // default, so adaptive is what the model does when `thinking` is left alone -- the rewrite asks for
   // exactly that, explicitly, rather than omitting the field and relying on the default.
+  let rewroteDisabled = false;
   if (req.thinking?.type === "disabled" && outputConfigEffort !== undefined && unsupported.has(`thinking.type.disabled+output_config.effort.${outputConfigEffort}`)) {
     base = { type: "adaptive" };
+    rewroteDisabled = true;
   }
 
   // Computed ONCE, shared by the fallback gate below AND the display step further down (fix round 2,
@@ -658,7 +660,7 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     base = { ...base, block_binding: { prefix_mismatch_behavior: "drop_block" } };
   }
 
-  return { ok: true, value: base, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
+  return { ok: true, value: base, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}), ...(rewroteDisabled ? { rewroteDisabled: true as const } : {}) };
 }
 
 /**
@@ -729,7 +731,7 @@ export function anthropicWireModelId(id: string): string {
  * `fake.requests`, which is `provider-conformance`'s job for the actual wire proof (this file's own
  * header comment).
  */
-export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
+export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate", onThinkingRewrite?: () => void): Record<string, unknown> {
   // Tools: WS-13 §8.1's three states. `emulated` is disabled for agent modes and `none` fails
   // negotiation -- neither is a reason to drop the tools and continue as plain chat.
   if (req.tools !== undefined && req.tools.length > 0 && descriptor !== undefined) {
@@ -775,6 +777,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
 
   const thinking = buildThinking(req, descriptor);
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
+  if (thinking.rewroteDisabled === true) onThinkingRewrite?.();
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.
@@ -1246,6 +1249,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
   const identityFor = (ctx: ProviderContext): Record<string, string> => winterIdentityHeaders((identityLookup ??= identityHeaderLookup(catalogOf())), ctx.connection.providerId);
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  let loggedThinkingRewrite = false;
 
   /**
    * Everything that must be decided BEFORE the network: the descriptor, the endpoint policy, the
@@ -1262,7 +1266,13 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     if (req.signal?.aborted === true) throw new ProviderRequestError({ code: "aborted", message: "provider request aborted by the caller", retryable: false });
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-    const body = buildRequestBody(req, descriptor, opts);
+    const body = buildRequestBody(req, descriptor, opts, "generate", () => {
+      // Review M-6: an explicit `disabled` the row forced back on is logged ONCE per adapter instance
+      // (the runtime builds one registry, and so one adapter, per session): ids only, never content.
+      if (loggedThinkingRewrite) return;
+      loggedThinkingRewrite = true;
+      ctx.log({ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: ctx.connection.providerId, model: req.model });
+    });
     const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }

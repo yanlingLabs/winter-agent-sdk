@@ -417,3 +417,20 @@ describe("WS-23 item 8: the catalog's Opus 5 clamp and the dashed aliases", () =
     }
   });
 });
+
+describe("WS-23 M-6: Opus 5's disabled -> adaptive rewrite is logged once per adapter (session)", () => {
+  test("two rewritten turns, one log line naming ids only; an unrewritten turn logs nothing", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn")));
+    const logs: Array<{ kind: string; providerId: string; model?: string }> = [];
+    const a = adapter();
+    const c = { ...ctx(s.url), log: (e: { kind: string; providerId: string; model?: string }) => void logs.push(e) };
+    const run = async (req: Partial<TurnRequest>) => {
+      for await (const _ of a.streamTurn({ model: "claude-opus-5", messages: [{ role: "user", content: "hi" }], ...req }, c)) void _;
+    };
+    await run({ thinking: { type: "disabled" }, effort: "high" });
+    expect(logs.filter((l) => l.kind.startsWith("provider.thinking_rewrite"))).toHaveLength(0);
+    await run({ thinking: { type: "disabled" }, effort: "xhigh" });
+    await run({ thinking: { type: "disabled" }, effort: "max" });
+    expect(logs.filter((l) => l.kind.startsWith("provider.thinking_rewrite"))).toEqual([{ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: "anthropic", model: "claude-opus-5" }]);
+  });
+});
