@@ -801,9 +801,10 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // `maxOutputTokens` (128K) whenever the request named nothing; it now sends
   // `ANTHROPIC_ROW_DEFAULT_MAX_TOKENS` (64K, see its comment for why) capped at that maximum, or the
   // host's own `defaultMaxOutputTokens`. The budget-carrying `enabled` arm keeps its growth rule on this
-  // path too: a budget that would not fit the default grows it to `budget + ANTHROPIC_DEFAULT_MAX_TOKENS`,
-  // still capped at the row's maximum -- so the `budget >= max_tokens` refusal below fires only when the
-  // ROW cannot hold the budget, never because of a default nobody chose. An explicit
+  // path too, and it grows by a FULL default's worth of answer: `budget + rowDefault`, capped at the row's
+  // maximum (review fix I-1: growing by the 4096 no-maximum fallback left a long-thinking code turn 4K
+  // of room to write its answer or its tool call). The `budget >= max_tokens` refusal below therefore
+  // fires only when the ROW cannot hold the budget, never because of a default nobody chose. An explicit
   // `req.maxOutputTokens` still wins outright (and is still refused above the row's maximum).
   const rowMax = descriptor?.maxOutputTokens?.value;
   const budget = thinking.value !== undefined && thinking.value.type === "enabled" ? thinking.value.budget_tokens : undefined;
@@ -815,7 +816,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
     maxTokens = req.maxOutputTokens;
   } else if (rowMax !== undefined) {
     const rowDefault = Math.min(opts.defaultMaxOutputTokens ?? ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, rowMax);
-    maxTokens = budget !== undefined && budget >= rowDefault ? Math.min(rowMax, budget + ANTHROPIC_DEFAULT_MAX_TOKENS) : rowDefault;
+    maxTokens = budget !== undefined && budget + rowDefault > rowDefault ? Math.min(rowMax, budget + rowDefault) : rowDefault;
   } else {
     const fallbackMax = opts.defaultMaxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
     maxTokens = budget !== undefined ? budget + fallbackMax : fallbackMax;

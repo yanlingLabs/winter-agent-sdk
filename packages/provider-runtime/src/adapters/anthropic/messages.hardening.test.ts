@@ -143,14 +143,26 @@ describe("WS-23 item 3: `max_tokens` defaults to 64K capped at the row, never th
     expect(() => body("claude-opus-5-5", { maxOutputTokens: 200_000 })).toThrow(/exceeds model "anthropic\/claude-opus-5-5"'s declared maximum of 128000/);
   });
 
+  test("I-1: sibling Anthropic-dialect rows at effort `max` (65536 budget) keep a full 64000 of answer room", () => {
+    for (const [provider, model] of [["deepseek-anthropic", "deepseek-v4-pro"], ["zai-anthropic", "glm-5.3"]] as const) {
+      const row = findDescriptor(catalog, provider, model)!;
+      const b = buildRequestBody({ model, messages: [{ role: "user", content: "hi" }], effort: "max" }, row, {});
+      const budget = (b["thinking"] as { budget_tokens: number }).budget_tokens;
+      expect(budget).toBe(65_536);
+      expect((b["max_tokens"] as number) - budget).toBe(64_000);
+    }
+  });
+
   test("a host default replaces 64K and is still capped at the row", () => {
     expect(body("claude-opus-5-5", {}, { defaultMaxOutputTokens: 32_000 })["max_tokens"]).toBe(32_000);
     expect(body("claude-haiku-4.5", {}, { defaultMaxOutputTokens: 100_000 })["max_tokens"]).toBe(64_000);
   });
 
-  test("an `enabled` budget that would not fit the default GROWS it (capped at the row); only a row that cannot hold the budget refuses", () => {
-    // Sonnet 4.6 still takes a manual budget; 70000 does not fit 64K, and the row's 128K can hold it.
-    expect(body("claude-sonnet-4.6", { thinking: { type: "enabled", budgetTokens: 70_000 } })["max_tokens"]).toBe(70_000 + 4_096);
+  test("an `enabled` budget GROWS the default by a full default's worth of answer (capped at the row); only a row that cannot hold the budget refuses", () => {
+    // Sonnet 4.6 still takes a manual budget: 70000 + 64000 is capped at the row's 128000 -> 58000 of answer room.
+    expect(body("claude-sonnet-4.6", { thinking: { type: "enabled", budgetTokens: 70_000 } })["max_tokens"]).toBe(128_000);
+    // A budget just under 64K keeps a full 64000 of answer room, not a sliver.
+    expect(body("claude-sonnet-4.6", { thinking: { type: "enabled", budgetTokens: 60_000 } })["max_tokens"]).toBe(124_000);
     // Opus 4.5's row maximum is 64000: a 64000 budget has no room left for an answer -> typed refusal.
     expect(() => body("claude-opus-4.5", { thinking: { type: "enabled", budgetTokens: 64_000 } })).toThrow(/does not fit inside max_tokens 64000/);
   });
