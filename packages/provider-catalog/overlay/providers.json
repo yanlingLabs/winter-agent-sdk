@@ -4520,6 +4520,43 @@
         "tier": "pinned-upstream"
       },
       "$comment": "2026-09-25 refresh: the Llama API public preview (api.llama.com) was retired on 2026-07-06 (Meta's notice route https://dev.meta.ai/docs/llama-api-deprecation/, corroborated by https://github.com/deepset-ai/haystack-core-integrations/issues/3544 and https://www.promptfoo.dev/docs/providers/llamaApi/). Blocked; successor is `meta` (Meta Model API)."
+    },
+    {
+      "id": "meta-anthropic",
+      "displayName": "Meta Model API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `meta`. Endpoint is the ROOT: the adapter appends `/v1/messages`, exactly the documented path.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.meta.ai"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://dev.meta.ai/docs/protocols/messages — Meta Model API Messages protocol, retrieved 2026-09-25: Anthropic SDK `base_url=\"https://api.meta.ai\"`, POST `/v1/messages` (and `/v1/messages/count_tokens`) with the same Model API key; per-token billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
     }
   ]
 }

@@ -700,7 +700,8 @@
       "displayName": "Muse",
       "vendor": "Meta",
       "vendorProviders": [
-        "meta"
+        "meta",
+        "meta-anthropic"
       ],
       "matchers": [
         {

@@ -3395,6 +3395,42 @@
       "scope": "llm"
     },
     {
+      "id": "meta-anthropic",
+      "displayName": "Meta Model API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.meta.ai"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://dev.meta.ai/docs/protocols/messages — Meta Model API Messages protocol, retrieved 2026-09-25: Anthropic SDK `base_url=\"https://api.meta.ai\"`, POST `/v1/messages` (and `/v1/messages/count_tokens`) with the same Model API key; per-token billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
       "id": "meta-llama",
       "displayName": "Meta Llama API",
       "protocols": [
@@ -37330,6 +37366,322 @@
       "modelFamily": "other"
     },
     {
+      "key": "meta-anthropic/muse-spark-1.1",
+      "providerId": "meta-anthropic",
+      "upstreamId": "muse-spark-1.1",
+      "displayName": "Muse Spark 1.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.1 table lists 1,048,576 token context",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.1 table lists text, image, video, audio, PDF inputs; 1.3 audio has degraded quality caveat",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.1 table lists text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — Muse Spark docs link model family to tool calling; both Chat and Responses served",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/tool-calling — Muse Spark tool-calling examples use tools and tool_calls",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/tool-calling — parallel_tool_calls true by default in Chat and Responses; multiple tool calls may be returned",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/structured-output — Muse Spark example uses response_format json_schema; family capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/pricing-rate-limits — Muse Spark cached input has a separate price and prompt-prefix cache hits are documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://dev.meta.ai/docs/reasoning — Muse Spark generates internal reasoning before visible output; reasoning_effort controls depth",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:36:21Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.25,
+          "outputPerMTokUsd": 4.25,
+          "cacheReadPerMTokUsd": 0.15
+        },
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/pricing-rate-limits — Standard tier muse-spark-1.1: input $1.25, cached input $0.15, output $4.25 per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "muse-spark-1.1",
+      "modelFamily": "muse"
+    },
+    {
+      "key": "meta-anthropic/muse-spark-1.2",
+      "providerId": "meta-anthropic",
+      "upstreamId": "muse-spark-1.2",
+      "displayName": "Muse Spark 1.2",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.2 table lists 1,048,576 token context",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.2 table lists text, image, video, audio, PDF inputs; 1.3 audio has degraded quality caveat",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.2 table lists text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — Muse Spark docs link model family to tool calling; both Chat and Responses served",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/tool-calling — Muse Spark tool-calling examples use tools and tool_calls",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/tool-calling — parallel_tool_calls true by default in Chat and Responses; multiple tool calls may be returned",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/structured-output — Muse Spark example uses response_format json_schema; family capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/pricing-rate-limits — Muse Spark cached input has a separate price and prompt-prefix cache hits are documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://dev.meta.ai/docs/reasoning — Muse Spark generates internal reasoning before visible output; reasoning_effort controls depth",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:36:21Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.25,
+          "outputPerMTokUsd": 4.25,
+          "cacheReadPerMTokUsd": 0.15
+        },
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/pricing-rate-limits — Standard tier muse-spark-1.2: input $1.25, cached input $0.15, output $4.25 per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "muse-spark-1.2",
+      "modelFamily": "muse"
+    },
+    {
+      "key": "meta-anthropic/muse-spark-1.3",
+      "providerId": "meta-anthropic",
+      "upstreamId": "muse-spark-1.3",
+      "displayName": "Muse Spark 1.3",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.3 table lists 1,048,576 token context",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.3 table lists text, image, video, audio, PDF inputs; 1.3 audio has degraded quality caveat",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — muse-spark-1.3 table lists text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/models — Muse Spark docs link model family to tool calling; both Chat and Responses served",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/tool-calling — Muse Spark tool-calling examples use tools and tool_calls",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/tool-calling — parallel_tool_calls true by default in Chat and Responses; multiple tool calls may be returned",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/structured-output — Muse Spark example uses response_format json_schema; family capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/pricing-rate-limits — Muse Spark cached input has a separate price and prompt-prefix cache hits are documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://dev.meta.ai/docs/reasoning — Muse Spark generates internal reasoning before visible output; reasoning_effort controls depth",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:36:21Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.25,
+          "outputPerMTokUsd": 4.25,
+          "cacheReadPerMTokUsd": 0.15
+        },
+        "source": "official-doc",
+        "sourceRef": "https://dev.meta.ai/docs/pricing-rate-limits — Standard tier muse-spark-1.3: input $1.25, cached input $0.15, output $4.25 per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:36:21Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "muse-spark-1.3",
+      "modelFamily": "muse"
+    },
+    {
       "key": "meta/muse-spark-1.1",
       "providerId": "meta",
       "upstreamId": "muse-spark-1.1",
@@ -37430,10 +37782,7 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:36:21Z"
       },
-      "unsupportedParameters": [
-        "logprobs",
-        "top_logprobs"
-      ],
+      "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "muse-spark-1.1",
       "modelFamily": "muse"
@@ -37539,10 +37888,7 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:36:21Z"
       },
-      "unsupportedParameters": [
-        "logprobs",
-        "top_logprobs"
-      ],
+      "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "muse-spark-1.2",
       "modelFamily": "muse"
@@ -37649,10 +37995,7 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:36:21Z"
       },
-      "unsupportedParameters": [
-        "logprobs",
-        "top_logprobs"
-      ],
+      "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "muse-spark-1.3",
       "modelFamily": "muse"
@@ -79829,7 +80172,8 @@
       "displayName": "Muse",
       "vendor": "Meta",
       "vendorProviders": [
-        "meta"
+        "meta",
+        "meta-anthropic"
       ],
       "matchers": [
         {
