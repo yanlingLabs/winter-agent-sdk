@@ -1008,6 +1008,38 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
   }, 5000);
 });
 
+describe("child-engine.ts: WS-23 -- a child engine fires SubagentStart/SubagentStop, never SessionStart/Stop", () => {
+  test("the parent's mirrored hooks see the subagent start and stop, with its agent_type; the child never fires the session events", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do it", runInBackground: false, agentType: "code-reviewer" };
+    const seen: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+    const { code } = await driveParentAnswering(
+      {
+        provider: scriptedProvider([{ kind: "text", text: "child done" }]),
+        parentHooks: {
+          SessionStart: [{ hookCount: 1, source: "sdk" }],
+          Stop: [{ hookCount: 1, source: "sdk" }],
+          SubagentStart: [{ hookCount: 1, source: "sdk" }],
+          SubagentStop: [{ hookCount: 1, source: "sdk" }],
+        },
+      },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "hook") return undefined;
+        const p = frame.payload as { event: string; payload?: Record<string, unknown> };
+        seen.push({ event: p.event, ...(p.payload !== undefined ? { payload: p.payload } : {}) });
+        return { ok: true, payload: {} };
+      },
+    );
+    expect(code).toBe(0);
+    expect(seen.map((s) => s.event)).toEqual(["SubagentStart", "SubagentStop"]);
+    expect(seen[0]!.payload).toMatchObject({ agent_type: "code-reviewer" });
+    expect(seen[1]!.payload).toMatchObject({ agent_type: "code-reviewer", stop_hook_active: false, last_assistant_message: "child done" });
+  }, 5000);
+});
+
 describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat: resolveChildResumeMode applied when getParentPolicy is supplied", () => {
   test("resume() applies the stricter-of comparator when the parent's current policy is stricter than the recorded one", async () => {
     registerSpawnAndRegister();
