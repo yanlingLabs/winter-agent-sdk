@@ -199,6 +199,7 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
         ...(input.thinking !== undefined ? { thinking: input.thinking } : {}),
+        ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
         // Ask for a readable SUMMARY only where the model's own evidence says HOW to ask.
         //

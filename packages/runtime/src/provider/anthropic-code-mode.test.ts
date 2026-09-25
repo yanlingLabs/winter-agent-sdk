@@ -380,3 +380,21 @@ describe("WS-23 I-3: a GPT session reaching a Console model (advisor reviewer, s
     });
   });
 });
+
+// --- review spec gap: the host's `max_tokens` override, end to end ------------------------------------
+
+describe("WS-23: `RuntimeConfig.maxOutputTokens` reaches the wire and wins over the adapter's default", () => {
+  const ONE = (): FakeResponse => ({ blocks: [{ type: "text", text: "ok" }], stopReason: "end_turn" });
+  test("absent -> the 64K default; set -> exactly the host's value (above the default, within the row)", async () => {
+    const plain = await runSession({ model: "anthropic/claude-opus-5-5", script: ONE });
+    expect(plain.fake.requests[0]!.body["max_tokens"]).toBe(64_000);
+    const raised = await runSession({ model: "anthropic/claude-opus-5-5", config: { maxOutputTokens: 100_000 }, script: ONE });
+    expect(raised.fake.requests[0]!.body["max_tokens"]).toBe(100_000);
+  });
+
+  test("above the row's maximum -> a typed refusal before the request, never a silent clamp", async () => {
+    const run = await runSession({ model: "anthropic/claude-opus-5-5", config: { maxOutputTokens: 500_000 }, script: ONE });
+    expect(run.fake.requests).toHaveLength(0);
+    expect(String(result(run.messages)["result"])).toContain("declared maximum of 128000");
+  });
+});

@@ -529,6 +529,8 @@ export interface ProviderRequest {
   model?: string;
   effort?: TurnRequest["effort"];
   thinking?: TurnRequest["thinking"];
+  /** WS-23: the host's output-token ceiling (`RuntimeConfig.maxOutputTokens`). Absent -> the adapter's own default. */
+  maxOutputTokens?: number;
   /**
    * R6-6: TRUE cancellation. Aborted when this turn is interrupted, so an adapter can cancel
    * pre-header and mid-stream instead of running to completion behind an abandoned await. The same
@@ -7302,6 +7304,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ...(currentModel !== undefined ? { model: currentModel } : {}),
             ...(config.effort !== undefined ? { effort: config.effort } : {}),
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+            // WS-23: the host's own `max_tokens` override, when it set one (conditionally spread, so
+            // every existing request is byte-identical).
+            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             signal: turnAbort.signal,
             // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
             // the classifier, the advisor, countTokens) build their own requests elsewhere and get

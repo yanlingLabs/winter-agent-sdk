@@ -1753,6 +1753,7 @@ test("Phase 6 Task 2: every provider-layer option is present in --config-json wh
       includePartialMessages: true,
       maxBudgetUsd: 2.5,
       providerStallTimeoutMs: 45000,
+      maxOutputTokens: 100000,
       keychainService: "com.winter.core.dev",
       autoClassifier: { model: "openai/gpt-4.1", authRef: { kind: "none" } },
       advisor: { model: "anthropic/claude-sonnet-5" },
@@ -1777,6 +1778,7 @@ test("Phase 6 Task 2: every provider-layer option is present in --config-json wh
   expect(config["includePartialMessages"]).toBe(true);
   expect(config["maxBudgetUsd"]).toBe(2.5);
   expect(config["providerStallTimeoutMs"]).toBe(45000);
+  expect(config["maxOutputTokens"]).toBe(100000);
   expect(config["keychainService"]).toBe("com.winter.core.dev");
   expect(config["autoClassifier"]).toEqual({ model: "openai/gpt-4.1", authRef: { kind: "none" } });
   expect(config["advisor"]).toEqual({ model: "anthropic/claude-sonnet-5" });
@@ -1790,7 +1792,7 @@ test("Phase 6 Task 2: unset provider-layer options are OMITTED entirely — an u
   const config = capture.get();
   for (const key of [
     "provider", "fallbackModel", "thinking", "effort", "maxThinkingTokens", "includePartialMessages",
-    "maxBudgetUsd", "providerStallTimeoutMs", "keychainService", "autoClassifier", "advisor",
+    "maxBudgetUsd", "providerStallTimeoutMs", "maxOutputTokens", "keychainService", "autoClassifier", "advisor",
   ]) {
     expect(key in config).toBe(false);
   }

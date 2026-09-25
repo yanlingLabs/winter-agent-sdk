@@ -646,6 +646,14 @@ export interface Options {
   maxBudgetUsd?: number;
   /** DISCLOSED WINTER option (R6-6): a stream silent for this long aborts as a typed `ProviderStallError`. Absent means DEFAULT_PROVIDER_STALL_TIMEOUT_MS. */
   providerStallTimeoutMs?: number;
+  /**
+   * DISCLOSED WINTER option (WS-23): the output-token ceiling (`max_tokens` on the Anthropic dialect)
+   * every main-loop generation asks for. Absent means the adapter's own default -- on a Claude row,
+   * 64000 capped at the row's declared maximum. A value above the row's maximum is refused typed,
+   * before the request. Forwarded as `TurnRequest.maxOutputTokens`, which an adapter treats as an
+   * explicit request (it wins over every default).
+   */
+  maxOutputTokens?: number;
   /** DISCLOSED WINTER option (R6-10): the macOS Keychain service every `{ kind: "keychain" }` ref resolves under. Absent means DEFAULT_KEYCHAIN_SERVICE. */
   keychainService?: string;
   /** DISCLOSED WINTER option (R6-14): the permission classifier's own model/credential, resolved through the SAME selection path as the session model. With none configured the worker serves only a `classifierEligible` model, else Manual fallback — never a silent weakening. */
