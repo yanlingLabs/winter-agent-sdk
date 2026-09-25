@@ -452,6 +452,12 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
 
       const fromExplicit = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "enabled", budgetTokens: 4096 } }), opus55Shaped, {});
       expect(fromExplicit["thinking"]).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+
+      // The one arm not covered above: `adaptive` is NOT in this row's `unsupportedParameters` (it is
+      // adaptive-ONLY), so an explicit `{type:"adaptive"}` request survives VERBATIM rather than being
+      // rewritten -- and still gets block_binding merged onto it by the same unconditional step.
+      const fromExplicitAdaptive = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "adaptive" } }), opus55Shaped, {});
+      expect(fromExplicitAdaptive["thinking"]).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
     });
 
     test("block_binding is ABSENT for a row with no blockBinding evidence, even when it is always-on", () => {
