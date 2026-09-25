@@ -228,6 +228,10 @@ import { createCommandHookInvoker } from "./hooks/command-invoker.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
 import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
 import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
+import type { HookComposite } from "./hooks/reducer.ts";
+import { createRegistryToolInputValidator } from "./hooks/input-validator.ts";
+import { contextStrings, hookAdditionalContextAttachment, hookFeedbackAttachment } from "./hooks/additional-context.ts";
+import { capHookText, MAX_HOOK_TOOL_OUTPUT_CHARS } from "./hooks/bounds.ts";
 // Task 11 (WS-07 §9 / WS-08 §7): the durable approval store a `defer` decision parks into, and the
 // pure revalidation function the resume-consumption step (this file, below) uses.
 import {
@@ -924,6 +928,11 @@ export interface UserEntryMeta {
 }
 
 export interface SessionPersistence {
+  /**
+   * WS-23: the durable transcript's absolute path, when the store knows it (store/dialect.ts's
+   * writer does). A command hook's stdin names it as `transcript_path`; absent, that field is `""`.
+   */
+  transcriptPath?: string;
   recordUserEntry(content: string | ContentBlock[], opts?: UserEntryMeta): void | Promise<void>;
   /**
    * SDK 0.0.16 (P16-5/P16-6): one persisted attachment -- claude's `{type: "attachment", attachment}`
@@ -1273,6 +1282,15 @@ export interface EngineOptions {
    * be found).
    */
   extraHookEntries?: readonly SourcedHookEntry[];
+  /**
+   * WS-23: set ONLY by `subagents/child-engine.ts` for a child's own engine. A subagent fires
+   * `SubagentStart` where a session fires `SessionStart`, and `SubagentStop` where a session fires
+   * `Stop` -- claude's own split ("Converting Stop hook to SubagentStop"), so a hook can tell a
+   * subagent finishing from the session finishing, and a SubagentStop `block` keeps THE SUBAGENT
+   * going (the child's own turn loop, below) rather than the parent. `agentType` is the resolved
+   * `subagent_type`; `agentTranscriptPath` the child's own transcript (`""` when it has none).
+   */
+  subagentHooks?: { agentType: string; agentTranscriptPath: string };
   /**
    * MCP server sources beyond the host's own `config.mcpServers`: the settings tiers,
    * the project `mcp.json`, and plugin manifests. Appended AFTER the explicit source, so an explicitly
@@ -1875,6 +1893,58 @@ function capAgentListingWhenToUse(whenToUse: string, source: SourcedAgentDefinit
  * disposer list this wrapper drains. Draining is idempotent (`splice`), so the ordinary teardown may
  * still run them at its own point in the sequence and this is purely the backstop.
  */
+/**
+ * WS-23: how many times one turn's Stop/SubagentStop hooks may send the model back to work before
+ * the turn ends regardless. Winter's own number (claude has an equivalent cap); the `stop_hook_active`
+ * input flag is the first guard, this is the backstop for a hook that ignores it.
+ */
+export const STOP_HOOK_BLOCK_CAP = 8;
+
+/**
+ * WS-23: a PostToolUse hook's `updatedToolOutput` / `updatedMCPToolOutput` as tool_result content. A
+ * string stays a string; an array of text/image blocks is used as the content blocks; an MCP
+ * `CallToolResult`-shaped object contributes its `content` array; anything else is shown to the model
+ * as its JSON text -- a replacement is always DELIVERED, never silently dropped for its shape.
+ */
+//
+// Fix round 1 (C1): BOUNDED at MAX_HOOK_TOOL_OUTPUT_CHARS (hooks/bounds.ts) -- a replacement is
+// written into the history like any tool result, so an unbounded one would break every later request.
+// Block content counts text plus image payload; an oversized block list falls back to its text,
+// capped, with each image replaced by a one-line placeholder (a partial image is not an image).
+function toolOutputReplacement(value: unknown): string | ContentBlock[] {
+  const cap = MAX_HOOK_TOOL_OUTPUT_CHARS;
+  const boundBlocks = (blocks: ContentBlock[]): string | ContentBlock[] => {
+    const size = blocks.reduce((n, b) => n + (b.type === "text" ? b.text.length : b.type === "image" ? b.source.data.length : 0), 0);
+    if (size <= cap) return blocks;
+    return capHookText(blocks.map((b) => (b.type === "text" ? b.text : "[image omitted: the hook's replacement output exceeded its size bound]")).join("\n"), cap);
+  };
+  if (typeof value === "string") return capHookText(value, cap);
+  const blocksOf = (candidate: unknown): ContentBlock[] | undefined => {
+    if (!Array.isArray(candidate) || candidate.length === 0) return undefined;
+    const ok = candidate.every(
+      (b) =>
+        typeof b === "object" &&
+        b !== null &&
+        (((b as { type?: unknown }).type === "text" && typeof (b as { text?: unknown }).text === "string") ||
+          ((b as { type?: unknown }).type === "image" &&
+            typeof (b as { source?: { data?: unknown } }).source === "object" &&
+            typeof (b as { source?: { data?: unknown } }).source?.data === "string")),
+    );
+    return ok ? (candidate as ContentBlock[]) : undefined;
+  };
+  const direct = blocksOf(value);
+  if (direct !== undefined) return boundBlocks(direct);
+  if (typeof value === "object" && value !== null) {
+    const mcp = blocksOf((value as { content?: unknown }).content);
+    if (mcp !== undefined) return boundBlocks(mcp);
+  }
+  try {
+    return capHookText(JSON.stringify(value) ?? String(value), cap);
+  } catch {
+    return capHookText(String(value), cap);
+  }
+}
+
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const facetDisposers: Array<() => void> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
@@ -1956,6 +2026,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     fileCheckpointSink,
     winterHome: wiredWinterHome,
     extraHookEntries,
+    subagentHooks,
     extraMcpServerSources,
     initSlashCommands,
     initSkills,
@@ -2348,8 +2419,25 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The bridge invoker stays the fallback for every entry with no `command` (an SDK callback the
   // host answers), so a session with no command hooks behaves exactly as it did before this wiring.
   const bridgeHookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
+  // WS-23: claude's command-hook wire needs three session facts a command's stdin/env carries --
+  // the transcript path (`transcript_path`: the STORE's own, `SessionPersistence.transcriptPath`, so a
+  // resume found under another project directory names the right file; `""` when there is no durable
+  // store, never a path re-derived here and possibly wrong -- a claude-format script may `cat` it),
+  // the LIVE permission mode (`permission_mode`, read per invocation: it changes mid-session), and
+  // the brand whose prefix names the Winter twins of CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT. A child
+  // engine's store (a bare child TranscriptWriter) states no path, so a subagent's command hooks get
+  // `""` here; its own transcript rides SubagentStop's `agent_transcript_path`.
+  const hookTranscriptPath = store?.transcriptPath ?? "";
   const hookInvoker: HookInvoker = allHookEntries.some((e) => e.command !== undefined && e.command.length > 0)
-    ? createCommandHookInvoker(allHookEntries, { next: bridgeHookInvoker, cwd: config.cwd, ...(engineEnv !== undefined ? { env: engineEnv } : {}) })
+    ? createCommandHookInvoker(allHookEntries, {
+        next: bridgeHookInvoker,
+        cwd: config.cwd,
+        ...(engineEnv !== undefined ? { env: engineEnv } : {}),
+        projectDir: config.cwd,
+        brand: sessionBrand,
+        transcriptPath: hookTranscriptPath,
+        permissionMode: () => policyStateStore.getState().mode,
+      })
     : bridgeHookInvoker;
   // Auxiliary, exactly like recordUser/recordAssistant/recordPermissionUpdate further down (same
   // "a store failure never fails the turn or blocks the hook it accompanies" policy) — defined here
@@ -2396,8 +2484,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         },
       });
     },
-    response(info: { hookId: string; hookName?: string; hookEvent: HookEvent; sessionId: string; outcome: "success" | "error" | "cancelled" }): void {
+    response(info: { hookId: string; hookName?: string; hookEvent: HookEvent; sessionId: string; outcome: "success" | "error" | "cancelled"; stdout?: string; stderr?: string; exitCode?: number }): void {
       if (!shouldEmitHookLifecycle(info.hookEvent)) return;
+      // WS-23: a COMMAND hook's own process output now fills the three text fields (and
+      // `exit_code`); a callback hook still has none. `stdout` arrives already blanked when the hook
+      // asked for `suppressOutput` (runner.ts). `output` is the stdout the host would show.
       output.write({
         type: "data",
         message: {
@@ -2406,9 +2497,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           hook_id: info.hookId,
           hook_name: info.hookName ?? "",
           hook_event: info.hookEvent,
-          output: "",
-          stdout: "",
-          stderr: "",
+          output: info.stdout ?? "",
+          stdout: info.stdout ?? "",
+          stderr: info.stderr ?? "",
+          ...(info.exitCode !== undefined ? { exit_code: info.exitCode } : {}),
           outcome: info.outcome,
           session_id: info.sessionId,
           uuid: randomUUID(),
@@ -2455,12 +2547,26 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // one production call site; every other reference left in the codebase is test-only) — stateless
   // across calls (its own counters/cache live inside the closure below, session-scoped, exactly
   // like realHookStage's own registry), so it too is built ONCE, outside this factory.
+  // WS-23: the composites the hook stage computes for PreToolUse/PermissionRequest, keyed by tool
+  // call and OVERWRITTEN per evaluation (hook-stage.ts's `onComposite` header: a stale-policy
+  // re-evaluation replaces, never doubles). Drained once per call by `takeGatingHookComposites`
+  // in the tool round, which is where their context, notices and stop request are acted on.
+  const gatingHookComposites = new Map<string, { PreToolUse?: HookComposite; PermissionRequest?: HookComposite }>();
   const realHookStage = createHookStage({
     registry: hookRegistry,
     invoker: hookInvoker,
     audit: hookAuditRecorder,
     sessionId: config.sessionId,
     lifecycle: hookLifecycleSink,
+    // WS-23 (brief item 6): a hook's `updatedInput` is checked against the tool's registered input
+    // schema; an invalid one is a deny (runner.ts). Was: no validator at all, so the P2 no-op ran.
+    validator: createRegistryToolInputValidator(),
+    onComposite: (event, call, composite) => {
+      if (call.toolUseId === undefined) return;
+      const slot = gatingHookComposites.get(call.toolUseId) ?? {};
+      slot[event] = composite;
+      gatingHookComposites.set(call.toolUseId, slot);
+    },
     // Phase 4 Task 3 (MUST 9): populated for a child engine's own hook runs (config.agentId is set
     // ONLY on a child's own RuntimeConfig, per that field's own comment), absent for the main
     // engine -- HookStageDeps.agentID already existed as a seam (createHookStage's own header) with
@@ -2941,6 +3047,81 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(config.agentId !== undefined ? { agentID: config.agentId } : {}),
     });
   }
+
+  // --- WS-23: acting on what hooks SAY, not only on what they decide ------------------------------
+  //
+  // Until WS-23 every firing site above read a composite's permission decision (or nothing at all)
+  // and dropped the rest: `additionalContext` for five events, `systemMessage`, `continue: false`.
+  // `absorbHookComposite` is the ONE place those land, so every site treats them alike:
+  //  - `additionalContext` (opt-in per site: PreCompact's is compaction instructions, not model
+  //    context) -> a `hook_additional_context` attachment QUEUED here and appended at the conversation
+  //    tail by `flushPendingHookAttachments` -- after this round's tool results, with the prompt, or
+  //    after a compaction summary (hooks/additional-context.ts says why an attachment, and why never the
+  //    system prompt);
+  //  - `systemMessage` -> an `informational` frame for the host, at once;
+  //  - `continue: false` -> `turnStop.request`, which the turn loop honours at its next boundary (the
+  //    remaining calls of the round are not run; no further generation starts) and ends the turn with
+  //    the hook's own reason.
+  const pendingHookAttachments: AttachmentPayload[] = [];
+  // A HOLDER, not a bare `let`: it is set inside hook callbacks the turn loop awaits, and TypeScript
+  // does not see a call reset its narrowing of a captured variable.
+  const turnStop: { request?: { hookName: string; reason?: string } } = {};
+  const currentTurnStop = (): { hookName: string; reason?: string } | undefined => turnStop.request;
+  const emitHookNotice = (content: string, extra?: { preventContinuation?: boolean }): void => {
+    output.write({
+      type: "data",
+      message: {
+        type: "system",
+        subtype: "informational",
+        content,
+        level: "warning",
+        ...(extra?.preventContinuation === true ? { prevent_continuation: true } : {}),
+        uuid: randomUUID(),
+        session_id: config.sessionId,
+      },
+    });
+  };
+  // `outsideTurn` (fix round 1, I1): a site that fires with NO turn to stop -- SessionStart/SubagentStart
+  // before the first envelope, a manual `/compact` (a built-in that ends its own turn regardless).
+  // Its `continue: false` is CONSUMED right there (the notice, then nothing) instead of being left for
+  // whichever turn comes next: the review's probe showed a leaked stop silently dropping the user's
+  // NEXT prompt, announced as a UserPromptSubmit block it never was.
+  const absorbHookComposite = (composite: HookComposite, opts: { hookName: string; context?: boolean; toolUseID?: string; outsideTurn?: boolean }): void => {
+    for (const notice of contextStrings(composite.systemMessages)) emitHookNotice(notice);
+    if (opts.context === true) {
+      const attachment = hookAdditionalContextAttachment(opts.hookName, contextStrings(composite.extraContext), opts.toolUseID);
+      if (attachment !== undefined) pendingHookAttachments.push(attachment);
+    }
+    if (composite.preventContinuation === undefined) return;
+    const reason = composite.preventContinuation.reason;
+    if (opts.outsideTurn === true) {
+      emitHookNotice(`${opts.hookName} hook asked to stop, but there is no turn to stop here${reason !== undefined ? `: ${reason}` : ""}`);
+      return;
+    }
+    if (turnStop.request === undefined) turnStop.request = { hookName: opts.hookName, ...(reason !== undefined ? { reason } : {}) };
+  };
+  const flushPendingHookAttachments = async (): Promise<void> => {
+    for (const attachment of pendingHookAttachments.splice(0)) {
+      const message = attachmentMessage(attachment);
+      if (message === undefined) continue;
+      messages.push(message);
+      await recordAttachment(attachment);
+    }
+  };
+  /** The turn's terminal result for a hook's `continue: false` -- claude's `hook_stopped` terminal reason, with the hook's own words. */
+  const takeHookStopResult = (): Omit<Extract<SdkMessage, { type: "result" }>, "permission_denials"> => {
+    const stop = turnStop.request!;
+    delete turnStop.request;
+    emitHookNotice(`${stop.hookName} hook stopped continuation${stop.reason !== undefined ? `: ${stop.reason}` : ""}`, { preventContinuation: true });
+    return { type: "result", subtype: "success", is_error: false, result: stop.reason ?? "", terminal_reason: "hook_stopped" };
+  };
+  /** The PreToolUse/PermissionRequest composites the hook stage recorded for one call -- see `gatingHookComposites`. */
+  const takeGatingHookComposites = (toolUseId: string, toolName: string): void => {
+    const slot = gatingHookComposites.get(toolUseId);
+    gatingHookComposites.delete(toolUseId);
+    if (slot?.PreToolUse !== undefined) absorbHookComposite(slot.PreToolUse, { hookName: `PreToolUse:${toolName}`, context: true, toolUseID: toolUseId });
+    if (slot?.PermissionRequest !== undefined) absorbHookComposite(slot.PermissionRequest, { hookName: `PermissionRequest:${toolName}`, toolUseID: toolUseId });
+  };
 
   // --- Phase 5 fix wave, B-H1(c): R5-13's Notification emission ----------------------------------
   //
@@ -5712,9 +5893,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // for control_response frames) and BEFORE the turn loop begins — never any earlier: a hook RPC
   // issued before the pump exists would have nothing routing its eventual answer back to the
   // bridge, and would need to rely solely on the runner's own per-hook timeout to ever resolve.
-  await fireObservationalHook("SessionStart", {
-    payload: { source: config.forkSession === true ? "fork" : config.resume !== undefined || config.continue === true ? "resume" : "startup" },
-  });
+  //
+  // WS-23: a SUBAGENT's engine fires `SubagentStart` here instead (see EngineOptions.subagentHooks),
+  // and either event's `additionalContext` now REACHES the model: queued, and appended with the first
+  // user turn (`flushPendingHookAttachments` at turn start) -- never into the system prompt.
+  if (subagentHooks !== undefined) {
+    const started = await fireObservationalHook("SubagentStart", { payload: { agent_id: config.agentId ?? "", agent_type: subagentHooks.agentType } });
+    absorbHookComposite(started, { hookName: `SubagentStart:${subagentHooks.agentType}`, context: true, outsideTurn: true });
+  } else {
+    const sessionStartSource = config.forkSession === true ? "fork" : config.resume !== undefined || config.continue === true ? "resume" : "startup";
+    const started = await fireObservationalHook("SessionStart", { payload: { source: sessionStartSource } });
+    absorbHookComposite(started, { hookName: `SessionStart:${sessionStartSource}`, context: true, outsideTurn: true });
+  }
   // B-H1(c) point 2: the session is IDLE, waiting for a user envelope (WS-04 §4.1's `idle` state).
   // Emitted here and again after every terminal result below, which is exactly the set of moments
   // the state machine re-enters `idle` -- an observer polling for "is it my turn" has no other
@@ -6027,6 +6217,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // PreCompact -- pinned input `{ trigger, custom_instructions }` (derived-shapes-p5 item (f)).
     // `custom_instructions` is `string | null` on the pin, never absent.
     const pre = await fireObservationalHook("PreCompact", { payload: { trigger, custom_instructions: customInstructions } });
+    absorbHookComposite(pre, { hookName: `PreCompact:${trigger}`, outsideTurn: trigger === "manual" }); // WS-23: notices + `continue: false`; its context stays compaction instructions, below
     const forwarded = (pre.extraContext ?? []).map((c) => c.context).filter((t) => typeof t === "string" && t.length > 0);
     const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
 
@@ -6134,7 +6325,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
     // PostCompact AFTER compact(): its pinned input carries `compact_summary` as a REQUIRED string,
     // so the summary must exist before the hook can be given its input at all.
-    await fireObservationalHook("PostCompact", { payload: { trigger, compact_summary: result.summary } });
+    // WS-23: its notices and a `continue: false` are honoured like every other event's.
+    absorbHookComposite(await fireObservationalHook("PostCompact", { payload: { trigger, compact_summary: result.summary } }), { hookName: `PostCompact:${trigger}`, outsideTurn: trigger === "manual" });
+
+    // WS-23 (brief item 7): `SessionStart` with `source: "compact"` -- the context a SessionStart hook
+    // injects (a project's conventions, a status snapshot) was IN the history the summary just
+    // replaced, so the hook is asked again and its context is appended right after the summary. A
+    // subagent fires no SessionStart (EngineOptions.subagentHooks), so a child's compaction does not.
+    if (subagentHooks === undefined) {
+      absorbHookComposite(await fireObservationalHook("SessionStart", { payload: { source: "compact" } }), { hookName: "SessionStart:compact", context: true, outsideTurn: trigger === "manual" });
+      await flushPendingHookAttachments();
+    }
 
     // WS-09 §8.5: the deferred loaded set resets to `evidenced n still-registered` -- a tool the
     // model can no longer see evidence of having loaded must not stay silently callable.
@@ -7103,16 +7304,58 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // downstream needs the original text, and the expansion is exactly what the model was given.
     // Carried for a capture.
     const userText = resolvedPromptText;
+
+    // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "user envelope accepted, BEFORE the turn's
+    // provider call". WS-23 MOVED IT AHEAD OF THE PROMPT ENTERING THE HISTORY (it used to fire after
+    // the envelope was recorded): a `decision: "block"` (or `continue: false`) must DROP the prompt --
+    // never sent to the model, never written to the transcript -- and a prompt already pushed and
+    // recorded cannot be dropped. The turn then ends like the `/compact` built-in does, with exactly
+    // one terminal result (WS-04 §4.1), carrying the hook's reason for the host. `additionalContext`
+    // is queued and appended WITH the prompt, below.
+    //
+    // The envelope's prompt INPUT (live mode, date, model) is snapshotted BEFORE the hook runs, i.e.
+    // at acceptance: a hook's own latency must not let a control request that arrived after this
+    // envelope (a `set_permission_mode`) leak into how this envelope's prompt is assembled.
+    const envelopeInput = promptInput();
+    // Fix round 1 (I1): every turn starts with no stop request -- a stop belongs to the turn that
+    // raised it, never to the next one.
+    delete turnStop.request;
+    // Fix round 1 (M2): what was queued BEFORE this prompt's hook (SessionStart's context, waiting for
+    // the first user turn) is not this prompt's -- a blocked prompt drops only its own hook's context.
+    const pendingBeforePrompt = pendingHookAttachments.length;
+    const promptHooks = await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
+    absorbHookComposite(promptHooks, { hookName: "UserPromptSubmit", context: true });
+    const promptBlock = contextStrings(promptHooks.blockReasons);
+    const promptStop = currentTurnStop();
+    if (promptBlock.length > 0 || promptStop !== undefined) {
+      interruptCurrentTurn.current = null;
+      pendingHookAttachments.length = pendingBeforePrompt; // this prompt never enters the history, so neither does its context
+      const reason = promptBlock.length > 0 ? promptBlock.join("\n") : (promptStop?.reason ?? "");
+      delete turnStop.request;
+      emitHookNotice(
+        promptBlock.length > 0
+          ? `UserPromptSubmit operation blocked by hook${reason.length > 0 ? `:\n${reason}` : ""}`
+          : `${promptStop!.hookName} hook stopped continuation${reason.length > 0 ? `: ${reason}` : ""}`,
+        { preventContinuation: true },
+      );
+      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: reason, terminal_reason: "hook_stopped", usage: emptyResultUsage(), permission_denials: [] } });
+      await flushStore();
+      endTurn();
+      continue;
+    }
+
     messages.push({ role: "user", content: userText });
     // Lane N: a notification envelope is persisted META-FLAGGED with its origin, exactly as claude
     // writes one (`isMeta: true`, `origin: {kind: "task-notification"}`) -- so a transcript reader, a
     // resumed session and the daemon's projector can all tell a turn the runtime started from one the
     // human typed. The provider history is identical either way: the text IS the turn's input.
     await recordUser(userText, turnStartedByNotification ? { isMeta: true, origin: { kind: "task-notification" } } : undefined);
+    // WS-23: the prompt's own hook context (UserPromptSubmit), plus anything SessionStart/SubagentStart
+    // queued before this session's first turn -- appended right after the prompt, so it rides WITH it.
+    await flushPendingHookAttachments();
 
     // Phase 5 Task 3: assembled AFTER the envelope is recorded (so a store failure never leaves an
     // assembled-but-unrecorded turn) and BEFORE the first provider call of the turn.
-    const envelopeInput = promptInput();
     const assembled = assemblePrompt(envelopeInput);
     // SDK 0.0.16: the session context is built (once, memoized) BEFORE the scan, so the date fold
     // compares against the date the index-0 context actually carries.
@@ -7131,14 +7374,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // result, below -- when checkpointing is on, so no pre-P5 trace moves.
     const turnUserMessageUuid = randomUUID();
 
-    // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "user envelope accepted, BEFORE the turn's
-    // provider call" — fired here, after the envelope is durably recorded but before
-    // provider.generate() is ever invoked. Its own output shape (additionalContext/sessionTitle/
-    // suppressOriginalPrompt) is declaration-owned and OBSERVATIONAL at P2 (WS-08 §1.3 / open
-    // question 4: "any gating behavior beyond the declaration is ... never assumed") — nothing here
-    // consumes it; a future task that wants UserPromptSubmit to actually suppress/rewrite the
-    // prompt has a real seam to build against (this call site), not a gap to discover.
-    await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
+    // (UserPromptSubmit now fires ABOVE, before the prompt enters the history -- WS-23.)
 
     // Finding 3 (P2 fix-wave): `permission_denials` is deliberately OMITTED from this variable's own
     // type — every one of the several construction sites below builds a plain result shape exactly
@@ -7146,6 +7382,32 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // (via a spread), rather than repeated at each `finalResult = {...}` assignment.
     let finalResult: Omit<Extract<SdkMessage, { type: "result" }>, "permission_denials"> | null = null;
     let interrupted = false;
+
+    // --- WS-23 (brief item 5): Stop / SubagentStop can KEEP THE TURN GOING ------------------------
+    //
+    // A `decision: "block"` (or claude 2.1.282's softer `additionalContext`) on the event fired when
+    // the model finishes with a plain answer is fed back to the model as `<Stop> hook feedback:` and
+    // the round loop runs again. Two loop guards: claude's `stop_hook_active` input flag (true on
+    // every re-fire within this turn, so a well-written hook lets the stop through), and a hard cap
+    // (STOP_HOOK_BLOCK_CAP) for a hook that ignores the flag -- otherwise one buggy script turns a
+    // finished answer into an unbounded token spend. Only the TEXT exit consults them: a turn ending
+    // on an error, an interrupt, max turns or a budget stop is not continued (claude discards the
+    // block there too), though the hook still fires once, below the loop, as it always has.
+    let stopHookActive = false;
+    let stopHookBlocks = 0;
+    let stopHookFired = false;
+    const stopHookName = subagentHooks !== undefined ? `SubagentStop:${subagentHooks.agentType}` : "Stop";
+    const fireStopHooks = async (lastAssistantText: string | undefined): Promise<HookComposite> => {
+      stopHookFired = true;
+      const payload = {
+        stop_hook_active: stopHookActive,
+        ...(lastAssistantText !== undefined ? { last_assistant_message: lastAssistantText } : {}),
+        ...(subagentHooks !== undefined ? { agent_id: config.agentId ?? "", agent_type: subagentHooks.agentType, agent_transcript_path: subagentHooks.agentTranscriptPath } : {}),
+      };
+      const composite = await fireObservationalHook(subagentHooks !== undefined ? "SubagentStop" : "Stop", { payload });
+      absorbHookComposite(composite, { hookName: stopHookName });
+      return composite;
+    };
 
     roundLoop: while (true) {
       // Phase 5 Task 3 (R5-10): `outputFormat` with no seam fails LOUDLY, on the first round, before
@@ -7174,6 +7436,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // once per turn -- a long tool-using turn is exactly where a context window fills up, and a
       // check that only ran at turn start would let it overflow mid-turn with no recourse.
       await maybeAutoCompact();
+      // WS-23: a hook asked for the turn to stop (`continue: false`) -- a tool round's PostToolUse, a
+      // compaction's hooks, a SessionStart before this first turn -- so no further generation starts.
+      if (currentTurnStop() !== undefined) {
+        finalResult = takeHookStopResult();
+        break roundLoop;
+      }
 
       let turn: ProviderTurn;
       try {
@@ -7317,6 +7585,23 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
         messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
+        // WS-23: the Stop/SubagentStop hooks fire HERE for a plain answer (still before the terminal
+        // result is written -- the single-shot wrapper is still reading, see the post-loop comment),
+        // and may send the model back to work. See `fireStopHooks` above.
+        const stopHooks = await fireStopHooks(turn.text);
+        const stopFeedback = [...contextStrings(stopHooks.blockReasons), ...contextStrings(stopHooks.extraContext)];
+        if (stopFeedback.length > 0 && currentTurnStop() === undefined) {
+          if (stopHookBlocks < STOP_HOOK_BLOCK_CAP) {
+            stopHookBlocks++;
+            stopHookActive = true;
+            const feedback = hookFeedbackAttachment(stopHookName, stopFeedback)!;
+            messages.push(attachmentMessage(feedback)!);
+            await recordAttachment(feedback);
+            finalResult = null;
+            continue roundLoop;
+          }
+          emitHookNotice(`${stopHookName} hook blocked the turn from ending ${STOP_HOOK_BLOCK_CAP} times; ending it anyway. A Stop hook should allow the stop while its input's stop_hook_active is true.`);
+        }
         break roundLoop;
       }
 
@@ -7357,6 +7642,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // reason `toolThrowText` above is one -- `finalResult` has several other producers.
       let structuredTerminated = false;
       for (const call of turn.calls) {
+        // WS-23: once a hook has stopped the turn, the round's remaining calls are not run -- each
+        // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
+        const stoppedBy = currentTurnStop();
+        if (stoppedBy !== undefined) {
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBy.hookName} hook stopped the turn]`, error: true });
+          continue;
+        }
         // --- Phase 5 Task 3 (R5-10): the host-generated StructuredOutput tool -----------------------
         //
         // Handled BEFORE every other execution-boundary check, and deliberately outside the try:
@@ -7557,6 +7849,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             break;
           }
           const decision = decisionRaced.value;
+          // WS-23: what the PreToolUse/PermissionRequest hooks said BESIDE their decision -- context
+          // for the model, notices for the host, a stop request -- from the stage's side channel.
+          takeGatingHookComposites(call.id, call.name);
 
           // Denial emission, factored out (Task 11) so BOTH a real evaluate()-driven denial AND a
           // fail-closed-defer denial (this call's own new branch, below — no durable approval store
@@ -7607,12 +7902,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // interruptSignal (this whole call-info-building/firing step is synchronous-cheap and
             // deliberately unraced, matching the rpc_probe turn kind's own precedent elsewhere in
             // this file).
-            await fireObservationalHook("PermissionDenied", {
-              toolUseID: call.id,
-              toolName: call.name,
-              input: permissionCall.input,
-              payload: { reason: message },
-            });
+            absorbHookComposite(
+              await fireObservationalHook("PermissionDenied", {
+                toolUseID: call.id,
+                toolName: call.name,
+                input: permissionCall.input,
+                payload: { reason: message },
+              }),
+              { hookName: `PermissionDenied:${call.name}` },
+            );
           };
 
           // --- Task 11 (WS-07 §9 / WS-08 §7): a `defer` decision parks the call durably ----------
@@ -7859,6 +8157,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           if (postToolUseHookOutcome.classifierContext !== undefined) {
             accumulatedClassifierContext.push(...postToolUseHookOutcome.classifierContext);
           }
+          // WS-23: the post-tool hook's context reaches the model (appended after this round's
+          // results), its notices the host, its `continue: false` the turn loop.
+          absorbHookComposite(postToolUseHookOutcome, { hookName: `${raced.value.isError === true ? "PostToolUseFailure" : "PostToolUse"}:${call.name}`, context: true, toolUseID: call.id });
+          // WS-23 (brief item 5): `updatedToolOutput` REPLACES what the model is shown for this call
+          // (claude 2.1.282: "Replaces the tool output before it is sent to the model"; its MCP-only
+          // twin `updatedMCPToolOutput` is read by the same interpreter). Applied to the result block
+          // this call just pushed, before the round's tool message is emitted, pushed and recorded --
+          // so the wire, the history and the transcript all carry the replacement.
+          if (postToolUseHookOutcome.transformedOutput !== undefined) {
+            const last = resultBlocks[resultBlocks.length - 1];
+            if (last !== undefined && last.type === "tool_result" && last.tool_use_id === call.id) {
+              resultBlocks[resultBlocks.length - 1] = { ...last, content: toolOutputReplacement(postToolUseHookOutcome.transformedOutput) };
+            }
+          }
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);
           finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
@@ -7869,12 +8181,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // `executedCall`/`decision` are try-block-scoped and not reachable from `catch`, so this
           // uses `call`'s own raw, untransformed input, the one value guaranteed available
           // regardless of which line inside the try actually threw).
-          await fireObservationalHook("PostToolUseFailure", {
-            toolUseID: call.id,
-            toolName: call.name,
-            input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
-            payload: { error: text },
-          });
+          absorbHookComposite(
+            await fireObservationalHook("PostToolUseFailure", {
+              toolUseID: call.id,
+              toolName: call.name,
+              input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
+              payload: { error: text },
+            }),
+            { hookName: `PostToolUseFailure:${call.name}`, context: true, toolUseID: call.id },
+          );
           break;
         }
       }
@@ -7940,9 +8255,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       output.write({ type: "data", message: { type: "user", message: { content: resultBlocks } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
+      // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a
+      // text-only attachment into the last tool_result (context/request-layout.ts). Flushed before
+      // any break below, so a turn that ends here still carries what its hooks said.
+      await flushPendingHookAttachments();
+      // Anything left keyed for a call this round never finished (an interrupt mid-evaluation).
+      gatingHookComposites.clear();
 
       if (finalResult) break roundLoop; // relocated below the emit/push/record (Ruling P1-H) — see comment above
       if (interrupted) break roundLoop;
+      if (currentTurnStop() !== undefined) {
+        finalResult = takeHookStopResult();
+        break roundLoop;
+      }
       // SDK 0.0.16 (P16-6): claude's scan after every tool round -- a mid-turn change (a new agent
       // definition, a new skill, midnight) is announced right after these tool results, and the
       // request builder folds it into them.
@@ -7959,7 +8284,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // single-shot mode for the identical structural reason SessionEnd needed the bridge's
     // closed-flag fix (see that call site's own comment, further down this function). Declaration-
     // owned/observational output (WS-08 §1.3, §13 open question 4) — not consumed here.
-    await fireObservationalHook("Stop", { payload: { stop_hook_active: false } });
+    //
+    // WS-23: fired here only when the text exit above did not already fire it (every other way a
+    // turn ends), as `SubagentStop` inside a subagent. A `continue: false` from any hook this turn
+    // that the loop did not get to act on is announced here and cleared -- the turn is ending anyway.
+    if (!stopHookFired) await fireStopHooks(undefined);
+    const unconsumedStop = currentTurnStop();
+    if (unconsumedStop !== undefined) {
+      const stop = unconsumedStop;
+      delete turnStop.request;
+      emitHookNotice(`${stop.hookName} hook stopped continuation${stop.reason !== undefined ? `: ${stop.reason}` : ""}`, { preventContinuation: true });
+    }
+    pendingHookAttachments.length = 0; // context queued for a turn that is over has nothing left to accompany
 
     interruptCurrentTurn.current = null;
 

@@ -548,6 +548,8 @@ export const agentExecutor: ToolExecutor = {
       // the one channel engine.ts's `resolveChildModel` has for telling "this child IS the built-in
       // Explore" (the Explore model cap) from "this child is merely named 'Explore'".
       ...(definitionSource === "builtin" ? { builtinAgentType: subagentType } : {}),
+      // WS-23: the type the child's SubagentStart/SubagentStop hooks report, whatever its source.
+      agentType: isFork ? "fork" : subagentType,
       onSpawned: register,
       onProgress: (progress) => {
         // Review r1 finding 3: a RESUMED child (SendMessage) runs a new generation under the same

@@ -1113,6 +1113,10 @@ export interface ResolvedEngineSession {
 // (nor needs one) unless it goes through buildWriter/resolveEngineSession.
 function withPermissionJournal(writer: TranscriptWriter, location: { winterHome: string; projectKey: string; sessionId: string }): SessionPersistence {
   return {
+    // WS-23: the transcript's own absolute path, from the one (winterHome, projectKey, sessionId)
+    // triple that decides it -- what a command hook's `transcript_path` names. Exact for a resume
+    // found under another project directory, which a path re-derived from the cwd would not be.
+    transcriptPath: join(location.winterHome, "projects", location.projectKey, `${location.sessionId}.jsonl`),
     // Lane N: FORWARDS `opts` -- a missing forward here would silently drop the meta/origin marks off
     // every notification turn (the same seam-drop class the assistant forward below warns about).
     recordUserEntry: (content, opts) => writer.recordUserEntry(content, opts),

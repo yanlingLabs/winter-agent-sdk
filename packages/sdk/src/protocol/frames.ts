@@ -665,6 +665,24 @@ export interface SDKSessionStateChangedMessage {
   [k: string]: unknown;
 }
 
+/**
+ * WS-23: claude 2.1.282's `SDKInformationalMessage` -- "generic text banner emitted by the loop --
+ * non-error status lines, hook feedback (e.g. a UserPromptSubmit hook's block reason)". Winter had no
+ * text-notice frame at all; this is the one a hook's `systemMessage`, a blocked prompt's reason and a
+ * hook's `continue: false` ride to the host. `prevent_continuation` is set when the notice is the
+ * reason the turn is ending.
+ */
+export interface SDKInformationalMessage {
+  type: "system";
+  subtype: "informational";
+  content: string;
+  level: "info" | "notice" | "suggestion" | "warning";
+  tool_use_id?: string;
+  prevent_continuation?: boolean;
+  uuid: string;
+  session_id: string;
+}
+
 export type SdkMessage =
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the LOADED-SURFACE fields.
   // `output_style` and `skills` are REQUIRED on the pin -- Task 1's own finding is that a Winter
@@ -707,6 +725,7 @@ export type SdkMessage =
   | SDKStatusMessage
   | SDKCompactBoundaryMessage
   | SDKSessionStateChangedMessage
+  | SDKInformationalMessage
   | BackgroundTaskMessage
   // Phase 6 Task 3: the provider-facing family. Listed BEFORE the open catch-all at the end of this
   // union so each stays independently discriminable on `type`/`subtype`.
