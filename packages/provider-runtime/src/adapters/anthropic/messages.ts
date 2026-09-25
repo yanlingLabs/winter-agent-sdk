@@ -362,11 +362,20 @@ export function promptCachingLayout(req: TurnRequest, descriptor: WinterModelDes
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" } as const;
 
-/** `systemBlocks` -> the wire `system` array, cache-marked per block scope. Empty blocks are dropped (claude's `filter(Boolean)`). */
-export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: "global" | "org" | null }[]): Record<string, unknown>[] {
+/**
+ * `systemBlocks` -> the wire `system` array, cache-marked per block scope. Empty blocks are dropped (claude's `filter(Boolean)`).
+ *
+ * WS-23: `ttl: "1h"` rides the SYSTEM breakpoints only, when the session asked for it; the messages'
+ * breakpoints stay at the default 5 minutes. That is the order the vendor requires ("cache entries
+ * with longer TTL must appear before shorter TTLs",
+ * https://platform.claude.com/docs/en/build-with-claude/prompt-caching#mixing-different-ttls), and the
+ * system prompt is the one prefix worth keeping across a long idle gap.
+ */
+export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: "global" | "org" | null }[], ttl?: "5m" | "1h"): Record<string, unknown>[] {
+  const cacheControl = ttl === "1h" ? { ...EPHEMERAL_CACHE_CONTROL, ttl: "1h" } : { ...EPHEMERAL_CACHE_CONTROL };
   return blocks
     .filter((block) => block.text.length > 0)
-    .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...EPHEMERAL_CACHE_CONTROL } } : {}) }));
+    .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...cacheControl } } : {}) }));
 }
 
 /** Anthropic's own ceiling on `cache_control` breakpoints per request (https://platform.claude.com/docs/en/build-with-claude/prompt-caching). */
@@ -997,7 +1006,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   const wireMessages = toWireMessages(req.messages, { referableTools });
   // The system blocks' own breakpoints (at most two: the static prefix and the dynamic rest) come out
   // of the request's budget of four first; the messages get what is left.
-  const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks) : undefined;
+  const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks, req.cacheTtl) : undefined;
   const systemBreakpoints = wireSystem?.filter((block) => "cache_control" in block).length ?? 0;
   return {
     model: anthropicWireModelId(req.model),
@@ -1340,6 +1349,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
     let cacheWriteTokens: number | undefined;
+    let cacheWrite1hTokens: number | undefined;
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" = "end_turn";
     let sawMessageStop = false;
 
@@ -1373,6 +1383,14 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             // usage object, and they are what makes cost accounting honest for a cached prompt.
             if (typeof usage?.["cache_read_input_tokens"] === "number") cacheReadTokens = usage["cache_read_input_tokens"];
             if (typeof usage?.["cache_creation_input_tokens"] === "number") cacheWriteTokens = usage["cache_creation_input_tokens"];
+            // WS-23: the 1-hour share of those writes, priced at its own rate. `cache_creation_input_tokens`
+            // "equals the sum of the values in the `cache_creation` object"
+            // (https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration).
+            const creation = usage?.["cache_creation"];
+            if (creation !== null && typeof creation === "object" && typeof (creation as Record<string, unknown>)["ephemeral_1h_input_tokens"] === "number") {
+              const oneHour = (creation as Record<string, number>)["ephemeral_1h_input_tokens"]!;
+              if (oneHour > 0) cacheWrite1hTokens = oneHour;
+            }
             yield {
               type: "message_start",
               ...(typeof message?.id === "string" ? { id: message.id } : {}),
@@ -1509,6 +1527,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       outputTokens,
       ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+      ...(cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens } : {}),
     };
     yield { type: "done", stopReason };
   }

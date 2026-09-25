@@ -829,7 +829,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     // session is actually billed on. A per-token number for a seat is not a smaller error than no
     // number; it is a wrong one that reads as authoritative, so the row's own basis governs.
     if (result.provider.pricingBasis !== "token") return undefined;
-    const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}) }, result.descriptor);
+    const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}), ...(usage.cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens: usage.cacheWrite1hTokens } : {}) }, result.descriptor);
     if (estimate.costBasis !== "list") return undefined;
     const apiProvider = apiProviderFor(result.providerId);
     const contextWindow = result.descriptor.contextWindow?.value;

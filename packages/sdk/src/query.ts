@@ -692,6 +692,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.enableFileCheckpointing !== undefined ? { enableFileCheckpointing: options.enableFileCheckpointing } : {}),
     ...(options.contextWindowTokens !== undefined ? { contextWindowTokens: options.contextWindowTokens } : {}),
     ...(options.compactionThreshold !== undefined ? { compactionThreshold: options.compactionThreshold } : {}),
+    ...(options.promptCacheTtl !== undefined ? { promptCacheTtl: options.promptCacheTtl } : {}),
     ...(options.trustedWorkspace !== undefined ? { trustedWorkspace: options.trustedWorkspace } : {}),
     ...(options.plansDirectory !== undefined ? { plansDirectory: options.plansDirectory } : {}),
     ...(options.outputStyle !== undefined ? { outputStyle: options.outputStyle } : {}),

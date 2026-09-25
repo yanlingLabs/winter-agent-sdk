@@ -214,6 +214,13 @@ export interface TurnRequest {
   signal?: AbortSignal;
   /** Ask the provider for a readable reasoning SUMMARY where its descriptor's `reasoning.summaryRequest` says how. Never a request for raw reasoning. */
   requestSummary?: boolean;
+  /**
+   * WS-23: the cache lifetime of the SYSTEM prompt's breakpoints. ABSENT means the provider's own
+   * default (5 minutes on Anthropic); `"1h"` is written at twice the input price
+   * (https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration). An
+   * adapter with no such control ignores it.
+   */
+  cacheTtl?: "5m" | "1h";
 }
 
 /**
@@ -242,7 +249,12 @@ export type ProviderEvent =
    * normalized in its adapter (`inputTokens = prompt - cached`), so `input + cacheRead + cacheWrite`
    * is the whole prompt, counted once, for every provider.
    */
-  | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
+  //
+  // WS-23: `cacheWrite1hTokens` is the part of `cacheWriteTokens` written at the 1-hour lifetime
+  // (Anthropic's `usage.cache_creation.ephemeral_1h_input_tokens`; `cache_creation_input_tokens` is
+  // the sum of both lifetimes). A SUBSET, never added on top -- it exists so a 1-hour write is priced
+  // at its own rate. Absent means every write was at the default lifetime.
+  | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; cacheWrite1hTokens?: number }
   /**
    * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the `kind` discriminant is what says so at the type
    * level. An HTTP 429 is NOT this event — capture (G) proved the pinned runtime emits zero

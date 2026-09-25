@@ -138,7 +138,18 @@ export interface UsageForCost {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /** WS-23: the 1-hour-lifetime SUBSET of `cacheWriteTokens` (never added on top of it). */
+  cacheWrite1hTokens?: number;
 }
+
+/**
+ * WS-23: a 1-hour cache write costs twice the base input price -- Anthropic's own rule ("1-hour cache
+ * write tokens are 2 times the base input tokens price",
+ * https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing), stated there for every
+ * model. A MULTIPLIER on the row's own evidenced input price rather than a new catalog field, because
+ * the vendor states it as one; every other cache rate still comes from the row.
+ */
+export const ONE_HOUR_CACHE_WRITE_INPUT_MULTIPLIER = 2;
 
 /**
  * R6-H: the descriptor's `pricing` evidence is the ONLY price source.
@@ -165,11 +176,15 @@ export function estimateCostUsd(usage: UsageForCost, descriptor: WinterModelDesc
   const perMillion = (tokens: number, rate: number): number => (tokens / 1_000_000) * rate;
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
+  // WS-23: the 1-hour share is a SUBSET of the writes, clamped so a malformed report cannot price
+  // tokens twice or negatively.
+  const cacheWrite1h = Math.min(Math.max(usage.cacheWrite1hTokens ?? 0, 0), cacheWrite);
   const costUsd =
     perMillion(usage.inputTokens, pricing.inputPerMTokUsd) +
     perMillion(usage.outputTokens, pricing.outputPerMTokUsd) +
     perMillion(cacheRead, pricing.cacheReadPerMTokUsd ?? pricing.inputPerMTokUsd) +
-    perMillion(cacheWrite, pricing.cacheWritePerMTokUsd ?? pricing.inputPerMTokUsd);
+    perMillion(cacheWrite - cacheWrite1h, pricing.cacheWritePerMTokUsd ?? pricing.inputPerMTokUsd) +
+    perMillion(cacheWrite1h, pricing.inputPerMTokUsd * ONE_HOUR_CACHE_WRITE_INPUT_MULTIPLIER);
   return { costUsd, costBasis: "list" };
 }
 

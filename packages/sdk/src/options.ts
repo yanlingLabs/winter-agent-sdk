@@ -552,6 +552,15 @@ export interface Options {
   // DEFAULT_CONTEXT_WINDOW_TOKENS / DEFAULT_COMPACTION_THRESHOLD, applied runtime-side.
   contextWindowTokens?: number;
   compactionThreshold?: number;
+  /**
+   * WS-23 -- DISCLOSED WINTER option: how long the provider keeps this session's cached SYSTEM prompt.
+   * `"5m"` (the default, the vendor's own) or `"1h"` (written at twice the input price, worth it where
+   * idle gaps of 5-60 minutes are common: https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration).
+   * Applies to models whose catalog row documents prompt caching; the conversation's own rolling
+   * breakpoint stays at 5 minutes, which is the order the vendor requires (longer TTLs first). The
+   * host's choice; resolved runtime-side, so absent is byte-identical to before.
+   */
+  promptCacheTtl?: "5m" | "1h";
   // DISCLOSED WINTER option (RULING P5-A): host-declared workspace trust. Default false — a
   // repository must never self-trust (WS-07 §3.2), and nothing infers this from `settingSources`.
   // It sits ABOVE the pinned per-tier filter, never underneath it: capture (1) proved the pinned

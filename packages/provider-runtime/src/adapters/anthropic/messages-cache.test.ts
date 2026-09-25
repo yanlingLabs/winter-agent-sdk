@@ -3,12 +3,12 @@
 // deferred tools, cache breakpoints, TTL and diagnostics. Kept in its own file so the parallel
 // anthropic-hardening lane's edits to `messages.test.ts` never collide with these.
 import { describe, expect, test } from "bun:test";
-import { ANTHROPIC_DEFAULT_BASE_URL } from "./index.ts";
+import { ANTHROPIC_DEFAULT_BASE_URL, createAnthropicMessagesAdapter } from "./index.ts";
 import { buildHeaders, buildRequestBody, LOOKBACK_MARGIN_POSITIONS, perMessageEffortBetaFor, toWireMessages, withMessageCacheMarker, withMessageCacheMarkers } from "./messages.ts";
 import { ProviderRequestError } from "../../http.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
-import type { CredentialMaterial, CredentialRef, ProviderContext, ProviderMessageLike, TurnRequest } from "../../types.ts";
-import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import type { CredentialMaterial, CredentialRef, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
+import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
 const evidence = <T>(value: T) => ({ value, source: "official-doc" as const, confidence: "declared" as const });
@@ -246,5 +246,68 @@ describe("cache breakpoints (WS-23 item 5)", () => {
     );
     expect(countMarkers(body["system"])).toBe(2);
     expect(countMarkers(body["messages"])).toBe(2);
+  });
+});
+
+// --- WS-23 item 6: TTL and the 1-hour write counter -----------------------------------------------------
+
+/** A loopback Messages endpoint answering every request with `events`, recording each request body. */
+async function withSseServer<T>(events: Array<Record<string, unknown>>, run: (url: string, bodies: Array<Record<string, unknown>>) => Promise<T>): Promise<T> {
+  const bodies: Array<Record<string, unknown>> = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      bodies.push((await request.json()) as Record<string, unknown>);
+      const sse = events.map((e) => `event: ${String(e["type"])}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+      return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  try {
+    return await run(`http://127.0.0.1:${server.port}`, bodies);
+  } finally {
+    server.stop(true);
+  }
+}
+
+const turnEvents = (usage: Record<string, unknown>, extra: Record<string, unknown> = {}): Array<Record<string, unknown>> => [
+  { type: "message_start", message: { id: "msg_1", model: "claude-opus-5-5", usage, ...extra } },
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+  { type: "message_stop" },
+];
+
+async function streamOnce(url: string, req: TurnRequest, row: WinterModelDescriptor, logs: Array<Record<string, unknown>> = []): Promise<ProviderEvent[]> {
+  const adapter = createAnthropicMessagesAdapter({ catalog: { models: [row], providers: [], families: [] } as unknown as WinterCatalog, retry: { maxRetries: 0 } });
+  const events: ProviderEvent[] = [];
+  const context: ProviderContext = { connection: { providerId: "anthropic", baseUrl: url, local: true }, credentials: noCredentials, authRef: { kind: "none" }, stallTimeoutMs: 5_000, log: (e) => void logs.push(e as Record<string, unknown>) };
+  for await (const event of adapter.streamTurn(req, context)) events.push(event);
+  return events;
+}
+
+describe("cache lifetime and the 1-hour write counter (WS-23 item 6)", () => {
+  const blocks = [{ text: "static", cacheScope: "global" as const }, { text: "dynamic", cacheScope: "org" as const }];
+
+  test("`cacheTtl: \"1h\"` rides the SYSTEM breakpoints only; the conversation's rolling breakpoint stays at the default", () => {
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], systemBlocks: blocks, system: "static\n\ndynamic", cacheTtl: "1h" }, opus55(), {});
+    expect(body["system"]).toEqual([
+      { type: "text", text: "static", cache_control: { type: "ephemeral", ttl: "1h" } },
+      { type: "text", text: "dynamic", cache_control: { type: "ephemeral", ttl: "1h" } },
+    ]);
+    expect((body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[0]!.content[0]!["cache_control"]).toEqual({ type: "ephemeral" });
+  });
+
+  test("absent -> no `ttl` key anywhere (byte-identical to before)", () => {
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }], systemBlocks: blocks, system: "static\n\ndynamic" }, opus55(), {});
+    expect(JSON.stringify(body)).not.toContain('"ttl"');
+  });
+
+  test("the usage event carries the 1-hour share of the writes, read off `usage.cache_creation`", async () => {
+    await withSseServer(turnEvents({ input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 248, cache_creation: { ephemeral_5m_input_tokens: 148, ephemeral_1h_input_tokens: 100 } }), async (url) => {
+      const events = await streamOnce(url, { model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }] }, opus55());
+      expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 5, outputTokens: 1, cacheReadTokens: 100, cacheWriteTokens: 248, cacheWrite1hTokens: 100 });
+    });
   });
 });

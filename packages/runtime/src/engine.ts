@@ -527,6 +527,16 @@ function isPerMessageEffortRejection(err: unknown): boolean {
   return /mid-conversation-output-config|per-turn effort|output_config/i.test(err instanceof Error ? err.message : "");
 }
 
+/**
+ * WS-23: the session's system-prompt cache lifetime -- `RuntimeConfig.promptCacheTtl`, defaulted HERE
+ * and nowhere else. `"5m"` is the vendor's own default and what claude 2.1.282 uses with an API key;
+ * `"1h"` is the host's choice for sessions with long idle gaps (it is written at twice the input
+ * price). Only `"1h"` reaches a request, so a default session's requests are byte-identical to before.
+ */
+export function promptCacheTtlFor(config: { promptCacheTtl?: "5m" | "1h" }): "5m" | "1h" {
+  return config.promptCacheTtl === "1h" ? "1h" : "5m";
+}
+
 /** WS-23: a tool_result without its `loadedTools` bookkeeping (see the tool-round frame write). */
 function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }>): ContentBlock {
   const { loadedTools: _loaded, ...rest } = block;
@@ -599,6 +609,8 @@ export interface ProviderRequest {
    */
   tools?: ProviderToolSpec[];
   toolChoice?: TurnRequest["toolChoice"];
+  /** WS-23: the system prompt's cache lifetime, sent only when the session asked for `"1h"` (`promptCacheTtlFor`). */
+  cacheTtl?: "1h";
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -784,6 +796,8 @@ export interface ProviderUsage {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /** WS-23: the 1-hour-lifetime SUBSET of `cacheWriteTokens` (provider-runtime's `usage` event says why). */
+  cacheWrite1hTokens?: number;
 }
 
 // Phase 6 Task 3 (R6-3): both production kinds gain `usage`/`stopReason`/`thinking`/`nativeState`,
@@ -6214,6 +6228,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(currentModel !== undefined ? { model: currentModel } : {}),
       ...(plan.topLevel !== undefined ? { effort: plan.topLevel } : {}),
       ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+      ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
     };
   };
 
@@ -7295,7 +7310,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // claude's per-turn `result.usage` (a fresh QueryEngine's `totalUsage` per prompt in SDK mode):
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
-    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0 };
     // claude's full `NonNullableUsage` shape around the four real counts (frames.ts's WireResultUsage
     // says what each filled field means).
     const resultUsage = (): WireResultUsage => ({
@@ -7306,7 +7321,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       output_tokens: turnUsage.output_tokens,
       server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
       service_tier: "standard",
-      cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: turnUsage.cache_creation_input_tokens },
+      // WS-23: the lifetime split the provider reported (the 1-hour share is a subset of the writes).
+      cache_creation: { ephemeral_1h_input_tokens: turnUsage.cache_creation_1h_input_tokens, ephemeral_5m_input_tokens: turnUsage.cache_creation_input_tokens - turnUsage.cache_creation_1h_input_tokens },
       inference_geo: "",
       iterations: [],
       speed: "standard",
@@ -7484,6 +7500,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // `config.effort` directly -- a `set_effort` moves the live level.
             ...(effortPlan.topLevel !== undefined ? { effort: effortPlan.topLevel } : {}),
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+            ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
             signal: turnAbort.signal,
             // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
             // the classifier, the advisor, countTokens) build their own requests elsewhere and get
@@ -7510,6 +7527,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           turnUsage.output_tokens += turn.usage.outputTokens;
           turnUsage.cache_read_input_tokens += turn.usage.cacheReadTokens ?? 0;
           turnUsage.cache_creation_input_tokens += turn.usage.cacheWriteTokens ?? 0;
+          turnUsage.cache_creation_1h_input_tokens += Math.min(turn.usage.cacheWrite1hTokens ?? 0, turn.usage.cacheWriteTokens ?? 0);
         }
         // --- Phase 6 Task 3 (R6-C): the pinned REFUSAL frames -----------------------------------
         //
