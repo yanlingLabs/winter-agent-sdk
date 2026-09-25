@@ -4,6 +4,38 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### Hooks (WS-23)
+
+- **Fail-closed hooks.** `HookCallbackMatcher.failClosed` (and `failClosed: true` on a settings/plugin command
+  handler or its matcher group) makes an error, timeout, throw or malformed output from a `PreToolUse` /
+  `PermissionRequest` hook a DENY naming the hook. Default off: other hooks' failures stay non-blocking.
+- **Matchers** accept claude's regular expressions (`Edit|Write`, `mcp__.*`, `.*`; `""` = all) beside the existing
+  exact names and globs, anchored to the whole tool name. A pattern that will not compile warns once and matches
+  nothing. `SessionStart`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact` and `Notification`
+  matchers filter on the event's subject (`source`, `agent_type`, `trigger`, `notification_type`).
+- **Command hooks speak claude's wire:** snake_case stdin (`session_id`, `transcript_path`, `cwd`,
+  `hook_event_name`, `permission_mode`, `tool_name`, `tool_input`, `tool_response`, `prompt`, ...); exit 2 blocks
+  with stderr as the reason; other non-zero exits are non-blocking errors; plain-text stdout is context for
+  `UserPromptSubmit`/`SessionStart`/`SubagentStart`. `CLAUDE_PROJECT_DIR` and `WINTER_PROJECT_DIR` are exported
+  for every hook; a plugin hook gets `${CLAUDE_PLUGIN_ROOT}` substituted and `CLAUDE_PLUGIN_ROOT` /
+  `WINTER_PLUGIN_ROOT` exported. Project/local hooks still need a trusted workspace.
+- **`additionalContext` reaches the model** for `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
+  `UserPromptSubmit`, `SessionStart` and `SubagentStart`, as a `<system-reminder>` at the conversation tail (inside
+  the call's tool result, or with the prompt / first user turn), never in the system prompt.
+- **Decisions that used to be ignored:** `Stop`/`SubagentStop` `decision: "block"` continues the turn with the
+  reason fed to the model (`stop_hook_active` on the re-fire, capped at 8 continuations per turn);
+  `UserPromptSubmit` `decision: "block"` drops the prompt and ends the turn with the reason; `continue: false`
+  ends the turn (`terminal_reason: "hook_stopped"`); `systemMessage` is a new `system/informational` frame;
+  `suppressOutput` hides a command hook's stdout from `hook_response`, which now carries command hooks'
+  stdout/stderr/exit code; `PostToolUse` `updatedToolOutput` / `updatedMCPToolOutput` replaces the tool result.
+- **`updatedInput` is validated** against the tool's input schema; an invalid one DENIES the call (previously
+  the original input ran).
+- **New events fire:** `SubagentStart` / `SubagentStop` from a subagent's engine (in place of `SessionStart` /
+  `Stop`), and `SessionStart` with `source: "compact"` after a compaction.
+- `UserPromptSubmit` now fires before the prompt is recorded (so a blocked prompt never enters the transcript).
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus
