@@ -7,16 +7,19 @@ import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { ProviderTurnError, runEngine, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
-import { lastTopLevelEffort, withEffortMarkers } from "./request-layout.ts";
+import { fakeCompactionController } from "../compaction/seam.ts";
+import { buildRequestMessages, frozenEffortFromHistory, withEffortMarkers, type EffortMarkerPlan } from "./request-layout.ts";
+import { attachmentMessage } from "./attachments.ts";
 
 const all = (): boolean => true;
 const marker = (effort: string): ProviderMessage => ({ role: "system", content: [], outputConfig: { effort } });
+const plan = (initial: string, live: string, accepts: (e: string) => boolean = all): EffortMarkerPlan => ({ initial, live, accepts });
 
-describe("withEffortMarkers (pure)", () => {
+describe("withEffortMarkers (pure, on the PRE-merge list)", () => {
   test("no change -> no marker; the pending turn runs at the live level", () => {
     const history: ProviderMessage[] = [{ role: "user", content: "a" }, { role: "assistant", content: "b", effort: "high", perTurnEffort: "high" }, { role: "user", content: "c" }];
-    expect(withEffortMarkers(history, "high", "high", all)).toEqual(history);
-    expect(withEffortMarkers(history, "high", "low", all)).toEqual([...history.slice(0, 2), marker("low"), history[2]!]);
+    expect(withEffortMarkers(history, plan("high", "high"))).toEqual(history);
+    expect(withEffortMarkers(history, plan("high", "low"))).toEqual([...history.slice(0, 2), marker("low"), history[2]!]);
   });
 
   test("a changed historic turn keeps its marker at the SAME position on every later request (turns 1 -> 3)", () => {
@@ -27,7 +30,7 @@ describe("withEffortMarkers (pure)", () => {
       { role: "assistant", content: "r2", effort: "high", perTurnEffort: "low" },
       { role: "user", content: "three" },
     ];
-    expect(withEffortMarkers(t2, "high", "high", all)).toEqual([t2[0]!, t2[1]!, marker("low"), t2[2]!, t2[3]!, marker("high"), t2[4]!]);
+    expect(withEffortMarkers(t2, plan("high", "high"))).toEqual([t2[0]!, t2[1]!, marker("low"), t2[2]!, t2[3]!, marker("high"), t2[4]!]);
   });
 
   test("tool rounds are not turn starts; a level the row cannot take gets no marker (deterministic, so still byte-stable)", () => {
@@ -37,17 +40,48 @@ describe("withEffortMarkers (pure)", () => {
       { role: "tool", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] },
       { role: "assistant", content: "done", effort: "high", perTurnEffort: "minimal" },
     ];
-    expect(withEffortMarkers(history, "high", "high", (e) => e !== "minimal")).toEqual(history);
+    expect(withEffortMarkers(history, plan("high", "high", (e) => e !== "minimal"))).toEqual(history);
   });
 
-  test("the index-0 meta context is never a turn start; an un-annotated history is left alone", () => {
+  test("the index-0 meta context and attachments are never turn starts; an un-annotated history is left alone", () => {
     const history: ProviderMessage[] = [{ role: "user", content: "ctx", isMeta: true }, { role: "user", content: "q" }, { role: "assistant", content: "a" }, { role: "user", content: "q2" }];
-    expect(withEffortMarkers(history, "high", "high", all)).toEqual(history);
+    expect(withEffortMarkers(history, plan("high", "high"))).toEqual(history);
   });
 
-  test("lastTopLevelEffort reads the newest annotated assistant message", () => {
-    expect(lastTopLevelEffort([{ role: "assistant", content: "a", effort: "high" }, { role: "user", content: "x" }, { role: "assistant", content: "b", effort: "max" }])).toBe("max");
-    expect(lastTopLevelEffort([{ role: "user", content: "x" }])).toBeUndefined();
+  test("frozenEffortFromHistory reads the newest ANNOTATED assistant message, absent top-level included", () => {
+    expect(frozenEffortFromHistory([{ role: "assistant", content: "a", effort: "high", perTurnEffort: "high" }, { role: "user", content: "x" }, { role: "assistant", content: "b", effort: "max", perTurnEffort: "low" }])).toEqual({ value: "max" });
+    expect(frozenEffortFromHistory([{ role: "assistant", content: "a", perTurnEffort: "low" }])).toEqual({ value: undefined });
+    expect(frozenEffortFromHistory([{ role: "user", content: "x" }, { role: "assistant", content: "plain" }])).toBeUndefined();
+  });
+});
+
+describe("buildRequestMessages with an effort plan (fix round 1: I1, I2)", () => {
+  test("a LEADING marker at the initial level opens every request -- the beta rides every request, not just the one that switches", () => {
+    const out = buildRequestMessages([{ role: "user", content: "one" }], "ctx", { effort: plan("high", "high") });
+    expect(out[0]).toEqual(marker("high"));
+    expect(out.slice(1).map((m) => m.role)).toEqual(["user"]);
+  });
+
+  test("I2, the reviewer's case: a prompt after an INTERRUPTED tool round still gets its marker, and is not folded into the tool message", () => {
+    const history: ProviderMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t", name: "Bash", input: {} }], effort: "high", perTurnEffort: "high" },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t", content: "[interrupted]", interrupted: true }] },
+      { role: "user", content: "now do this instead" },
+    ];
+    const out = buildRequestMessages(history, undefined, { effort: plan("high", "low") });
+    expect(out.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool", "system", "user"]);
+    expect(out[4]).toEqual(marker("low"));
+    expect(out[5]).toEqual({ role: "user", content: "now do this instead" });
+  });
+
+  test("a turn's bubbled-up attachments stay merged with its prompt: the marker goes before them, right after the reply", () => {
+    const skills = attachmentMessage({ type: "skill_listing", content: "- alpha: Alpha.", skillCount: 1, isInitial: false, names: ["alpha"] })!;
+    const history: ProviderMessage[] = [{ role: "user", content: "one" }, { role: "assistant", content: "r1", effort: "high", perTurnEffort: "high" }, { role: "user", content: "two" }, skills];
+    const out = buildRequestMessages(history, undefined, { effort: plan("high", "low") });
+    expect(out.map((m) => m.role)).toEqual(["system", "user", "assistant", "system", "user"]);
+    expect(JSON.stringify(out[4]!.content)).toContain("alpha");
+    expect(JSON.stringify(out[4]!.content)).toContain("two");
   });
 });
 
@@ -109,8 +143,10 @@ async function drive(opts: { steps: Step[]; config?: Partial<RuntimeConfig>; noE
   return { requests, acks, recorded, frames };
 }
 
+/** The CHANGE markers -- every effort marker but the leading one every per-message request opens with. */
 const markers = (req: ProviderRequest): Array<{ at: number; effort: string }> =>
-  req.messages.flatMap((m, at) => (m.role === "system" && m.outputConfig !== undefined ? [{ at, effort: m.outputConfig.effort }] : []));
+  req.messages.flatMap((m, at) => (at > 0 && m.role === "system" && m.outputConfig !== undefined ? [{ at, effort: m.outputConfig.effort }] : []));
+const leading = (req: ProviderRequest): string | undefined => (req.messages[0]?.role === "system" ? req.messages[0].outputConfig?.effort : undefined);
 
 describe("per-message effort through the engine (WS-23 item 1)", () => {
   test("a per-message row: the top-level effort stays frozen at `high`, and each switch rides a marker placed before the user turn it applies to", async () => {
@@ -120,10 +156,12 @@ describe("per-message effort through the engine (WS-23 item 1)", () => {
     expect(acks.every((a) => a.ok)).toBe(true);
     expect(requests.map((r) => r.effort)).toEqual(["high", "high", "high"]);
     expect(markers(requests[0]!)).toEqual([]);
-    // [user one][assistant][marker low][user two]
-    expect(markers(requests[1]!)).toEqual([{ at: 2, effort: "low" }]);
+    // Every request opens with the leading marker at the frozen level (fix round 1, I1).
+    expect(requests.map(leading)).toEqual(["high", "high", "high"]);
+    // [lead][user one][assistant][marker low][user two]
+    expect(markers(requests[1]!)).toEqual([{ at: 3, effort: "low" }]);
     // Turn 3 re-derives turn 2's marker at the SAME index, then adds its own before `three`.
-    expect(markers(requests[2]!)).toEqual([{ at: 2, effort: "low" }, { at: 5, effort: "high" }]);
+    expect(markers(requests[2]!)).toEqual([{ at: 3, effort: "low" }, { at: 6, effort: "high" }]);
     // Append-only: every earlier request's messages are a byte-identical prefix of the next one's.
     expect(requests[2]!.messages.slice(0, requests[1]!.messages.length)).toEqual(requests[1]!.messages);
     expect(requests[1]!.messages.slice(0, requests[0]!.messages.length)).toEqual(requests[0]!.messages);
@@ -171,6 +209,7 @@ describe("per-message effort through the engine (WS-23 item 1)", () => {
     // `default` put it back to the session's own `high` before the first turn.
     expect(requests[0]!.effort).toBe("high");
     expect(markers(requests[0]!)).toEqual([]);
+    expect(leading(requests[0]!)).toBe("high");
   });
 
   test("a set_effort arriving MID-TURN is parked: the running turn finishes at its level, the next one runs at the new one", async () => {
@@ -211,10 +250,10 @@ describe("per-message effort through the engine (WS-23 item 1)", () => {
     await reader;
     const assistants = requests[1]!.messages.filter((m) => m.role === "assistant");
     expect(assistants[0]!.perTurnEffort).toBe("high");
-    expect(markers(requests[1]!)).toEqual([{ at: 2, effort: "low" }]);
+    expect(markers(requests[1]!)).toEqual([{ at: 3, effort: "low" }]);
   });
 
-  test("the API refusing the beta with a 400: the round re-runs with NO marker and the live level at the top, and the fallback is sticky", async () => {
+  test("the API refusing the beta with a 400 -- on TURN ONE, since the beta rides every request: the round re-runs with NO marker at the live level, and the fallback is sticky", async () => {
     const errors: string[] = [];
     const original = console.error;
     console.error = (...args: unknown[]) => void errors.push(args.join(" "));
@@ -222,14 +261,14 @@ describe("per-message effort through the engine (WS-23 item 1)", () => {
       const { requests, frames } = await drive({
         steps: [{ user: "one" }, { control: "set_effort", payload: { effort: "low" } }, { user: "two" }, { control: "set_effort", payload: { effort: "max" } }, { user: "three" }],
         generate: (req, index) => {
-          if (markers(req).length > 0) throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — output_config.effort requires a model that supports per-turn effort; this model does not", { status: 400, code: "bad_request", retryable: false });
+          if (req.messages.some((m) => m.role === "system")) throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — output_config.effort requires a model that supports per-turn effort; this model does not", { status: 400, code: "bad_request", retryable: false });
           return { kind: "text", text: `r${index}` };
         },
       });
-      // one: plain; two: marker refused (400) then re-run plain at `low`; three: plain at `max`.
-      expect(requests.map((r) => [r.effort, markers(r).length])).toEqual([
-        ["high", 0],
+      // one: refused (the beta rides it), re-run plain at `high`; then plain throughout.
+      expect(requests.map((r) => [r.effort, r.messages.filter((m) => m.role === "system").length])).toEqual([
         ["high", 1],
+        ["high", 0],
         ["low", 0],
         ["max", 0],
       ]);
@@ -239,5 +278,40 @@ describe("per-message effort through the engine (WS-23 item 1)", () => {
     } finally {
       console.error = original;
     }
+  });
+});
+
+describe("the frozen top-level effort lives in engine state (fix round 1, M2)", () => {
+  const WITH_DEFAULT: ModelDescription = { ...OPUS_55, defaultEffort: "medium" };
+
+  test("an EFFORTLESS session's first set_effort does not introduce a top-level value: the switch rides a marker from the row's default", async () => {
+    const { requests } = await drive({ noEffort: true, describe: WITH_DEFAULT, steps: [{ user: "one" }, { control: "set_effort", payload: { effort: "low" } }, { user: "two" }, { control: "set_effort", payload: { effort: "default" } }, { user: "three" }] });
+    expect(requests.map((r) => r.effort)).toEqual([undefined, undefined, undefined]);
+    expect(requests.map(leading)).toEqual(["medium", "medium", "medium"]);
+    expect(markers(requests[1]!)).toEqual([{ at: 3, effort: "low" }]);
+    // `default` puts the model back on its own level -- expressed as a marker, the top level untouched.
+    expect(markers(requests[2]!)).toEqual([{ at: 3, effort: "low" }, { at: 6, effort: "medium" }]);
+  });
+
+  test("after a compaction whose kept history carries no annotation, the top-level value does not move", async () => {
+    const { requests } = await drive({
+      steps: [{ user: "one" }, { control: "set_effort", payload: { effort: "low" } }, { user: "two" }, { user: "/compact" }, { user: "three" }],
+      engine: { compactionController: fakeCompactionController({ keep: 0, summary: "SUMMARY" }) },
+    });
+    const afterCompaction = requests.at(-1)!;
+    expect(afterCompaction.messages.some((m) => m.content === "SUMMARY")).toBe(true);
+    expect(afterCompaction.effort).toBe("high");
+    expect(leading(afterCompaction)).toBe("high");
+    // The kept history has no annotated reply, so the live `low` for turn three rides its own marker.
+    expect(markers(afterCompaction).map((m) => m.effort)).toEqual(["low"]);
+  });
+
+  test("a resumed session restores the frozen value from the transcript, absent included", async () => {
+    const history: ProviderMessage[] = [{ role: "user", content: "earlier" }, { role: "assistant", content: "r", perTurnEffort: "low" }];
+    const { requests } = await drive({ describe: WITH_DEFAULT, engine: { initialMessages: history }, steps: [{ user: "next" }] });
+    // The transcript's session sent no top-level effort; the host's `high` rides a marker instead.
+    expect(requests[0]!.effort).toBeUndefined();
+    expect(leading(requests[0]!)).toBe("medium");
+    expect(markers(requests[0]!).map((m) => m.effort)).toEqual(["low", "high"]);
   });
 });

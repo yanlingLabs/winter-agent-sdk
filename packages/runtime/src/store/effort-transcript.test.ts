@@ -115,7 +115,7 @@ describe("a resumed session re-derives the live session's effort markers (WS-23 
     // Compared as the Anthropic adapter serialises them: the in-memory `origin` annotation differs (a
     // real resume re-attaches it from the provider-state sidecar), but it never reaches the wire.
     expect(JSON.stringify(toWireMessages(resumed.requests[0]!.messages))).toBe(JSON.stringify(toWireMessages(live.requests[2]!.messages)));
-    // And the markers are really there: `low` before `two`, `high` before `three`.
-    expect(resumed.requests[0]!.messages.filter((m) => m.role === "system").map((m) => m.outputConfig?.effort)).toEqual(["low", "high"]);
+    // And the markers are really there: the leading one at the frozen `high`, `low` before `two`, `high` before `three`.
+    expect(resumed.requests[0]!.messages.filter((m) => m.role === "system").map((m) => m.outputConfig?.effort)).toEqual(["high", "low", "high"]);
   });
 });

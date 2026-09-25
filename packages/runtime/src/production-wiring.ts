@@ -708,6 +708,7 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
   const description: ModelDescription = {
     ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),
     ...(row.reasoning !== undefined && row.reasoning.efforts.length > 0 ? { efforts: [...row.reasoning.efforts] } : {}),
+    ...(row.reasoning?.defaultEffort !== undefined ? { defaultEffort: row.reasoning.defaultEffort } : {}),
     ...(Object.keys(wire).length > 0 ? { wire } : {}),
   };
   return Object.keys(description).length > 0 ? description : undefined;

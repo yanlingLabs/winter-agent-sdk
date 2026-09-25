@@ -205,15 +205,15 @@ import {
   clearSessionRequestLayout,
   getSessionRequestLayout,
   joinSystemBlocks,
-  lastTopLevelEffort,
+  frozenEffortFromHistory,
   recordSessionRequestLayout,
   referencedToolNames,
   registerSessionContextReload,
   renderSystemContext,
   renderUserContext,
   unregisterSessionContextReload,
-  withEffortMarkers,
   type ContextEntry,
+  type EffortMarkerPlan,
   type SessionRequestLayout,
 } from "./context/request-layout.ts";
 import { computeGitStatus } from "./context/git-status.ts";
@@ -524,7 +524,7 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
  */
 function isPerMessageEffortRejection(err: unknown): boolean {
   if (!isProviderTurnError(err) || err.status !== 400) return false;
-  return /mid-conversation-output-config|per-turn effort|output_config/i.test(err instanceof Error ? err.message : "");
+  return /mid-conversation-output-config|per-turn effort/i.test(err instanceof Error ? err.message : "");
 }
 
 /**
@@ -577,6 +577,8 @@ export interface ModelDescription {
   displayName?: string;
   /** The row's own `reasoning.efforts`, verbatim -- `set_effort` validates a requested level against it. */
   efforts?: string[];
+  /** The row's own `reasoning.defaultEffort`: the level in force when no effort is named. */
+  defaultEffort?: string;
   wire?: ModelWireFeatures;
 }
 
@@ -2759,7 +2761,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // generation catch.
   let perMessageEffortRejected = false;
   // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
-  let generationEffort: { effort: string; perTurnEffort: string } | undefined;
+  let generationEffort: { effort?: string; perTurnEffort: string } | undefined;
+  // WS-23 fix round 1 (M2): the TOP-LEVEL effort a per-message-effort session sends, frozen at its first
+  // such request (absent included: a session that named no effort keeps sending none) and held HERE, not
+  // re-derived from the history -- a compaction's kept messages need not carry any annotation, and a
+  // first \`set_effort\` must not move a top-level value the session never sent. Seeded from the history
+  // on resume; re-frozen only on a model change (the cache is cold then anyway).
+  let frozenEffort: { modelKey: string | undefined; value: string | undefined } | undefined;
+  {
+    const seeded = frozenEffortFromHistory(messages);
+    if (seeded !== undefined) frozenEffort = { modelKey: providerIdentity?.modelKey ?? config.model, value: seeded.value };
+  }
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
   // `cacheDiagnostics.previousMessageId`. Cleared by a compaction (the history it fingerprinted is gone).
   let lastMainResponse: { id: string; modelKey: string | undefined } | undefined;
@@ -3142,7 +3154,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }, effortStamp?: { effort: string; perTurnEffort: string }): Promise<string | undefined> => {
+  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }, effortStamp?: { effort?: string; perTurnEffort: string }): Promise<string | undefined> => {
     if (!store) return undefined;
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
@@ -6247,8 +6259,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const shape = lastMainRequestShape;
     if (shape === undefined || shape.modelKey !== (currentProviderIdentity?.modelKey ?? currentModel)) return undefined;
     const plan = planEffort();
-    const base = buildRequestMessages(messages, shape.userContextText, { systemReminders: systemRemindersOnWire() });
-    const outbound = plan.markers !== undefined ? withEffortMarkers(base, plan.markers.topLevel, plan.markers.live, plan.markers.accepts) : base;
+    const outbound = buildRequestMessages(messages, shape.userContextText, { systemReminders: systemRemindersOnWire(), ...(plan.markers !== undefined ? { effort: plan.markers } : {}) });
     return {
       messages: outbound,
       ...(shape.system.system.length > 0 ? { system: shape.system.system } : {}),
@@ -6576,7 +6587,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire() });
+  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan): ProviderMessage[] =>
+    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}) });
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
@@ -6590,29 +6602,37 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * WS-23: this generation's effort as the wire carries it.
    *
    * On a model whose row documents per-message effort (`describeModel(...).wire.perMessageEffort`) the
-   * TOP-LEVEL value stays what the previous request sent (the newest assistant message's own `effort`
-   * annotation -- which also restores it on a resumed session), and the live level rides effort-only
-   * `system` markers (`withEffortMarkers`). Everywhere else -- no evidence, a numeric effort (a child
-   * definition's), or after the API refused the beta -- a change is a new top-level value, which is the
-   * only option those models have. A session with no effort at all sends none, exactly as before.
+   * TOP-LEVEL value stays frozen (`frozenEffort`), and the level in force rides effort-only `system`
+   * markers laid out by `buildRequestMessages` -- a leading one at the frozen level on every request,
+   * and one before each human turn whose level changed. The level with no named effort is the row's
+   * own `defaultEffort`. Everywhere else -- no evidence, a numeric effort (a child definition's), no
+   * default to reason from, or after the API refused the beta -- a change is a new top-level value,
+   * the only option those models have, and a session with no effort sends none, exactly as before.
    *
-   * RESUME RULE, decided here: when a resumed session's `config.effort` differs from the transcript's
-   * last top-level value, the transcript's value keeps the top-level slot (so the cached prefix can
-   * still match) and the host's requested level applies to the new turn through a marker.
+   * RESUME RULE, decided here: the transcript's top-level value keeps the top-level slot (so the cached
+   * prefix can still match) and a different `config.effort` applies to the new turn through a marker.
    */
-  const planEffort = (): { topLevel: TurnRequest["effort"] | undefined; markers?: { topLevel: string; live: string; accepts: (effort: string) => boolean } } => {
+  const planEffort = (): { topLevel: TurnRequest["effort"] | undefined; markers?: EffortMarkerPlan; stamp?: { effort?: string; perTurnEffort: string } } => {
     const live = liveEffort;
-    if (live === undefined) return { topLevel: undefined };
-    if (typeof live !== "string" || perMessageEffortRejected) return { topLevel: live };
+    const plain = { topLevel: live, ...(typeof live === "string" ? { stamp: { effort: live, perTurnEffort: live } } : {}) };
+    if (typeof live === "number" || perMessageEffortRejected) return plain;
     const described = currentModelDescription();
-    if (described?.wire?.perMessageEffort !== true) return { topLevel: live };
+    if (described?.wire?.perMessageEffort !== true) return plain;
     const vocabulary = described.efforts ?? [];
     const accepts = (effort: string): boolean => vocabulary.includes(effort);
-    const previous = lastTopLevelEffort(messages);
-    // A previous top-level value this row cannot take (the history was written on another family) is
-    // not carried: the live level becomes the new frozen value, since the cache is cold after a switch.
-    const topLevel = previous !== undefined && accepts(previous) && isNamedEffort(previous) ? previous : live;
-    return { topLevel, markers: { topLevel, live, accepts } };
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    if (frozenEffort === undefined || frozenEffort.modelKey !== key || (frozenEffort.value !== undefined && !(accepts(frozenEffort.value) && isNamedEffort(frozenEffort.value)))) {
+      frozenEffort = { modelKey: key, value: live };
+    }
+    const frozen = frozenEffort.value;
+    const initial = frozen ?? described.defaultEffort;
+    const effective = live ?? described.defaultEffort;
+    if (initial === undefined || effective === undefined || !accepts(initial) || !accepts(effective)) return plain;
+    return {
+      topLevel: frozen !== undefined && isNamedEffort(frozen) ? frozen : undefined,
+      markers: { initial, live: effective, accepts },
+      stamp: { ...(frozen !== undefined ? { effort: frozen } : {}), perTurnEffort: effective },
+    };
   };
 
   // --- the skill listing's session state (claude's `sentSkillNames`) -------------------------------
@@ -7495,14 +7515,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       let turn: ProviderTurn;
       // WS-23: whether THIS generation carried per-message effort markers -- read by the catch's
       // beta-rejection fallback, which must never fire for a request that sent none.
-      let sentEffortMarkers = false;
+      let sentPerMessageBeta = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
         const effortPlan = planEffort();
-        const outboundMessages = effortPlan.markers !== undefined ? withEffortMarkers(requestMessages(context), effortPlan.markers.topLevel, effortPlan.markers.live, effortPlan.markers.accepts) : requestMessages(context);
-        generationEffort = typeof effortPlan.topLevel === "string" && typeof liveEffort === "string" ? { effort: effortPlan.topLevel, perTurnEffort: liveEffort } : undefined;
-        sentEffortMarkers = outboundMessages.some((m) => m.role === "system" && m.outputConfig !== undefined);
+        const outboundMessages = requestMessages(context, effortPlan.markers);
+        generationEffort = effortPlan.stamp;
+        // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
+        // every such request -- and the fallback keys on exactly that.
+        sentPerMessageBeta = effortPlan.markers !== undefined;
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
@@ -7573,7 +7595,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           turnUsage.cache_creation_1h_input_tokens += Math.min(turn.usage.cacheWrite1hTokens ?? 0, turn.usage.cacheWriteTokens ?? 0);
           if (turn.usage.cacheMiss !== undefined || turn.usage.thinkingBlocksDropped !== undefined) {
             turnCacheMisses.push({
-              type: turn.usage.cacheMiss?.type ?? "thinking_dropped",
+              ...(turn.usage.cacheMiss !== undefined ? { type: turn.usage.cacheMiss.type } : {}),
               ...(turn.usage.cacheMiss?.missedInputTokens !== undefined ? { missed_input_tokens: turn.usage.cacheMiss.missedInputTokens } : {}),
               ...(turn.usage.thinkingBlocksDropped !== undefined ? { thinking_blocks_dropped: turn.usage.thinkingBlocksDropped } : {}),
             });
@@ -7623,7 +7645,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // is pre-first-byte, so re-running the round is a fresh request, never a replay; the session
         // then changes the TOP-LEVEL value for the rest of its life, the only form left, and says so
         // once. Sticky, so a second refusal cannot loop -- it surfaces like any other failure.
-        if (sentEffortMarkers && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
+        if (sentPerMessageBeta && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
           perMessageEffortRejected = true;
           console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
           continue roundLoop;

@@ -174,6 +174,7 @@ describe("T8 production wiring: the guards it carries", () => {
       expect(wiring.engineOptions.describeModel("anthropic/claude-opus-5-5")).toEqual({
         displayName: "Claude Opus 5.5",
         efforts: ["low", "medium", "high", "xhigh", "max"],
+        defaultEffort: "medium",
         wire: { perMessageEffort: true, deferredToolLoading: true, midConversationSystem: true },
       });
       // Sonnet 5: effort via output_config, but neither per-message effort nor tool search.

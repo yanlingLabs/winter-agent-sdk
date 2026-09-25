@@ -82,6 +82,11 @@ describe("cache diagnostics through the engine (WS-23 item 8)", () => {
     expect(results[0]!["usage"]).not.toHaveProperty("cache_misses");
     expect((results[1]!["usage"] as Record<string, unknown>)["cache_misses"]).toEqual([{ type: "system_changed", missed_input_tokens: 41850, thinking_blocks_dropped: 2 }]);
   });
+
+  test("dropped thinking with no cache miss gets its own field, never a `type` outside Anthropic's cache_miss_reason vocabulary (fix round 1, M4)", async () => {
+    const { results } = await drive({ prompts: ["one"], generate: () => ({ kind: "text", text: "ok", usage: { inputTokens: 1, outputTokens: 1, thinkingBlocksDropped: 3 } }) });
+    expect((results[0]!["usage"] as Record<string, unknown>)["cache_misses"]).toEqual([{ thinking_blocks_dropped: 3 }]);
+  });
 });
 
 describe("the cache-routing key (WS-23 item 9)", () => {
