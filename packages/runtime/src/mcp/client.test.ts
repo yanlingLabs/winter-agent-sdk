@@ -4,6 +4,7 @@ import { inputRequired, inputResponse } from "@modelcontextprotocol/server";
 import {
   connectMcpServer,
   McpConnectError,
+  AUTO_PROBE_TIMEOUT_CAP_MS,
   resolveVersionNegotiation,
   type ConnectedMcpClient,
 } from "./client.ts";
@@ -549,6 +550,155 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
       expect((error as McpConnectError).httpStatus).toBe(429);
     } finally {
       limited.stop(true);
+    }
+  });
+});
+
+// --- WS-23 fix round 1 (review I1/I2 + minor): the `auto` legacy retry, manual listing, cause codes ---
+
+type ProbeAnswer = "500-text" | "500-jsonrpc-methodnotfound" | "502-text" | "503-text" | "202-empty" | "200-html" | "hang" | "sse-open-silent" | "401";
+
+// A raw legacy Streamable HTTP server, correct on `initialize`/`tools/list`/`tools/call`, whose only
+// variable is how it answers an UNKNOWN pre-initialize method -- the `server/discover` probe. Every
+// answer here made v2's own `'auto'` refuse a server v1 connected to (review I1's measurement).
+function rawLegacyHttpServer(probe: ProbeAnswer, capabilities: Record<string, unknown> = { tools: {} }) {
+  const methods: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    idleTimeout: 0,
+    async fetch(req) {
+      if (req.method !== "POST") return new Response(null, { status: 405 });
+      const body = (await req.json()) as { id?: unknown; method?: string; params?: { cursor?: string } };
+      methods.push(String(body.method));
+      if (probe === "401") return new Response("unauthorized", { status: 401 });
+      const json = (obj: unknown, status = 200, extra: Record<string, string> = {}) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json", ...extra } });
+      switch (body.method) {
+        case "initialize":
+          return json({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18", capabilities, serverInfo: { name: "raw", version: "1" } } }, 200, { "mcp-session-id": "raw-session" });
+        case "notifications/initialized":
+          return new Response(null, { status: 202 });
+        case "tools/list":
+          // Two pages, so the manual walk (no `tools` capability) is proven to follow the cursor.
+          return body.params?.cursor === undefined
+            ? json({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "t1", inputSchema: { type: "object" } }], nextCursor: "p2" } })
+            : json({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "t2", inputSchema: { type: "object" } }] } });
+        case "resources/list":
+          return json({ jsonrpc: "2.0", id: body.id, result: { resources: [{ uri: "file:///r", name: "r" }] } });
+        case "tools/call":
+          return json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+      }
+      switch (probe) {
+        case "500-text": return new Response("Internal Server Error", { status: 500 });
+        case "500-jsonrpc-methodnotfound": return json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, 500);
+        case "502-text": return new Response("Bad Gateway", { status: 502 });
+        case "503-text": return new Response("Service Unavailable", { status: 503 });
+        case "202-empty": return new Response(null, { status: 202 });
+        case "200-html": return new Response("<html>hi</html>", { status: 200, headers: { "content-type": "text/html" } });
+        case "hang": return new Promise<Response>(() => {});
+        case "sse-open-silent": return new Response(new ReadableStream({ start() {} }), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      return json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } });
+    },
+  });
+  return { url: `http://127.0.0.1:${server.port}/mcp`, methods, stop: () => server.stop(true) };
+}
+
+describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transport; listing without the capability; cause codes", () => {
+  const answers: ProbeAnswer[] = ["500-text", "500-jsonrpc-methodnotfound", "502-text", "503-text", "202-empty", "200-html", "hang", "sse-open-silent"];
+  for (const probe of answers) {
+    test(`a legacy server answering the probe '${probe}' still connects on the http default ('auto'), within one connect budget`, async () => {
+      const srv = rawLegacyHttpServer(probe);
+      const connectTimeoutMs = 3000;
+      const started = Date.now();
+      try {
+        const client = await connectMcpServer({ name: "raw", config: { type: "http", url: srv.url }, connectTimeoutMs, elicitationAsk: NO_ELICIT });
+        try {
+          expect(client.protocolVersion).toBe("2025-06-18");
+          expect(await client.callTool("t1", {})).toEqual({ content: [{ type: "text", text: "ok" }] });
+        } finally {
+          await client.close();
+        }
+        // A hang or a silent stream costs the PROBE's own bound (min(5 s, budget/3)), never the budget.
+        expect(Date.now() - started).toBeLessThan(connectTimeoutMs);
+        expect(srv.methods[0]).toBe("server/discover");
+        expect(srv.methods.filter((m) => m === "server/discover")).toHaveLength(1);
+        expect(srv.methods).toContain("initialize");
+      } finally {
+        srv.stop();
+      }
+    }, 10_000);
+  }
+
+  test("the probe bound is min(5 s, connect budget / 3)", () => {
+    expect(AUTO_PROBE_TIMEOUT_CAP_MS).toBe(5000);
+  });
+
+  test("an auth wall is NOT retried: a 401 on the probe is needs_auth after exactly one request", async () => {
+    const srv = rawLegacyHttpServer("401");
+    try {
+      let error: unknown;
+      try {
+        await connectMcpServer({ name: "raw", config: { type: "http", url: srv.url }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      } catch (err) {
+        error = err;
+      }
+      expect((error as McpConnectError).code).toBe("needs_auth");
+      expect(srv.methods).toEqual(["server/discover"]);
+    } finally {
+      srv.stop();
+    }
+  });
+
+  test("a { pin } is never retried as legacy -- the refusal stands", async () => {
+    const srv = rawLegacyHttpServer("500-text");
+    try {
+      await expect(connectMcpServer({ name: "raw", config: { type: "http", url: srv.url, versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({ code: "handshake_failed" });
+      expect(srv.methods).not.toContain("initialize");
+    } finally {
+      srv.stop();
+    }
+  });
+
+  test("a refused connection keeps its v1 code (unknown) on the 'auto' default, not handshake_failed", async () => {
+    const dead = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+    const url = `http://127.0.0.1:${dead.port}/mcp`;
+    dead.stop(true);
+    for (const versionNegotiation of ["auto", "legacy"] as const) {
+      let error: unknown;
+      try {
+        await connectMcpServer({ name: "gone", config: { type: "http", url, versionNegotiation }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      } catch (err) {
+        error = err;
+      }
+      expect([versionNegotiation, (error as McpConnectError).code]).toEqual([versionNegotiation, "unknown"]);
+    }
+  });
+
+  test("a server that advertises capabilities {} still has its tools (all pages) and resources listed -- v2 alone would return []", async () => {
+    const srv = rawLegacyHttpServer("500-text", {});
+    try {
+      const client = await connectMcpServer({ name: "nocaps", config: { type: "http", url: srv.url, versionNegotiation: "legacy" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      try {
+        expect((await client.listTools()).map((t) => t.name)).toEqual(["t1", "t2"]);
+        expect((await client.listResources()).map((r) => r.uri)).toEqual(["file:///r"]);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      srv.stop();
+    }
+  });
+
+  test("a server that declares nothing and answers -32601 to tools/list simply has no tools (not a failed connection)", async () => {
+    const server = new Server({ name: "bare", version: "1.0.0" }, { capabilities: {} });
+    const client = await connectMcpServer({ name: "bare", config: { type: "sdk", name: "bare" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    try {
+      expect(await client.listTools()).toEqual([]);
+      expect(await client.listResources()).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
     }
   });
 });

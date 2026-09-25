@@ -34,7 +34,7 @@
 // LOCALLY (a request timeout, a closed connection, a failed era negotiation, a non-OK HTTP answer) is
 // now an `SdkError` whose `code` is a STRING `SdkErrorCode` -- the HTTP status moved off `.code` onto
 // `SdkHttpError.status`. `classifyConnectError` below is where that move is absorbed.
-import { Client, ProtocolError, SdkError, SdkErrorCode, SdkHttpError, SseError, UnauthorizedError, type Transport, type VersionNegotiationMode } from "@modelcontextprotocol/client";
+import { Client, ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError, SseError, UnauthorizedError, type Transport, type VersionNegotiationMode } from "@modelcontextprotocol/client";
 import type { McpServerConfigForProcessTransport, McpVersionNegotiation } from "@yanlinglabs/winter-agent-sdk";
 import { buildStdioTransport, WinterStdioTransport } from "./transports/stdio.ts";
 import { buildHttpTransport } from "./transports/http.ts";
@@ -220,8 +220,15 @@ function classifyConnectError(err: unknown): McpConnectError {
   }
   // WS-23: a failed era negotiation (a `{pin}` the server does not offer, a probe answered 5xx, a
   // network failure mid-probe) never becomes an era verdict -- the v2 client refuses the connect
-  // with this code, and the handshake is exactly what failed.
-  if (err instanceof SdkError && err.code === SdkErrorCode.EraNegotiationFailed) return new McpConnectError("handshake_failed", err.message);
+  // with this code. When it wraps an underlying failure (`cause`: a refused connection, a DNS
+  // failure) that failure is what is classified, so the code matches what the same failure gets on
+  // the legacy handshake (and got on v1); only a failure OF the negotiation itself (no cause: the
+  // pin was not offered) is a handshake failure.
+  if (err instanceof SdkError && err.code === SdkErrorCode.EraNegotiationFailed) {
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause !== undefined && cause !== err) return classifyConnectError(cause);
+    return new McpConnectError("handshake_failed", err.message);
+  }
   // A JSON-RPC error ANSWERING the handshake (e.g. an `initialize` the server refused) -- v1 left
   // this to the generic "unknown" below; it is a handshake failure by definition.
   if (err instanceof ProtocolError) return new McpConnectError("handshake_failed", err.message);
@@ -269,10 +276,86 @@ function dedupeTools(tools: McpToolInfo[]): McpToolInfo[] {
   return out;
 }
 
+// --- `'auto'`: the probe's own budget, and the legacy retry (WS-23 fix round 1, ruling I1) --------
+//
+// The v2 client's `'auto'` falls back to `initialize` only on answers it reads as definitive legacy
+// evidence (404/405/400, a -32601 in a 200). Measured against hand-written and proxied legacy servers
+// that are correct on `initialize`, several other answers to the unknown `server/discover` probe made
+// it REFUSE the connect instead: 500/502/503 (even a 500 whose body is a valid -32601), an empty 202,
+// a 200 `text/html`, a probe that hangs, a silent SSE stream -- every one a server v1 connected to.
+// So Winter adds the fallback the SDK leaves out: when an `'auto'` attempt fails for any reason other
+// than an auth wall (401/403 -- a legacy handshake would hit the same wall, and must not be spent
+// twice) or a spawn failure (no server to talk to), it is retried ONCE with `'legacy'`, on a FRESH
+// transport (the first one may be mid-probe, or its stdio child dead), inside what is left of the
+// same connect budget. A `{pin}` is never retried: a pin is a demand, and "no silent fallback" is the
+// point of one.
+//
+// The probe gets its OWN bound, min(5 s, connect budget / 3): left to inherit the whole budget, a
+// probe that hangs would consume it, and the legacy retry would never get to run.
+export const AUTO_PROBE_TIMEOUT_CAP_MS = 5000;
+
+function autoProbeTimeoutMs(connectTimeoutMs: number): number {
+  return Math.max(1, Math.min(AUTO_PROBE_TIMEOUT_CAP_MS, Math.floor(connectTimeoutMs / 3)));
+}
+
+function retriesAsLegacy(err: McpConnectError): boolean {
+  if (err.code === "needs_auth" || err.code === "spawn_failed") return false;
+  return err.httpStatus !== 401 && err.httpStatus !== 403;
+}
+
+// --- Listing without the capability (WS-23 fix round 1, ruling I2) -------------------------------
+//
+// v2's `listTools()`/`listResources()` return an EMPTY list, without a request, when the server did
+// not advertise the `tools`/`resources` capability. v1 always sent the request, and hand-written
+// servers that serve `tools/list` without declaring the capability worked -- on v2 they would connect
+// with zero tools and nothing anywhere saying why. For such a server this file sends the request
+// itself, through the public `client.request`, and walks the pages with the SDK's own 64-page cap
+// (`ClientOptions.listMaxPages`' default) and a repeated-cursor stop. One deliberate difference from
+// v1: a server that declares nothing AND answers `-32601 Method not found` simply has none -- v1
+// failed the whole connection on that, which served no one.
+export const MANUAL_LIST_MAX_PAGES = 64;
+
+async function listAllPagesManually<T>(fetchPage: (cursor: string | undefined) => Promise<{ items: T[]; nextCursor?: string | undefined }>, what: string): Promise<T[]> {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MANUAL_LIST_MAX_PAGES; page++) {
+    let result: { items: T[]; nextCursor?: string | undefined };
+    try {
+      result = await fetchPage(cursor);
+    } catch (err) {
+      if (page === 0 && err instanceof ProtocolError && err.code === ProtocolErrorCode.MethodNotFound) return [];
+      throw err;
+    }
+    out.push(...result.items);
+    const next = result.nextCursor;
+    if (next === undefined || seen.has(next)) return out;
+    seen.add(next);
+    cursor = next;
+  }
+  throw new Error(`mcp client: ${what} did not finish within ${MANUAL_LIST_MAX_PAGES} pages (the server's pagination never converged)`);
+}
+
 // --- The connector -----------------------------------------------------------------------------
 
 export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<ConnectedMcpClient> {
-  const { name, config, connectTimeoutMs, elicitationAsk } = opts;
+  const mode = resolveVersionNegotiation(opts.config);
+  if (mode !== "auto") return connectOnce(opts, mode, opts.connectTimeoutMs);
+  const started = Date.now();
+  try {
+    return await connectOnce(opts, "auto", opts.connectTimeoutMs, autoProbeTimeoutMs(opts.connectTimeoutMs));
+  } catch (err) {
+    if (!(err instanceof McpConnectError) || !retriesAsLegacy(err)) throw err;
+    // Whatever is left of the ONE connect budget -- the outer race (raceConnect) is what fired when
+    // nothing is left, and a retry past it would stretch MCP_TIMEOUT.
+    const remaining = opts.connectTimeoutMs - (Date.now() - started);
+    if (remaining <= 0) throw err;
+    return connectOnce(opts, "legacy", remaining);
+  }
+}
+
+async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegotiation, connectTimeoutMs: number, probeTimeoutMs?: number): Promise<ConnectedMcpClient> {
+  const { name, config, elicitationAsk } = opts;
 
   let transport: Transport;
 
@@ -310,7 +393,7 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
         // `form` explicitly keeps form mode on -- per the spec an EMPTY object means form-only, and a
         // non-empty one lists every mode it supports.
         capabilities: { elicitation: { form: {}, url: {} } },
-        versionNegotiation: { mode: toSdkNegotiationMode(resolveVersionNegotiation(config)) },
+        versionNegotiation: { mode: toSdkNegotiationMode(mode), ...(probeTimeoutMs !== undefined ? { probe: { timeoutMs: probeTimeoutMs } } : {}) },
         // `input_required` (2026-07-28): left at the v2 default (`autoFulfill: true`), which fulfils
         // an embedded elicitation through the SAME `elicitation/create` handler installed below and
         // retries the call -- so a modern server's multi-round-trip tool reaches the host exactly the
@@ -361,9 +444,15 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
       // `cacheMode: 'refresh'` always fetches (and still re-stores, which is what callTool's
       // output-schema validation reads), so the live-requery contract holds on every era.
       async listTools(): Promise<McpToolInfo[]> {
-        const rawTools = await client.listTools(undefined, { cacheMode: "refresh" });
+        const rawTools =
+          client.getServerCapabilities()?.tools !== undefined
+            ? (await client.listTools(undefined, { cacheMode: "refresh" })).tools
+            : await listAllPagesManually(async (cursor) => {
+                const page = await client.request({ method: "tools/list", ...(cursor !== undefined ? { params: { cursor } } : {}) });
+                return { items: page.tools, nextCursor: page.nextCursor };
+              }, "tools/list");
         return dedupeTools(
-          rawTools.tools.map((t) => ({
+          rawTools.map((t) => ({
             name: t.name,
             ...(t.description !== undefined ? { description: t.description } : {}),
             inputSchema: t.inputSchema as Record<string, unknown>,
@@ -376,8 +465,14 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
       // Same `cacheMode: 'refresh'` reasoning as `listTools()`: the resource bridge tools promise the
       // server's CURRENT answer, and a server-sent TTL must not quietly change that.
       async listResources(): Promise<McpResourceInfo[]> {
-        const result = await client.listResources(undefined, { cacheMode: "refresh" });
-        return result.resources.map((r) => ({
+        const resources =
+          client.getServerCapabilities()?.resources !== undefined
+            ? (await client.listResources(undefined, { cacheMode: "refresh" })).resources
+            : await listAllPagesManually(async (cursor) => {
+                const page = await client.request({ method: "resources/list", ...(cursor !== undefined ? { params: { cursor } } : {}) });
+                return { items: page.resources, nextCursor: page.nextCursor };
+              }, "resources/list");
+        return resources.map((r) => ({
           uri: r.uri,
           ...(r.name !== undefined ? { name: r.name } : {}),
           ...(r.description !== undefined ? { description: r.description } : {}),
