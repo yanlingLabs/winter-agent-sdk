@@ -185,7 +185,7 @@ export interface SandboxSettingsConfig {
 //
 // `McpServerConfigForProcessTransport` deliberately excludes the one variant options.ts's own
 // `McpServerConfig` union adds on top (`McpSdkServerConfigWithInstance`, carrying a live,
-// non-serializable `@modelcontextprotocol/sdk` object) -- exactly matching the pinned OFFICIAL SDK's
+// non-serializable MCP SDK server object) -- exactly matching the pinned OFFICIAL SDK's
 // own twin-union split for the identical reason (derived-shapes-p4.md item (a)): a live instance can
 // never cross this package's own process/wire boundary (query.ts's `--config-json` argv). This is
 // the type RuntimeConfig.mcpServers below actually carries, and the type Lane A (Task 4)/Task 3
