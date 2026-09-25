@@ -236,7 +236,7 @@ describe("spawnEmbeddedWorker (one Worker per session)", () => {
             env: sessionEnv(),
             allowedTools: [MCP_SDK_TEST_TOOL_NAME],
             capabilities: ["winter.mcp"],
-            mcpServers: { [MCP_SDK_TEST_SERVER_NAME]: { type: "sdk", name: MCP_SDK_TEST_SERVER_NAME, instance: server.instance } } as Options["mcpServers"],
+            mcpServers: { [MCP_SDK_TEST_SERVER_NAME]: { type: "sdk", name: MCP_SDK_TEST_SERVER_NAME, instance: server.instance } } as NonNullable<Options["mcpServers"]>,
             spawnClaudeCodeProcess: (o) => {
               const p = spawnEmbeddedWorker({ workerEntry: WORKER_ENTRY, spawn: o });
               procs.push(p);
