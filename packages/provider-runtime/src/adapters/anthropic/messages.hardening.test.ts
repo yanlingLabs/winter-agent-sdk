@@ -4,7 +4,7 @@
 // (`messages.test.ts`) has no stream, and the conformance corpus is the frozen WS-13 case list.
 //
 // Hermetic: 127.0.0.1:0 only, an inline `fixture` key, and the compiled catalog's own Claude rows.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { serve } from "bun";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, INTERLEAVED_THINKING_BETA, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor } from "./messages.ts";
@@ -24,6 +24,25 @@ interface Server {
 const servers: Server[] = [];
 afterEach(async () => {
   for (const s of servers.splice(0)) await s.stop();
+  tornBody = undefined;
+});
+
+// HERMETIC BY CONSTRUCTION (review M-2): every request in this file must stay on loopback -- anything
+// else is refused before it leaves the process, whatever a case's configuration says. `tornBody` lets
+// one case hand the adapter a response body that THROWS mid-read (the Linux tear shape), which a real
+// loopback server cannot produce deterministically.
+let tornBody: (() => ReadableStream<Uint8Array>) | undefined;
+const realFetch = globalThis.fetch;
+beforeAll(() => {
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const target = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (target.hostname !== "127.0.0.1" && target.hostname !== "localhost") throw new Error(`hermetic test file: refused a request to ${target.origin}`);
+    const response = await realFetch(input, init);
+    return tornBody !== undefined ? new Response(tornBody(), { status: 200, headers: { "content-type": "text/event-stream" } }) : response;
+  }) as typeof fetch;
+});
+afterAll(() => {
+  globalThis.fetch = realFetch;
 });
 
 function start(answer: (index: number) => Answer): Server {
@@ -204,6 +223,45 @@ describe("WS-23 item 4: a mid-stream `overloaded_error` BEFORE any content retri
     expect(s.requests).toHaveLength(1);
     expect(events.some((e) => e.type === "retry")).toBe(false);
     expect(error(events)?.error).toMatchObject({ code: "server", providerCode: "overloaded_error", retryable: false });
+  });
+
+  test("I-2: a connection torn after `message_start` is NOT replayed, in either tear shape -- one request, a committed final failure", async () => {
+    // Shape 1 (macOS): the stream ends cleanly before `message_stop`.
+    const clean = start(() => sse(messageStart));
+    const cleanEvents = await collect(clean.url);
+    expect(clean.requests).toHaveLength(1);
+    expect(cleanEvents.some((e) => e.type === "retry")).toBe(false);
+    expect(cleanEvents[0]!.type).toBe("message_start");
+    expect(error(cleanEvents)?.error).toMatchObject({ code: "network" });
+
+    // Shape 2 (Linux CI): the body read THROWS after `message_start`.
+    const torn = start(() => sse(messageStart));
+    tornBody = () => {
+      let sent = false;
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!sent) {
+            sent = true;
+            controller.enqueue(new TextEncoder().encode(messageStart));
+          } else controller.error(new Error("socket hang up"));
+        },
+      });
+    };
+    const tornEvents = await collect(torn.url);
+    expect(torn.requests).toHaveLength(1);
+    expect(tornEvents.some((e) => e.type === "retry")).toBe(false);
+    // `message_start` reached the consumer first, so the fold marks the failure committed.
+    expect(tornEvents[0]!.type).toBe("message_start");
+    expect(error(tornEvents)?.error).toMatchObject({ code: "network" });
+  });
+
+  test("M-8: the stream log counts the committed attempt's bytes only, not the abandoned retry's", async () => {
+    const good = messageStart + textBlock(0, "second try") + ending("end_turn");
+    const s = start((i) => sse(i === 0 ? messageStart + frame("error", { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }) : good));
+    const logged: number[] = [];
+    for await (const _ of adapter().streamTurn({ model: "claude-sonnet-5", messages: [{ role: "user", content: "hi" }] }, { ...ctx(s.url), log: (e) => void (e.bytes !== undefined && logged.push(e.bytes)) })) void _;
+    expect(s.requests).toHaveLength(2);
+    expect(logged).toEqual([new TextEncoder().encode(good).length]);
   });
 
   test("any OTHER pre-content error frame is not replayed (only the documented transient state is)", async () => {

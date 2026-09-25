@@ -1175,10 +1175,10 @@ export function anthropicCaptureEvent(descriptor: WinterModelDescriptor | undefi
  * A committing frame is anything that is not `message_start` or `ping`: a content block, a
  * `message_delta`, `message_stop`, or an `error` the retry policy cannot help. Up to it nothing has
  * been shown to anyone -- `message_start` carries an id and a usage count, `ping` carries nothing --
- * so a failure there is still safe to replay. Exactly ONE provider-reported failure is turned into a retryable
- * throw (a transport failure in the same window -- a dropped connection between `message_start` and
- * the first block -- also replays, because `withRetry`'s own `network` verdict is retryable and the
- * commit line has not been crossed; a stall or an abort stays final): an `error` frame whose type is `overloaded_error` (the vendor's documented transient state,
+ * so a failure there is still safe to replay. Exactly ONE failure is turned into a retryable throw
+ * (review ruling I-2: a TRANSPORT failure in this window -- a torn connection, a stall, an abort -- keeps
+ * its pre-WS-23 behaviour and is NOT replayed: it is handed to the stream loop as a committed, final
+ * failure, whichever shape the tear takes on the host platform): an `error` frame whose type is `overloaded_error` (the vendor's documented transient state,
  * HTTP 529 when it arrives as a status; https://platform.claude.com/docs/en/api/errors). Everything
  * else is handed back, buffered, for the stream loop to treat exactly as it always has -- an
  * unparseable frame, an ordinary content stream, a stream that ended early.
@@ -1189,7 +1189,14 @@ export function anthropicCaptureEvent(descriptor: WinterModelDescriptor | undefi
 async function openCommittedStream(stream: AsyncGenerator<SseEvent>): Promise<{ frames: AsyncGenerator<SseEvent>; buffered: SseEvent[] }> {
   const buffered: SseEvent[] = [];
   for (;;) {
-    const next = await stream.next();
+    let next: IteratorResult<SseEvent>;
+    try {
+      next = await stream.next();
+    } catch (err) {
+      // I-2: a transport failure is not this function's to replay. The stream loop sees the buffered
+      // frames and then this very error, exactly as it did before the read moved inside `withRetry`.
+      return { frames: rethrowing(err), buffered };
+    }
     if (next.done === true) return { frames: stream, buffered };
     const sse = next.value;
     buffered.push(sse);
@@ -1216,6 +1223,11 @@ async function openCommittedStream(stream: AsyncGenerator<SseEvent>): Promise<{ 
     }
     return { frames: stream, buffered };
   }
+}
+
+// eslint-disable-next-line require-yield -- a generator that only rethrows, so the loop's own catch owns the failure
+async function* rethrowing(err: unknown): AsyncGenerator<SseEvent> {
+  throw err;
 }
 
 function malformed(detail: string): ProviderError {
@@ -1282,6 +1294,8 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     try {
       opened = await withRetry(
         async () => {
+          // M-8: the stream log counts the COMMITTED attempt's bytes, not every abandoned retry's too.
+          bytes = 0;
           const res = await boundedFetch(`${endpoint.base}/v1/messages`, {
             method: "POST",
             headers,
