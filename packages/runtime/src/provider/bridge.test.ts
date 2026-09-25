@@ -564,6 +564,33 @@ describe("the T3 identity history renderer", () => {
   });
 });
 
+describe("WS-23 (M-5): stream order is kept for the Anthropic family ONLY", () => {
+  // Text AFTER a function call -- the shape Gemini's positional text-signature replay cannot take.
+  const TEXT_CALL_TEXT: ProviderEvent[] = [
+    { type: "text_delta", text: "Checking. " },
+    { type: "tool_call_start", id: "c1", name: "Read" },
+    { type: "tool_call_delta", id: "c1", argumentsJsonDelta: "{}" },
+    { type: "tool_call_end", id: "c1" },
+    { type: "text_delta", text: "Then summarising." },
+    { type: "done", stopReason: "tool_use" },
+  ];
+
+  test("a non-Anthropic family (google, openai) gets NO `content`: the engine keeps the pre-WS-23 joined-text assembly", async () => {
+    for (const family of ["google", "openai"] as const) {
+      const adapter = { ...scriptedAdapter(() => scripted(TEXT_CALL_TEXT)), family };
+      const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [{ role: "user", content: "hi" }] });
+      expect("content" in turn).toBe(false);
+      expect(turn.kind === "tool_use" ? turn.text : undefined).toBe("Checking. Then summarising.");
+    }
+  });
+
+  test("the Anthropic family keeps the stream order, text after the call included", async () => {
+    const adapter = { ...scriptedAdapter(() => scripted(TEXT_CALL_TEXT)), family: "anthropic" as const };
+    const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [{ role: "user", content: "hi" }] });
+    expect(turn.content?.map((b) => b.type as string)).toEqual(["text", "tool_use", "text"]);
+  });
+});
+
 describe("adapterAsProvider: what actually reaches the adapter", () => {
   test("the request carries the resolved model id, the system prompt, the tools and the signal", async () => {
     let seen: TurnRequest | undefined;

@@ -227,7 +227,16 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
       // real domain on the very NEXT generation and drop the state. Live native replay would be dead
       // while resumed sessions kept working (the chain rebuilds family/domain from the record) --
       // the common case broken, the rarer one fine, and nothing failing anywhere.
-      return stampNativeState(await foldProviderStream(stream, input.sink), {
+      const folded = await foldProviderStream(stream, input.sink);
+      // WS-23 (review M-5): the stream-order `content` is kept for the ANTHROPIC family only. Its
+      // purpose is replaying in-dialect thinking blocks in place, which no other family has; and at
+      // least one other family's serializer keys opaque state on the per-kind shape -- Gemini's
+      // text `thoughtSignature` is re-attached to the message's FIRST text part, assuming at most one
+      // per message, so a `[text, functionCall, text]` turn in stream order would put the trailing
+      // text's signature on the leading one. Dropping the key restores the pre-WS-23 assembly
+      // exactly (joined text, then calls) for every non-Anthropic family.
+      const turn: FoldedProviderTurn = adapter.family === "anthropic" || folded.content === undefined ? folded : (({ content: _ordered, ...rest }) => rest as FoldedProviderTurn)(folded);
+      return stampNativeState(turn, {
         providerId: resolved.providerId,
         modelKey: resolved.modelKey,
         family: adapter.family,
