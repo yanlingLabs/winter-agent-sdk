@@ -3281,16 +3281,16 @@
     },
     {
       "id": "xiaomi-token-plan",
-      "displayName": "Xiaomi MiMo Token Plan (OpenAI dialect)",
+      "displayName": "Xiaomi MiMo Token Plan Singapore (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions"
       ],
-      "$comment": "Xiaomi MiMo Token Plan (subscription). The documented host carries a `-cn` suffix; no separate international plan host was found.",
+      "$comment": "Xiaomi MiMo Token Plan, the Singapore cluster (international default). One row per cluster because the plan key is issued with its cluster's Base URL.",
       "authKinds": [
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://token-plan-cn.xiaomimimo.com/v1"
+        "api": "https://token-plan-sgp.xiaomimimo.com/v1"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -3305,20 +3305,21 @@
         "class": "review-required",
         "reasons": [
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host."
         ]
       },
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call — Xiaomi MiMo open platform quick start, retrieved 2026-09-25: the Token Plan's `tp-` key is used against `https://token-plan-cn.xiaomimimo.com/v1` (OpenAI) and `/anthropic`; billing is the subscription plan.",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Singapore cluster (international default) serves OpenAI-compatible `https://token-plan-sgp.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-sgp.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
         "tier": "fetched-document"
       },
       "scope": "llm"
     },
     {
       "id": "xiaomi-token-plan-anthropic",
-      "displayName": "Xiaomi MiMo Token Plan (Anthropic dialect)",
+      "displayName": "Xiaomi MiMo Token Plan Singapore (Anthropic dialect)",
       "protocols": [
         "anthropic-messages"
       ],
@@ -3327,7 +3328,7 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://token-plan-cn.xiaomimimo.com/anthropic"
+        "api": "https://token-plan-sgp.xiaomimimo.com/anthropic"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -3343,13 +3344,14 @@
         "reasons": [
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host.",
           "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
         ]
       },
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call — Xiaomi MiMo open platform quick start, retrieved 2026-09-25: Token Plan Anthropic root `https://token-plan-cn.xiaomimimo.com/anthropic`.",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Singapore cluster (international default) serves OpenAI-compatible `https://token-plan-sgp.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-sgp.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -3778,6 +3780,160 @@
         "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Beijing (China) OpenAI-compatible base `https://dashscope.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`."
       },
       "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document); CNY per-token billing (https://help.aliyun.com/zh/model-studio/model-pricing)."
+    },
+    {
+      "id": "xiaomi-token-plan-cn",
+      "displayName": "Xiaomi MiMo Token Plan China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Xiaomi MiMo Token Plan, the China cluster. One row per cluster because the plan key is issued with its cluster's Base URL.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-cn.xiaomimimo.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the China cluster serves OpenAI-compatible `https://token-plan-cn.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-cn.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-token-plan-cn-anthropic",
+      "displayName": "Xiaomi MiMo Token Plan China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `xiaomi-token-plan-cn`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-cn.xiaomimimo.com/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the China cluster serves OpenAI-compatible `https://token-plan-cn.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-cn.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-token-plan-eu",
+      "displayName": "Xiaomi MiMo Token Plan Europe (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Xiaomi MiMo Token Plan, the Amsterdam (Europe) cluster. One row per cluster because the plan key is issued with its cluster's Base URL.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-ams.xiaomimimo.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Amsterdam (Europe) cluster serves OpenAI-compatible `https://token-plan-ams.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-ams.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-token-plan-eu-anthropic",
+      "displayName": "Xiaomi MiMo Token Plan Europe (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `xiaomi-token-plan-eu`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-ams.xiaomimimo.com/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Amsterdam (Europe) cluster serves OpenAI-compatible `https://token-plan-ams.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-ams.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
     }
   ]
 }

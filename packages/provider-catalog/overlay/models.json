@@ -32164,6 +32164,3050 @@
       },
       "unsupportedParameters": [],
       "status": "candidate"
+    },
+    {
+      "key": "xiaomi/mimo-v2.6-pro",
+      "providerId": "xiaomi",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro",
+      "aliases": [],
+      "$comment": "PAYG per-token. OpenAI Chat + Responses base https://api.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.435,
+          "outputPerMTokUsd": 0.87,
+          "cacheReadPerMTokUsd": 0.0036
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: USD/M input cache-miss $0.435, output $0.87, cache-hit $0.0036; ¥3 input/cache-miss, ¥6 output, ¥0.025 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi/mimo-v2.6-flash",
+      "providerId": "xiaomi",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash",
+      "aliases": [],
+      "$comment": "PAYG per-token. OpenAI Chat + Responses base https://api.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.14,
+          "outputPerMTokUsd": 0.28,
+          "cacheReadPerMTokUsd": 0.0028
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: USD/M input cache-miss $0.14, output $0.28, cache-hit $0.0028; ¥1 input/cache-miss, ¥2 output, ¥0.02 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi/mimo-v2.6-pro-ultraspeed",
+      "providerId": "xiaomi",
+      "upstreamId": "mimo-v2.6-pro-ultraspeed",
+      "displayName": "MiMo V2.6 Pro UltraSpeed",
+      "aliases": [],
+      "$comment": "PAYG per-token. OpenAI Chat + Responses base https://api.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. Customized service/contact sales; not in Token Plan roster. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro-ultraspeed: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 4.35,
+          "outputPerMTokUsd": 8.7,
+          "cacheReadPerMTokUsd": 0.036
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: USD/M input cache-miss $4.35, output $8.7, cache-hit $0.036; ¥30 input/cache-miss, ¥60 output, ¥0.25 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi/mimo-v2.5-pro",
+      "providerId": "xiaomi",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro",
+      "aliases": [],
+      "$comment": "PAYG per-token. OpenAI Chat + Responses base https://api.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.435,
+          "outputPerMTokUsd": 0.87,
+          "cacheReadPerMTokUsd": 0.0036
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: USD/M input cache-miss $0.435, output $0.87, cache-hit $0.0036; ¥3 input/cache-miss, ¥6 output, ¥0.025 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi/mimo-v2.5",
+      "providerId": "xiaomi",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5",
+      "aliases": [],
+      "$comment": "PAYG per-token. OpenAI Chat + Responses base https://api.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.14,
+          "outputPerMTokUsd": 0.28,
+          "cacheReadPerMTokUsd": 0.0028
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: USD/M input cache-miss $0.14, output $0.28, cache-hit $0.0028; ¥1 input/cache-miss, ¥2 output, ¥0.02 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-anthropic/mimo-v2.6-pro",
+      "providerId": "xiaomi-anthropic",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "PAYG per-token. Anthropic Messages base https://api.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.435,
+          "outputPerMTokUsd": 0.87,
+          "cacheReadPerMTokUsd": 0.0036
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: USD/M input cache-miss $0.435, output $0.87, cache-hit $0.0036; ¥3 input/cache-miss, ¥6 output, ¥0.025 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-anthropic/mimo-v2.6-flash",
+      "providerId": "xiaomi-anthropic",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "PAYG per-token. Anthropic Messages base https://api.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.14,
+          "outputPerMTokUsd": 0.28,
+          "cacheReadPerMTokUsd": 0.0028
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: USD/M input cache-miss $0.14, output $0.28, cache-hit $0.0028; ¥1 input/cache-miss, ¥2 output, ¥0.02 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-anthropic/mimo-v2.6-pro-ultraspeed",
+      "providerId": "xiaomi-anthropic",
+      "upstreamId": "mimo-v2.6-pro-ultraspeed",
+      "displayName": "MiMo V2.6 Pro UltraSpeed (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "PAYG per-token. Anthropic Messages base https://api.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. Customized service/contact sales; not in Token Plan roster.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro-ultraspeed: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 4.35,
+          "outputPerMTokUsd": 8.7,
+          "cacheReadPerMTokUsd": 0.036
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed — mimo-v2.6-pro-ultraspeed: USD/M input cache-miss $4.35, output $8.7, cache-hit $0.036; ¥30 input/cache-miss, ¥60 output, ¥0.25 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-anthropic/mimo-v2.5-pro",
+      "providerId": "xiaomi-anthropic",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "PAYG per-token. Anthropic Messages base https://api.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.435,
+          "outputPerMTokUsd": 0.87,
+          "cacheReadPerMTokUsd": 0.0036
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: USD/M input cache-miss $0.435, output $0.87, cache-hit $0.0036; ¥3 input/cache-miss, ¥6 output, ¥0.025 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-anthropic/mimo-v2.5",
+      "providerId": "xiaomi-anthropic",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "PAYG per-token. Anthropic Messages base https://api.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.14,
+          "outputPerMTokUsd": 0.28,
+          "cacheReadPerMTokUsd": 0.0028
+        },
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: USD/M input cache-miss $0.14, output $0.28, cache-hit $0.0028; ¥1 input/cache-miss, ¥2 output, ¥0.02 cache-hit",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan/mimo-v2.6-pro",
+      "providerId": "xiaomi-token-plan",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-cn/mimo-v2.6-pro",
+      "providerId": "xiaomi-token-plan-cn",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-eu/mimo-v2.6-pro",
+      "providerId": "xiaomi-token-plan-eu",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan/mimo-v2.6-flash",
+      "providerId": "xiaomi-token-plan",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+      "providerId": "xiaomi-token-plan-cn",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-eu/mimo-v2.6-flash",
+      "providerId": "xiaomi-token-plan-eu",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan/mimo-v2.5-pro",
+      "providerId": "xiaomi-token-plan",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-cn/mimo-v2.5-pro",
+      "providerId": "xiaomi-token-plan-cn",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-eu/mimo-v2.5-pro",
+      "providerId": "xiaomi-token-plan-eu",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan/mimo-v2.5",
+      "providerId": "xiaomi-token-plan",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-cn/mimo-v2.5",
+      "providerId": "xiaomi-token-plan-cn",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-eu/mimo-v2.5",
+      "providerId": "xiaomi-token-plan-eu",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Token Plan)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. OpenAI Chat + Responses base https://token-plan-cn.xiaomimimo.com/v1. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Responses accepts reasoning.effort but all non-none levels behave identically; Chat adapter has no documented reasoning_effort, hence efforts=[]. Replay: preserve reasoning_content across tool turns, or API may return 400. Responses does not support background, previous_response_id, context_management (ignored or error); these unsupportedParameters are Responses-specific. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6.  — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-anthropic/mimo-v2.6-pro",
+      "providerId": "xiaomi-token-plan-anthropic",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-cn-anthropic/mimo-v2.6-pro",
+      "providerId": "xiaomi-token-plan-cn-anthropic",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-eu-anthropic/mimo-v2.6-pro",
+      "providerId": "xiaomi-token-plan-eu-anthropic",
+      "upstreamId": "mimo-v2.6-pro",
+      "displayName": "MiMo V2.6 Pro (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-pro — mimo-v2.6-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-anthropic/mimo-v2.6-flash",
+      "providerId": "xiaomi-token-plan-anthropic",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-cn-anthropic/mimo-v2.6-flash",
+      "providerId": "xiaomi-token-plan-cn-anthropic",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-eu-anthropic/mimo-v2.6-flash",
+      "providerId": "xiaomi-token-plan-eu-anthropic",
+      "upstreamId": "mimo-v2.6-flash",
+      "displayName": "MiMo V2.6 Flash (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.6-flash — mimo-v2.6-flash: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.6-flash: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xiaomi-token-plan-anthropic/mimo-v2.5-pro",
+      "providerId": "xiaomi-token-plan-anthropic",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-cn-anthropic/mimo-v2.5-pro",
+      "providerId": "xiaomi-token-plan-cn-anthropic",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-eu-anthropic/mimo-v2.5-pro",
+      "providerId": "xiaomi-token-plan-eu-anthropic",
+      "upstreamId": "mimo-v2.5-pro",
+      "displayName": "MiMo V2.5 Pro (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: input modalities text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5-pro — mimo-v2.5-pro: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5-pro: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-anthropic/mimo-v2.5",
+      "providerId": "xiaomi-token-plan-anthropic",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-cn-anthropic/mimo-v2.5",
+      "providerId": "xiaomi-token-plan-cn-anthropic",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
+    },
+    {
+      "key": "xiaomi-token-plan-eu-anthropic/mimo-v2.5",
+      "providerId": "xiaomi-token-plan-eu-anthropic",
+      "upstreamId": "mimo-v2.5",
+      "displayName": "MiMo V2.5 (Token Plan) (Anthropic dialect)",
+      "aliases": [],
+      "$comment": "Token Plan subscription; no per-token price. Anthropic Messages base https://token-plan-cn.xiaomimimo.com/anthropic. Thinking off: thinking.type=disabled on Chat/Messages; Responses reasoning.effort=none disables. Effort: Chat has no documented reasoning_effort; Anthropic API documents thinking.type but not budget_tokens, so Winter budget ladder is unverified and efforts=[]. Replay: preserve thinking blocks across tool turns, or API may return 400. https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — choose the plan's cluster-specific URL shown in the console; cn/sgp/ams documented. https://mimo.mi.com/docs/zh-CN/quick-start/summary/model — announced retirement 2026-10-21 10:00 Beijing time; migrate to V2.6. ",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: input modalities text, image, video, audio",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Tool Call(s) capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Structured Output capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://mimo.mi.com/models/en-US/mimo-v2.5 — mimo-v2.5: Context Caching capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:52:37Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/deep-thinking — mimo-v2.5: deep-thinking supported; thinking.type enabled/disabled; enabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:52:37Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "deprecated"
     }
   ]
 }
