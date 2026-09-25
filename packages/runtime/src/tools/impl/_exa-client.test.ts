@@ -21,7 +21,7 @@ import {
   type ExaSearchClientOptions,
 } from "./_exa-client.ts";
 import { advancedPayload, basicPayload, tooManyRequests, withExaFixture, type ExaFixtureHttpRequest } from "./_exa-fixture.test-support.ts";
-import { withHttpFixture } from "../../mcp/test-fixtures.ts";
+import { createFakeConnectedMcpClient, withHttpFixture } from "../../mcp/test-fixtures.ts";
 import { resolveWebToolsConfig } from "@yanlinglabs/winter-agent-sdk";
 
 const KEY = "exa-key-3f9c1b7e-THE-SECRET";
@@ -150,6 +150,69 @@ describe("anonymous first", () => {
       } finally {
         await a.close();
         await b.close();
+      }
+    });
+  });
+});
+
+describe("WS-23: the search backend on the MCP TS SDK v2", () => {
+  // Exa is reached through `connectMcpServer` -- the one MCP client -- so the v2 migration runs
+  // through web search. These pin the two things the port had to decide for it: the connect is the
+  // plain legacy handshake (no `server/discover` probe, deliberately not the http default), and the
+  // v2 error classes still classify by HTTP STATUS on both the handshake and a live session.
+  test("connects on the plain legacy handshake: no server/discover probe, the first POST is `initialize`, and every search is one tools/call", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint);
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: true, tier: "anonymous" });
+        expect(await client.search({ query: "two" })).toMatchObject({ ok: true, tier: "anonymous" });
+        const rpc = fixture.requests.filter((r) => r.method === "POST").map((r) => r.rpcMethod);
+        expect(rpc).not.toContain("server/discover");
+        expect(rpc[0]).toBe("initialize");
+        expect(rpc.filter((m) => m === "tools/call")).toHaveLength(2);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("a DEAD SOCKET mid-session (Bun's fetch error: a STRING code, no status) still earns the one reconnect-and-retry", async () => {
+    // Neither SDK class: the shape Bun's own fetch rejects with when the peer is gone. The fixture
+    // cannot kill its own port mid-call, so the connection is a fake whose FIRST call throws it.
+    const deadSocket = Object.assign(new Error("Unable to connect. Is the computer able to access the url?"), { code: "ConnectionRefused" });
+    let connects = 0;
+    let calls = 0;
+    const connect = (async () => {
+      connects++;
+      return createFakeConnectedMcpClient("exa", {
+        callTool: async () => {
+          calls++;
+          if (calls === 2) throw deadSocket; // the second search, on the now-dead first connection
+          return advancedPayload([{ url: "https://ok.example/" }]) as never;
+        },
+      });
+    }) as unknown as NonNullable<ExaSearchClientOptions["connect"]>;
+    const { client } = clientFor("http://127.0.0.1:1/mcp", { connect });
+    try {
+      expect(await client.search({ query: "one" })).toMatchObject({ ok: true });
+      expect(await client.search({ query: "two" })).toMatchObject({ ok: true });
+      expect([connects, calls]).toEqual([2, 3]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a MID-SESSION 429 (v2's SdkHttpError, whose `.code` is now a string) still opens the breaker by status, and falls back to the key", async () => {
+    let limitNow = false;
+    await withExaFixture({ gate: (r) => (limitNow && r.apiKey === null && r.sessionId !== null ? new Response("", { status: 429 }) : undefined) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: true, tier: "anonymous" });
+        limitNow = true; // the anonymous SESSION now answers 429, with an empty body
+        expect(await client.search({ query: "two" })).toMatchObject({ ok: true, tier: "key" });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(true);
+      } finally {
+        await client.close();
       }
     });
   });

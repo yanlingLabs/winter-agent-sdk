@@ -41,6 +41,7 @@
 //   basic:    plain text records `Title:` / `URL:` / `Published:` / `Author:` / `Highlights:` (the
 //             highlight lines follow), separated by a line holding only `---`.
 // `parseExaHits` reads both and is deliberately tolerant: the payload is a third party's, unversioned.
+import { SdkError, SdkErrorCode, SdkHttpError, SseError } from "@modelcontextprotocol/client";
 import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
 import { connectMcpServer, McpConnectError, type ConnectedMcpClient, type McpToolCallResult } from "../../mcp/client.ts";
 import { createElicitationAsker } from "../../mcp/elicitation.ts";
@@ -195,16 +196,30 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * The HTTP status an error carries, wherever this MCP SDK put it. A handshake failure arrives wrapped
+ * as `McpConnectError`, whose `code` is a category and whose status rides `httpStatus`. A mid-session
+ * failure is the transport's own error: on the MCP TS SDK v2 (WS-23) that is an `SdkHttpError`,
+ * whose status is `.status` -- its `.code` is now a STRING (`SdkErrorCode`), where v1's
+ * `StreamableHTTPError.code` WAS the status, which is exactly the field this file used to read. The
+ * legacy SSE client's `SseError` still carries the status as a numeric `.code`.
+ */
+function httpStatusOf(err: unknown): number | undefined {
+  if (err instanceof McpConnectError) return err.httpStatus;
+  if (err instanceof SdkHttpError) return err.status;
+  if (err instanceof SseError && typeof err.code === "number") return err.code;
+  return undefined;
+}
+
 function classifyError(err: unknown): Classified {
-  // The STATUS first, the words second. A mid-session failure is the transport's own error, whose
-  // `code` IS the HTTP status; a handshake failure arrives wrapped as `McpConnectError`, whose `code`
-  // is a category and whose status rides `httpStatus`. The message holds only the response BODY, so
-  // a rate limit answered with an empty or unexpected body is recognisable by status alone.
-  const code = err instanceof McpConnectError ? err.httpStatus : (err as { code?: unknown } | null)?.code;
-  if (code === 429 || code === 402) return "rate-limited";
-  if (code === 401 || code === 403) return "auth";
+  // The STATUS first, the words second. The message holds only the response BODY, so a rate limit
+  // answered with an empty or unexpected body is recognisable by status alone.
+  const status = httpStatusOf(err);
+  if (status === 429 || status === 402) return "rate-limited";
+  if (status === 401 || status === 403) return "auth";
   if (err instanceof McpConnectError && err.code === "needs_auth") return "auth";
   if (err instanceof McpConnectError && err.code === "timeout") return "timeout";
+  if (err instanceof SdkError && err.code === SdkErrorCode.RequestTimeout) return "timeout";
   const text = errorText(err);
   if (RATE_LIMIT_PATTERN.test(text)) return "rate-limited";
   if (AUTH_PATTERN.test(text)) return "auth";
@@ -217,16 +232,23 @@ function classifyError(err: unknown): Classified {
  * reconnect-and-retry costs nothing? Anything the backend ANSWERED is final: a JSON-RPC error and an
  * HTTP 5xx may both follow a search that already ran and already counted against the allowance.
  *
- * Read off `code`, which both error families carry as a number: the transport's is the HTTP STATUS
- * (only 404 -- "session not found" -- means the session is gone), the protocol's is a JSON-RPC code
- * (only -32000, connection closed, is a transport failure). An error with no numeric code at all is a
- * socket-level failure.
+ * Read per error family (WS-23, MCP TS SDK v2 -- v1 let one numeric `code` answer all of this):
+ *   - an HTTP answer (`SdkHttpError`/`SseError`): only 404 -- "session not found" -- means the
+ *     session is gone;
+ *   - an error the SDK raised LOCALLY (`SdkError`, string code): only a closed or unsendable
+ *     connection is a transport failure (v1 spelled this as the JSON-RPC-shaped `-32000`);
+ *   - a JSON-RPC error the server sent (`ProtocolError`, numeric code): the backend answered -- final;
+ *   - anything else WITHOUT a numeric code is a socket-level failure: `fetch failed` has none, and
+ *     Bun's own fetch errors carry a STRING code (`ConnectionRefused`, `ECONNRESET`) -- exactly v1's
+ *     `typeof code !== "number"` reading, kept.
  */
 function isTransportFailure(err: unknown): boolean {
   if (err instanceof McpConnectError) return false;
+  const status = httpStatusOf(err);
+  if (status !== undefined) return status === 404;
+  if (err instanceof SdkError) return err.code === SdkErrorCode.ConnectionClosed || err.code === SdkErrorCode.SendFailed || err.code === SdkErrorCode.NotConnected;
   const code = (err as { code?: unknown } | null)?.code;
-  if (typeof code !== "number") return true;
-  return code === 404 || code === -32000;
+  return typeof code !== "number";
 }
 
 /**
@@ -432,7 +454,12 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
     if (existing !== undefined) return Promise.resolve(existing);
     const pending = connecting[tier];
     if (pending !== undefined) return pending;
-    const config: McpServerConfigForProcessTransport = { type: "http", url, ...(tier === "key" && apiKey !== undefined ? { headers: { [EXA_API_KEY_HEADER]: apiKey } } : {}) };
+    // `versionNegotiation: "legacy"` -- deliberately NOT the http default (`"auto"`, mcp/client.ts).
+    // An `auto` probe is one extra POST per connect, and on the anonymous tier every POST is spent
+    // against a rate limit this client is built to conserve; Exa's answer to a 2026-07-28
+    // `server/discover` probe has also never been measured, and a search backend has nothing the
+    // modern era adds (no elicitation, no list changes). Flip it only on a live measurement.
+    const config: McpServerConfigForProcessTransport = { type: "http", url, versionNegotiation: "legacy", ...(tier === "key" && apiKey !== undefined ? { headers: { [EXA_API_KEY_HEADER]: apiKey } } : {}) };
     const started = (async (): Promise<ConnectedMcpClient> => {
       const connection = await connect({
         name: MCP_SERVER_NAME,

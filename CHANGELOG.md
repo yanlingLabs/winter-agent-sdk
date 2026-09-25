@@ -50,6 +50,33 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   "Incorrect API key provided", is now classified `auth`, so credential validation reports an invalid
   key instead of an unreachable endpoint.
 
+### MCP: TypeScript SDK v2 and the 2026-07-28 protocol
+
+- The runtime's MCP client moves from `@modelcontextprotocol/sdk` 1.30 to `@modelcontextprotocol/client` 2.1.0
+  (`@modelcontextprotocol/server` 2.1.0 is a dev dependency for test fixtures only). v1 is gone from the lockfile,
+  along with the Express/Hono server stack it brought in; the workspace's zod (4.5.4) already meets v2's `^4.2`.
+  Every existing server keeps working: stdio, Streamable HTTP, legacy SSE and in-process servers all connect as
+  before, and Winter keeps its own stdio transport (process-group kill, explicit env allowlist).
+- New per-server `versionNegotiation` (`"legacy"` | `"auto"` | `{ pin: "<revision>" }`) on stdio, http and sse
+  configs. Defaults: `"auto"` for `http` (probe `server/discover`, fall back to `initialize`), `"legacy"` for
+  `stdio` (a probe on a live pipe can kill a legacy server) and `sse`. A malformed value is refused at config
+  resolution; a pin the server does not offer fails the connect (`handshake_failed`), never falls back. The
+  negotiated revision is reported per server as `protocolVersion` on `system/init.mcp_servers` and `mcp_status`.
+- 2026-07-28 `input_required` results are fulfilled through the existing elicitation path: the host's
+  `onElicitation` sees the same request shape whichever era a server negotiated, and with no callback the server
+  still gets a deterministic decline. URL-mode elicitation is now declared and reaches `onElicitation` with
+  `mode: "url"`, `url` and `elicitationId`. Accepted content that the protocol cannot carry (a nested value)
+  declines instead of reaching the server.
+- A server that advertises `tools.listChanged` gets its tools re-registered when it announces a change (on either
+  era). A change announced while the server is disabled is applied when it is re-enabled.
+- `type: "sdk"` MCP servers from settings, project `mcp.json` or plugin files are refused (`sdk_type_from_file_config`);
+  only the host's `Options.mcpServers` can declare one. Every MCP config rejection now carries a `code`.
+- HTTP 401 still maps to `needs-auth` under the v2 error classes (Streamable HTTP on both negotiation modes, and SSE).
+  Web search (Exa) connects with `versionNegotiation: "legacy"` and classifies rate limits by HTTP status on v2's
+  `SdkHttpError`.
+- New gate `bun run verify:mcp-compiled`: the compiled `winter` binary connects to a stdio MCP server (legacy and
+  `auto`) and completes a model-issued `tools/call`.
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus

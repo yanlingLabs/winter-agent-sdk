@@ -82,9 +82,21 @@ export interface ShadowedMcpServerEntry {
   origin: McpConfigSourceOrigin; // the LOSING declaration's own source
   shadowedBy: McpConfigSourceOrigin; // the source that already won this name
 }
+/**
+ * Why a declaration was refused, as a CODE a caller can branch on (the `reason` is prose for a
+ * human). WS-23 added the code; every rejection carries one.
+ *
+ * - `invalid_config` -- malformed, an unrecognized `type`, the claudeai-proxy variant, or a bad
+ *   `versionNegotiation` value (`validateServerConfig`).
+ * - `reserved_name` -- the standing server's name (RULING P4-B).
+ * - `sdk_type_from_file_config` -- a `type: "sdk"` entry from a settings/project/plugin FILE. Only
+ *   the host's own `Options.mcpServers` (origin `explicit`) may declare one; see the check itself.
+ */
+export type McpServerRejectionCode = "invalid_config" | "reserved_name" | "sdk_type_from_file_config";
 export interface RejectedMcpServerEntry {
   name: string;
   origin: McpConfigSourceOrigin;
+  code: McpServerRejectionCode;
   reason: string;
 }
 export interface ResolveMcpServerSourcesResult {
@@ -128,6 +140,21 @@ function validateServerConfig(raw: unknown): { ok: true; config: McpServerConfig
     // type === "sdk"
     if (typeof (raw as { name?: unknown }).name !== "string") {
       return { ok: false, reason: "sdk MCP server config is missing a string 'name'" };
+    }
+  }
+  // WS-23: `versionNegotiation` is refused here, at resolution, rather than handed to the v2 client
+  // to fail on at connect time -- a typo in a settings file then names the field and the value
+  // instead of surfacing as a generic handshake failure. A pin must look like a protocol revision
+  // (an ISO date); WHICH revisions exist is the server's answer to give, not this check's.
+  const negotiation = (raw as { versionNegotiation?: unknown }).versionNegotiation;
+  if (negotiation !== undefined) {
+    if (type === "sdk") {
+      return { ok: false, reason: "'versionNegotiation' does not apply to an in-process sdk MCP server (it always speaks the legacy handshake)" };
+    }
+    const pin = typeof negotiation === "object" && negotiation !== null && !Array.isArray(negotiation) ? (negotiation as { pin?: unknown }).pin : undefined;
+    const pinOk = typeof pin === "string" && /^\d{4}-\d{2}-\d{2}$/.test(pin) && Object.keys(negotiation as object).length === 1;
+    if (negotiation !== "legacy" && negotiation !== "auto" && !pinOk) {
+      return { ok: false, reason: `MCP server config 'versionNegotiation' must be "legacy", "auto" or { "pin": "<YYYY-MM-DD revision>" }; got ${JSON.stringify(negotiation)}` };
     }
   }
   return { ok: true, config: raw as McpServerConfigForProcessTransport };
@@ -197,12 +224,29 @@ export function resolveMcpServerSources(
         claimed.set(name, origin);
 
         if (name === reservedServerName) {
-          rejected.push({ name, origin, reason: `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
+          rejected.push({ name, origin, code: "reserved_name", reason: `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
           continue;
         }
         const validated = validateServerConfig(raw);
         if (!validated.ok) {
-          rejected.push({ name, origin, reason: validated.reason });
+          rejected.push({ name, origin, code: "invalid_config", reason: validated.reason });
+          continue;
+        }
+        // WS-23 hardening: `type: "sdk"` names an IN-PROCESS server object, which only the host that
+        // holds it can supply (`Options.mcpServers`, origin `explicit`; the live `mcp_set_servers`
+        // door is also the host's). From a settings/project/plugin FILE it can never be real -- no
+        // file can carry a live object -- yet it used to resolve like any other entry, and `start()`
+        // then reported it `connected` (RULING P4-C's state-only feed) with whatever `tools[]` the
+        // file listed: a config file could make the host believe a server, and tools, existed. Refused
+        // here, typed, before it can become a slot. A `project` file is refused the same way whether
+        // or not the workspace is trusted -- trust gates what a real server may do, and this is not one.
+        if (validated.config.type === "sdk" && origin !== "explicit") {
+          rejected.push({
+            name,
+            origin,
+            code: "sdk_type_from_file_config",
+            reason: `a type "sdk" MCP server can only be declared by the host (Options.mcpServers) -- a ${origin} config file cannot supply the in-process server it names, so "${name}" is refused`,
+          });
           continue;
         }
         // RULING P5-K (fix wave), amending WS-09 §1.2: a PROJECT-sourced server of ANY transport
@@ -278,15 +322,36 @@ interface ConnectionSlot {
   // first use" outcome. `inflight` lets every concurrent on-demand caller share the ONE real attempt
   // already in progress instead of starting a second that would invalidate the first's own gen.
   inflight?: Promise<boolean> | undefined;
+  // WS-23 (listChanged): the server said its tool list changed while this slot could not be
+  // refreshed -- its connection not yet committed and marked `connected` (the initial `tools/list`
+  // may still be in flight), or disabled (enableSlot restores `savedTools`, which the change just
+  // made stale). `refreshServerTools` refuses any non-connected slot, so the signal is PARKED here
+  // and replayed the moment the slot reaches `connected` (connectOneServer's success path,
+  // enableSlot's instant restore) rather than lost.
+  toolListStale?: boolean | undefined;
+  // WS-23 fix round 1 (ruling I3): refreshes of ONE slot are SINGLE-FLIGHT. Two overlapping
+  // refreshes (a listChanged signal landing while an earlier refresh's `tools/list` is still in
+  // flight) used to race, and the slower answer -- possibly the OLDER list -- committed last and
+  // stuck. `refreshing` is the run in progress; a refresh requested during it sets
+  // `refreshAgain` and joins it, and the run loops once more before settling, so the last commit
+  // is always from a `tools/list` sent AFTER the last request.
+  refreshing?: Promise<RefreshServerToolsResult> | undefined;
+  refreshAgain?: boolean | undefined;
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
+  // WS-23: read off the LIVE client, never stored separately on the slot -- every path that drops a
+  // connection already clears `slot.client`, so the version can never outlive the connection that
+  // negotiated it. A disabled slot keeps its idle connection (disableSlot's own comment), and so
+  // keeps reporting that connection's version, which is the truth.
+  const protocolVersion = slot.client?.protocolVersion;
   return {
     name: slot.name,
     state: slot.state,
     toolNames: slot.toolNames,
     ...(slot.errorCode !== undefined ? { errorCode: slot.errorCode } : {}),
     ...(slot.error !== undefined ? { error: slot.error } : {}),
+    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
   };
 }
 
@@ -689,10 +754,48 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     return ++slot.gen;
   }
 
+  // WS-23 (listChanged, protocol revision 2026-07-28 / 2025 `notifications/tools/list_changed`): a
+  // server that advertises `tools.listChanged` and then says its list changed gets its tools
+  // re-registered through `refreshServerTools` -- the SAME staleness-guarded path RefreshMcpTools
+  // already uses (gen snapshot, set-replace registration, executor reinstall, a state notify), never
+  // a second registration path of its own. The signal is bound to the CONNECTION that raised it: a
+  // notification from a client this slot no longer holds (replaced by addAndConnect, torn down by
+  // reconnect/remove) is dropped, so a closing connection can never refresh its successor.
+  function onToolListChangedFor(slot: ConnectionSlot, connection: () => ConnectedMcpClient | undefined): () => void {
+    return () => {
+      if (slots.get(slot.name) !== slot) return; // the slot itself was replaced or removed
+      const client = connection();
+      // A committed client that is not this one: this notification came from a superseded connection.
+      if (slot.client !== undefined && client !== undefined && slot.client !== client) return;
+      if (slot.state === "connected" && client !== undefined && slot.client === client) {
+        refreshAfterListChanged(slot.name);
+        return;
+      }
+      slot.toolListStale = true;
+    };
+  }
+
+  function refreshAfterListChanged(name: string): void {
+    void refreshServerTools(name).then((result) => {
+      if (!result.ok) console.error(`winter: mcp: server "${name}" reported a tool list change, but the refresh failed: ${result.reason}`);
+    });
+  }
+
+  // Called wherever a slot has just reached `connected`: replays a change parked while it could not
+  // be refreshed (see `toolListStale`).
+  function replayParkedToolListChange(slot: ConnectionSlot): void {
+    if (slot.toolListStale !== true) return;
+    slot.toolListStale = false;
+    refreshAfterListChanged(slot.name);
+  }
+
   // Returns whether it actually committed (`false` means a caller-visible supersede happened while
   // this attempt was connecting -- disable/remove/reconnect/on-demand-replace) -- every caller MUST
   // branch on this rather than assuming a resolved promise means "connected."
   async function connectSlotForReal(slot: ConnectionSlot, gen: number): Promise<boolean> {
+    let connection: ConnectedMcpClient | undefined;
+    // A fresh connection's own initial `tools/list` (below) supersedes anything parked for an older one.
+    slot.toolListStale = false;
     const client = await connectMcpServer({
       name: slot.name,
       config: slot.config,
@@ -700,8 +803,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       // tool-call timeout; see client.ts's own header).
       connectTimeoutMs: deps.envConfig.timeoutMs,
       elicitationAsk: deps.elicitationAsk,
+      onToolListChanged: onToolListChangedFor(slot, () => connection),
       ...(deps.inProcessServers?.[slot.name] !== undefined ? { inProcessServer: deps.inProcessServers[slot.name] } : {}),
     });
+    connection = client;
     const tools = await client.listTools();
     if (!isCurrentAttempt(slot, gen)) {
       // Superseded while connecting -- whatever superseded this attempt (disableSlot, removeSlot,
@@ -753,6 +858,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         // ordering ever changes.
         if (!committed || !isCurrentAttempt(slot, gen)) return;
         setSlotState(slot.name, "connected", { toolNames: slot.toolNames });
+        replayParkedToolListChange(slot);
       },
       (err: unknown) => {
         // A stale FAILURE must never stomp a slot that has since moved on (e.g. disabled, or a
@@ -846,7 +952,32 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     return slot?.state === "connected" ? slot.client : undefined;
   }
 
-  async function refreshServerTools(name: string): Promise<RefreshServerToolsResult> {
+  // The public door: single-flight per slot (see ConnectionSlot.refreshing). A caller that joins a
+  // run in progress gets the result of the run's LAST pass -- the one that reflects its request.
+  function refreshServerTools(name: string): Promise<RefreshServerToolsResult> {
+    const slot = slots.get(name);
+    if (!slot) return Promise.resolve({ ok: false, reason: `unknown MCP server "${name}"` });
+    if (slot.refreshing !== undefined) {
+      slot.refreshAgain = true;
+      return slot.refreshing;
+    }
+    const run = (async (): Promise<RefreshServerToolsResult> => {
+      let result: RefreshServerToolsResult;
+      do {
+        slot.refreshAgain = false;
+        result = await refreshServerToolsOnce(name);
+        // Re-read after the await: a joiner may have set it meanwhile (tsc narrows it to `false`
+        // from the assignment above, which is exactly what the await invalidates).
+      } while ((slot.refreshAgain as boolean | undefined) === true && slots.get(name) === slot);
+      return result;
+    })().finally(() => {
+      slot.refreshing = undefined;
+    });
+    slot.refreshing = run;
+    return run;
+  }
+
+  async function refreshServerToolsOnce(name: string): Promise<RefreshServerToolsResult> {
     const slot = slots.get(name);
     if (!slot) return { ok: false, reason: `unknown MCP server "${name}"` };
     if (slot.state !== "connected" || !slot.client) {
@@ -940,6 +1071,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         });
         installExecutorsForSlot(slot, tools);
         setSlotState(name, "connected", { toolNames: tools.map((t) => t.name) });
+        // WS-23: `savedTools` is what the server listed BEFORE the toggle; a change it announced
+        // while disabled was parked, and is applied now rather than left stale until the next one.
+        replayParkedToolListChange(slot);
         return;
       }
       // Rare/edge case, disclosed: the connection died on its own while disabled (or this server

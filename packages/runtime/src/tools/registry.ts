@@ -83,7 +83,8 @@ export interface JSONSchema {
 // report §54; widened Phase 4 Task 2. WS-09 §4's own prose enumerates only three hints
 // (readOnlyHint/destructiveHint/openWorldHint), matching WS-06 §1.1's identical three-field comment
 // -- but the REAL MCP protocol `ToolAnnotations` type carries five (verified empirically against
-// @modelcontextprotocol/sdk@1.30.0's own `Client.listTools()` result shape: a registered tool's
+// @modelcontextprotocol/sdk@1.30.0's own `Client.listTools()` result shape, and unchanged in the v2
+// `@modelcontextprotocol/client` the runtime uses since WS-23: a registered tool's
 // listed `annotations` object includes `title`/`idempotentHint` alongside the three WS-09 §4 names).
 // WS-09 §4's own MUST ("preserved end-to-end") is taken literally over its truncated enumeration:
 // dropping a real connected server's `idempotentHint`/`title` here would silently violate
@@ -800,8 +801,9 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
 
 // Fix round 1, RULING P4-B (MAJOR item 2): the standing server's own name is RESERVED as a live-MCP server identity,
 // independent of whatever happens to be statically registered under it at any given moment. The
-// standing server (mcp/winter-server.ts) is registry-native -- it builds its own real
-// @modelcontextprotocol/sdk McpServer object and is NEVER installed through this function -- so a
+// standing server (whose name lives in mcp/winter-server.ts) is registry-native -- it is NEVER
+// installed through this function (WS-23 deleted the empty server-object factory that file used to
+// hold; nothing registers standing-server tools yet) -- so a
 // call like registerMcpServerTools(<that name>, [{name: "browser", ...}]) must be refused even for a
 // tool name that has never been seen before and so would not trip the ordinary per-name collision
 // check below (that check only catches a name that already happens to be registered; a brand-new
@@ -972,7 +974,7 @@ export function registerMcpServerTools(
   if (RESERVED_MCP_SERVER_NAMES.has(server)) {
     throw new Error(
       `registerMcpServerTools: "${server}" is a RESERVED server name -- the standing Winter server ` +
-        `(mcp/winter-server.ts) owns this identity and is registry-native; it is never installed through ` +
+        `(its name is defined in mcp/winter-server.ts) owns this identity and is registry-native; it is never installed through ` +
         `this live-mutation function, and nothing else may register live tools under it either.`,
     );
   }

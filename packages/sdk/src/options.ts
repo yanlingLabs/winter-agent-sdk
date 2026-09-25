@@ -164,11 +164,11 @@ export function resolveWebToolsConfig(web: WebToolsConfig | undefined): Resolved
 // as-is) and adds the ONE variant the wire-safe `McpServerConfigForProcessTransport` union
 // deliberately excludes: an in-process SDK server carrying a LIVE, non-serializable instance.
 //
-// `instance` is typed `unknown`, NOT the real `@modelcontextprotocol/sdk` `McpServer` type: nothing
-// in this package constructs one -- Winter has no `createSdkMcpServer()`-equivalent public factory
-// yet (out of this task's scope; the standing Winter server, packages/runtime/src/mcp/
-// winter-server.ts, builds one directly runtime-side instead, never through this Options surface).
-// Adding `@modelcontextprotocol/sdk` as a dependency of this Node-fenced, portable sdk package for
+// `instance` is typed `unknown`, NOT a real MCP SDK server type (`@modelcontextprotocol/server`'s
+// `McpServer` since WS-23; `@modelcontextprotocol/sdk`'s before): nothing in this package constructs
+// one -- Winter has no `createSdkMcpServer()`-equivalent public factory, and nothing runtime-side
+// builds one either (WS-23 deleted the unused standing-server factory).
+// Adding an MCP SDK package as a dependency of this Node-fenced, portable sdk package for
 // one field nothing produces or reads would be a needless footprint increase; a host that already
 // depends on that package directly can still build this shape by hand (TypeScript structurally
 // accepts any value under `unknown`), and query.ts's own serialization (see its own
@@ -197,9 +197,9 @@ export type { McpServerToolPolicy, McpStdioServerConfig, McpHttpServerConfig, Mc
 // runtime (isWinterMcpServerInstance) rather than the field's own declared type ever requiring it, so
 // a host that only cares about the (already-shipped) wire-safety guarantee pays no new type
 // obligation. `content`/`isError` loosely mirror the real MCP `CallToolResult` shape closely enough
-// for a host-authored adapter to wrap a real `@modelcontextprotocol/sdk` `McpServer` around this
-// interface (e.g. via an in-memory Client/Transport pair, exactly how T2's own winter-server.test.ts
-// already proves the real SDK's shape) without this package taking on that dependency itself.
+// for a host-authored adapter to wrap a real MCP SDK `McpServer` around this interface (e.g. via an
+// in-memory Client/Transport pair, the shape the runtime's own mcp/transports/sdk.test.ts connects
+// to) without this package taking on that dependency itself.
 export interface WinterMcpServerInstance {
   listTools(): Array<{
     name: string;
