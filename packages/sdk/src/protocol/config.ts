@@ -133,6 +133,10 @@ export interface RuntimeHookMatcherGroup {
   // relying on the type checker to catch it). Absent entirely (not just an empty array) when no
   // group in this event has any hook name worth carrying — see query.ts's own builder.
   hookNames?: Array<string | null>;
+  // WS-23: `HookCallbackMatcher.failClosed`, carried verbatim (a plain boolean survives JSON). Absent
+  // unless the host set it to true -- see query.ts's builder -- so a session that never opts in sends
+  // the byte-identical config it always did.
+  failClosed?: boolean;
 }
 
 // Keyed by an OPEN string, deliberately NOT the closed `HookEvent` union `Options.hooks` itself uses

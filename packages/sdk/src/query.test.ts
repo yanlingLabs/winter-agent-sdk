@@ -2285,3 +2285,27 @@ test.skipIf(process.platform !== "darwin")(
   },
   30_000,
 );
+
+// --- WS-23: `HookCallbackMatcher.failClosed` crosses the wire as `RuntimeHookMatcherGroup.failClosed` --
+
+test("WS-23: a fail-closed matcher carries `failClosed: true` onto --config-json; an ordinary one carries no key at all", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      hooks: {
+        PreToolUse: [
+          { matcher: "Bash", failClosed: true, hooks: [async () => ({})] },
+          { matcher: "Edit|Write", hooks: [async () => ({})] },
+        ],
+      },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+  const groups = (capture.get()["hooks"] as Record<string, Array<Record<string, unknown>>>)["PreToolUse"]!;
+  expect(groups[0]).toMatchObject({ matcher: "Bash", hookCount: 1, source: "sdk", failClosed: true });
+  expect(groups[1]).toMatchObject({ matcher: "Edit|Write", hookCount: 1, source: "sdk" });
+  expect(groups[1]).not.toHaveProperty("failClosed");
+});
