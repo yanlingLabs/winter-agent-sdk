@@ -19,8 +19,13 @@
 //     `provider/scenario-fake.ts` is not reused because its scripted tool is hard-coded to `Glob`,
 //     and it backs the differential goldens, so it is not widened for this gate.
 //
-// WHAT IS ASSERTED, per leg (`legacy`, the stdio default; and `auto`, whose in-place
-// `server/discover` probe the fixture answers `-32601`, so it must fall back):
+// Fix round 1 adds an HTTP leg (web search rides Streamable HTTP): a raw legacy HTTP MCP server in
+// this file, reached on the http default (`auto`), that answers the `server/discover` probe with a
+// 500 -- an answer the v2 client refuses on its own, so the leg also proves Winter's one-shot legacy
+// retry (mcp/client.ts) survives compilation.
+//
+// WHAT IS ASSERTED, per leg (`legacy`, the stdio default; `auto` on stdio, whose in-place
+// `server/discover` probe the fixture answers `-32601`, so it must fall back; `http`):
 //   1. `system/init.mcp_servers` lists `ping` as `connected` at protocol revision 2025-11-25 — the v2
 //      client's handshake ran inside the binary and the negotiated version reached the status;
 //   2. `system/init.tools` offers `mcp__ping__gate_ping` — `tools/list` ran and registration worked;
@@ -87,10 +92,39 @@ function startFakeModel(): FakeModel {
   return { url: `http://127.0.0.1:${server.port}`, bodies, close: () => server.stop(true) };
 }
 
-async function runLeg(binPath: string, leg: "legacy" | "auto"): Promise<void> {
+/** A raw 2025-era Streamable HTTP MCP server: one tool, `gate_ping`; the probe is answered 500. */
+function startLegacyHttpMcp(label: string): { url: string; methods: string[]; close(): void } {
+  const methods: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      if (req.method !== "POST") return new Response(null, { status: 405 });
+      const body = (await req.json()) as { id?: unknown; method?: string };
+      methods.push(String(body.method));
+      const json = (obj: unknown, headers: Record<string, string> = {}) => new Response(JSON.stringify(obj), { headers: { "content-type": "application/json", ...headers } });
+      switch (body.method) {
+        case "initialize":
+          return json({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "raw-http", version: "1" } } }, { "mcp-session-id": "verify-session" });
+        case "notifications/initialized":
+          return new Response(null, { status: 202 });
+        case "tools/list":
+          return json({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "gate_ping", inputSchema: { type: "object", properties: {} } }] } });
+        case "tools/call":
+          return json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: `PONG-${label}` }] } });
+        default:
+          return new Response("Internal Server Error", { status: 500 });
+      }
+    },
+  });
+  return { url: `http://127.0.0.1:${server.port}/mcp`, methods, close: () => server.stop(true) };
+}
+
+async function runLeg(binPath: string, leg: "legacy" | "auto" | "http"): Promise<void> {
   const winterHome = mkdtempSync(join(tmpdir(), `winter-verify-mcp-${leg}-`));
   const fake = startFakeModel();
   const label = `compiled-${leg}`;
+  const http = leg === "http" ? startLegacyHttpMcp(label) : undefined;
   try {
     const config = {
       sessionId: `verify-mcp-compiled-${leg}`,
@@ -104,13 +138,16 @@ async function runLeg(binPath: string, leg: "legacy" | "auto"): Promise<void> {
       settingSources: [],
       strictMcpConfig: true,
       mcpServers: {
-        ping: {
-          command: Bun.which("node") ?? process.execPath,
-          args: [PING_FIXTURE, "--label", label],
-          // `alwaysLoad`: startup waits for it, so it is `connected` in `system/init` by construction.
-          alwaysLoad: true,
-          ...(leg === "auto" ? { versionNegotiation: "auto" } : {}),
-        },
+        // `alwaysLoad`: startup waits for it, so it is `connected` in `system/init` by construction.
+        ping:
+          http !== undefined
+            ? { type: "http", url: http.url, alwaysLoad: true }
+            : {
+                command: Bun.which("node") ?? process.execPath,
+                args: [PING_FIXTURE, "--label", label],
+                alwaysLoad: true,
+                ...(leg === "auto" ? { versionNegotiation: "auto" } : {}),
+              },
       },
     };
     const proc = Bun.spawn([binPath, "--run", "--config-json", JSON.stringify(config)], {
@@ -140,9 +177,11 @@ async function runLeg(binPath: string, leg: "legacy" | "auto"): Promise<void> {
     if (!fake.bodies[1]!.includes(`PONG-${label}`)) fail(`the model's second request carries no tool_result with PONG-${label} -- the tools/call never came back`);
     if (!JSON.stringify(messages).includes(FINAL_TEXT)) fail("the session never produced the final answer");
     if (exitCode !== 0) fail("the compiled binary exited non-zero");
+    if (http !== undefined && (http.methods[0] !== "server/discover" || !http.methods.includes("initialize"))) fail(`the http leg did not probe then fall back: ${JSON.stringify(http.methods)}`);
     console.log(`verify:mcp-compiled [${leg}] OK — connected at ${ping!.protocolVersion}, ${MCP_TOOL} offered, tools/call answered PONG-${label}`);
   } finally {
     fake.close();
+    http?.close();
     rmSync(winterHome, { recursive: true, force: true });
   }
 }
@@ -155,7 +194,8 @@ if (import.meta.main) {
     await buildRuntime({ out: binPath });
     await runLeg(binPath, "legacy");
     await runLeg(binPath, "auto");
-    console.log("verify:mcp-compiled OK — the compiled binary speaks MCP over stdio through @modelcontextprotocol/client v2");
+    await runLeg(binPath, "http");
+    console.log("verify:mcp-compiled OK — the compiled binary speaks MCP over stdio and Streamable HTTP through @modelcontextprotocol/client v2");
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     // process.exitCode, never process.exit(): the `finally` must still delete the ~60 MB binary
