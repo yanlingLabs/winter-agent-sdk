@@ -24,6 +24,22 @@ describe("toWireMcpStatus / mcpServerStatesToWire (T1's Open Question 5)", () =>
       { name: "auth-needed", status: "needs-auth" },
     ]);
   });
+  test("WS-23: a live connection's negotiated protocolVersion rides along -- and ONLY when present, so every other entry stays name+status", async () => {
+    const states = [
+      { name: "modern", state: "connected" as const, toolNames: [], protocolVersion: "2026-07-28" },
+      { name: "legacy", state: "connected" as const, toolNames: [], protocolVersion: "2025-11-25" },
+      { name: "down", state: "failed" as const, toolNames: [] },
+    ];
+    const wire = [
+      { name: "modern", status: "connected", protocolVersion: "2026-07-28" },
+      { name: "legacy", status: "connected", protocolVersion: "2025-11-25" },
+      { name: "down", status: "failed" },
+    ];
+    expect(mcpServerStatesToWire(states)).toEqual(wire);
+    expect("protocolVersion" in mcpServerStatesToWire(states)[2]!).toBe(false);
+    // The ONE mapping site feeds `mcp_status` too, so both surfaces carry it identically.
+    expect(await handleMcpStatus({ stateSource: createFakeMcpServerStateSource(states) })).toEqual({ ok: true, payload: { servers: wire } });
+  });
 });
 
 describe("handleMcpStatus", () => {

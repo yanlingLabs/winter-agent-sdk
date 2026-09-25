@@ -608,8 +608,9 @@ describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnec
   });
 
   test("refreshServerTools: re-queries an already-connected server's tools/list and re-registers a genuinely changed list, without reconnecting", async () => {
-    // A hand-built low-level server (not test-fixtures.ts's own createFixtureMcpServer, which
-    // captures its tool list ONCE at construction from a plain spec object) -- this test needs the
+    // A hand-built low-level server (written when test-fixtures.ts's createFixtureMcpServer still
+    // captured its tool list ONCE at construction; since WS-23 it reads `spec.tools` per request, and
+    // the listChanged tests below use that) -- this test needs the
     // SERVER's own tools/list answer to genuinely change BETWEEN two calls over the SAME connection,
     // which requires a live, mutable closure the server's own request handler reads fresh each time.
     let toolName = "v1";
@@ -917,3 +918,142 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
   });
 });
 
+// --- WS-23: the MCP TS SDK v2 port -- hardening, negotiation config, listChanged ------------------
+
+describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, listChanged re-registers", () => {
+  test("a type 'sdk' entry from a settings, project or plugin FILE is refused typed; the host's explicit one still resolves", () => {
+    const sdkEntry = { type: "sdk", name: "fake", tools: [{ name: "pretend", inputSchema: { type: "object" } }] };
+    const sources: McpServerSource[] = [
+      { origin: "explicit", servers: { hostsdk: { type: "sdk", name: "hostsdk" } } },
+      { origin: "settings", servers: { fromsettings: sdkEntry } },
+      { origin: "project", servers: { fromproject: sdkEntry } },
+      { origin: "plugin", servers: { fromplugin: sdkEntry } },
+    ];
+    // Trusted, so the project refusal is not the trust gate's `disabled` verdict: a file cannot
+    // supply an in-process server whether or not the workspace is trusted.
+    const result = resolveMcpServerSources(sources, { trustedWorkspace: true });
+    expect(result.resolved).toEqual([{ name: "hostsdk", origin: "explicit", config: { type: "sdk", name: "hostsdk" } }]);
+    expect(result.rejected.map((r) => [r.name, r.origin, r.code])).toEqual([
+      ["fromsettings", "settings", "sdk_type_from_file_config"],
+      ["fromproject", "project", "sdk_type_from_file_config"],
+      ["fromplugin", "plugin", "sdk_type_from_file_config"],
+    ]);
+    expect(result.rejected[0]!.reason).toContain("only be declared by the host");
+  });
+
+  test("...so a file-sourced 'sdk' entry can no longer be REPORTED connected with the tools it claims (the state-only feed never sees it)", async () => {
+    const resolved = resolveMcpServerSources([{ origin: "plugin", servers: { ghost: { type: "sdk", name: "ghost", tools: [{ name: "t", inputSchema: {} }] } } }], { trustedWorkspace: true }).resolved;
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()).toEqual([]);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  test("every rejection carries a typed code: invalid_config and reserved_name", () => {
+    const result = resolveMcpServerSources([{ origin: "explicit", servers: { winter: { command: "x" }, bad: { type: "carrier-pigeon" } } }], { trustedWorkspace: true });
+    expect(result.rejected.map((r) => [r.name, r.code])).toEqual([
+      ["winter", "reserved_name"],
+      ["bad", "invalid_config"],
+    ]);
+  });
+
+  test("versionNegotiation: 'legacy', 'auto' and a { pin } resolve; garbage, a malformed pin, extra keys and the field on an sdk entry are refused at resolution", () => {
+    const ok = resolveMcpServerSources(
+      [{ origin: "settings", servers: { a: { command: "x", versionNegotiation: "legacy" }, b: { type: "http", url: "http://x", versionNegotiation: "auto" }, c: { type: "sse", url: "http://x", versionNegotiation: { pin: "2026-07-28" } } } }],
+      { trustedWorkspace: true },
+    );
+    expect(ok.rejected).toEqual([]);
+    expect(ok.resolved.map((r) => r.name)).toEqual(["a", "b", "c"]);
+    const bad = resolveMcpServerSources(
+      [
+        {
+          origin: "settings",
+          servers: {
+            word: { command: "x", versionNegotiation: "modern" },
+            pin: { type: "http", url: "http://x", versionNegotiation: { pin: "latest" } },
+            extra: { type: "http", url: "http://x", versionNegotiation: { pin: "2026-07-28", fallback: true } },
+          },
+        },
+        { origin: "explicit", servers: { insdk: { type: "sdk", name: "insdk", versionNegotiation: "auto" } } },
+      ],
+      { trustedWorkspace: true },
+    );
+    expect(bad.resolved).toEqual([]);
+    expect(bad.rejected.map((r) => [r.name, r.code])).toEqual([
+      ["insdk", "invalid_config"],
+      ["word", "invalid_config"],
+      ["pin", "invalid_config"],
+      ["extra", "invalid_config"],
+    ]);
+    expect(bad.rejected.find((r) => r.name === "word")!.reason).toContain("versionNegotiation");
+  });
+
+  test("a server's tool-list-changed notification re-registers its tools through refreshServerTools -- no reconnect, the new tool callable, the old one gone", async () => {
+    const spec: FixtureServerSpec = { toolsListChanged: true, tools: [{ name: "before", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "before" }] }) }] };
+    const server = createFixtureMcpServer(spec);
+    let connects = 0;
+    const counting: InProcessMcpServer = { connect: (t) => (connects++, server.connect(t)) };
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "lc", origin: "explicit", config: { type: "sdk", name: "lc" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { lc: counting } });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["before"]);
+      spec.tools = [{ name: "after", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "after" }] }) }];
+      await server.sendToolListChanged();
+      // The client debounces the notification (300 ms), then the refresh is one tools/list round trip.
+      for (let i = 0; i < 200 && lifecycle.stateSource.snapshot()[0]!.toolNames[0] !== "after"; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lifecycle.stateSource.snapshot()[0]).toMatchObject({ state: "connected", toolNames: ["after"] });
+      expect(getRegisteredTool("mcp__lc__before")).toBeUndefined();
+      expect(await getRegisteredTool("mcp__lc__after")!.executor!.execute({}, {} as never)).toEqual({ output: "after" });
+      expect(connects).toBe(1);
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  });
+
+  test("a change announced while the server is DISABLED is parked, then applied when it is toggled back on (never the stale savedTools)", async () => {
+    const spec: FixtureServerSpec = { toolsListChanged: true, tools: [{ name: "old", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [] }) }] };
+    const server = createFixtureMcpServer(spec);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "park", origin: "explicit", config: { type: "sdk", name: "park" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { park: server } });
+    try {
+      await lifecycle.start();
+      await lifecycle.controlSeam.toggle("park", false);
+      spec.tools = [{ name: "new", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [] }) }];
+      await server.sendToolListChanged();
+      await new Promise((r) => setTimeout(r, 500)); // past the client's debounce: the signal has landed (and been parked)
+      expect(lifecycle.stateSource.snapshot()[0]).toMatchObject({ state: "disabled", toolNames: ["old"] });
+      await lifecycle.controlSeam.toggle("park", true);
+      for (let i = 0; i < 200 && lifecycle.stateSource.snapshot()[0]!.toolNames[0] !== "new"; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lifecycle.stateSource.snapshot()[0]).toMatchObject({ state: "connected", toolNames: ["new"] });
+      expect(getRegisteredTool("mcp__park__old")).toBeUndefined();
+      expect(getRegisteredTool("mcp__park__new")).toBeDefined();
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  });
+
+  test("the negotiated protocolVersion is on the state board for a live connection only (absent once it fails or is torn down)", async () => {
+    const resolved: ResolvedMcpServerEntry[] = [
+      { name: "live", origin: "explicit", config: { ...stdioFixtureCommand(), env: {} } },
+      { name: "dead", origin: "explicit", config: { command: "/no/such/binary-ws23-version" } },
+    ];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
+    try {
+      await lifecycle.start();
+      await lifecycle.stateSource.waitForPending(undefined, 5000);
+      const byName = Object.fromEntries(lifecycle.stateSource.snapshot().map((s) => [s.name, s]));
+      expect(byName["live"]).toMatchObject({ state: "connected", protocolVersion: "2025-11-25" });
+      expect(byName["dead"]!.state).toBe("failed");
+      expect("protocolVersion" in byName["dead"]!).toBe(false);
+    } finally {
+      await lifecycle.dispose();
+    }
+    expect(lifecycle.stateSource.snapshot().every((s) => s.protocolVersion === undefined)).toBe(true);
+  }, 15_000);
+});

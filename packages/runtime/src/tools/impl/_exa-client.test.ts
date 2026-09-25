@@ -155,6 +155,43 @@ describe("anonymous first", () => {
   });
 });
 
+describe("WS-23: the search backend on the MCP TS SDK v2", () => {
+  // Exa is reached through `connectMcpServer` -- the one MCP client -- so the v2 migration runs
+  // through web search. These pin the two things the port had to decide for it: the connect is the
+  // plain legacy handshake (no `server/discover` probe, deliberately not the http default), and the
+  // v2 error classes still classify by HTTP STATUS on both the handshake and a live session.
+  test("connects on the plain legacy handshake: no server/discover probe, the first POST is `initialize`, and every search is one tools/call", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const { client } = clientFor(fixture.endpoint);
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: true, tier: "anonymous" });
+        expect(await client.search({ query: "two" })).toMatchObject({ ok: true, tier: "anonymous" });
+        const rpc = fixture.requests.filter((r) => r.method === "POST").map((r) => r.rpcMethod);
+        expect(rpc).not.toContain("server/discover");
+        expect(rpc[0]).toBe("initialize");
+        expect(rpc.filter((m) => m === "tools/call")).toHaveLength(2);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  test("a MID-SESSION 429 (v2's SdkHttpError, whose `.code` is now a string) still opens the breaker by status, and falls back to the key", async () => {
+    let limitNow = false;
+    await withExaFixture({ gate: (r) => (limitNow && r.apiKey === null && r.sessionId !== null ? new Response("", { status: 429 }) : undefined) }, async (fixture) => {
+      const { client, clock: c, state } = clientFor(fixture.endpoint, { resolveKey: found });
+      try {
+        expect(await client.search({ query: "one" })).toMatchObject({ ok: true, tier: "anonymous" });
+        limitNow = true; // the anonymous SESSION now answers 429, with an empty body
+        expect(await client.search({ query: "two" })).toMatchObject({ ok: true, tier: "key" });
+        expect(anonymousBreakerOpen(state, c.now())).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+});
+
 describe("the key as fallback, and the circuit breaker", () => {
   test("anonymous 429 -> key fallback (HEADER, never the URL) -> the breaker SKIPS anonymous next call -> RE-PROBE after the cooldown", async () => {
     let anonymousLimited = true;
