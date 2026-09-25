@@ -95,7 +95,9 @@ describe("createRegistry — resolution", () => {
     // row resolves" rather than "every row is candidate". `supported` stays unreachable: it requires
     // the behavioural corpus (WS-13 §13).
     for (const model of catalog.models) {
-      expect([model.key, model.status]).toEqual([model.key, model.status === "experimental" ? "experimental" : "candidate"]);
+      // `deprecated` (2026-09-25 refresh) is a vendor-retired row: listings and slots drop it, but the registry
+      // still resolves it so a stored tag fails at the vendor rather than as an unknown key.
+      expect([model.key, model.status]).toEqual([model.key, model.status === "experimental" || model.status === "deprecated" ? model.status : "candidate"]);
       expect(ok(fullRegistry().resolve({ model: model.key })).modelKey).toBe(model.key);
     }
   });

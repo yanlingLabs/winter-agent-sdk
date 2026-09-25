@@ -238,7 +238,7 @@
     },
     {
       "id": "alibaba",
-      "displayName": "Alibaba Cloud Model Studio",
+      "displayName": "Alibaba Cloud Model Studio (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions",
         "openai-responses"
@@ -265,6 +265,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
@@ -272,8 +273,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Singapore (international) OpenAI-compatible base `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`; per-token billing (https://www.alibabacloud.com/help/en/model-studio/model-pricing)."
+        "citation": "https://bailian.console.alibabacloud.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope-intl.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -340,6 +341,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
         ]
@@ -348,8 +350,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Beijing (China) OpenAI-compatible base `https://dashscope.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`."
+        "citation": "https://dashscope.console.aliyun.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1357,6 +1359,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
@@ -1364,8 +1367,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://docs.cohere.com/v2/docs/compatibility-api — Cohere Compatibility API documentation, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://api.cohere.ai/compatibility/v1` with a Cohere API key; per-token billing per https://cohere.com/pricing."
+        "citation": "https://cohere.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.cohere.com/compatibility/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3360,7 +3363,7 @@
     },
     {
       "id": "meta",
-      "displayName": "Meta Model API",
+      "displayName": "Meta Model API (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions",
         "openai-responses"
@@ -3570,6 +3573,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
           "Host migrated from api.minimaxi.com to api.minimax.cn per the current docs; a key issued before the migration has not been probed against the new host."
@@ -3579,8 +3583,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://platform.minimax.cn/docs/api-reference/text-openai-api — MiniMax China OpenAI-compatible API reference, retrieved 2026-09-25: base `https://api.minimax.cn/v1` with an `sk-api-` key; CNY per-token billing (https://platform.minimax.cn/docs/guides/pricing-paygo)."
+        "citation": "https://www.minimaxi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.minimaxi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3795,6 +3799,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
@@ -3802,8 +3807,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://docs.mistral.ai/models and https://docs.mistral.ai/inference/pricing — Mistral La Plateforme model and pricing documentation, retrieved 2026-09-25: OpenAI-style Chat Completions at `https://api.mistral.ai/v1` with a La Plateforme API key; per-token billing."
+        "citation": "https://mistral.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.mistral.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4534,6 +4539,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "Hosted endpoints are trial/rate-limited developer access; NVIDIA marks some model endpoints deprecated without a date."
         ]
@@ -4542,8 +4548,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — NVIDIA build.nvidia.com model page, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1` with an NVIDIA API key; Free Endpoint (rate-limited trial access, no per-token billing)."
+        "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5126,6 +5132,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
         ]
@@ -5134,8 +5141,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://cloud.baidu.com/doc/qianfan-docs/s/7m95lyy43 — Baidu Qianfan's current served-model list (updated 2026-07-13), retrieved 2026-09-25: OpenAI-compatible base `https://qianfan.baidubce.com/v2`, Anthropic-compatible base `https://qianfan.baidubce.com/anthropic`; per-token CNY billing."
+        "citation": "https://cloud.baidu.com/product-s/qianfan_home — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://qianfan.baidubce.com/v2. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5357,6 +5364,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
         ]
@@ -5365,8 +5373,8 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-overview and https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start — Alibaba Cloud Token Plan (Personal) documentation, retrieved 2026-09-25: Singapore-only subscription plan; OpenAI-compatible base `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` and Anthropic base `.../apps/anthropic` with the plan key; billing is plan credits."
+        "citation": "https://www.qwencloud.com/pricing/token-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -8759,7 +8767,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -8867,7 +8875,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -8977,7 +8985,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9087,7 +9095,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9183,7 +9191,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9293,7 +9301,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9396,7 +9404,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9492,7 +9500,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9586,7 +9594,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9689,7 +9697,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9785,7 +9793,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9881,7 +9889,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -9989,7 +9997,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10097,7 +10105,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10207,7 +10215,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10317,7 +10325,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10413,7 +10421,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10523,7 +10531,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10626,7 +10634,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10722,7 +10730,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10816,7 +10824,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -10919,7 +10927,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -11015,7 +11023,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -11111,7 +11119,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -14617,22 +14625,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
-      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1,
@@ -14728,22 +14720,6 @@
         "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 4.5 has cache-write and cache-hit price columns; prompt caching is available.",
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -26626,22 +26602,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
-      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1,
@@ -26737,22 +26697,6 @@
         "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 4.5 has cache-write and cache-hit price columns; prompt caching is available.",
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -32847,17 +32791,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T08:40:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash — Thinking Supported",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T08:40:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state"
-      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.3,
@@ -32960,17 +32893,6 @@
         "sourceRef": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite — Caching Supported",
         "confidence": "declared",
         "observedAt": "2026-09-25T08:40:00Z"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite — Thinking Supported",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T08:40:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -38107,7 +38029,7 @@
           "observedAt": "2026-09-25T10:38:08Z"
         },
         "efforts": [],
-        "continuation": "opaque-provider-state"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -38212,7 +38134,7 @@
           "observedAt": "2026-09-25T10:38:08Z"
         },
         "efforts": [],
-        "continuation": "opaque-provider-state"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -38317,7 +38239,7 @@
           "observedAt": "2026-09-25T10:38:08Z"
         },
         "efforts": [],
-        "continuation": "opaque-provider-state"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -38730,7 +38652,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -38820,7 +38742,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -38910,7 +38832,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39000,7 +38922,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39090,7 +39012,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39180,7 +39102,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39270,7 +39192,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39362,7 +39284,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39451,7 +39373,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39541,7 +39463,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39631,7 +39553,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39721,7 +39643,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39811,7 +39733,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39901,7 +39823,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39991,7 +39913,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -40083,7 +40005,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -40172,7 +40094,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -40250,7 +40172,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -40330,7 +40252,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -41387,7 +41309,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -41465,7 +41387,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -41545,7 +41467,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -58783,7 +58705,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -58867,7 +58789,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -58951,7 +58873,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59051,7 +58973,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59149,7 +59071,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59247,7 +59169,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59331,7 +59253,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59417,7 +59339,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59503,7 +59425,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59596,7 +59518,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59694,7 +59616,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59778,7 +59700,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59862,7 +59784,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59962,7 +59884,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -60060,7 +59982,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -60158,7 +60080,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -60242,7 +60164,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -60328,7 +60250,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -60414,7 +60336,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -60507,7 +60429,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62293,7 +62215,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62377,7 +62299,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62461,7 +62383,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62546,7 +62468,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62630,7 +62552,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62708,7 +62630,7 @@
           "observedAt": "2026-09-25T09:45:00Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [
         "top_k",
@@ -62804,7 +62726,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62888,7 +62810,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -62981,7 +62903,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -63067,7 +62989,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -63155,7 +63077,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65270,7 +65192,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65506,7 +65428,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65566,7 +65488,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65625,7 +65547,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65684,7 +65606,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65743,7 +65665,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65802,7 +65724,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65859,7 +65781,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -65954,7 +65876,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -66046,7 +65968,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -66103,7 +66025,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -66160,7 +66082,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -66219,7 +66141,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -66278,7 +66200,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -67500,7 +67422,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -67603,7 +67525,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -67706,7 +67628,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -67809,7 +67731,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -72885,7 +72807,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -72981,7 +72903,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -73080,7 +73002,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -73179,7 +73101,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -73278,7 +73200,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -73377,7 +73299,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -73462,7 +73384,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -73550,7 +73472,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73638,7 +73560,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73726,7 +73648,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -73811,7 +73733,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -73899,7 +73821,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73987,7 +73909,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -74424,7 +74346,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -74509,7 +74431,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -74597,7 +74519,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -74685,7 +74607,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -76341,7 +76263,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -76445,7 +76367,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -77261,6 +77183,17 @@
           "confidence": "declared",
           "observedAt": "2026-09-14T00:00:00Z"
         }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0,
+          "cacheReadPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — current Z.AI USD price-per-1M-tokens table; the cached-input field is recorded as cache-read. Cache storage is Limited-time Free but is not represented by ModelPricing (retrieved 2026-09-19). GLM-4.7-Flash is listed Free for input, cached input, cache storage, and output, so this is an explicit zero list price rather than an unknown price.",
+        "confidence": "declared",
+        "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -78707,7 +78640,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -78811,7 +78744,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -78915,7 +78848,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "unsupportedParameters": [],
@@ -79011,7 +78944,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "unsupportedParameters": [],
@@ -79529,6 +79462,17 @@
         },
         "efforts": [],
         "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0,
+          "cacheReadPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — Zhipu BigModel (China) price page lists GLM-4.7-Flash as free (免费) for input and output (retrieved 2026-09-25); recorded as an explicit zero list price, not an unknown one.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -80350,7 +80294,35 @@
           "note": "Cohere Command (`command-a-plus-05-2026`, `command-r-08-2024`)"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "a-plus",
+          "canonicalModelId": "command-a-plus-05-2026",
+          "description": "Cohere's flagship Command model.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "reasoning",
+          "canonicalModelId": "command-a-reasoning-08-2025",
+          "description": "Command A tuned for reasoning.",
+          "reason": "Second: reasoning depth.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "a",
+          "canonicalModelId": "command-a-03-2025",
+          "description": "the previous Command A generation.",
+          "reason": "Third: the established model.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -80699,7 +80671,26 @@
           "note": "Tencent Hunyuan: legacy `hunyuan-*` ids and the TokenHub Hy line (`hy3`, `hy4-preview`); `hy-mt*`/`hy-role` are not matched"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "hy4",
+          "canonicalModelId": "hy4-preview",
+          "description": "Tencent's newest Hunyuan (preview).",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "hy3",
+          "canonicalModelId": "hy3",
+          "description": "the current generally available Hunyuan.",
+          "reason": "Second: the stable model.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -80811,7 +80802,26 @@
           "note": "Xiaomi MiMo (`mimo-v2.6-pro`); a reseller's `xiaomimimo/` namespace is not stripped, so those rows stay in `other`"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "pro",
+          "canonicalModelId": "mimo-v2.6-pro",
+          "description": "the strongest MiMo.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "mimo-v2.6-flash",
+          "description": "the fast, cheaper MiMo.",
+          "reason": "Second: cost and speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -80924,7 +80934,17 @@
           "note": "Meta Superintelligence Labs' Muse line on the Meta Model API (`muse-spark-1.3`)"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "spark",
+          "canonicalModelId": "muse-spark-1.3",
+          "description": "Meta's current Muse Spark model.",
+          "reason": "Only option: the newest Spark release.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -80977,7 +80997,35 @@
           "note": "Bedrock ids keep the `amazon.` vendor prefix after the region/`-v1:0` strip (`amazon.nova-pro`); `amazon.` is not in BEDROCK_PREFIXES, so the matcher allows it"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "nova-2-lite",
+          "canonicalModelId": "amazon.nova-2-lite",
+          "description": "Amazon's Nova 2 Lite reasoning model.",
+          "reason": "First: the current generation.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "pro",
+          "canonicalModelId": "amazon.nova-pro",
+          "description": "the first-generation Nova Pro.",
+          "reason": "Second: the larger first-generation model.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "micro",
+          "canonicalModelId": "amazon.nova-micro",
+          "description": "the smallest, text-only Nova.",
+          "reason": "Third: speed and cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },

@@ -3280,83 +3280,6 @@
       "scope": "llm"
     },
     {
-      "id": "xiaomi-token-plan",
-      "displayName": "Xiaomi MiMo Token Plan Singapore (OpenAI dialect)",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "$comment": "Xiaomi MiMo Token Plan, the Singapore cluster (international default). One row per cluster because the plan key is issued with its cluster's Base URL.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://token-plan-sgp.xiaomimimo.com/v1"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
-          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host."
-        ]
-      },
-      "pricingBasis": "subscription",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Singapore cluster (international default) serves OpenAI-compatible `https://token-plan-sgp.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-sgp.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
-      "id": "xiaomi-token-plan-anthropic",
-      "displayName": "Xiaomi MiMo Token Plan Singapore (Anthropic dialect)",
-      "protocols": [
-        "anthropic-messages"
-      ],
-      "$comment": "Dialect sibling of `xiaomi-token-plan`.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://token-plan-sgp.xiaomimimo.com/anthropic"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.anthropic-messages",
-      "family": "anthropic",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
-          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
-        ]
-      },
-      "pricingBasis": "subscription",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Singapore cluster (international default) serves OpenAI-compatible `https://token-plan-sgp.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-sgp.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
       "id": "qianfan-anthropic",
       "displayName": "Baidu Qianfan (Anthropic dialect)",
       "protocols": [
@@ -3475,7 +3398,7 @@
     },
     {
       "id": "meta",
-      "displayName": "Meta Model API",
+      "displayName": "Meta Model API (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions",
         "openai-responses"
@@ -3586,165 +3509,81 @@
       "scope": "llm"
     },
     {
-      "id": "zai-anthropic",
-      "displayName": "Z.AI API (Anthropic dialect)",
+      "id": "xiaomi-token-plan",
+      "displayName": "Xiaomi MiMo Token Plan Singapore (OpenAI dialect)",
       "protocols": [
-        "anthropic-messages"
+        "openai-chat-completions"
       ],
+      "$comment": "Xiaomi MiMo Token Plan, the Singapore cluster (international default). One row per cluster because the plan key is issued with its cluster's Base URL.",
       "authKinds": [
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://api.z.ai/api/anthropic"
+        "api": "https://token-plan-sgp.xiaomimimo.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Singapore cluster (international default) serves OpenAI-compatible `https://token-plan-sgp.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-sgp.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-token-plan-anthropic",
+      "displayName": "Xiaomi MiMo Token Plan Singapore (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `xiaomi-token-plan`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-sgp.xiaomimimo.com/anthropic"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.anthropic-messages",
       "family": "anthropic",
       "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/zai/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "The cited documentation (docs.z.ai/devpack/tool/claude, and docs.z.ai/scenario-example/develop-tools/claude re-read 2026-09-25) describes `https://api.z.ai/api/anthropic` only for the GLM Coding Plan; no page read states that METERED (pay-as-you-go) API keys are accepted there. Needs a live metered-key probe before this row can be trusted for token billing.",
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)",
-        "tier": "fetched-document"
-      }
-    },
-    {
-      "id": "qwen-cloud-token-plan",
-      "displayName": "Alibaba Cloud Token Plan (OpenAI dialect)",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/qwen-cloud-token-plan/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
       },
       "risk": {
         "class": "review-required",
         "reasons": [
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The key and Base URL are issued per subscription and the account region must match the cluster (https://mimo.mi.com/docs/en-US/quick-start/faq/token-plan/Team-Benefits); a key is not documented to work on another cluster's host.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
         ]
       },
-      "scope": "llm",
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-overview and https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start — Alibaba Cloud Token Plan (Personal) documentation, retrieved 2026-09-25: Singapore-only subscription plan; OpenAI-compatible base `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` and Anthropic base `.../apps/anthropic` with the plan key; billing is plan credits."
+        "citation": "https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/quick-access — Xiaomi MiMo Token Plan quick access, retrieved 2026-09-25: the Singapore cluster (international default) serves OpenAI-compatible `https://token-plan-sgp.xiaomimimo.com/v1` and Anthropic-compatible `https://token-plan-sgp.xiaomimimo.com/anthropic`; after subscribing the user receives an exclusive `tp-` key and Base URL (\"the Base URL shall be subject to what is displayed on the Token Plan page\"); billing is the subscription plan.",
+        "tier": "fetched-document"
       },
-      "$comment": "2026-09-25 refresh: re-admitted on fetched Alibaba documentation (tier fetched-document) and corrected to `subscription` — the Token Plan is a credits subscription, so its models carry no per-token price. Alibaba's Sep 23/25 pages state the plan is available ONLY in the Singapore region (the cn-beijing host on the base-url page is not a launched product)."
-    },
-    {
-      "id": "alibaba",
-      "displayName": "Alibaba Cloud Model Studio",
-      "protocols": [
-        "openai-chat-completions",
-        "openai-responses"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        "models": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
-      },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/alibaba/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Singapore (international) OpenAI-compatible base `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`; per-token billing (https://www.alibabacloud.com/help/en/model-studio/model-pricing)."
-      },
-      "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document). Model Studio also serves OpenAI Responses at `/compatible-mode/v1/responses` on this host and key (https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-responses) — listed as a protocol, but rows stay `chat` until adapter-level Responses support lands."
-    },
-    {
-      "id": "alibaba-cn",
-      "displayName": "Alibaba Cloud Bailian China (OpenAI dialect)",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "models": "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
-      },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/alibaba/cn/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Beijing (China) OpenAI-compatible base `https://dashscope.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`."
-      },
-      "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document); CNY per-token billing (https://help.aliyun.com/zh/model-studio/model-pricing)."
+      "scope": "llm"
     },
     {
       "id": "xiaomi-token-plan-cn",
@@ -3899,47 +3738,6 @@
         "tier": "fetched-document"
       },
       "scope": "llm"
-    },
-    {
-      "id": "qianfan",
-      "displayName": "Baidu Qianfan (OpenAI dialect)",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://qianfan.baidubce.com/v2",
-        "models": "https://qianfan.baidubce.com/v2/models"
-      },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/qianfan/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://cloud.baidu.com/doc/qianfan-docs/s/7m95lyy43 — Baidu Qianfan's current served-model list (updated 2026-07-13), retrieved 2026-09-25: OpenAI-compatible base `https://qianfan.baidubce.com/v2`, Anthropic-compatible base `https://qianfan.baidubce.com/anthropic`; per-token CNY billing."
-      },
-      "$comment": "2026-09-25 refresh: re-admitted on Baidu's fetched model list (tier fetched-document). The duplicate `baidu` row points at the same endpoint and is left untouched pending a consolidation decision."
     },
     {
       "id": "tencent-tokenhub",
@@ -4246,46 +4044,6 @@
       "scope": "llm"
     },
     {
-      "id": "tencent",
-      "displayName": "Tencent Hunyuan (legacy platform)",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://api.hunyuan.cloud.tencent.com/v1"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/tencent/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Platform shutting down 2026-09-30 per https://cloud.tencent.com/document/product/1729/131925; use `tencent-tokenhub`.",
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://hunyuan.tencent.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hunyuan.cloud.tencent.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
-        "tier": "pinned-upstream"
-      },
-      "$comment": "2026-09-25 refresh: Tencent announced (https://cloud.tencent.com/document/product/1729/131925) that the old Hunyuan platform at api.hunyuan.cloud.tencent.com shuts down on 2026-09-30 and that its main ids (hunyuan-turbos-latest, -t1-latest, -pro, -lite, -functioncall, the 2.0 dated ids) went offline on 2026-06-22. Successor: `tencent-tokenhub`."
-    },
-    {
       "id": "minimax-cn-anthropic",
       "displayName": "MiniMax China (Anthropic dialect)",
       "protocols": [
@@ -4402,6 +4160,289 @@
       "scope": "llm"
     },
     {
+      "id": "meta-anthropic",
+      "displayName": "Meta Model API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `meta`. Endpoint is the ROOT: the adapter appends `/v1/messages`, exactly the documented path.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.meta.ai"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://dev.meta.ai/docs/protocols/messages — Meta Model API Messages protocol, retrieved 2026-09-25: Anthropic SDK `base_url=\"https://api.meta.ai\"`, POST `/v1/messages` (and `/v1/messages/count_tokens`) with the same Model API key; per-token billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zai-anthropic",
+      "displayName": "Z.AI API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.z.ai/api/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/zai/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "The cited documentation (docs.z.ai/devpack/tool/claude, and docs.z.ai/scenario-example/develop-tools/claude re-read 2026-09-25) describes `https://api.z.ai/api/anthropic` only for the GLM Coding Plan; no page read states that METERED (pay-as-you-go) API keys are accepted there. Needs a live metered-key probe before this row can be trusted for token billing.",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)",
+        "tier": "fetched-document"
+      }
+    },
+    {
+      "id": "qwen-cloud-token-plan",
+      "displayName": "Alibaba Cloud Token Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/qwen-cloud-token-plan/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.qwencloud.com/pricing/token-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on fetched Alibaba documentation (tier fetched-document) and corrected to `subscription` — the Token Plan is a credits subscription, so its models carry no per-token price. Alibaba's Sep 23/25 pages state the plan is available ONLY in the Singapore region (the cn-beijing host on the base-url page is not a launched product). FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-overview and https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start — Alibaba Cloud Token Plan (Personal) documentation, retrieved 2026-09-25: Singapore-only subscription plan; OpenAI-compatible base `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` and Anthropic base `.../apps/anthropic` with the plan key; billing is plan credits. — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
+    },
+    {
+      "id": "alibaba",
+      "displayName": "Alibaba Cloud Model Studio (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "models": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/alibaba/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://bailian.console.alibabacloud.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope-intl.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document). Model Studio also serves OpenAI Responses at `/compatible-mode/v1/responses` on this host and key (https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-responses) — listed as a protocol, but rows stay `chat` until adapter-level Responses support lands. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Singapore (international) OpenAI-compatible base `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`; per-token billing (https://www.alibabacloud.com/help/en/model-studio/model-pricing). — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
+    },
+    {
+      "id": "alibaba-cn",
+      "displayName": "Alibaba Cloud Bailian China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "models": "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/alibaba/cn/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://dashscope.console.aliyun.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Alibaba's own base-url page (tier fetched-document); CNY per-token billing (https://help.aliyun.com/zh/model-studio/model-pricing). FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: Beijing (China) OpenAI-compatible base `https://dashscope.aliyuncs.com/compatible-mode/v1`, Anthropic base `.../apps/anthropic`. — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
+    },
+    {
+      "id": "qianfan",
+      "displayName": "Baidu Qianfan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://qianfan.baidubce.com/v2",
+        "models": "https://qianfan.baidubce.com/v2/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/qianfan/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.baidu.com/product-s/qianfan_home — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://qianfan.baidubce.com/v2. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Baidu's fetched model list (tier fetched-document). The duplicate `baidu` row points at the same endpoint and is left untouched pending a consolidation decision. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://cloud.baidu.com/doc/qianfan-docs/s/7m95lyy43 — Baidu Qianfan's current served-model list (updated 2026-07-13), retrieved 2026-09-25: OpenAI-compatible base `https://qianfan.baidubce.com/v2`, Anthropic-compatible base `https://qianfan.baidubce.com/anthropic`; per-token CNY billing. — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
+    },
+    {
+      "id": "tencent",
+      "displayName": "Tencent Hunyuan (legacy platform)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.hunyuan.cloud.tencent.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/tencent/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Platform shutting down 2026-09-30 per https://cloud.tencent.com/document/product/1729/131925; use `tencent-tokenhub`.",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://hunyuan.tencent.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hunyuan.cloud.tencent.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: Tencent announced (https://cloud.tencent.com/document/product/1729/131925) that the old Hunyuan platform at api.hunyuan.cloud.tencent.com shuts down on 2026-09-30 and that its main ids (hunyuan-turbos-latest, -t1-latest, -pro, -lite, -functioncall, the 2.0 dated ids) went offline on 2026-06-22. Successor: `tencent-tokenhub`."
+    },
+    {
       "id": "minimax-cn",
       "displayName": "MiniMax China (OpenAI dialect)",
       "protocols": [
@@ -4429,6 +4470,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
           "Host migrated from api.minimaxi.com to api.minimax.cn per the current docs; a key issued before the migration has not been probed against the new host."
@@ -4438,10 +4480,10 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://platform.minimax.cn/docs/api-reference/text-openai-api — MiniMax China OpenAI-compatible API reference, retrieved 2026-09-25: base `https://api.minimax.cn/v1` with an `sk-api-` key; CNY per-token billing (https://platform.minimax.cn/docs/guides/pricing-paygo)."
+        "citation": "https://www.minimaxi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.minimaxi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
-      "$comment": "2026-09-25 refresh: MiniMax's China docs moved from platform.minimaxi.com (now a 302 to platform.minimax.cn) and the current OpenAI reference names `https://api.minimax.cn/v1`; the old `api.minimaxi.com` host survives only in older material (the MiniMax CLI README). Endpoint switched to the documented host."
+      "$comment": "2026-09-25 refresh: MiniMax's China docs moved from platform.minimaxi.com (now a 302 to platform.minimax.cn) and the current OpenAI reference names `https://api.minimax.cn/v1`; the old `api.minimaxi.com` host survives only in older material (the MiniMax CLI README). Endpoint switched to the documented host. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://platform.minimax.cn/docs/api-reference/text-openai-api — MiniMax China OpenAI-compatible API reference, retrieved 2026-09-25: base `https://api.minimax.cn/v1` with an `sk-api-` key; CNY per-token billing (https://platform.minimax.cn/docs/guides/pricing-paygo). — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
     },
     {
       "id": "mistral",
@@ -4470,6 +4512,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
@@ -4477,10 +4520,10 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://docs.mistral.ai/models and https://docs.mistral.ai/inference/pricing — Mistral La Plateforme model and pricing documentation, retrieved 2026-09-25: OpenAI-style Chat Completions at `https://api.mistral.ai/v1` with a La Plateforme API key; per-token billing."
+        "citation": "https://mistral.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.mistral.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
-      "$comment": "2026-09-25 refresh: re-admitted on Mistral's fetched docs (tier fetched-document). Devstral and Magistral are retired (folded into Mistral Medium 3.5 / Small 4). Codestral's old dedicated host (codestral.mistral.ai) still answers but current docs show only the metered La Plateforme FIM route, so it is not a separate provider."
+      "$comment": "2026-09-25 refresh: re-admitted on Mistral's fetched docs (tier fetched-document). Devstral and Magistral are retired (folded into Mistral Medium 3.5 / Small 4). Codestral's old dedicated host (codestral.mistral.ai) still answers but current docs show only the metered La Plateforme FIM route, so it is not a separate provider. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://docs.mistral.ai/models and https://docs.mistral.ai/inference/pricing — Mistral La Plateforme model and pricing documentation, retrieved 2026-09-25: OpenAI-style Chat Completions at `https://api.mistral.ai/v1` with a La Plateforme API key; per-token billing. — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
     },
     {
       "id": "meta-llama",
@@ -4522,43 +4565,6 @@
       "$comment": "2026-09-25 refresh: the Llama API public preview (api.llama.com) was retired on 2026-07-06 (Meta's notice route https://dev.meta.ai/docs/llama-api-deprecation/, corroborated by https://github.com/deepset-ai/haystack-core-integrations/issues/3544 and https://www.promptfoo.dev/docs/providers/llamaApi/). Blocked; successor is `meta` (Meta Model API)."
     },
     {
-      "id": "meta-anthropic",
-      "displayName": "Meta Model API (Anthropic dialect)",
-      "protocols": [
-        "anthropic-messages"
-      ],
-      "$comment": "Dialect sibling of `meta`. Endpoint is the ROOT: the adapter appends `/v1/messages`, exactly the documented path.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://api.meta.ai"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.anthropic-messages",
-      "family": "anthropic",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
-        ]
-      },
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://dev.meta.ai/docs/protocols/messages — Meta Model API Messages protocol, retrieved 2026-09-25: Anthropic SDK `base_url=\"https://api.meta.ai\"`, POST `/v1/messages` (and `/v1/messages/count_tokens`) with the same Model API key; per-token billing.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
       "id": "nvidia",
       "displayName": "NVIDIA NIM",
       "protocols": [
@@ -4585,6 +4591,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "Hosted endpoints are trial/rate-limited developer access; NVIDIA marks some model endpoints deprecated without a date."
         ]
@@ -4593,10 +4600,10 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — NVIDIA build.nvidia.com model page, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1` with an NVIDIA API key; Free Endpoint (rate-limited trial access, no per-token billing)."
+        "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
-      "$comment": "2026-09-25 refresh: re-admitted on NVIDIA's fetched build.nvidia.com model pages (tier fetched-document). `free` stays correct: NVIDIA retired the credit system for build.nvidia.com in favour of per-model trial rate limits (staff reply 2025-09-10, https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567) and publishes no per-token price table. Several Nemotron pages mark their Free Endpoint DEPRECATED with no shutdown date."
+      "$comment": "2026-09-25 refresh: re-admitted on NVIDIA's fetched build.nvidia.com model pages (tier fetched-document). `free` stays correct: NVIDIA retired the credit system for build.nvidia.com in favour of per-model trial rate limits (staff reply 2025-09-10, https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567) and publishes no per-token price table. Several Nemotron pages mark their Free Endpoint DEPRECATED with no shutdown date. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — NVIDIA build.nvidia.com model page, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1` with an NVIDIA API key; Free Endpoint (rate-limited trial access, no per-token billing). — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
     },
     {
       "id": "cohere",
@@ -4626,6 +4633,7 @@
       "risk": {
         "class": "review-required",
         "reasons": [
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read",
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
@@ -4633,10 +4641,10 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "tier": "fetched-document",
-        "citation": "https://docs.cohere.com/v2/docs/compatibility-api — Cohere Compatibility API documentation, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://api.cohere.ai/compatibility/v1` with a Cohere API key; per-token billing per https://cohere.com/pricing."
+        "citation": "https://cohere.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.cohere.com/compatibility/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
-      "$comment": "2026-09-25 refresh: re-admitted on Cohere's fetched Compatibility API doc (tier fetched-document), whose documented base is `https://api.cohere.ai/compatibility/v1` (the extracted row used the api.cohere.com spelling of the same Cohere API). Cohere's native v2 Chat API is a different dialect and is not modelled. Command A+, A Reasoning and A Vision are documented as free up to rate limits, so they carry no per-token price."
+      "$comment": "2026-09-25 refresh: re-admitted on Cohere's fetched Compatibility API doc (tier fetched-document), whose documented base is `https://api.cohere.ai/compatibility/v1` (the extracted row used the api.cohere.com spelling of the same Cohere API). Cohere's native v2 Chat API is a different dialect and is not modelled. Command A+, A Reasoning and A Vision are documented as free up to rate limits, so they carry no per-token price. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://docs.cohere.com/v2/docs/compatibility-api — Cohere Compatibility API documentation, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://api.cohere.ai/compatibility/v1` with a Cohere API key; per-token billing per https://cohere.com/pricing. — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
     }
   ]
 }

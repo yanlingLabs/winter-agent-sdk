@@ -193,22 +193,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
-      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1,
@@ -738,22 +722,6 @@
         "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 4.5 has cache-write and cache-hit price columns; prompt caching is available.",
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -3214,7 +3182,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -3303,7 +3271,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -3392,7 +3360,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -3481,7 +3449,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -3572,7 +3540,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -5533,6 +5501,17 @@
           "confidence": "declared",
           "observedAt": "2026-09-14T00:00:00Z"
         }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0,
+          "cacheReadPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — current Z.AI USD price-per-1M-tokens table; the cached-input field is recorded as cache-read. Cache storage is Limited-time Free but is not represented by ModelPricing (retrieved 2026-09-19). GLM-4.7-Flash is listed Free for input, cached input, cache storage, and output, so this is an explicit zero list price rather than an unknown price.",
+        "confidence": "declared",
+        "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -7605,22 +7584,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
-      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1,
@@ -7715,22 +7678,6 @@
         "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 4.5 has cache-write and cache-hit price columns; prompt caching is available.",
         "confidence": "declared",
         "observedAt": "2026-09-25T10:25:20Z"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview — Claude Haiku 4.5 model page specifies extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected.",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T10:25:20Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -11040,17 +10987,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T08:40:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash — Thinking Supported",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T08:40:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state"
-      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.3,
@@ -11152,17 +11088,6 @@
         "sourceRef": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite — Caching Supported",
         "confidence": "declared",
         "observedAt": "2026-09-25T08:40:00Z"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite — Thinking Supported",
-          "confidence": "declared",
-          "observedAt": "2026-09-25T08:40:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -13622,7 +13547,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -22064,7 +21989,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -22700,7 +22625,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -22789,7 +22714,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -22878,7 +22803,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -22969,7 +22894,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -23046,7 +22971,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -23123,7 +23048,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -24514,7 +24439,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -24607,7 +24532,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -24709,7 +24634,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -24804,7 +24729,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -24899,7 +24824,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -24994,7 +24919,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -25096,7 +25021,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -25203,7 +25128,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -25310,7 +25235,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -25419,7 +25344,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -25528,7 +25453,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -25637,7 +25562,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -26993,7 +26918,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27086,7 +27011,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27188,7 +27113,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27283,7 +27208,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27378,7 +27303,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27473,7 +27398,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27575,7 +27500,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27682,7 +27607,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27789,7 +27714,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -27898,7 +27823,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -28007,7 +27932,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -28116,7 +28041,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -29059,7 +28984,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29144,7 +29069,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29229,7 +29154,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29326,7 +29251,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29423,7 +29348,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29522,7 +29447,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29605,7 +29530,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29702,7 +29627,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29785,7 +29710,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -29868,7 +29793,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -30801,7 +30726,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -30886,7 +30811,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -30971,7 +30896,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31068,7 +30993,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31165,7 +31090,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31264,7 +31189,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31347,7 +31272,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31444,7 +31369,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31527,7 +31452,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31610,7 +31535,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -32616,7 +32541,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -32701,7 +32626,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -32784,7 +32709,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -32876,7 +32801,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -32968,7 +32893,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -33052,7 +32977,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -33135,7 +33060,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -33218,7 +33143,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -33301,7 +33226,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -33378,7 +33303,7 @@
           "observedAt": "2026-09-25T09:45:00Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [
         "top_k",
@@ -33464,7 +33389,7 @@
           "xhigh",
           "max"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -34038,7 +33963,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -34136,7 +34061,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -34234,7 +34159,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -34329,7 +34254,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -34427,7 +34352,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -35560,7 +35485,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -35647,7 +35572,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -35734,7 +35659,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -35821,7 +35746,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -35908,7 +35833,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -35995,7 +35920,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -36079,7 +36004,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -36163,7 +36088,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -36247,7 +36172,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -36334,7 +36259,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -36421,7 +36346,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -36508,7 +36433,7 @@
           "observedAt": "2026-09-25T09:52:37Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -39693,7 +39618,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -39795,7 +39720,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -40261,7 +40186,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -40363,7 +40288,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -40626,7 +40551,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41646,7 +41571,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41705,7 +41630,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41763,7 +41688,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41821,7 +41746,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41879,7 +41804,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41937,7 +41862,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41995,7 +41920,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -42053,7 +41978,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -42109,7 +42034,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -42200,7 +42125,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -42256,7 +42181,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -42312,7 +42237,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -42406,7 +42331,7 @@
           "observedAt": "2026-09-25T10:06:30Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -43860,7 +43785,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -43948,7 +43873,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44037,7 +43962,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44126,7 +44051,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44215,7 +44140,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44304,7 +44229,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44393,7 +44318,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44482,7 +44407,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -44812,7 +44737,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -44889,7 +44814,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -44966,7 +44891,7 @@
           "observedAt": "2026-09-25T08:58:15Z"
         },
         "efforts": [],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -45705,6 +45630,17 @@
         "efforts": [],
         "continuation": "plaintext"
       },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0,
+          "cacheReadPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — Zhipu BigModel (China) price page lists GLM-4.7-Flash as free (免费) for input and output (retrieved 2026-09-25); recorded as an explicit zero list price, not an unknown one.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate"
     },
@@ -46114,7 +46050,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -46217,7 +46153,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "pricing": {
@@ -46507,7 +46443,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "unsupportedParameters": [],
@@ -46602,7 +46538,7 @@
           "high",
           "max"
         ],
-        "continuation": "plaintext",
+        "continuation": "none",
         "defaultEffort": "max"
       },
       "unsupportedParameters": [],
@@ -48506,7 +48442,7 @@
           "observedAt": "2026-09-25T10:38:08Z"
         },
         "efforts": [],
-        "continuation": "opaque-provider-state"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -48610,7 +48546,7 @@
           "observedAt": "2026-09-25T10:38:08Z"
         },
         "efforts": [],
-        "continuation": "opaque-provider-state"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -48714,7 +48650,7 @@
           "observedAt": "2026-09-25T10:38:08Z"
         },
         "efforts": [],
-        "continuation": "opaque-provider-state"
+        "continuation": "none"
       },
       "pricing": {
         "value": {

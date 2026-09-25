@@ -709,7 +709,17 @@
           "note": "Meta Superintelligence Labs' Muse line on the Meta Model API (`muse-spark-1.3`)"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "spark",
+          "canonicalModelId": "muse-spark-1.3",
+          "description": "Meta's current Muse Spark model.",
+          "reason": "Only option: the newest Spark release.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -733,7 +743,26 @@
           "note": "Xiaomi MiMo (`mimo-v2.6-pro`); a reseller's `xiaomimimo/` namespace is not stripped, so those rows stay in `other`"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "pro",
+          "canonicalModelId": "mimo-v2.6-pro",
+          "description": "the strongest MiMo.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "flash",
+          "canonicalModelId": "mimo-v2.6-flash",
+          "description": "the fast, cheaper MiMo.",
+          "reason": "Second: cost and speed.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -750,7 +779,35 @@
           "note": "Cohere Command (`command-a-plus-05-2026`, `command-r-08-2024`)"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "a-plus",
+          "canonicalModelId": "command-a-plus-05-2026",
+          "description": "Cohere's flagship Command model.",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "reasoning",
+          "canonicalModelId": "command-a-reasoning-08-2025",
+          "description": "Command A tuned for reasoning.",
+          "reason": "Second: reasoning depth.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "a",
+          "canonicalModelId": "command-a-03-2025",
+          "description": "the previous Command A generation.",
+          "reason": "Third: the established model.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -771,7 +828,26 @@
           "note": "Tencent Hunyuan: legacy `hunyuan-*` ids and the TokenHub Hy line (`hy3`, `hy4-preview`); `hy-mt*`/`hy-role` are not matched"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "hy4",
+          "canonicalModelId": "hy4-preview",
+          "description": "Tencent's newest Hunyuan (preview).",
+          "reason": "First: strength.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "hy3",
+          "canonicalModelId": "hy3",
+          "description": "the current generally available Hunyuan.",
+          "reason": "Second: the stable model.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     },
@@ -788,7 +864,35 @@
           "note": "Bedrock ids keep the `amazon.` vendor prefix after the region/`-v1:0` strip (`amazon.nova-pro`); `amazon.` is not in BEDROCK_PREFIXES, so the matcher allows it"
         }
       ],
-      "slots": [],
+      "slots": [
+        {
+          "name": "nova-2-lite",
+          "canonicalModelId": "amazon.nova-2-lite",
+          "description": "Amazon's Nova 2 Lite reasoning model.",
+          "reason": "First: the current generation.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "pro",
+          "canonicalModelId": "amazon.nova-pro",
+          "description": "the first-generation Nova Pro.",
+          "reason": "Second: the larger first-generation model.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        },
+        {
+          "name": "micro",
+          "canonicalModelId": "amazon.nova-micro",
+          "description": "the smallest, text-only Nova.",
+          "reason": "Third: speed and cost.",
+          "basis": "winter-curated",
+          "citation": "spec:WS-13c §9",
+          "status": "candidate"
+        }
+      ],
       "status": "candidate",
       "citation": "spec:WS-13c §9"
     }

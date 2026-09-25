@@ -466,8 +466,8 @@ describe("the COMMITTED catalog", () => {
       // behavioural corpus (WS-13 §13), and upstream presence promotes nothing.
       //
       // `deprecated` joined in the 2026-09-25 catalog refresh: a row whose model the VENDOR retired is
-      // shadowed at `deprecated` (the registry refuses it and listings drop it) rather than deleted, so a
-      // stored tag naming it still meets a typed refusal instead of an unknown key. It is a demotion,
+      // shadowed at `deprecated` (family listings and slot resolution drop it; the registry still resolves it)
+      // rather than deleted, so a stored tag naming it keeps a known key instead of an unknown one. It is a demotion,
       // never a promotion; the overlay row's `$comment` says why (comments are stripped from the shipped document).
       expect([m.key, m.status]).toEqual([m.key, m.status === "experimental" || m.status === "deprecated" ? m.status : "candidate"]);
       expect(["candidate", "experimental", "deprecated"]).toContain(m.status);

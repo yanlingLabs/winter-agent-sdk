@@ -1651,7 +1651,8 @@ describe("WS-13c: the wiring's model-family surface", () => {
       const resolveSlot = wiring.engineOptions.resolveSlot!;
       const opus = resolveSlot("opus", undefined);
       expect(opus.ok).toBe(true);
-      expect(opus.ok && opus.canonicalModelId).toBe("claude-opus-5");
+      // 2026-09-25 catalog refresh: the `opus` slot moved to Opus 5.5 (user ruling).
+      expect(opus.ok && opus.canonicalModelId).toBe("claude-opus-5.5");
       // §4 step 3-i: the family's own vendor provider leads.
       expect(opus.ok && opus.providerId).toBe("anthropic");
       // M-1: an UNADVERTISED foreign name records the source of the slot that resolved -- the claude
@@ -1676,6 +1677,8 @@ describe("WS-13c: the wiring's model-family surface", () => {
   });
 
   test("preferredProviders reorders the non-vendor tail, live from settings", async () => {
+    // 2026-09-25 catalog refresh: exercised on `sonnet`, not `opus` -- the `opus` slot now names Opus 5.5,
+    // which only the two vendor rows serve yet, so it has no non-vendor tail to reorder.
     // Asserted RELATIVELY rather than against a hardcoded provider id: which aggregator the
     // admission-tier tie-break picks is catalog data another task may repoint, but "a preferred
     // provider outranks whatever the tier order would have chosen" is the rule.
@@ -1685,7 +1688,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
     const unpreferred = await buildProductionWiring({ config: localSession("s-slots-unpreferred"), env: {}, winterHome: home, provider: hermetic });
     let byTier: string | undefined;
     try {
-      const r = unpreferred.engineOptions.resolveSlot!("opus", undefined);
+      const r = unpreferred.engineOptions.resolveSlot!("sonnet", undefined);
       byTier = r.ok ? r.providerId : undefined;
       expect(byTier).toBeDefined();
       expect(byTier).not.toBe("anthropic"); // the vendor row is disabled
@@ -1694,12 +1697,12 @@ describe("WS-13c: the wiring's model-family surface", () => {
       unpreferred.dispose();
     }
     // Any OTHER provider that serves the same canonical model, promoted by preference alone.
-    const other = "tabitoken";
+    const other = ["kie", "blackbox", "freeaiapikey"].find((p) => p !== byTier)!;
     expect(other).not.toBe(byTier);
     writeSettings(join(home), { providers: { anthropic: { enabled: false }, console: { enabled: false } }, preferredProviders: [other] });
     const preferred = await buildProductionWiring({ config: localSession("s-slots-preferred"), env: {}, winterHome: home, provider: hermetic });
     try {
-      expect(preferred.engineOptions.resolveSlot!("opus", undefined)).toMatchObject({ ok: true, providerId: other });
+      expect(preferred.engineOptions.resolveSlot!("sonnet", undefined)).toMatchObject({ ok: true, providerId: other });
     } finally {
       preferred.dispose();
     }
@@ -1741,7 +1744,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(resolveSlot("opus", undefined)).toMatchObject({ ok: true, providerId: "anthropic" });
       // Each `resolveChildProvider` call makes a REAL, awaited probe and records its answer, which is
       // exactly how the synchronous view becomes accurate without a startup Keychain sweep.
-      const rows = rowsForCanonicalId(loadCatalog(), "claude-opus-5");
+      const rows = rowsForCanonicalId(loadCatalog(), "claude-opus-5.5");
       expect(rows.length).toBeGreaterThan(1);
       for (const row of rows) await wiring.childFactoryOptions.resolveChildProvider!(row.key);
       // WARM: the empty store holds no record for any of them, so the slot is unservable and every
@@ -1750,7 +1753,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(warm).toMatchObject({ ok: false, code: "slot-unservable" });
       expect(!warm.ok && warm.wouldServe.map((w) => w.providerId).sort()).toEqual(rows.map((r) => r.providerId).sort());
       expect(!warm.ok && warm.wouldServe.every((w) => w.why === "no credential configured")).toBe(true);
-      expect(!warm.ok && warm.message).toContain("claude-opus-5");
+      expect(!warm.ok && warm.message).toContain("claude-opus-5.5");
     } finally {
       wiring.dispose();
     }
