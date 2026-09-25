@@ -90,10 +90,11 @@ export interface OpenAiAdapterOptions {
    * no `baseUrl` sent an xAI key to OpenAI. This lookup is `createShippedAdapters`' answer: each
    * provider's own `defaultEndpoints.api`, off its own catalog row.
    *
-   * AUTHORITATIVE WHEN PRESENT: a provider it does not know has NO generated endpoint, and the turn
-   * is refused typed (`resolveEndpoint`'s "has no endpoint") rather than handed to the adapter's
-   * vendor constant. Consulted only when `generatedBaseUrl` is absent, so a fixture that points the
-   * adapter at a loopback fake is unaffected.
+   * AUTHORITATIVE OVER THE VENDOR CONSTANT: a provider it does not know has NO generated endpoint,
+   * and the turn is refused typed (`resolveEndpoint`'s "has no endpoint") rather than handed to the
+   * adapter's vendor default. An explicit `generatedBaseUrl` still wins over it — that is a fixture
+   * pointing the adapter at a loopback fake — which is why `createShippedAdapters` passes this lookup
+   * ALONE and never both (fix round 1, M4).
    */
   generatedBaseUrls?: (providerId: string) => string | undefined;
   /**
@@ -478,12 +479,23 @@ export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescri
       ? summaryEvidence.values[0]
       : undefined;
 
+  // WS-23 fix round 1 (I3): a row whose continuation IS the provider's opaque reasoning item asks for
+  // that item on every turn it has not switched reasoning off — with or without an effort. Such a model
+  // reasons at its own default when no effort is named (xAI: "Reasoning cannot be disabled" on
+  // grok-4.5/4.6/4.7; `grok-build-0.1` and `grok-4.20-0309-reasoning` take no effort at all), and on a
+  // `store: false` request the item is the ONLY carrier of that reasoning into the next turn. Tying the
+  // request to an explicit effort left those rows declaring a continuation domain the adapter never
+  // filled — a switch away warned about state that was never captured. Absent evidence of opaque
+  // continuation the old rule stands: `include` only when reasoning was asked for.
+  const opaqueContinuation = reasoningEvidence?.supported.value === true && reasoningEvidence.continuation === "opaque-provider-state";
+
   return {
     ...(effort !== undefined ? { effort } : {}),
     ...(summary !== undefined ? { summary } : {}),
     // Codex parity, carried from Norma: encrypted continuation state is requested whenever reasoning
-    // is configured, so the completed reasoning item is replayable on later `store: false` requests.
-    wantsEncryptedContent: reasoningRequested,
+    // is configured, so the completed reasoning item is replayable on later `store: false` requests —
+    // and (I3, above) whenever the row's own continuation is that item.
+    wantsEncryptedContent: reasoningRequested || opaqueContinuation,
     enabled: true,
   };
 }
