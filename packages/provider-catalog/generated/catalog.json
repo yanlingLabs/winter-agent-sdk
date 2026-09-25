@@ -10001,13 +10001,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.144,
-          "outputPerMTokUsd": 0.574
+          "inputPerMTokUsd": 0.137931,
+          "outputPerMTokUsd": 0.551724
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-coder-next — China (Beijing) qwen3-coder-next: input $0.144, output $0.574 per million tokens; ≤32K input; >32K–128K $0.216/$0.861; >128K–256K $0.359/$1.434",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-next, ≤32K; 32K–128K: ¥1.5/¥6; 128K–256K: ¥2.5/¥10 input tier: ¥1 input/¥4 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10109,13 +10109,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.574,
-          "outputPerMTokUsd": 2.294
+          "inputPerMTokUsd": 0.551724,
+          "outputPerMTokUsd": 2.206897
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-coder-plus — China (Beijing) qwen3-coder-plus: input $0.574, output $2.294 per million tokens; ≤32K input; >32K–128K $0.861/$3.441; >128K–256K $1.434/$5.735; >256K–1M $2.868/$28.671",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-plus, ≤32K; 32K–128K: ¥6/¥24; 128K–256K: ¥10/¥40; 256K–1M: ¥20/¥200 input tier: ¥4 input/¥16 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10219,13 +10219,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.115,
-          "outputPerMTokUsd": 0.917
+          "inputPerMTokUsd": 0.110345,
+          "outputPerMTokUsd": 0.882759
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-5-122b-a10b — China (Beijing) qwen3.5-122b-a10b: input $0.115, output $0.917 per million tokens; ≤128K input; >128K–256K $0.287/$2.294",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-122b-a10b, ≤128K; >128K–256K: ¥2/¥16 input tier: ¥0.8 input/¥6.4 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10329,13 +10329,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.172,
-          "outputPerMTokUsd": 1.032
+          "inputPerMTokUsd": 0.165517,
+          "outputPerMTokUsd": 0.993103
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-5-397b-a17b — China (Beijing) qwen3.5-397b-a17b: input $0.172, output $1.032 per million tokens; ≤128K input; >128K–256K $0.43/$2.58",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-397b-a17b, ≤128K; >128K–256K: ¥3/¥18 input tier: ¥1.2 input/¥7.2 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10425,13 +10425,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.115,
-          "outputPerMTokUsd": 0.688
+          "inputPerMTokUsd": 0.110345,
+          "outputPerMTokUsd": 0.662069
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.5-plus: input $0.115, output $0.688 per million tokens; ≤128K input; >128K–256K $0.287/$1.72; >256K–1M $0.573/$3.44",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-plus, ≤128K; 128K–256K: ¥2/¥12; 256K–1M: ¥4/¥24 input tier: ¥0.8 input/¥4.8 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10535,13 +10535,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.412564,
-          "outputPerMTokUsd": 2.475384
+          "inputPerMTokUsd": 0.413793,
+          "outputPerMTokUsd": 2.482759
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-6-27b — China (Beijing) qwen3.6-27b: input $0.412564, output $2.475384 per million tokens; all input",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-27b, ≤256K input tier: ¥3 input/¥18 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10638,13 +10638,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.165,
-          "outputPerMTokUsd": 0.99
+          "inputPerMTokUsd": 0.165517,
+          "outputPerMTokUsd": 0.993103
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.6-flash: input $0.165, output $0.99 per million tokens; ≤256K input; >256K–1M $0.66/$3.961",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-flash, ≤256K; 256K–1M: ¥4.8/¥28.8 input tier: ¥1.2 input/¥7.2 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10734,13 +10734,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.276,
-          "outputPerMTokUsd": 1.651
+          "inputPerMTokUsd": 0.275862,
+          "outputPerMTokUsd": 1.655172
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.6-plus: input $0.276, output $1.651 per million tokens; ≤256K input; >256K–1M $1.101/$6.602",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-plus, ≤256K; >256K–1M: ¥8/¥48 input tier: ¥2 input/¥12 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10828,13 +10828,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 1.65,
-          "outputPerMTokUsd": 4.951
+          "inputPerMTokUsd": 1.655172,
+          "outputPerMTokUsd": 4.965517
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.7-max: input $1.65, output $4.951 per million tokens; 0–1M input tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.7-max, 0–1M input tier: ¥12 input/¥36 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -10931,13 +10931,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.276,
-          "outputPerMTokUsd": 1.101
+          "inputPerMTokUsd": 0.275862,
+          "outputPerMTokUsd": 1.103448
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.7-plus: input $0.276, output $1.101 per million tokens; ≤256K input; >256K–1M $0.826/$3.301; list price before limited-time 20% discount",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.7-plus, ≤256K; >256K–1M: ¥6/¥24; base list price before temporary 20% promotion input tier: ¥2 input/¥8 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -11027,13 +11027,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.113,
-          "outputPerMTokUsd": 0.382
+          "inputPerMTokUsd": 0.110345,
+          "outputPerMTokUsd": 0.372414
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.8-flash: input $0.113, output $0.382 per million tokens; 0–1M input tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-flash, 0–1M input tier: ¥0.8 input/¥2.7 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -11123,13 +11123,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 1.65,
-          "outputPerMTokUsd": 4.951
+          "inputPerMTokUsd": 1.655172,
+          "outputPerMTokUsd": 4.965517
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.8-max: input $1.65, output $4.951 per million tokens; 0–1M input tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-max, 0–1M input tier: ¥12 input/¥36 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -11455,13 +11455,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.144,
-          "outputPerMTokUsd": 0.574
+          "inputPerMTokUsd": 0.137931,
+          "outputPerMTokUsd": 0.551724
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-coder-next — China (Beijing) qwen3-coder-next: input $0.144, output $0.574 per million tokens; ≤32K input; >32K–128K $0.216/$0.861; >128K–256K $0.359/$1.434",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-next, ≤32K; 32K–128K: ¥1.5/¥6; 128K–256K: ¥2.5/¥10 input tier: ¥1 input/¥4 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -11557,13 +11557,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.574,
-          "outputPerMTokUsd": 2.294
+          "inputPerMTokUsd": 0.551724,
+          "outputPerMTokUsd": 2.206897
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/qwen3-coder-plus — China (Beijing) qwen3-coder-plus: input $0.574, output $2.294 per million tokens; ≤32K input; >32K–128K $0.861/$3.441; >128K–256K $1.434/$5.735; >256K–1M $2.868/$28.671",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-plus, ≤32K; 32K–128K: ¥6/¥24; 128K–256K: ¥10/¥40; 256K–1M: ¥20/¥200 input tier: ¥4 input/¥16 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -12160,13 +12160,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.165,
-          "outputPerMTokUsd": 0.99
+          "inputPerMTokUsd": 0.165517,
+          "outputPerMTokUsd": 0.993103
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.6-flash: input $0.165, output $0.99 per million tokens; ≤256K input; >256K–1M $0.66/$3.961",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-flash, ≤256K; 256K–1M: ¥4.8/¥28.8 input tier: ¥1.2 input/¥7.2 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -12531,13 +12531,13 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.113,
-          "outputPerMTokUsd": 0.382
+          "inputPerMTokUsd": 0.110345,
+          "outputPerMTokUsd": 0.372414
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing — China (Beijing) qwen3.8-flash: input $0.113, output $0.382 per million tokens; 0–1M input tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T09:40:00Z"
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-flash, 0–1M input tier: ¥0.8 input/¥2.7 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -21850,13 +21850,12 @@
         "value": [
           "text",
           "image",
-          "video",
-          "pdf"
+          "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Lite supports text, image, video, pdf inputs; PDF is mapped from document support",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T11:00:00Z"
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — per-model Input Modalities table marks Text, Image, Video supported; PDF is not listed as a separate modality",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "outputModalities": {
         "value": [
@@ -22001,13 +22000,12 @@
         "value": [
           "text",
           "image",
-          "video",
-          "pdf"
+          "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Premier supports text, image, video, pdf inputs; PDF is mapped from document support",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T11:00:00Z"
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — per-model Input Modalities table marks Text, Image, Video supported; PDF is not listed as a separate modality",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "outputModalities": {
         "value": [
@@ -22089,13 +22087,12 @@
         "value": [
           "text",
           "image",
-          "video",
-          "pdf"
+          "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Pro supports text, image, video, pdf inputs; PDF is mapped from document support",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T11:00:00Z"
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — per-model Input Modalities table marks Text, Image, Video supported; PDF is not listed as a separate modality",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "outputModalities": {
         "value": [
@@ -22533,13 +22530,12 @@
         "value": [
           "text",
           "image",
-          "video",
-          "pdf"
+          "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.aws.amazon.com/nova/latest/nova2-userguide/what-is-nova-2.html — Amazon Nova 2 Lite (US Geo) supports text, image, video, pdf inputs; PDF is mapped from document support",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T11:00:00Z"
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html — per-model Input Modalities table marks Text, Image, Video supported; PDF is not listed as a separate modality",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "outputModalities": {
         "value": [
@@ -29370,12 +29366,11 @@
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Chat reasoning_effort and Responses reasoning.effort allow none/low/high/max; default high; none disables",
+          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Chat Completions thinking toggle uses thinking.type enabled/disabled; reasoning_effort low/high/max; default high. Responses reasoning.effort additionally accepts none",
           "confidence": "declared",
-          "observedAt": "2026-09-25T08:45:47Z"
+          "observedAt": "2026-09-25T12:31:56.381Z"
         },
         "efforts": [
-          "none",
           "low",
           "high",
           "max"
@@ -29500,12 +29495,11 @@
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Chat reasoning_effort and Responses reasoning.effort allow none/low/high/max; default high; none disables",
+          "sourceRef": "https://api-docs.deepseek.com/guides/thinking_mode/ — Chat Completions thinking toggle uses thinking.type enabled/disabled; reasoning_effort low/high/max; default high. Responses reasoning.effort additionally accepts none",
           "confidence": "declared",
-          "observedAt": "2026-09-25T08:45:47Z"
+          "observedAt": "2026-09-25T12:31:56.381Z"
         },
         "efforts": [
-          "none",
           "low",
           "high",
           "max"
@@ -42697,9 +42691,9 @@
           "cacheWritePerMTokUsd": 0.375
         },
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise — current MiniMax API pay-as-you-go Token Plan price table for this M2.7 model, per million tokens (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 Pay as You Go Standard table: $0.3 input/$1.2 output/$0.06 prompt-cache read/$0.375 prompt-cache write per million tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -42789,9 +42783,9 @@
           "cacheWritePerMTokUsd": 0.375
         },
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise — current MiniMax API pay-as-you-go Token Plan price table for this M2.7 model, per million tokens (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed Pay as You Go Standard table: $0.6 input/$2.4 output/$0.06 prompt-cache read/$0.375 prompt-cache write per million tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -65828,6 +65822,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 row lists maximum output 384k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -65888,6 +65903,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 row lists maximum output 384k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -65947,6 +65983,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 row lists context window 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 row lists maximum input 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66006,6 +66063,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 row lists context window 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 row lists maximum input 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66065,6 +66143,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66124,6 +66223,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66181,6 +66301,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66425,6 +66566,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code row lists context window 256k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code row lists maximum input 256k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code row lists maximum output 256k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66482,6 +66644,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 row lists maximum output 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66541,6 +66724,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 row lists context window 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 row lists maximum input 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66600,6 +66804,20 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m3 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m3 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66706,6 +66924,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 row lists maximum output 384k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66770,6 +67009,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 row lists maximum output 384k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66833,6 +67093,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 row lists context window 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 row lists maximum input 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66896,6 +67177,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 row lists context window 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 row lists maximum input 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -66959,6 +67261,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -67022,6 +67345,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -67083,6 +67427,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -67339,6 +67704,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code row lists context window 256k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code row lists maximum input 256k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code row lists maximum output 256k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -67400,6 +67786,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 row lists maximum output 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -67463,6 +67870,27 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 row lists context window 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 row lists maximum input 200k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 row lists maximum output 128k tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -67526,6 +67954,20 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m3 row lists context window 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
+      "maxInputTokens": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m3 row lists maximum input 1M tokens; k/M expanded as decimal",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -68073,14 +68515,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.149,
-          "outputPerMTokUsd": 0.596,
-          "cacheReadPerMTokUsd": 0.03725
+          "inputPerMTokUsd": 0.132,
+          "outputPerMTokUsd": 0.528,
+          "cacheReadPerMTokUsd": 0.033
         },
         "source": "official-doc",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy3: CNY 1 input, 4 output, 0.25 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "sourceRef": "https://proxy-hk.tencentcloud.com/pt/document/product/1300/78937 — Singapore international USD list, hy3: $0.132 input/$0.528 output/$0.033 cache-hit per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -68176,14 +68618,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.894,
-          "outputPerMTokUsd": 2.682,
-          "cacheReadPerMTokUsd": 0.0447
+          "inputPerMTokUsd": 0.834,
+          "outputPerMTokUsd": 2.501,
+          "cacheReadPerMTokUsd": 0.042
         },
         "source": "official-doc",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy4-preview: CNY 6 input, 18 output, 0.3 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "sourceRef": "https://proxy-hk.tencentcloud.com/pt/document/product/1300/78937 — Singapore international USD list, hy4-preview: $0.834 input/$2.501 output/$0.042 cache-hit per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -68283,14 +68725,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.149,
-          "outputPerMTokUsd": 0.596,
-          "cacheReadPerMTokUsd": 0.03725
+          "inputPerMTokUsd": 0.132,
+          "outputPerMTokUsd": 0.528,
+          "cacheReadPerMTokUsd": 0.033
         },
         "source": "official-doc",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy3: CNY 1 input, 4 output, 0.25 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "sourceRef": "https://proxy-hk.tencentcloud.com/pt/document/product/1300/78937 — Singapore international USD list, hy3: $0.132 input/$0.528 output/$0.033 cache-hit per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -68390,14 +68832,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.894,
-          "outputPerMTokUsd": 2.682,
-          "cacheReadPerMTokUsd": 0.0447
+          "inputPerMTokUsd": 0.834,
+          "outputPerMTokUsd": 2.501,
+          "cacheReadPerMTokUsd": 0.042
         },
         "source": "official-doc",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy4-preview: CNY 6 input, 18 output, 0.3 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
-        "confidence": "inferred",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "sourceRef": "https://proxy-hk.tencentcloud.com/pt/document/product/1300/78937 — Singapore international USD list, hy4-preview: $0.834 input/$2.501 output/$0.042 cache-hit per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -72762,9 +73204,9 @@
           "cacheReadPerMTokUsd": 0.2
         },
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/developers/pricing — current global Standard Text API price table for grok-4.3; it charges the listed long-context rate for every token after the prompt reaches 200K and applies a 10% US-regional premium. This catalog records the standard short-context rate (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.x.ai/developers/pricing — grok-4.3 Standard global short-context rate: $1.25 input/$2.5 output/$0.2 cached per million; long-context threshold 200K. US-regional 1.1x applies only to models currently on that endpoint, listed as grok-4.7 and grok-4.6; not grok-4.3.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73158,9 +73600,9 @@
           "cacheReadPerMTokUsd": 0.2
         },
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/developers/pricing — current global Standard Text API price table for grok-build-0.1; it charges the listed long-context rate for every token after the prompt reaches 200K and applies a 10% US-regional premium. This catalog records the standard short-context rate (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.x.ai/developers/pricing — grok-build-0.1 Standard global short-context rate: $1 input/$2 output/$0.2 cached per million; long-context threshold 200K. US-regional 1.1x applies only to models currently on that endpoint, listed as grok-4.7 and grok-4.6; not grok-build-0.1.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T12:31:56.381Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -77212,6 +77654,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-4.5 — glm-4.5 model guide/table gives 128K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "maxOutputTokens": {
         "value": 98304,
         "source": "official-doc",
@@ -77294,6 +77743,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/llms-full.txt — glm-4.5-air model guide/table gives 128K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "maxOutputTokens": {
         "value": 98304,
         "source": "official-doc",
@@ -77376,6 +77832,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-4.6 — glm-4.6 model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "maxOutputTokens": {
         "value": 131072,
         "source": "official-doc",
@@ -77458,6 +77921,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-4.7 — glm-4.7 model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "maxOutputTokens": {
         "value": 131072,
         "source": "official-doc",
@@ -77561,6 +78031,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/llms-full.txt — glm-4.7-flash model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -77650,6 +78127,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/llms-full.txt — glm-4.7-flashx model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -77725,6 +78209,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5 — glm-5 model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "maxOutputTokens": {
         "value": 131072,
         "source": "official-doc",
@@ -77828,6 +78319,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5-turbo — glm-5-turbo model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "inputModalities": {
         "value": [
           "text"
@@ -77906,6 +78404,13 @@
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.1 — glm-5.1 model guide/table gives 200K context length; K expanded as 1,000 tokens",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T12:31:56.381Z"
+      },
       "maxOutputTokens": {
         "value": 131072,
         "source": "official-doc",
