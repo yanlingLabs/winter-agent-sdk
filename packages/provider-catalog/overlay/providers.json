@@ -3477,9 +3477,10 @@
       "id": "meta",
       "displayName": "Meta Model API",
       "protocols": [
-        "openai-chat-completions"
+        "openai-chat-completions",
+        "openai-responses"
       ],
-      "$comment": "Meta's first-party hosted API since the Llama API public preview was retired on 2026-07-06 (see the `meta-llama` row). Serves the Muse family.",
+      "$comment": "Meta's first-party hosted API since the Llama API public preview was retired on 2026-07-06 (see the `meta-llama` row). Serves the Muse family. The `-contributor` model variants (cheaper, but they opt the caller's data into Meta model training) are deliberately NOT catalogued: a data-sharing opt-in must not appear as an ordinary model choice.",
       "authKinds": [
         "api-key"
       ],
@@ -3504,7 +3505,7 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://dev.meta.ai/docs/models — Meta's Model API documentation (Meta Superintelligence Labs), retrieved 2026-09-25: OpenAI-compatible API at `https://api.meta.ai/v1` with a Model API key, pay-as-you-go per-token billing; serves the Muse Spark models.",
+        "citation": "https://dev.meta.ai/docs/models and https://dev.meta.ai/docs/pricing-rate-limits — Meta Model API documentation, retrieved 2026-09-25: OpenAI-compatible Chat Completions and Responses at `https://api.meta.ai/v1` with a Model API key; pay-as-you-go per-token billing; serves the Muse Spark models.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -4480,6 +4481,45 @@
         "citation": "https://docs.mistral.ai/models and https://docs.mistral.ai/inference/pricing — Mistral La Plateforme model and pricing documentation, retrieved 2026-09-25: OpenAI-style Chat Completions at `https://api.mistral.ai/v1` with a La Plateforme API key; per-token billing."
       },
       "$comment": "2026-09-25 refresh: re-admitted on Mistral's fetched docs (tier fetched-document). Devstral and Magistral are retired (folded into Mistral Medium 3.5 / Small 4). Codestral's old dedicated host (codestral.mistral.ai) still answers but current docs show only the metered La Plateforme FIM route, so it is not a separate provider."
+    },
+    {
+      "id": "meta-llama",
+      "displayName": "Meta Llama API",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.llama.com/compat/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/meta-llama/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "The Llama API public preview at api.llama.com was retired on 2026-07-06; Meta's first-party hosted API is now the Meta Model API (`meta`)."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://llama.developer.meta.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.llama.com/compat/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: the Llama API public preview (api.llama.com) was retired on 2026-07-06 (Meta's notice route https://dev.meta.ai/docs/llama-api-deprecation/, corroborated by https://github.com/deepset-ai/haystack-core-integrations/issues/3544 and https://www.promptfoo.dev/docs/providers/llamaApi/). Blocked; successor is `meta` (Meta Model API)."
     }
   ]
 }
