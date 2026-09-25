@@ -16,7 +16,11 @@ export const PROTOCOL_VERSION = "1.0" as const;
 // Winter-only additions beyond the pinned 5-member enum, which this field's own bare-`string` type
 // (never a closed literal union, matching item (b)'s own finding: "a BARE, UNTYPED string status,
 // not the richer 5-member literal union") accommodates without contradiction.
-export interface WireMcpServerStatus { name: string; status: string; }
+// WS-23: `protocolVersion` -- the revision a server's LIVE connection negotiated (`2025-11-25`, or
+// `2026-07-28` when the per-server `versionNegotiation` selected the modern era). Winter-owned and
+// optional: absent whenever there is no live connection, so a frame without one is byte-identical to
+// before the field existed.
+export interface WireMcpServerStatus { name: string; status: string; protocolVersion?: string; }
 
 export interface InitFrame { type: "init"; protocolVersion: ProtocolVersion; sessionId: string; cwd: string;
   model: string; permissionMode: string; tools: string[];

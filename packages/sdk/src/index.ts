@@ -68,7 +68,7 @@ export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, Sandbo
 // `RuntimeAgentDefinition` is intentionally NOT re-exported under the bare name `AgentDefinition`
 // (options.ts's own export above owns that name) -- see protocol/config.ts's own header for why the
 // two differ by exactly one field (`permissionMode`).
-export type { McpServerConfigForProcessTransport, AgentMcpServerSpec, RuntimeAgentDefinition } from "./protocol/config.ts";
+export type { McpServerConfigForProcessTransport, McpVersionNegotiation, AgentMcpServerSpec, RuntimeAgentDefinition } from "./protocol/config.ts";
 
 // Wire protocol (WS-02 §3: owned by the sdk, the runtime depends on it — never the reverse).
 // Previously reachable only via the runtime; now the sdk's own public surface.
