@@ -4,6 +4,49 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.24
+
+Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus
+where Claude takes its effort on the wire.
+
+### Anthropic Messages adapter
+
+- Claude models whose catalog id is dotted (`claude-opus-4.5` … `4.8`, `claude-sonnet-4.5`/`4.6`,
+  `claude-haiku-4.5`) now reach the API under Anthropic's dashed model id (`claude-opus-4-8`); Winter's own leg
+  previously sent the dotted id and got a 404. Catalog keys and stored tags are unchanged.
+- Effort reaches current Claude models the way Anthropic documents it: a row with `reasoning.effortRequest` sends
+  `output_config.effort` plus `thinking: {type: "adaptive"}` (previously every effort became
+  `thinking.budget_tokens`, which Claude 4.7 and later reject with a 400); Opus 4.5 keeps its budget and adds
+  `output_config.effort`, which Anthropic documents as composing; rows without the field are unchanged.
+- An explicit thinking request never sends a type the row's `unsupportedParameters` names: `enabled` becomes
+  `adaptive` where `enabled` is rejected; `disabled` on an always-on model is omitted (or sent as adaptive where
+  the row needs the block-binding opt-in); `adaptive` on a budget-only model is refused before the request.
+- A forced `tool_choice` (`any` / `tool`) becomes `auto` on rows that reject it (Opus 5.5, Fable 5.1); Winter's
+  inner web-tool pass no longer guarantees a first tool call there, and the classifier still fails closed.
+- On always-on models, a summary-requesting turn sends `display: "summarized"`, so the model's progress notes
+  between tool calls stay visible.
+- Rows with `reasoning.blockBinding` (Opus 5.5, Fable 5.1) opt into `thinking-binding-controls-2026-08-01` with
+  `prefix_mismatch_behavior: "drop_block"`, so a conversation whose tools change mid-session (MCP servers
+  connecting, deferred tools loading) keeps working instead of failing "bound to a different conversation".
+
+### Catalog data
+
+- `reasoning.effortRequest` (new optional evidence field, `{ field: "output_config.effort" }`) on the ten Claude
+  models Anthropic's effort documentation lists (Fable 5.1/5, Opus 5.5/5/4.8/4.7/4.6/4.5, Sonnet 5/4.6), on both
+  `anthropic` and `console`. Anthropic-dialect rows now name the request shapes Anthropic rejects with a 400 in
+  `unsupportedParameters` (`thinking.type.enabled|disabled|adaptive`, `tool_choice.any|tool`), per model.
+- `reasoning.blockBinding` (new optional evidence field, `{ beta: "thinking-binding-controls-2026-08-01" }`) on
+  Opus 5.5 and Fable 5.1: their API binds a replayed thinking block to the conversation prefix, and the documented
+  escape is that beta with `thinking.block_binding.prefix_mismatch_behavior: "drop_block"`.
+- Restored curated defaults a re-map had dropped or changed without evidence: `openai/o4-mini` (`medium`),
+  `openai/gpt-6-astra` (`medium`). Xiaomi MiMo V2.5 rows stay `candidate` until their announced 2026-10-21
+  retirement (0.0.23 marked them `deprecated` early).
+- One CNY→USD rate for every CNY-derived price (0.1490, the 2026-09-25 reference rate); Alibaba China rows
+  re-derived from the CNY list. Tencent TokenHub international priced from its own USD list.
+- Documented values filled: Z.ai GLM context windows, Tencent Token Plan context/output limits.
+- DeepSeek's OpenAI-dialect rows drop an undocumented literal `none` effort (`low`/`high`/`max`); Amazon Nova
+  input modalities follow the AWS model cards (no `pdf`); xAI and MiniMax pricing citations corrected.
+
 ## 0.0.23
 
 The 2026-09-25 first-party provider/model catalog refresh: 213 providers (was 171), 1000 models (was
