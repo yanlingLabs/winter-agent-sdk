@@ -393,8 +393,10 @@ export type ContentBlock =
   //
   // OPAQUE FIELD DISCIPLINE (Global Constraints): `signature` and `redacted_thinking.data` ride
   // IN-DIALECT (the dialect itself defines them) and NOWHERE else -- never the advisor transcript,
-  // never the compaction summariser's input, never a log line, never an error message. The seam
-  // contract test asserts each of those negatives rather than trusting the comment.
+  // never the compaction summariser's REDACTED input, never a log line, never an error message. The
+  // seam contract test asserts each of those negatives rather than trusting the comment. (WS-23: the
+  // summariser's prefix-reusing request is the session's own request to the SAME provider, so its
+  // blocks ride in-dialect exactly as every main-loop request carries them -- not a new sink.)
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
@@ -2718,6 +2720,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   let perMessageEffortRejected = false;
   // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
   let generationEffort: { effort: string; perTurnEffort: string } | undefined;
+  // WS-23: the last main-loop request's system, index-0 context and tools, for compaction to reuse.
+  let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[] } | undefined;
   const applyPendingEffort = (): void => {
     if (pendingEffort === undefined) return;
     liveEffort = pendingEffort.effort;
@@ -6185,6 +6189,34 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // check runs against a reading a real generation has since updated.
   let lastCompactionTokens: number | null = null;
 
+  /**
+   * WS-23: the session's own outbound request for the history AS IT STANDS -- the system blocks, tools
+   * and index-0 context the main loop last sent, the live model and reasoning settings, and the
+   * outbound message list rebuilt exactly as the next main-loop request would build it (effort markers
+   * included). Handed to the compaction controller so the summary REUSES the cached prefix instead of
+   * being the one request of the session that carries no cache blocks at all.
+   *
+   * `undefined` before the first request of this run, and after a `set_model` that has not yet sent a
+   * request: the last shape was built for another model (its tools and system can differ per model),
+   * so reusing it would be neither a cache hit nor the right request.
+   */
+  const compactionPrefixRequest = (): ProviderRequest | undefined => {
+    const shape = lastMainRequestShape;
+    if (shape === undefined || shape.modelKey !== (currentProviderIdentity?.modelKey ?? currentModel)) return undefined;
+    const plan = planEffort();
+    const base = buildRequestMessages(messages, shape.userContextText);
+    const outbound = plan.markers !== undefined ? withEffortMarkers(base, plan.markers.topLevel, plan.markers.live, plan.markers.accepts) : base;
+    return {
+      messages: outbound,
+      ...(shape.system.system.length > 0 ? { system: shape.system.system } : {}),
+      ...(shape.system.systemBlocks !== undefined && shape.system.systemBlocks.length > 0 ? { systemBlocks: shape.system.systemBlocks } : {}),
+      ...(shape.tools.length > 0 ? { tools: shape.tools } : {}),
+      ...(currentModel !== undefined ? { model: currentModel } : {}),
+      ...(plan.topLevel !== undefined ? { effort: plan.topLevel } : {}),
+      ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+    };
+  };
+
   const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
     if (compactionController === undefined) {
       return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
@@ -6197,6 +6229,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const forwarded = (pre.extraContext ?? []).map((c) => c.context).filter((t) => typeof t === "string" && t.length > 0);
     const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
 
+    const prefixRequest = compactionPrefixRequest();
     let result: CompactionResult;
     try {
       result = await compactionController.compact({
@@ -6207,6 +6240,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // The LIVE provider (fix wave): after a `set_model` the summariser must run on the model the
         // session is generating with, not the one it started on.
         provider: activeProvider,
+        ...(prefixRequest !== undefined ? { prefixRequest } : {}),
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
@@ -7418,6 +7452,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         assertMessagesWithinCap(outboundMessages);
         const toolSpecs = providerToolSpecs();
         const outboundSystem = requestSystem(assembled, context);
+        // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
+        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs };
         // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
         recordSessionRequestLayout(config.sessionId, config.agentId, {
           ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),

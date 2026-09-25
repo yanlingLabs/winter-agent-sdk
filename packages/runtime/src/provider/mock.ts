@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Provider, ProviderMessage, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
 import { registerTool } from "../tools/registry.ts";
+import { isCompactionSummaryRequest } from "../compaction/summarizer.ts";
 
 // --- Phase 5 Task 2 (R5-3): the mock family's half of the provider-seam extension ------------------
 //
@@ -325,7 +326,8 @@ function rawTestProviderByName(name: TestProviderName): Provider {
       let n = 0;
       return instrumentMockProvider({
         async generate(input): Promise<ProviderTurn> {
-          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "THE COMPACTED SUMMARY" };
+          // WS-23: the summariser in EITHER shape (redacted `system`, or the prefix-reusing request).
+          if (isCompactionSummaryRequest(input)) return { kind: "text", text: "THE COMPACTED SUMMARY" };
           n++;
           // THE USAGE RAMP IS THE WHOLE FIXTURE, and it is not decoration. `retainedPairs` defaults
           // to 4 and is NOT a `RuntimeConfig` field, so no scenario can lower it -- and Lane K's

@@ -25,7 +25,7 @@
 // ProviderMessage history, which carries no `encrypted_content`/reasoning-item field at this phase.
 // A future provider phase that adds one MUST redact before this seam, not after -- a summary is
 // model-readable text and is persisted as such.
-import type { ContextAccountant, Provider, ProviderMessage } from "../engine.ts";
+import type { ContextAccountant, Provider, ProviderMessage, ProviderRequest } from "../engine.ts";
 
 export interface CompactionInput {
   messages: ProviderMessage[];
@@ -35,6 +35,19 @@ export interface CompactionInput {
   accountant: ContextAccountant;
   /** The SESSION's own provider -- R5-4: the summarizer runs on it, never on a second, separately-configured model. */
   provider: Provider;
+  /**
+   * WS-23: the session's OWN outbound request for the history as it stands -- the exact system
+   * blocks, tools, model and reasoning settings the main loop last sent, and the outbound message list
+   * (index-0 context and effort markers included). A controller that appends its instruction to this,
+   * rather than building a fresh `{messages, system}` request, reads the whole conversation from the
+   * prompt cache the main loop already wrote -- the way a byte-exact fork does -- instead of paying for
+   * the largest request of the session uncached. ABSENT before the session's first request (a
+   * `/compact` as the very first thing a resumed session does) and on a fixture: the old shape stands.
+   *
+   * In-dialect by construction: these are the bytes the SAME provider already received, so nothing
+   * here reaches a model it had not already reached.
+   */
+  prefixRequest?: ProviderRequest;
 }
 
 export interface CompactionResult {
