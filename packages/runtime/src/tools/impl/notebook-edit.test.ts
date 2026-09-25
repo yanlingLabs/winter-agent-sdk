@@ -20,7 +20,7 @@ function makeCtx(cwd: string, opts?: { readState?: SessionReadState; probe?: Rea
     cwd,
     home: "/home/test",
     sessionId: "test-session",
-    readState: opts?.readState ?? createSessionReadState(),
+    readState: opts?.readState ?? createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => opts?.probe ?? "silent" },
     tempDir: "/unused",
@@ -105,7 +105,7 @@ describe("NotebookEdit -- input validation", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "x", edit_mode: "insert" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -119,7 +119,7 @@ describe("NotebookEdit -- input validation", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "x" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -133,7 +133,7 @@ describe("NotebookEdit -- input validation", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "x", edit_mode: "delete" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -170,7 +170,7 @@ describe("NotebookEdit -- input validation", () => {
     try {
       const filePath = join(dir, "nb.ipynb");
       writeFileSync(filePath, "{not json");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "x", cell_id: "a" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -185,7 +185,7 @@ describe("NotebookEdit -- input validation", () => {
     try {
       const filePath = join(dir, "nb.ipynb");
       writeFileSync(filePath, JSON.stringify({ metadata: {}, nbformat: 4, nbformat_minor: 5 }));
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "x", cell_id: "a" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -214,7 +214,7 @@ describe("NotebookEdit -- the read-before-edit ladder gates the target", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -230,7 +230,7 @@ describe("NotebookEdit -- the read-before-edit ladder gates the target", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "  nb.ipynb  ", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -256,7 +256,7 @@ describe("NotebookEdit -- the read-before-edit ladder gates the target", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       utimesSync(filePath, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state, probe: "silent" }));
@@ -275,7 +275,7 @@ describe("NotebookEdit -- replace", () => {
         { id: "a", cell_type: "code", source: "print(1)" },
         { id: "b", cell_type: "markdown", source: "# hi" },
       ]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "print(2)", cell_id: "a" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -298,7 +298,7 @@ describe("NotebookEdit -- replace", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "print(1)" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute(
         { notebook_path: "nb.ipynb", new_source: "# now prose", cell_id: "a", cell_type: "markdown" },
@@ -316,7 +316,7 @@ describe("NotebookEdit -- replace", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "print(1)" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "# prose", cell_id: "a", cell_type: "markdown" }, makeCtx(dir, { readState: state }));
       const nb = readNotebook(filePath);
@@ -331,7 +331,7 @@ describe("NotebookEdit -- replace", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "markdown", source: "# hi" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "print(1)", cell_id: "a", cell_type: "code" }, makeCtx(dir, { readState: state }));
       const nb = readNotebook(filePath);
@@ -347,7 +347,7 @@ describe("NotebookEdit -- replace", () => {
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "print(1)" }]);
       const before = readFileSync(filePath, "utf8");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "x", cell_id: "nope" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -361,7 +361,7 @@ describe("NotebookEdit -- replace", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state }));
       const nb = readNotebook(filePath);
@@ -382,7 +382,7 @@ describe("NotebookEdit -- delete", () => {
         { id: "a", cell_type: "code", source: "keep" },
         { id: "b", cell_type: "code", source: "drop me" },
       ]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "", cell_id: "b", edit_mode: "delete" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -401,7 +401,7 @@ describe("NotebookEdit -- delete", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "", cell_id: "nope", edit_mode: "delete" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -419,7 +419,7 @@ describe("NotebookEdit -- insert", () => {
         { id: "a", cell_type: "code", source: "first" },
         { id: "b", cell_type: "code", source: "third" },
       ]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute(
         { notebook_path: "nb.ipynb", new_source: "second", cell_id: "a", cell_type: "code", edit_mode: "insert" },
@@ -449,7 +449,7 @@ describe("NotebookEdit -- insert", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "was-first" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute(
         { notebook_path: "nb.ipynb", new_source: "now-first", cell_type: "markdown", edit_mode: "insert" },
@@ -469,7 +469,7 @@ describe("NotebookEdit -- insert", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await notebookEditExecutor().execute(
         { notebook_path: "nb.ipynb", new_source: "x", cell_id: "nope", cell_type: "code", edit_mode: "insert" },
@@ -487,7 +487,7 @@ describe("NotebookEdit -- post-edit read state", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state }));
       const record = state.lookup(filePath);
@@ -502,7 +502,7 @@ describe("NotebookEdit -- post-edit read state", () => {
     const { dir, cleanup } = fixtureDir();
     try {
       const filePath = writeNotebook(dir, "nb.ipynb", [{ id: "a", cell_type: "code", source: "1" }]);
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const first = await notebookEditExecutor().execute({ notebook_path: "nb.ipynb", new_source: "2", cell_id: "a" }, makeCtx(dir, { readState: state, probe: "deny" }));
       expect(first.isError).toBeUndefined();

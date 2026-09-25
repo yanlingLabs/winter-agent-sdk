@@ -38,7 +38,7 @@ async function withStdioConnection<T>(
   fn: (client: Client, getPid: () => number | null) => Promise<T>,
 ): Promise<{ result: T; pid: number | null }> {
   const { command, args } = stdioFixtureCommand();
-  const transport = buildStdioTransport({ command, args, env });
+  const transport = buildStdioTransport({ command, args, env }, process.cwd());
   const client = new Client({ name: "stdio-transport-test", version: "1.0.0" });
 
   let capturedPid: number | null = null;
@@ -210,7 +210,7 @@ describe("fix round 1 (MAJOR M1): env allowlist over a REAL spawned child, via t
 describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- genuine RED/GREEN discriminators", () => {
   test("the spawned child is its own process-group leader: process.kill(-pid, 0) succeeds while it is alive", async () => {
     const { command, args } = stdioFixtureCommand();
-    const transport = new WinterStdioTransport({ command, args, env: {} });
+    const transport = new WinterStdioTransport({ command, args, env: {}, cwd: process.cwd() });
     await transport.start();
     const pid = transport.pid;
     expect(pid).not.toBeNull();
@@ -223,7 +223,7 @@ describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- ge
 
   test("close() reaps the WHOLE PROCESS GROUP, including a forked grandchild -- not just the direct child", async () => {
     const { command, args } = grandchildSpawningCommand();
-    const transport = new WinterStdioTransport({ command, args, env: {} });
+    const transport = new WinterStdioTransport({ command, args, env: {}, cwd: process.cwd() });
     await transport.start();
     const pid = transport.pid;
     expect(pid).not.toBeNull();
@@ -272,7 +272,7 @@ describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- ge
 
   test("a failed/timed-out connect ALSO reaps the whole group (mirrors mcp/client.ts's own catch-block close path)", async () => {
     const { command, args } = grandchildSpawningCommand();
-    const transport = new WinterStdioTransport({ command, args, env: {} });
+    const transport = new WinterStdioTransport({ command, args, env: {}, cwd: process.cwd() });
     const client = new Client({ name: "stdio-timeout-test", version: "1.0.0" });
     let capturedPid: number | null = null;
     const pollTimer = setInterval(() => {
@@ -325,7 +325,7 @@ describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- ge
     const canary = "WINTER_STDERR_CANARY_c0ffee";
     // Writes to stderr, never speaks MCP, then exits -- so the handshake fails and the tail is the
     // only evidence of why.
-    const transport = new WinterStdioTransport({ command: "/bin/sh", args: ["-c", `echo ${canary} 1>&2; sleep 0.2`], env: {} });
+    const transport = new WinterStdioTransport({ command: "/bin/sh", args: ["-c", `echo ${canary} 1>&2; sleep 0.2`], env: {}, cwd: process.cwd() });
     const client = new Client({ name: "stdio-stderr-test", version: "1.0.0" });
     try {
       await client.connect(transport, { timeout: 300 }).catch(() => {});
@@ -348,6 +348,7 @@ describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- ge
       command: "/bin/sh",
       args: ["-c", "i=0; while [ $i -lt 200 ]; do printf '%01000d' 0 1>&2; i=$((i+1)); done; sleep 0.3"],
       env: {},
+      cwd: process.cwd(),
     });
     try {
       await transport.start();

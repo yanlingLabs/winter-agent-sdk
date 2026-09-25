@@ -500,6 +500,8 @@ export interface McpLifecycleDeps {
    * `addAndConnect` guard is the second door onto the same rule. Defaults to `WINTER_SERVER_NAME`.
    */
   reservedServerName?: string;
+  /** WS-23: the session cwd every stdio server of this lifecycle is spawned in (see `ConnectMcpServerOptions.cwd`). */
+  cwd?: string;
 }
 
 export type RefreshServerToolsResult = { ok: true; toolNames: string[] } | { ok: false; reason: string };
@@ -701,6 +703,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       connectTimeoutMs: deps.envConfig.timeoutMs,
       elicitationAsk: deps.elicitationAsk,
       ...(deps.inProcessServers?.[slot.name] !== undefined ? { inProcessServer: deps.inProcessServers[slot.name] } : {}),
+      ...(deps.cwd !== undefined ? { cwd: deps.cwd } : {}),
     });
     const tools = await client.listTools();
     if (!isCurrentAttempt(slot, gen)) {

@@ -41,18 +41,17 @@ export interface SessionReadState {
 export interface SessionReadStateOptions {
   // Base a relative path passed to recordRead/lookup resolves against. Construction-time only
   // (never per-call, see the ruling note above) so a session's keying stays internally consistent.
-  // Defaults to process.cwd() -- every current caller (engine.ts) passes only absolute paths, so
-  // this default is never exercised in production today; it exists so relative-path callers get a
-  // deterministic, documented resolution instead of an implicit dependency on the daemon's own
-  // process cwd at the call site.
-  cwd?: string;
+  // WS-23: REQUIRED -- it used to default to `process.cwd()`, which for an embedded session (a Worker
+  // inside a host daemon) is the DAEMON's cwd, never the session's. The one production caller
+  // (engine.ts) passes `config.cwd`.
+  cwd: string;
 }
 
 // A fresh, empty, in-memory read history -- engine.ts constructs exactly one of these per run
 // (session-scoped lifetime, mirroring how PolicyStateStore/hookRegistry are also built once per
 // run) and threads it into every ToolExecutionContext that run ever builds.
-export function createSessionReadState(opts: SessionReadStateOptions = {}): SessionReadState {
-  const cwd = opts.cwd ?? process.cwd();
+export function createSessionReadState(opts: SessionReadStateOptions): SessionReadState {
+  const cwd = opts.cwd;
   const reads = new Map<string, ReadRecord>();
 
   function canonicalKey(p: string): string {

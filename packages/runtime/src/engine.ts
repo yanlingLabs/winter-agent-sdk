@@ -4013,6 +4013,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // ...and the same name onto the control seam's own `addAndConnect` guard (the live
       // `mcp_set_servers` door), which bypasses `resolveMcpServerSources` entirely.
       reservedServerName: sessionBrand.mcpServerName,
+      // WS-23: stdio servers start in the SESSION cwd, stated -- a spawned child used to inherit it
+      // implicitly; an embedded session's Worker has only the host daemon's cwd to inherit.
+      cwd: config.cwd,
     });
     // WS-09 §2's three-deadline model lives entirely inside `start()`: an ordinary server connects
     // in the background and this returns immediately; `MCP_CONNECTION_NONBLOCKING=0` or an

@@ -12,7 +12,7 @@ function makeCtx(cwd: string, overrides: Partial<ToolExecutionContext> = {}): To
     cwd,
     home: "/home/test",
     sessionId: "test-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: join(cwd, ".tmp"),

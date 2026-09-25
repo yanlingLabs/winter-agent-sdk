@@ -13,7 +13,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     cwd: "/work",
     home: "/synthetic/home/tester",
     sessionId: "t5-wfms-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-test",

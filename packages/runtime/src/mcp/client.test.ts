@@ -35,7 +35,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     });
     let client: ConnectedMcpClient | undefined;
     try {
-      client = await connectMcpServer({ name: "greeter", config: { type: "sdk", name: "greeter" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+      client = await connectMcpServer({ cwd: process.cwd(), name: "greeter", config: { type: "sdk", name: "greeter" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
       expect(client.serverName).toBe("greeter");
       const tools = await client.listTools();
       expect(tools).toEqual([
@@ -58,7 +58,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
 
   test("an isError tool result is returned, not thrown", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const result = await client.callTool("boom", {});
       expect(result).toEqual({ content: [{ type: "text", text: "boom" }], isError: true });
@@ -70,7 +70,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
 
   test("listResources + readResource: text inline, blob as base64 (no path-marker logic here -- that's the bridge tool's job)", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const resources = await client.listResources();
       expect(resources.map((r) => r.uri).sort()).toEqual(["fixture://blob.bin", "fixture://text.txt"]);
@@ -92,7 +92,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
       ],
     };
     const server = createFixtureMcpServer(spec);
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const tools = await client.listTools();
       expect(tools).toHaveLength(1);
@@ -124,7 +124,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
       seen.push(payload);
       return ask(payload);
     };
-    const client = await connectMcpServer({ name: "elicit-srv", config: { type: "sdk", name: "elicit-srv" }, connectTimeoutMs: 5000, elicitationAsk: wrappedAsk, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "elicit-srv", config: { type: "sdk", name: "elicit-srv" }, connectTimeoutMs: 5000, elicitationAsk: wrappedAsk, inProcessServer: server });
     try {
       const result = await client.callTool("ask", { q: "what is it" });
       const text = (result.content[0] as { text: string }).text;
@@ -153,7 +153,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
         },
       ],
     });
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const result = await client.callTool("ask", {});
       expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ action: "decline" });
@@ -167,7 +167,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     const server = createFixtureMcpServer({
       tools: [{ name: "slow", inputSchema: { type: "object", properties: {} }, handler: () => new Promise(() => {}) }], // never resolves
     });
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const started = Date.now();
       await expect(client.callTool("slow", {}, { timeoutMs: 100 })).rejects.toBeTruthy();
@@ -179,7 +179,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
   });
 
   test("connecting with type 'sdk' but no inProcessServer supplied fails fast with a typed spawn_failed error", async () => {
-    await expect(connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 1000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({
+    await expect(connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 1000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({
       code: "spawn_failed",
     });
   });
@@ -189,7 +189,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     const server = new Server({ name: "mutable", version: "1.0.0" }, { capabilities: { tools: {} } });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
     server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [] }));
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       expect((await client.listTools()).map((t) => t.name)).toEqual(["v1"]);
       toolName = "v2";
@@ -205,7 +205,7 @@ describe("connectMcpServer: error classification", () => {
   test("a nonexistent stdio command classifies as spawn_failed", async () => {
     let error: unknown;
     try {
-      await connectMcpServer({ name: "s", config: { command: "/no/such/binary-winter-lane-a-test" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      await connectMcpServer({ cwd: process.cwd(), name: "s", config: { command: "/no/such/binary-winter-lane-a-test" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
     } catch (err) {
       error = err;
     }
@@ -222,7 +222,7 @@ describe("connectMcpServer: error classification", () => {
     try {
       let error: unknown;
       try {
-        await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -239,7 +239,7 @@ describe("connectMcpServer: error classification", () => {
       const started = Date.now();
       let error: unknown;
       try {
-        await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${hungServer.port}/mcp` }, connectTimeoutMs: 150, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "http", url: `http://127.0.0.1:${hungServer.port}/mcp` }, connectTimeoutMs: 150, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -253,7 +253,7 @@ describe("connectMcpServer: error classification", () => {
 
   test("real stdio connection succeeds end-to-end through connectMcpServer (cross-transport spot check)", async () => {
     const { command, args } = stdioFixtureCommand();
-    const client = await connectMcpServer({ name: "stdio-srv", config: { command, args, env: {} }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "stdio-srv", config: { command, args, env: {} }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
     try {
       const tools = await client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual(["boom", "echo", "env_dump"]);
@@ -266,7 +266,7 @@ describe("connectMcpServer: error classification", () => {
 
   test("real http connection succeeds end-to-end through connectMcpServer (cross-transport spot check)", async () => {
     await withHttpFixture(defaultFixtureSpec(), async (url) => {
-      const client = await connectMcpServer({ name: "http-srv", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "http-srv", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         const result = await client.callTool("echo", { text: "hi" });
         expect(result).toEqual({ content: [{ type: "text", text: "echo:hi" }] });

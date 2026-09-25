@@ -15,7 +15,7 @@ function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session
     cwd: "/work",
     home: "/home/test",
     sessionId: "test-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-test",

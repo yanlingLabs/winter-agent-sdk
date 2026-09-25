@@ -131,6 +131,13 @@ export interface ConnectMcpServerOptions {
   inProcessServer?: InProcessMcpServer;
   /** `type: "http"` only: fail rather than follow a redirect -- see `buildHttpTransport`. For a direct caller whose headers carry a credential. */
   refuseHttpRedirects?: boolean;
+  /**
+   * WS-23: the session cwd a STDIO server is spawned in. Optional on this options bag only because
+   * the other three transports have no process; a stdio config connected WITHOUT one is refused
+   * typed (`spawn_failed`) rather than spawned in the host process's cwd -- which, for an embedded
+   * session (one Worker per session inside a daemon), is the daemon's, not the session's.
+   */
+  cwd?: string;
 }
 
 // --- Error classification (WS-09 §2.1's failed/needsAuth split, plus a small diagnostic taxonomy
@@ -219,7 +226,10 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
       // used to wrap, no separate pid-capture/hard-kill fallback is needed here: the generic
       // `transport!.close()` in this function's own catch block below is sufficient for every
       // transport kind, stdio included.
-      transport = buildStdioTransport(config);
+      if (opts.cwd === undefined) {
+        throw new McpConnectError("spawn_failed", `mcp client: stdio server "${name}" has no session cwd to start in; it is never started in the host process's cwd`);
+      }
+      transport = buildStdioTransport(config, opts.cwd);
     }
 
     const client = new Client(

@@ -386,7 +386,7 @@ describe("R6-6 contract: cancellation reaches BOTH sides", () => {
       sessionId: "s",
       home: "/tmp",
       getCwd: () => "/tmp",
-      readState: (await import("../tools/read-state.ts")).createSessionReadState(),
+      readState: (await import("../tools/read-state.ts")).createSessionReadState({ cwd: process.cwd() }),
       emitFrame: () => {},
       probeReadAccess: () => "silent",
       getTempDir: () => "/tmp",

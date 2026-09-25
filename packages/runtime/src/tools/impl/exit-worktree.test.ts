@@ -50,7 +50,7 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
     cwd,
     home: "/home/test",
     sessionId: "test-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-test",

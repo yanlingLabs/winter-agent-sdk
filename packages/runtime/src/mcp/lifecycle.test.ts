@@ -209,7 +209,7 @@ describe("RULING P5-K: an untrusted project server reaches the lifecycle DISABLE
     const fixture = createFixtureMcpServer(defaultFixtureSpec());
     const probe = counting(fixture);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "repo", origin: "project", config: { type: "sdk", name: "repo" }, disabledReason: "project-sourced MCP servers require a trusted workspace" }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { repo: probe.server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { repo: probe.server } });
     try {
       await lifecycle.start();
       expect(probe.connects()).toBe(0);
@@ -227,7 +227,7 @@ describe("RULING P5-K: an untrusted project server reaches the lifecycle DISABLE
     const fixture = createFixtureMcpServer(defaultFixtureSpec());
     const probe = counting(fixture);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "repo2", origin: "project", config: { type: "sdk", name: "repo2" }, disabledReason: "project-sourced MCP servers require a trusted workspace" }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { repo2: probe.server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { repo2: probe.server } });
     try {
       await lifecycle.start();
       expect(probe.connects()).toBe(0);
@@ -250,7 +250,7 @@ describe("RULING P5-K: an untrusted project server reaches the lifecycle DISABLE
     // The trap this pins: a slot constructed `pending` and skipped in `start()` would sit pending
     // forever, and the blocking-batch path (`waitForPending`) would burn the whole connect deadline.
     const resolved: ResolvedMcpServerEntry[] = [{ name: "repo3", origin: "project", config: { command: "never-run" }, disabledReason: "untrusted" }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectionNonblocking: false, connectTimeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectionNonblocking: false, connectTimeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
     try {
       const started = Date.now();
       await lifecycle.start();
@@ -266,7 +266,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
   test("a successfully connected server: registry gains its tools, state is 'connected', tool call round-trips and is output-capped", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "fix", origin: "explicit", config: { type: "sdk", name: "fix" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
     try {
       await lifecycle.start();
       const snap = lifecycle.stateSource.snapshot();
@@ -296,7 +296,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
       ],
     });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "annot-srv", origin: "explicit", config: { type: "sdk", name: "annot-srv" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "annot-srv": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "annot-srv": server } });
     try {
       await lifecycle.start();
       const registered = getRegisteredTool("mcp__annot-srv__annotated");
@@ -320,7 +320,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
       tools: [{ name: "big", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: bigText }] }) }],
     });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "fix", origin: "explicit", config: { type: "sdk", name: "fix" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ maxOutputTokens: 10 }), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ maxOutputTokens: 10 }), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
     try {
       await lifecycle.start();
       const result = await getRegisteredTool("mcp__fix__big")!.executor!.execute({}, { tempDir: sessionDir } as never);
@@ -347,7 +347,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
       tools: [{ name: "small", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "tiny" }] }) }],
     });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "fix", origin: "explicit", config: { type: "sdk", name: "fix" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
     try {
       await lifecycle.start();
       const ctx = {
@@ -368,7 +368,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
   test("an isError tool result flows through as ToolResultPayload.isError", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "fix", origin: "explicit", config: { type: "sdk", name: "fix" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
     try {
       await lifecycle.start();
       const result = await getRegisteredTool("mcp__fix__boom")!.executor!.execute({}, {} as never);
@@ -381,7 +381,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
 
   test("a failed connection (nonexistent stdio command): state is 'failed' with an errorCode, no tools registered", async () => {
     const resolved: ResolvedMcpServerEntry[] = [{ name: "broken", origin: "explicit", config: { command: "/no/such/binary-lifecycle-test" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       await lifecycle.stateSource.waitForPending(undefined, 500);
@@ -396,7 +396,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
   test("a server requiring auth (401, no authProvider configured) lands in the 'needsAuth' state, not 'failed'", async () => {
     const authServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("unauthorized", { status: 401 }) });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "gated", origin: "explicit", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       await lifecycle.stateSource.waitForPending(undefined, 500);
@@ -416,7 +416,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     // file's own comment at that call site), never left racing the caller in the background the way
     // a real stdio/http/sse connection legitimately can be. The NEXT test proves the actual
     // alwaysLoad WAIT mechanism using a real (non-sdk) transport, where the flag genuinely exists.
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { eager: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { eager: server } });
     try {
       const started = Date.now();
       await lifecycle.start();
@@ -431,7 +431,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
   test("alwaysLoad on a REAL (stdio) transport: start() actually waits for it to finish connecting", async () => {
     const { command, args } = stdioFixtureCommand();
     const resolved: ResolvedMcpServerEntry[] = [{ name: "stdio-eager", origin: "explicit", config: { command, args, env: {}, alwaysLoad: true } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       // start() resolved -- by alwaysLoad's own contract, the server must already be connected, not
@@ -446,7 +446,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
   test("without alwaysLoad, start() returns immediately (nonblocking default) even though the server is still pending", async () => {
     const { command, args } = stdioFixtureCommand();
     const resolved: ResolvedMcpServerEntry[] = [{ name: "lazy", origin: "explicit", config: { command, args, env: {} } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT });
     try {
       const started = Date.now();
       await lifecycle.start();
@@ -463,6 +463,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     const { command, args } = stdioFixtureCommand();
     const resolved: ResolvedMcpServerEntry[] = [{ name: "batched", origin: "explicit", config: { command, args, env: {} } }];
     const lifecycle = createMcpLifecycle({
+      cwd: process.cwd(),
       servers: resolved,
       envConfig: fastEnv({ connectionNonblocking: false, connectTimeoutMs: 3000, timeoutMs: 3000 }),
       elicitationAsk: NO_ELICIT,
@@ -479,7 +480,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     const resolved: ResolvedMcpServerEntry[] = [
       { name: "hostsdk", origin: "explicit", config: { type: "sdk", name: "hostsdk", tools: [{ name: "hosted_tool", inputSchema: {} }] } },
     ];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT }); // no inProcessServers entry at all
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT }); // no inProcessServers entry at all
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "hostsdk", state: "connected", toolNames: ["hosted_tool"] }]);
@@ -495,7 +496,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     const cache = createInMemoryDiscoveryCache();
     cache.set("cached-srv", [{ name: "cachedTool", inputSchema: { type: "object", properties: {} } }]);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "cached-srv", origin: "explicit", config: { type: "http", url: "http://127.0.0.1:1/never-actually-dialed" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
     try {
       const started = Date.now();
       await lifecycle.start();
@@ -512,7 +513,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     cache.set("stdio-not-cached", [{ name: "shouldNeverAppear", inputSchema: {} }]);
     const { command, args } = stdioFixtureCommand();
     const resolved: ResolvedMcpServerEntry[] = [{ name: "stdio-not-cached", origin: "explicit", config: { command, args, env: {} } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true, connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true, connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
     try {
       await lifecycle.start();
       await lifecycle.stateSource.waitForPending(undefined, 3000);
@@ -530,7 +531,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     // Points at a real, closed loopback port -- the deferred live connect (triggered by the first
     // tool call below) will genuinely fail.
     const resolved: ResolvedMcpServerEntry[] = [{ name: "cached-fail", origin: "explicit", config: { type: "http", url: "http://127.0.0.1:1/closed" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true, timeoutMs: 300 }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true, timeoutMs: 300 }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("cached");
@@ -548,7 +549,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
   test("dispose() closes every live connection and unregisters every tool", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "disposable", origin: "explicit", config: { type: "sdk", name: "disposable" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { disposable: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { disposable: server } });
     await lifecycle.start();
     expect(getRegisteredTool("mcp__disposable__echo")).toBeDefined();
     await lifecycle.dispose();
@@ -565,7 +566,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     };
     const server = createFixtureMcpServer(spec);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "dupsrv", origin: "explicit", config: { type: "sdk", name: "dupsrv" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { dupsrv: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { dupsrv: server } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["dup"]);
@@ -589,6 +590,7 @@ describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnec
       { name: "failedsrv", origin: "explicit", config: { command: "/no/such/binary-bridge-surface-test" } },
     ];
     const lifecycle = createMcpLifecycle({
+      cwd: process.cwd(),
       servers: resolved,
       envConfig: fastEnv({ discoveryCache: true }),
       elicitationAsk: NO_ELICIT,
@@ -620,7 +622,7 @@ describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnec
     server.setRequestHandler(CallToolRequestSchema, async (req) => ({ content: [{ type: "text", text: `called:${req.params.name}` }] }));
 
     const resolved: ResolvedMcpServerEntry[] = [{ name: "refreshable", origin: "explicit", config: { type: "sdk", name: "refreshable" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { refreshable: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { refreshable: server } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["v1"]);
@@ -649,7 +651,7 @@ describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnec
       { name: "cachedsrv", origin: "explicit", config: { type: "http", url: "http://127.0.0.1:1/never-dialed" } },
       { name: "failedsrv", origin: "explicit", config: { command: "/no/such/binary-refresh-test" } },
     ];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
     try {
       await lifecycle.start();
       await lifecycle.stateSource.waitForPending(undefined, 500);
@@ -722,7 +724,7 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
     const gate = createDeferred();
     const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "race-toggle", origin: "explicit", config: { type: "sdk", name: "race-toggle" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-toggle": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-toggle": server } });
     try {
       await lifecycle.start(); // start()'s own race gives up after 50ms; the gated attempt keeps running in the background
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
@@ -746,7 +748,7 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
     const gate = createDeferred();
     const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "race-remove", origin: "explicit", config: { type: "sdk", name: "race-remove" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-remove": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-remove": server } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
@@ -771,7 +773,7 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
     const gate = createDeferred();
     const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "race-reconnect", origin: "explicit", config: { type: "sdk", name: "race-reconnect" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-reconnect": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-reconnect": server } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
@@ -797,7 +799,7 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
     const gate = createDeferred();
     const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "race-replace", origin: "explicit", config: { type: "sdk", name: "race-replace" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-replace": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-replace": server } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
@@ -870,7 +872,7 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
       const cache = createInMemoryDiscoveryCache();
       cache.set("race-cached", [{ name: "echo", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }]);
       const resolved: ResolvedMcpServerEntry[] = [{ name: "race-cached", origin: "explicit", config: { type: "http", url: fixture.url.toString() } }];
-      const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+      const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
       try {
         await lifecycle.start();
         expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("cached"); // served from the cache -- no real dial yet
@@ -904,7 +906,7 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
     const gate = createDeferred();
     const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "race-dispose", origin: "explicit", config: { type: "sdk", name: "race-dispose" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-dispose": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-dispose": server } });
     await lifecycle.start();
     expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
 

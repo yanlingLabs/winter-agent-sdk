@@ -20,7 +20,7 @@ function makeCtx(cwd: string, opts?: { readState?: SessionReadState; probe?: Rea
     cwd,
     home: "/home/test",
     sessionId: "test-session",
-    readState: opts?.readState ?? createSessionReadState(),
+    readState: opts?.readState ?? createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => opts?.probe ?? "silent" },
     tempDir: "/unused",
@@ -68,7 +68,7 @@ describe("Edit -- input validation", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "  a.txt  ", old_string: "hello", new_string: "world" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -83,7 +83,7 @@ describe("Edit -- input validation", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "", new_string: "x" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -97,7 +97,7 @@ describe("Edit -- input validation", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "hello" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -148,7 +148,7 @@ describe("Edit -- the read-before-edit ladder gates the target", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "goodbye" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -163,7 +163,7 @@ describe("Edit -- the read-before-edit ladder gates the target", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       utimesSync(filePath, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "goodbye" }, makeCtx(dir, { readState: state, probe: "silent" }));
@@ -179,7 +179,7 @@ describe("Edit -- the read-before-edit ladder gates the target", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       utimesSync(filePath, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "goodbye" }, makeCtx(dir, { readState: state, probe: "prompt" }));
@@ -195,7 +195,7 @@ describe("Edit -- the read-before-edit ladder gates the target", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello hello");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       utimesSync(filePath, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "hi" }, makeCtx(dir, { readState: state, probe: "silent" }));
@@ -213,7 +213,7 @@ describe("Edit -- match-count semantics", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "nope", new_string: "x" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -228,7 +228,7 @@ describe("Edit -- match-count semantics", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "a a a");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "a", new_string: "b" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBe(true);
@@ -243,7 +243,7 @@ describe("Edit -- match-count semantics", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "a a a");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "a", new_string: "b", replace_all: true }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -260,7 +260,7 @@ describe("Edit -- match-count semantics", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "one two three");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "two", new_string: "TWO" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -277,7 +277,7 @@ describe("Edit -- replacement is fully literal, never regex/$-pattern interprete
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "$& literally" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -292,7 +292,7 @@ describe("Edit -- replacement is fully literal, never regex/$-pattern interprete
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "$$" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -307,7 +307,7 @@ describe("Edit -- replacement is fully literal, never regex/$-pattern interprete
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "export X=old\nexport Y=old");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "old", new_string: "$HOME/bin", replace_all: true }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -324,7 +324,7 @@ describe("Edit -- result shape and post-edit read state", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "line one\nline two");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const result = await editExecutor().execute({ file_path: "a.txt", old_string: "one", new_string: "1" }, makeCtx(dir, { readState: state }));
       const parsed = JSON.parse(result.output);
@@ -347,7 +347,7 @@ describe("Edit -- result shape and post-edit read state", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "hello world");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       await editExecutor().execute({ file_path: "a.txt", old_string: "hello", new_string: "goodbye" }, makeCtx(dir, { readState: state }));
       const record = state.lookup(filePath);
@@ -363,7 +363,7 @@ describe("Edit -- result shape and post-edit read state", () => {
     try {
       const filePath = join(dir, "a.txt");
       writeFileSync(filePath, "one two three");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       readFully(state, filePath);
       const first = await editExecutor().execute({ file_path: "a.txt", old_string: "one", new_string: "1" }, makeCtx(dir, { readState: state, probe: "deny" }));
       expect(first.isError).toBeUndefined();

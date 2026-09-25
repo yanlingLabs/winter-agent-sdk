@@ -59,6 +59,14 @@ export interface WinterStdioTransportOptions {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /**
+   * WS-23: the SESSION's cwd, REQUIRED. A spawned `winter` child used to be started in the session
+   * cwd, so an unstated spawn cwd inherited it; an embedded session runs in a Worker, which cannot
+   * have a cwd of its own (`process.cwd()` there is the host daemon's -- `/` under launchd), so a
+   * server with relative `args` (`node ./mcp/server.js`) would start in the wrong tree. Required
+   * rather than defaulted so no caller can silently fall back to the process cwd.
+   */
+  cwd: string;
 }
 
 // Implements the SDK's own `Transport` interface directly (verified structurally compatible: the
@@ -98,6 +106,7 @@ export class WinterStdioTransport implements Transport {
     }
     return new Promise<void>((resolve, reject) => {
       const child = spawn(this.opts.command, this.opts.args ?? [], {
+        cwd: this.opts.cwd,
         env: buildStdioEnv(this.opts.env),
         // stderr is ALWAYS piped, never inherited -- WS-04 owns exactly two stdio streams already
         // (this process's own stdin/stdout frame pipe, and the host's stderr diagnostics callback
@@ -240,9 +249,10 @@ export class WinterStdioTransport implements Transport {
   }
 }
 
-export function buildStdioTransport(cfg: McpStdioServerConfig): WinterStdioTransport {
+export function buildStdioTransport(cfg: McpStdioServerConfig, cwd: string): WinterStdioTransport {
   return new WinterStdioTransport({
     command: cfg.command,
+    cwd,
     ...(cfg.args !== undefined ? { args: cfg.args } : {}),
     ...(cfg.env !== undefined ? { env: cfg.env } : {}),
   });

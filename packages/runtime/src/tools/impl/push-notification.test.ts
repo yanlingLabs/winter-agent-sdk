@@ -14,7 +14,7 @@ function makeCtx(): ToolExecutionContext {
     cwd: "/work",
     home: "/home/test",
     sessionId: "push-test-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/work/.tmp",
