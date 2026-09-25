@@ -4,6 +4,52 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### xAI on the Responses API
+
+- The api-key `xai` provider (`https://api.x.ai/v1`) now runs on `winter.openai-responses` instead of
+  `winter.openai-chat-completions`. xAI calls Responses its preferred API and Chat Completions "a legacy
+  endpoint"; only Responses returns reasoning as a replayable encrypted item. Winter stays stateless on it:
+  `store: false`, full history replayed each turn, never `previous_response_id`. `xai-oauth` is unchanged
+  (still Chat Completions): its proxy's `/v1/responses` has never been probed.
+- Every reasoning-capable `xai` row now records `continuation: "opaque-provider-state"`: reasoning carries
+  across turns and tool loops as the encrypted item. `grok-4.7` alone also records a readable summary
+  (`reasoning.summary`, sent as `detailed`). `grok-4.20-0309-reasoning` and `grok-build-0.1` keep an empty
+  effort vocabulary because xAI documents no effort knob for them.
+- New row `xai/grok-4.20-multi-agent-0309` (alias `grok-4.20-multi-agent`), Responses-only. Its effort picks
+  the agent count (low/medium = 4, high/xhigh = 16). A `tools` array or an output cap is refused before
+  the request, since xAI supports neither on this model.
+
+### Responses adapter
+
+- Each provider on the adapter now gets its own endpoint from its catalog row. A connection with no
+  `baseUrl` for any provider other than `openai` used to fall back to `api.openai.com`, which would have
+  sent an xAI key to OpenAI. It now reaches that provider's own host, or is refused with a typed
+  `capability` error when the catalog names no host for it. Sessions built by the runtime are
+  unaffected: they already copy each multi-provider row's endpoint into the connection.
+- A row whose continuation is the encrypted reasoning item (`opaque-provider-state`) now asks for it
+  (`include: ["reasoning.encrypted_content"]`) on every turn that does not switch reasoning off, even
+  when no effort is named. Before, an effortless turn on such a model kept no reasoning for the next
+  turn. This also applies to the opaque `openai/*` and `codex-oauth/*` rows (include only; no
+  `reasoning` object is added).
+- `response.reasoning_text.delta` now reaches the readable-reasoning channel as well as
+  `response.reasoning_summary_text.delta`. It is treated as a summary unless the row records full
+  exposed reasoning.
+- A request with no tools no longer sends `tools`, `tool_choice` or `parallel_tool_calls`. The codex
+  backend is the exception: it rejects a request missing them, so it still gets all three.
+- `OpenAI-Organization` / `OpenAI-Project` are sent only on `openai` turns, never on another provider
+  sharing the adapter.
+
+### Errors
+
+- `normalizeHttpError` also reads xAI's flat error body (`{"code": "<status text>", "error": "<message>"}`),
+  alongside the structured `{error: {…}}` envelopes, whose handling is unchanged. Only a body whose keys
+  are exactly `{error}` or `{error, code}` counts. The flat body's `code` becomes `providerCode`, and
+  its message becomes the snippet. A wrong key, which xAI answers with HTTP 400 and a message starting
+  "Incorrect API key provided", is now classified `auth`, so credential validation reports an invalid
+  key instead of an unreachable endpoint.
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus

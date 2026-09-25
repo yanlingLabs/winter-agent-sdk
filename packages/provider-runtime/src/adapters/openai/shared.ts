@@ -82,6 +82,22 @@ export interface OpenAiAdapterOptions {
    */
   generatedBaseUrl?: string;
   /**
+   * The reviewed endpoint PER PROVIDER, for an adapter that serves several (WS-23).
+   *
+   * `generatedBaseUrl` is one URL, which is only an answer while an adapter serves one provider.
+   * The moment `xai` joined `openai` on `winter.openai-responses` there was no single answer, and
+   * the adapter fell through to its compiled-in `api.openai.com` — so a turn on a connection with
+   * no `baseUrl` sent an xAI key to OpenAI. This lookup is `createShippedAdapters`' answer: each
+   * provider's own `defaultEndpoints.api`, off its own catalog row.
+   *
+   * AUTHORITATIVE OVER THE VENDOR CONSTANT: a provider it does not know has NO generated endpoint,
+   * and the turn is refused typed (`resolveEndpoint`'s "has no endpoint") rather than handed to the
+   * adapter's vendor default. An explicit `generatedBaseUrl` still wins over it — that is a fixture
+   * pointing the adapter at a loopback fake — which is why `createShippedAdapters` passes this lookup
+   * ALONE and never both (fix round 1, M4).
+   */
+  generatedBaseUrls?: (providerId: string) => string | undefined;
+  /**
    * REQUIRED — omitting it is a compile error, and that is the fail-closed mechanism (ruling on
    * finding I3).
    *
@@ -176,7 +192,10 @@ function trimSlash(url: string): string {
  */
 export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOptions, fallbackGeneratedBaseUrl?: string): ResolvedEndpoint {
   const userBase = ctx.connection.baseUrl;
-  const generatedBase = options.generatedBaseUrl ?? fallbackGeneratedBaseUrl;
+  // WS-23: a per-provider lookup, when the wiring supplied one, REPLACES the vendor fallback rather
+  // than preceding it — a miss is "this provider has no reviewed endpoint", which refuses below, and
+  // never "so use the adapter's own vendor's host" (see `generatedBaseUrls`).
+  const generatedBase = options.generatedBaseUrl ?? (options.generatedBaseUrls !== undefined ? options.generatedBaseUrls(ctx.connection.providerId) : fallbackGeneratedBaseUrl);
   if (userBase !== undefined && userBase.length > 0) {
     // P7a: `generated` is the PROFILE's answer now, not this line's assumption -- a reviewed
     // endpoint the runtime copied in stays generated, a host-entered one is a user endpoint.
@@ -460,12 +479,23 @@ export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescri
       ? summaryEvidence.values[0]
       : undefined;
 
+  // WS-23 fix round 1 (I3): a row whose continuation IS the provider's opaque reasoning item asks for
+  // that item on every turn it has not switched reasoning off — with or without an effort. Such a model
+  // reasons at its own default when no effort is named (xAI: "Reasoning cannot be disabled" on
+  // grok-4.5/4.6/4.7; `grok-build-0.1` and `grok-4.20-0309-reasoning` take no effort at all), and on a
+  // `store: false` request the item is the ONLY carrier of that reasoning into the next turn. Tying the
+  // request to an explicit effort left those rows declaring a continuation domain the adapter never
+  // filled — a switch away warned about state that was never captured. Absent evidence of opaque
+  // continuation the old rule stands: `include` only when reasoning was asked for.
+  const opaqueContinuation = reasoningEvidence?.supported.value === true && reasoningEvidence.continuation === "opaque-provider-state";
+
   return {
     ...(effort !== undefined ? { effort } : {}),
     ...(summary !== undefined ? { summary } : {}),
     // Codex parity, carried from Norma: encrypted continuation state is requested whenever reasoning
-    // is configured, so the completed reasoning item is replayable on later `store: false` requests.
-    wantsEncryptedContent: reasoningRequested,
+    // is configured, so the completed reasoning item is replayable on later `store: false` requests —
+    // and (I3, above) whenever the row's own continuation is that item.
+    wantsEncryptedContent: reasoningRequested || opaqueContinuation,
     enabled: true,
   };
 }
