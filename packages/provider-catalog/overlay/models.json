@@ -213,9 +213,7 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-5",
       "displayName": "Claude Opus 5",
-      "aliases": [
-        "opus"
-      ],
+      "aliases": [],
       "$comment": "ADDED by Lane X, beyond T2's seed. `opus` is one of the four PINNED aliases `packages/runtime/src/provider/selection.ts` routes to the `anthropic` provider (`PINNED_ANTHROPIC_ALIASES`), and with no row carrying it the alias resolved to a typed `unknown-model` refusal — a hole the seed's `sonnet`/`haiku` rows hid. The capability facts are upstream's at the pin; the prices are the vendor's own page. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-5/overview — actual Claude API wire model ID claude-opus-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — thinking defaults on; disabled allowed only at low/medium/high, rejected at xhigh/max. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor July 24, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
       "endpoints": [
         "chat"
@@ -8151,9 +8149,7 @@
       "providerId": "console",
       "upstreamId": "claude-opus-5",
       "displayName": "Claude Opus 5",
-      "aliases": [
-        "opus"
-      ],
+      "aliases": [],
       "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-5/overview — actual Claude API wire model ID claude-opus-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — thinking defaults on; disabled allowed only at low/medium/high, rejected at xhigh/max. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor July 24, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
       "endpoints": [
         "chat"
@@ -47065,7 +47061,9 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-5-5",
       "displayName": "Claude Opus 5.5",
-      "aliases": [],
+      "aliases": [
+        "opus"
+      ],
       "$comment": "https://platform.claude.com/docs/en/models/opus-5-5/overview — actual Claude API wire model ID claude-opus-5-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default medium. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — always on; thinking.type enabled/disabled rejected. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor September 22, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. Forced tool_choice any/tool is rejected (not all tool_choice values); do not mark entire parameter unsupported. ",
       "endpoints": [
         "chat"
@@ -47219,7 +47217,9 @@
       "providerId": "console",
       "upstreamId": "claude-opus-5-5",
       "displayName": "Claude Opus 5.5",
-      "aliases": [],
+      "aliases": [
+        "opus"
+      ],
       "$comment": "https://platform.claude.com/docs/en/models/opus-5-5/overview — actual Claude API wire model ID claude-opus-5-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default medium. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — always on; thinking.type enabled/disabled rejected. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor September 22, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. Forced tool_choice any/tool is rejected (not all tool_choice values); do not mark entire parameter unsupported. ",
       "endpoints": [
         "chat"

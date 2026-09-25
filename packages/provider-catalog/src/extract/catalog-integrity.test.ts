@@ -79,7 +79,9 @@ describe("the seed is fully replaced", () => {
     // with no row carrying `opus` the alias was a typed `unknown-model` refusal.
     const byAlias = catalog.models.filter((m) => m.providerId === "anthropic" && m.aliases.includes("opus"));
     expect(byAlias).toHaveLength(1);
-    expect(byAlias[0]!.key).toBe("anthropic/claude-opus-5");
+    // 2026-09-25 refresh: the alias follows the `opus` slot to Opus 5.5 (user ruling), so a typed `opus`
+    // and a picked `opus` name the same model.
+    expect(byAlias[0]!.key).toBe("anthropic/claude-opus-5-5");
   });
 });
 

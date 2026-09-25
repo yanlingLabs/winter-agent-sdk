@@ -15199,9 +15199,7 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-5",
       "displayName": "Claude Opus 5",
-      "aliases": [
-        "opus"
-      ],
+      "aliases": [],
       "endpoints": [
         "chat"
       ],
@@ -15360,7 +15358,9 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-5-5",
       "displayName": "Claude Opus 5.5",
-      "aliases": [],
+      "aliases": [
+        "opus"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -27176,9 +27176,7 @@
       "providerId": "console",
       "upstreamId": "claude-opus-5",
       "displayName": "Claude Opus 5",
-      "aliases": [
-        "opus"
-      ],
+      "aliases": [],
       "endpoints": [
         "chat"
       ],
@@ -27337,7 +27335,9 @@
       "providerId": "console",
       "upstreamId": "claude-opus-5-5",
       "displayName": "Claude Opus 5.5",
-      "aliases": [],
+      "aliases": [
+        "opus"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -80463,8 +80463,7 @@
       "vendor": "Google",
       "vendorProviders": [
         "google",
-        "vertex",
-        "google-openai"
+        "vertex"
       ],
       "matchers": [
         {

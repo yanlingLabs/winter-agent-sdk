@@ -195,8 +195,7 @@
       "vendor": "Google",
       "vendorProviders": [
         "google",
-        "vertex",
-        "google-openai"
+        "vertex"
       ],
       "matchers": [
         {
