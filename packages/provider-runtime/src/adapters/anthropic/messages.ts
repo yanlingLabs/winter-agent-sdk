@@ -92,6 +92,31 @@ export const ANTHROPIC_API_VERSION = "2023-06-01";
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 4096;
 
 /**
+ * WS-23: the wire `max_tokens` for a row that DOES declare its maximum output, when the request names
+ * none: this value, capped at the row's own maximum.
+ *
+ * WHY NOT THE ROW'S FULL MAXIMUM (which every request sent before this, 128K on the current Claude
+ * rows): `max_tokens` is not free even when the model stops early.
+ *   - RATE LIMITS. Anthropic's output-tokens-per-minute limiter reserves against `max_tokens` when a
+ *     request STARTS and settles to the real count when it ends
+ *     (https://platform.claude.com/docs/en/api/rate-limits), so a 128K ask on every tool round of a code
+ *     session spends OTPM headroom the turn never uses, and trips 429s sooner under parallel subagents.
+ *   - RUNAWAY BOUND. A generation that degenerates (a loop, a giant file written inline) is cut at
+ *     64K rather than 128K: half the latency and cost before the harness regains control.
+ *   - THE VENDOR'S OWN GUIDANCE for streaming callers is ~64K
+ *     (https://platform.claude.com/docs/en/build-with-claude/streaming, the `max_tokens` defaults).
+ * CLAUDE, FOR REFERENCE ONLY (parity is not a goal): the pinned 0.3.250 runtime sent 64000 for
+ * `claude-sonnet-5` (capture (F)); claude 2.1.282 sends 128000 on `claude-opus-5-5` (the WS-23
+ * capture). Winter diverges from the latter deliberately, for the reasons above; a turn that needs
+ * more asks for it (`TurnRequest.maxOutputTokens`) or a host raises the default
+ * (`AnthropicAdapterOptions.defaultMaxOutputTokens`).
+ *
+ * NO CATALOG FIELD FITS: the catalog carries each row's MAXIMUM (`maxOutputTokens`), not a
+ * recommended default, and inventing one per row would be a capability claim with no vendor evidence.
+ */
+export const ANTHROPIC_ROW_DEFAULT_MAX_TOKENS = 64_000;
+
+/**
  * The effort -> thinking-budget ladder.
  *
  * WINTER-AUTHORED AND DISCLOSED. The pin states no unit, no range and no mapping for effort
@@ -128,6 +153,11 @@ export interface AnthropicAdapterOptions {
   retry?: RetryPolicyOptions;
   /** `anthropic-beta` values, joined with commas. A PROTOCOL header (R6-L): every endpoint needs it to be spoken to, and it names no account. */
   betas?: string[];
+  /**
+   * The HOST's default `max_tokens` when a request names none (WS-23): replaces
+   * `ANTHROPIC_ROW_DEFAULT_MAX_TOKENS` on a row that declares its maximum (and is capped at that
+   * maximum), and `ANTHROPIC_DEFAULT_MAX_TOKENS` on a row that declares none.
+   */
   defaultMaxOutputTokens?: number;
 }
 
@@ -740,17 +770,34 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // is not a quantity this adapter has ever been told -- inventing a bigger fallback for it would be
   // exactly the unevidenced capability claim `ANTHROPIC_DEFAULT_MAX_TOKENS`'s own comment refuses to
   // make. In PRACTICE this rarely bites: every real Claude row in the catalog declares its own
-  // `maxOutputTokens` (128K on the 2026-09-25 rows), so `declaredMax` is populated before the fallback
+  // `maxOutputTokens` (128K on the 2026-09-25 rows), so the row's own ceiling applies before the fallback
   // is ever reached, and the flat, undeclared-only fallback below is reserved for an `allowUnlisted`
   // passthrough or a descriptor missing that one field -- exactly the situations `maxOutputTokens`
   // evidence exists to be threaded through instead of this adapter guessing at a ceiling.
-  const declaredMax = req.maxOutputTokens ?? descriptor?.maxOutputTokens?.value;
-  const fallbackMax = opts.defaultMaxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
+  //
+  // WS-23: A DECLARED ROW'S MAXIMUM IS A CEILING, NOT A DEFAULT. This used to send the row's full
+  // `maxOutputTokens` (128K) whenever the request named nothing; it now sends
+  // `ANTHROPIC_ROW_DEFAULT_MAX_TOKENS` (64K, see its comment for why) capped at that maximum, or the
+  // host's own `defaultMaxOutputTokens`. The budget-carrying `enabled` arm keeps its growth rule on this
+  // path too: a budget that would not fit the default grows it to `budget + ANTHROPIC_DEFAULT_MAX_TOKENS`,
+  // still capped at the row's maximum -- so the `budget >= max_tokens` refusal below fires only when the
+  // ROW cannot hold the budget, never because of a default nobody chose. An explicit
+  // `req.maxOutputTokens` still wins outright (and is still refused above the row's maximum).
+  const rowMax = descriptor?.maxOutputTokens?.value;
   const budget = thinking.value !== undefined && thinking.value.type === "enabled" ? thinking.value.budget_tokens : undefined;
-  if (req.maxOutputTokens !== undefined && descriptor?.maxOutputTokens?.value !== undefined && req.maxOutputTokens > descriptor.maxOutputTokens.value) {
-    throw capabilityRefusal(`requested max output ${req.maxOutputTokens} exceeds model "${descriptor.key}"'s declared maximum of ${descriptor.maxOutputTokens.value}`);
+  if (req.maxOutputTokens !== undefined && rowMax !== undefined && descriptor !== undefined && req.maxOutputTokens > rowMax) {
+    throw capabilityRefusal(`requested max output ${req.maxOutputTokens} exceeds model "${descriptor.key}"'s declared maximum of ${rowMax}`);
   }
-  const maxTokens = declaredMax ?? (budget !== undefined ? budget + fallbackMax : fallbackMax);
+  let maxTokens: number;
+  if (req.maxOutputTokens !== undefined) {
+    maxTokens = req.maxOutputTokens;
+  } else if (rowMax !== undefined) {
+    const rowDefault = Math.min(opts.defaultMaxOutputTokens ?? ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, rowMax);
+    maxTokens = budget !== undefined && budget >= rowDefault ? Math.min(rowMax, budget + ANTHROPIC_DEFAULT_MAX_TOKENS) : rowDefault;
+  } else {
+    const fallbackMax = opts.defaultMaxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
+    maxTokens = budget !== undefined ? budget + fallbackMax : fallbackMax;
+  }
   if (purpose === "count") {
     // A count carries the PROMPT and nothing else: no `stream`, no `max_tokens`, and therefore no
     // ceiling for a thinking budget to overrun. `output_config.effort` is deliberately left OFF this

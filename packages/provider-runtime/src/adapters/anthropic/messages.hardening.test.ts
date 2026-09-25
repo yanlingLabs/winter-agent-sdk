@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { serve } from "bun";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { createAnthropicMessagesAdapter } from "./messages.ts";
+import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor } from "./messages.ts";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import type { ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
 
@@ -116,5 +116,44 @@ describe("WS-23 item 2: the context-overflow 400 is typed at the adapter", () =>
     const failure = error(await collect(s.url))?.error;
     expect(failure?.code).toBe("bad_request");
     expect("contextOverflow" in (failure ?? {})).toBe(false);
+  });
+});
+
+describe("WS-23 item 3: `max_tokens` defaults to 64K capped at the row, never the row's full 128K", () => {
+  const catalog = loadCatalog();
+  const row = (model: string) => findDescriptor(catalog, "anthropic", model)!;
+  const body = (model: string, over: Partial<TurnRequest> = {}, opts: Parameters<typeof buildRequestBody>[2] = {}) =>
+    buildRequestBody({ model, messages: [{ role: "user", content: "hi" }], ...over }, row(model), opts);
+
+  test("a 128K row (Opus 5.5, Sonnet 5) is sent 64000 when the request names nothing", () => {
+    expect(row("claude-opus-5-5").maxOutputTokens?.value).toBe(128_000);
+    expect(body("claude-opus-5-5")["max_tokens"]).toBe(ANTHROPIC_ROW_DEFAULT_MAX_TOKENS);
+    expect(body("claude-sonnet-5", { effort: "max" })["max_tokens"]).toBe(64_000);
+  });
+
+  test("a row whose maximum is BELOW the default is capped at its own maximum (Haiku 4.5: 64000)", () => {
+    expect(body("claude-haiku-4.5")["max_tokens"]).toBe(64_000);
+  });
+
+  test("an explicit request wins outright, up to the row's maximum; above it is still a typed refusal", () => {
+    expect(body("claude-opus-5-5", { maxOutputTokens: 128_000 })["max_tokens"]).toBe(128_000);
+    expect(body("claude-opus-5-5", { maxOutputTokens: 1_000 })["max_tokens"]).toBe(1_000);
+    expect(() => body("claude-opus-5-5", { maxOutputTokens: 200_000 })).toThrow(/exceeds model "anthropic\/claude-opus-5-5"'s declared maximum of 128000/);
+  });
+
+  test("a host default replaces 64K and is still capped at the row", () => {
+    expect(body("claude-opus-5-5", {}, { defaultMaxOutputTokens: 32_000 })["max_tokens"]).toBe(32_000);
+    expect(body("claude-haiku-4.5", {}, { defaultMaxOutputTokens: 100_000 })["max_tokens"]).toBe(64_000);
+  });
+
+  test("an `enabled` budget that would not fit the default GROWS it (capped at the row); only a row that cannot hold the budget refuses", () => {
+    // Sonnet 4.6 still takes a manual budget; 70000 does not fit 64K, and the row's 128K can hold it.
+    expect(body("claude-sonnet-4.6", { thinking: { type: "enabled", budgetTokens: 70_000 } })["max_tokens"]).toBe(70_000 + 4_096);
+    // Opus 4.5's row maximum is 64000: a 64000 budget has no room left for an answer -> typed refusal.
+    expect(() => body("claude-opus-4.5", { thinking: { type: "enabled", budgetTokens: 64_000 } })).toThrow(/does not fit inside max_tokens 64000/);
+  });
+
+  test("a row that declares NO maximum keeps the conservative 4096 fallback (it may be a sibling with a smaller window)", () => {
+    expect(buildRequestBody({ model: "claude-unlisted", messages: [{ role: "user", content: "hi" }] }, undefined, {})["max_tokens"]).toBe(4_096);
   });
 });
