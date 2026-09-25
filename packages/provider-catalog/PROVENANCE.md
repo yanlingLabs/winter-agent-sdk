@@ -85,6 +85,7 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` / `effortRequest` / `blockBinding` / `perMessageEffort` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
 | `model.deferredToolLoading` | official-doc derived | **overlay only**; Anthropic's tool-search model-compatibility table (custom `tool_reference` + `defer_loading`) |
 | `model.midConversationSystem` | official-doc derived | **overlay only**; Anthropic's mid-conversation system messages page (model list; Sonnet 5 excluded) |
+| `model.promptCacheKey` | official-doc derived | **overlay only**; OpenAI's prompt-caching guide (Responses `prompt_cache_key`), and codex-rs's own request builder for the ChatGPT Codex backend |
 
 ### Two tiers of admission citation
 

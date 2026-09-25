@@ -254,6 +254,13 @@ export interface WinterModelDescriptor {
    * beta header). `true` is the only meaningful value; absent keeps reminders as user-turn text.
    */
   midConversationSystem?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23: the endpoint takes a `prompt_cache_key` that groups a caller's requests for cache routing
+   * (OpenAI Responses: "Use a stable `prompt_cache_key` to optimize cache routing for requests that
+   * share a reusable prefix", https://developers.openai.com/api/docs/guides/prompt-caching). `true` is
+   * the only meaningful value; absent sends no key.
+   */
+  promptCacheKey?: CapabilityEvidence<boolean>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

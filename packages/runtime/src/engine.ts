@@ -537,6 +537,15 @@ export function promptCacheTtlFor(config: { promptCacheTtl?: "5m" | "1h" }): "5m
   return config.promptCacheTtl === "1h" ? "1h" : "5m";
 }
 
+/**
+ * WS-23: the cache-routing key for one conversation -- the session id, and for a subagent the session
+ * id plus its agent id (a child's prefix is its own, so sharing the parent's key would only mix two
+ * prefixes under one routing group). Opaque ids only: nothing about the user or the content.
+ */
+export function promptCacheKeyFor(config: { sessionId: string; agentId?: string }): string {
+  return config.agentId === undefined ? config.sessionId : `${config.sessionId}:${config.agentId}`;
+}
+
 /** WS-23: a tool_result without its `loadedTools` bookkeeping (see the tool-round frame write). */
 function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }>): ContentBlock {
   const { loadedTools: _loaded, ...rest } = block;
@@ -620,6 +629,8 @@ export interface ProviderRequest {
    * the next comparison meaningless.
    */
   cacheDiagnostics?: { previousMessageId: string | null };
+  /** WS-23: this conversation's cache-routing key (`promptCacheKeyFor`) -- the session id, plus the agent id for a subagent. */
+  cacheKey?: string;
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -6247,6 +6258,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(plan.topLevel !== undefined ? { effort: plan.topLevel } : {}),
       ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
       ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
+      cacheKey: promptCacheKeyFor(config),
     };
   };
 
@@ -7527,6 +7539,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
             ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
             cacheDiagnostics: { previousMessageId: lastMainResponse !== undefined && lastMainResponse.modelKey === (currentProviderIdentity?.modelKey ?? currentModel) ? lastMainResponse.id : null },
+            cacheKey: promptCacheKeyFor(config),
             signal: turnAbort.signal,
             // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
             // the classifier, the advisor, countTokens) build their own requests elsewhere and get

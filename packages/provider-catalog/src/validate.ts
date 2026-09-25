@@ -749,6 +749,7 @@ function checkModel(errs: Errors, v: unknown, path: string): void {
   checkEvidence(errs, v["promptCaching"], `${path}.promptCaching`, evidenceBoolean, false);
   checkEvidence(errs, v["deferredToolLoading"], `${path}.deferredToolLoading`, evidenceBoolean, false);
   checkEvidence(errs, v["midConversationSystem"], `${path}.midConversationSystem`, evidenceBoolean, false);
+  checkEvidence(errs, v["promptCacheKey"], `${path}.promptCacheKey`, evidenceBoolean, false);
   checkEvidence(errs, v["classifierEligible"], `${path}.classifierEligible`, evidenceBoolean, false);
   checkEvidence(errs, v["pricing"], `${path}.pricing`, (val, p) => checkPricing(errs, val, p), false);
   if (v["reasoning"] !== undefined) checkReasoning(errs, v["reasoning"], `${path}.reasoning`);

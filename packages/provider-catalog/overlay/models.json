@@ -2105,7 +2105,14 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      }
     },
     {
       "key": "codex-oauth/gpt-5.6-terra",
@@ -2211,7 +2218,14 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      }
     },
     {
       "key": "codex-oauth/gpt-5.6-luna",
@@ -2317,7 +2331,14 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      }
     },
     {
       "key": "deepseek-anthropic/deepseek-flash",
@@ -4269,7 +4290,14 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/o4-mini",
@@ -4415,7 +4443,14 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "opencode/big-pickle",
@@ -6540,7 +6575,14 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "codex-oauth/gpt-6-astra",
@@ -6648,7 +6690,14 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      }
     },
     {
       "key": "anthropic/claude-fable-5-1",
@@ -7278,7 +7327,14 @@
         "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.6-terra",
@@ -7391,7 +7447,14 @@
         "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.6-luna",
@@ -7504,7 +7567,14 @@
         "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "console/claude-fable-5",
@@ -9293,7 +9363,14 @@
         "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-4.1-mini",
@@ -9372,7 +9449,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-4.1-nano",
@@ -9458,7 +9542,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-4o",
@@ -9537,7 +9628,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-4o-2024-11-20",
@@ -9616,7 +9714,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-4o-mini",
@@ -9695,7 +9800,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.4",
@@ -9799,7 +9911,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.4-mini",
@@ -9910,7 +10029,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.4-nano",
@@ -10021,7 +10147,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.4-pro",
@@ -10107,7 +10240,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.5",
@@ -10211,7 +10351,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-5.5-pro",
@@ -10304,7 +10451,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/o3",
@@ -10405,7 +10559,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/o3-mini",
@@ -10498,7 +10659,14 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openrouter/openai/gpt-5.4",
@@ -47620,7 +47788,14 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      }
     },
     {
       "key": "codex-oauth/gpt-6-luna",
@@ -47728,7 +47903,14 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      }
     },
     {
       "key": "openai/gpt-6-sol",
@@ -47878,7 +48060,14 @@
         "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "openai/gpt-6-luna",
@@ -48028,7 +48217,14 @@
         "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      }
     },
     {
       "key": "anthropic/claude-opus-5-5",

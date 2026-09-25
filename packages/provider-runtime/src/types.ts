@@ -228,6 +228,13 @@ export interface TurnRequest {
    * no beta header, Claude API only; an adapter or provider without it ignores the field.
    */
   cacheDiagnostics?: { previousMessageId: string | null };
+  /**
+   * WS-23: a stable key grouping one conversation's requests for the provider's cache routing
+   * (OpenAI's `prompt_cache_key`). The engine builds it from the session id (plus the agent id for a
+   * subagent); an adapter sends it only where the row's `promptCacheKey` evidence says the endpoint
+   * takes one.
+   */
+  cacheKey?: string;
 }
 
 /**

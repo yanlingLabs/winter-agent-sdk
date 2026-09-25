@@ -203,6 +203,7 @@
         "promptCaching": { "$ref": "#/$defs/evidenceBoolean" },
         "deferredToolLoading": { "$ref": "#/$defs/evidenceBoolean" },
         "midConversationSystem": { "$ref": "#/$defs/evidenceBoolean" },
+        "promptCacheKey": { "$ref": "#/$defs/evidenceBoolean" },
         "classifierEligible": { "$ref": "#/$defs/evidenceBoolean" },
         "pricing": { "$ref": "#/$defs/evidencePricing" },
         "reasoning": {

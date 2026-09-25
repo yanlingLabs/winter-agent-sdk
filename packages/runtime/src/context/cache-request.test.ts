@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
-import { promptCacheTtlFor, runEngine, type EngineOptions, type ProviderRequest, type ProviderTurn } from "../engine.ts";
+import { promptCacheKeyFor, promptCacheTtlFor, runEngine, type EngineOptions, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
 
 async function drive(opts: { config?: Partial<RuntimeConfig>; prompts: string[]; generate?: (req: ProviderRequest, index: number) => ProviderTurn; engine?: Partial<EngineOptions> }) {
@@ -81,5 +81,17 @@ describe("cache diagnostics through the engine (WS-23 item 8)", () => {
     });
     expect(results[0]!["usage"]).not.toHaveProperty("cache_misses");
     expect((results[1]!["usage"] as Record<string, unknown>)["cache_misses"]).toEqual([{ type: "system_changed", missed_input_tokens: 41850, thinking_blocks_dropped: 2 }]);
+  });
+});
+
+describe("the cache-routing key (WS-23 item 9)", () => {
+  test("the session id, plus the agent id for a subagent", () => {
+    expect(promptCacheKeyFor({ sessionId: "s-1" })).toBe("s-1");
+    expect(promptCacheKeyFor({ sessionId: "s-1", agentId: "a-7" })).toBe("s-1:a-7");
+  });
+
+  test("every main-loop request carries it", async () => {
+    const { requests } = await drive({ prompts: ["one", "two"] });
+    expect(requests.map((r) => r.cacheKey)).toEqual(["ws23-cache-session", "ws23-cache-session"]);
   });
 });

@@ -238,4 +238,5 @@ export const FIELD_PROVENANCE: readonly FieldProvenance[] = [
   { field: "reasoning.continuationDomain / summaryRequest / readableState / completionEvent / toolLoopRequirement / effortRequest / blockBinding / perMessageEffort", provenance: "official-doc-derived", note: "OVERLAY ONLY. Continuation domain is a first-class documented fact, never inferred from a shared HTTP shape (WS-13 §8.2)" },
   { field: "model.deferredToolLoading", provenance: "official-doc-derived", note: "OVERLAY ONLY, from Anthropic's tool-search model-compatibility table (a client tool-search result's `tool_reference` blocks expand `defer_loading` tools)" },
   { field: "model.midConversationSystem", provenance: "official-doc-derived", note: "OVERLAY ONLY, from Anthropic's mid-conversation system messages page (a `role: \"system\"` message with text inside `messages`)" },
+  { field: "model.promptCacheKey", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's prompt-caching guide (Responses `prompt_cache_key`) and codex-rs's request builder" },
 ];
