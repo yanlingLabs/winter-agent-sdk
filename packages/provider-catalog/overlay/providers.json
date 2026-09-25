@@ -2793,7 +2793,7 @@
       "protocols": [
         "anthropic-messages"
       ],
-      "$comment": "Dialect sibling of `zhipu`. Shares its URL with `zhipu-coding-anthropic`: the credential, not the host, decides metered vs plan billing (the same shape as `zai-anthropic`/`zai-coding-anthropic`).",
+      "$comment": "Dialect sibling of `zhipu`, mirroring `zai-anthropic`. Shares its URL with `zhipu-coding-anthropic`. The documentation found places this root under the GLM Coding Plan; acceptance of METERED (pay-as-you-go) keys here is not stated anywhere read, exactly as for `zai-anthropic`.",
       "authKinds": [
         "api-key"
       ],
@@ -2814,13 +2814,14 @@
         "reasons": [
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe.",
+          "Metered-key acceptance on this Anthropic root is undocumented: the pages read describe it only for the GLM Coding Plan. Needs a live metered-key probe."
         ]
       },
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`; the same root serves metered keys and GLM Coding Plan keys.",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -3693,6 +3694,45 @@
         "tier": "fetched-document"
       },
       "scope": "llm"
+    },
+    {
+      "id": "zai-anthropic",
+      "displayName": "Z.AI API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.z.ai/api/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/zai/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "The cited documentation (docs.z.ai/devpack/tool/claude, and docs.z.ai/scenario-example/develop-tools/claude re-read 2026-09-25) describes `https://api.z.ai/api/anthropic` only for the GLM Coding Plan; no page read states that METERED (pay-as-you-go) API keys are accepted there. Needs a live metered-key probe before this row can be trusted for token billing.",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)",
+        "tier": "fetched-document"
+      }
     }
   ]
 }

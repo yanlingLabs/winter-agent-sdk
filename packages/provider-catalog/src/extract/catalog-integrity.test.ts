@@ -340,7 +340,9 @@ describe("standing floors", () => {
   });
 
   test("no row is `supported` — upstream presence promotes nothing (WS-13 §13)", () => {
-    for (const model of catalog.models) expect(["candidate", "experimental"]).toContain(model.status);
+    // `deprecated` (2026-09-25 refresh) is a vendor-retired row kept so its key still refuses typed;
+    // a demotion, never a promotion — see validate.test.ts.
+    for (const model of catalog.models) expect(["candidate", "experimental", "deprecated"]).toContain(model.status);
     // R6-16: the native-cloud families enter as `experimental`, and only where an adapter is live.
     const experimental = catalog.models.filter((m) => m.status === "experimental").map((m) => m.providerId);
     expect([...new Set(experimental)].sort()).toEqual(["azure-openai", "vertex"]);

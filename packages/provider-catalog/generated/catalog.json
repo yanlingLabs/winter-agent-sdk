@@ -7074,7 +7074,8 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is a FETCHED vendor document, but no live gate case has run against this endpoint; the OpenAI-dialect sibling `zai` is a reviewed overlay row from the same vendor's docs"
+          "The cited documentation (docs.z.ai/devpack/tool/claude, and docs.z.ai/scenario-example/develop-tools/claude re-read 2026-09-25) describes `https://api.z.ai/api/anthropic` only for the GLM Coding Plan; no page read states that METERED (pay-as-you-go) API keys are accepted there. Needs a live metered-key probe before this row can be trusted for token billing.",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
       "scope": "llm",
@@ -7293,13 +7294,14 @@
         "reasons": [
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe.",
+          "Metered-key acceptance on this Anthropic root is undocumented: the pages read describe it only for the GLM Coding Plan. Needs a live metered-key probe."
         ]
       },
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`; the same root serves metered keys and GLM Coding Plan keys.",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -26710,7 +26712,6 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "low",
           "medium",
           "high"
@@ -26832,13 +26833,11 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "low",
           "medium",
           "high"
         ],
-        "continuation": "opaque-provider-state",
-        "defaultEffort": "minimal"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -27077,7 +27076,6 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "low",
           "medium",
           "high"
@@ -27192,13 +27190,11 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "low",
           "medium",
           "high"
         ],
-        "continuation": "opaque-provider-state",
-        "defaultEffort": "minimal"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -27307,7 +27303,6 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "low",
           "medium",
           "high"
@@ -27619,7 +27614,6 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "high"
         ],
         "continuation": "none"
@@ -27687,7 +27681,6 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [
-          "minimal",
           "high"
         ],
         "continuation": "none"
@@ -31526,45 +31519,359 @@
       "modelFamily": "other"
     },
     {
-      "key": "minimax-anthropic/MiniMax-M2.5",
+      "key": "minimax-anthropic/MiniMax-M2",
       "providerId": "minimax-anthropic",
-      "upstreamId": "MiniMax-M2.5",
-      "displayName": "MiniMax M2.5 (Anthropic dialect)",
+      "upstreamId": "MiniMax-M2",
+      "displayName": "MiniMax-M2 (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/models-intro — M2 maximum output 128K including CoT",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5 at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
-        "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5 at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5 at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2 standard USD per million: input $0.3, output $1.2, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-anthropic/MiniMax-M2.1",
+      "providerId": "minimax-anthropic",
+      "upstreamId": "MiniMax-M2.1",
+      "displayName": "MiniMax-M2.1 (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.1 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1 standard USD per million: input $0.3, output $1.2, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-anthropic/MiniMax-M2.1-highspeed",
+      "providerId": "minimax-anthropic",
+      "upstreamId": "MiniMax-M2.1-highspeed",
+      "displayName": "MiniMax-M2.1-highspeed (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.1-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.4,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed standard USD per million: input $0.6, output $2.4, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-anthropic/MiniMax-M2.5",
+      "providerId": "minimax-anthropic",
+      "upstreamId": "MiniMax-M2.5",
+      "displayName": "MiniMax-M2.5 (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.5 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5 standard USD per million: input $0.3, output $1.2, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -31575,42 +31882,86 @@
       "key": "minimax-anthropic/MiniMax-M2.5-highspeed",
       "providerId": "minimax-anthropic",
       "upstreamId": "MiniMax-M2.5-highspeed",
-      "displayName": "MiniMax M2.5 Highspeed (Anthropic dialect)",
+      "displayName": "MiniMax-M2.5-highspeed (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.5-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
-        "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.4,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed standard USD per million: input $0.6, output $2.4, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -31621,42 +31972,86 @@
       "key": "minimax-anthropic/MiniMax-M2.7",
       "providerId": "minimax-anthropic",
       "upstreamId": "MiniMax-M2.7",
-      "displayName": "MiniMax M2.7 (Anthropic dialect)",
+      "displayName": "MiniMax-M2.7 (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7 at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
-        "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7 at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7 at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.06,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 standard USD per million: input $0.3, output $1.2, cache read $0.06, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -31667,42 +32062,86 @@
       "key": "minimax-anthropic/MiniMax-M2.7-highspeed",
       "providerId": "minimax-anthropic",
       "upstreamId": "MiniMax-M2.7-highspeed",
-      "displayName": "MiniMax M2.7 Highspeed (Anthropic dialect)",
+      "displayName": "MiniMax-M2.7-highspeed (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
-        "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.4,
+          "cacheReadPerMTokUsd": 0.06,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed standard USD per million: input $0.6, output $2.4, cache read $0.06, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -31713,49 +32152,87 @@
       "key": "minimax-anthropic/MiniMax-M3",
       "providerId": "minimax-anthropic",
       "upstreamId": "MiniMax-M3",
-      "displayName": "MiniMax M3 (Anthropic dialect)",
+      "displayName": "MiniMax-M3 (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1048576,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3 at v3.8.50 (5458026c) — `contextLength`",
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M3 context window 1,000,000",
         "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3 at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
-        "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3 at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3 at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 adaptive thinking can be enabled; omitted defaults off",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.06
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — M3 STANDARD <=512K input, permanent 50% off: input $0.30, output $1.20, cache read $0.06 per million; >512K input: $0.60/$2.40/$0.12; priority tier 1.5x",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -32001,45 +32478,77 @@
       "modelFamily": "minimax"
     },
     {
-      "key": "minimax-token-plan/MiniMax-M2.7",
-      "providerId": "minimax-token-plan",
+      "key": "minimax-token-plan-anthropic/MiniMax-M2.7",
+      "providerId": "minimax-token-plan-anthropic",
       "upstreamId": "MiniMax-M2.7",
-      "displayName": "MiniMax M2.7 (Token Plan)",
+      "displayName": "MiniMax-M2.7 (Token Plan) (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — M2.7 is named as a Token Plan model; no additional input modality is documented.",
-        "confidence": "inferred",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — no model-level function-call contract is documented; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — no model-level function-call contract is documented; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -32047,45 +32556,77 @@
       "modelFamily": "minimax"
     },
     {
-      "key": "minimax-token-plan/MiniMax-M2.7-highspeed",
-      "providerId": "minimax-token-plan",
+      "key": "minimax-token-plan-anthropic/MiniMax-M2.7-highspeed",
+      "providerId": "minimax-token-plan-anthropic",
       "upstreamId": "MiniMax-M2.7-highspeed",
-      "displayName": "MiniMax M2.7 HighSpeed (Token Plan)",
+      "displayName": "MiniMax-M2.7-highspeed (Token Plan) (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — the plan documents M2.7 HighSpeed usage but no additional modality.",
-        "confidence": "inferred",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — no model-level function-call contract is documented; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — no model-level function-call contract is documented; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -32093,10 +32634,10 @@
       "modelFamily": "minimax"
     },
     {
-      "key": "minimax-token-plan/MiniMax-M3",
-      "providerId": "minimax-token-plan",
+      "key": "minimax-token-plan-anthropic/MiniMax-M3",
+      "providerId": "minimax-token-plan-anthropic",
       "upstreamId": "MiniMax-M3",
-      "displayName": "MiniMax M3 (Token Plan)",
+      "displayName": "MiniMax-M3 (Token Plan) (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
@@ -32104,9 +32645,16 @@
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — Token Plan advertises M3 with a 1M context window (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax-M3 context window 1,000,000",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "inputModalities": {
         "value": [
@@ -32115,32 +32663,50 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — Token Plan advertises native image and video understanding (retrieved 2026-09-19).",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 supports text, image, video messages",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — chat example emits textual answer",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — no model-level function-call contract is documented; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — tools/tool_choice fully supported and tool_use blocks documented",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://platform.minimax.io/subscribe/coding-plan — no model-level function-call contract is documented; fails closed.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — M3 adaptive thinking can be enabled; omitted defaults off",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -32148,47 +32714,611 @@
       "modelFamily": "minimax"
     },
     {
-      "key": "minimax/MiniMax-M2.5",
-      "providerId": "minimax",
-      "upstreamId": "MiniMax-M2.5",
-      "displayName": "MiniMax M2.5",
+      "key": "minimax-token-plan/MiniMax-M2.7",
+      "providerId": "minimax-token-plan",
+      "upstreamId": "MiniMax-M2.7",
+      "displayName": "MiniMax-M2.7 (Token Plan)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-token-plan/MiniMax-M2.7-highspeed",
+      "providerId": "minimax-token-plan",
+      "upstreamId": "MiniMax-M2.7-highspeed",
+      "displayName": "MiniMax-M2.7-highspeed (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax-token-plan/MiniMax-M3",
+      "providerId": "minimax-token-plan",
+      "upstreamId": "MiniMax-M3",
+      "displayName": "MiniMax-M3 (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M3 context window 1,000,000",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 thinking on by default; can disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax/MiniMax-M2",
+      "providerId": "minimax",
+      "upstreamId": "MiniMax-M2",
+      "displayName": "MiniMax-M2",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/models-intro — M2 maximum output 128K including CoT",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2 standard USD per million: input $0.3, output $1.2, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax/MiniMax-M2.1",
+      "providerId": "minimax",
+      "upstreamId": "MiniMax-M2.1",
+      "displayName": "MiniMax-M2.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.1 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1 standard USD per million: input $0.3, output $1.2, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax/MiniMax-M2.1-highspeed",
+      "providerId": "minimax",
+      "upstreamId": "MiniMax-M2.1-highspeed",
+      "displayName": "MiniMax-M2.1-highspeed",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.1-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.4,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed standard USD per million: input $0.6, output $2.4, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.1-highspeed",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "minimax/MiniMax-M2.5",
+      "providerId": "minimax",
+      "upstreamId": "MiniMax-M2.5",
+      "displayName": "MiniMax-M2.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.5 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5 standard USD per million: input $0.3, output $1.2, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m2.5",
       "modelFamily": "minimax"
@@ -32197,44 +33327,90 @@
       "key": "minimax/MiniMax-M2.5-highspeed",
       "providerId": "minimax",
       "upstreamId": "MiniMax-M2.5-highspeed",
-      "displayName": "MiniMax M2.5 Highspeed",
+      "displayName": "MiniMax-M2.5-highspeed",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.5-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.5-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.4,
+          "cacheReadPerMTokUsd": 0.03,
+          "cacheWritePerMTokUsd": 0.375
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed standard USD per million: input $0.6, output $2.4, cache read $0.03, cache write $0.375",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m2.5-highspeed",
       "modelFamily": "minimax"
@@ -32243,45 +33419,75 @@
       "key": "minimax/MiniMax-M2.7",
       "providerId": "minimax",
       "upstreamId": "MiniMax-M2.7",
-      "displayName": "MiniMax M2.7",
+      "displayName": "MiniMax-M2.7",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7 context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7 has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.3,
@@ -32294,6 +33500,10 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
       "canonicalModelId": "minimax-m2.7",
       "modelFamily": "minimax"
     },
@@ -32301,45 +33511,75 @@
       "key": "minimax/MiniMax-M2.7-highspeed",
       "providerId": "minimax",
       "upstreamId": "MiniMax-M2.7-highspeed",
-      "displayName": "MiniMax M2.7 Highspeed",
+      "displayName": "MiniMax-M2.7-highspeed",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M2.7-highspeed context window 204,800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 204800,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — non-M3 max_completion_tokens maximum 204800",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x series support text and tool-call blocks only; no image or video",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M2.7-highspeed",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed has prompt-cache read price and write price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M2.x models always think and cannot be disabled",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.6,
@@ -32352,6 +33592,10 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [
+        "function_call"
+      ],
+      "status": "candidate",
       "canonicalModelId": "minimax-m2.7-highspeed",
       "modelFamily": "minimax"
     },
@@ -32359,52 +33603,91 @@
       "key": "minimax/MiniMax-M3",
       "providerId": "minimax",
       "upstreamId": "MiniMax-M3",
-      "displayName": "MiniMax M3",
+      "displayName": "MiniMax-M3",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1048576,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax-M3 context window 1,000,000",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-chat-openai — MiniMax-M3 max_completion_tokens maximum 524288",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 supports text, image, video messages",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — chat example emits textual answer",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — multi-turn function calls and tools documented for all eight models",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/minimax/index.ts#MiniMax-M3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — function/tool calling supported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
       },
-      "unsupportedParameters": [],
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — MiniMax-M3 has prompt-cache read price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.minimax.io/docs/api-reference/text-openai-api — M3 thinking on by default; can disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:58:15Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.06
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.minimax.io/docs/guides/pricing-paygo — M3 STANDARD <=512K input, permanent 50% off: input $0.30, output $1.20, cache read $0.06 per million; >512K input: $0.60/$2.40/$0.12; priority tier 1.5x",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:58:15Z"
+      },
+      "unsupportedParameters": [
+        "function_call"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m3",
       "modelFamily": "minimax"
@@ -50468,7 +51751,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "canonicalModelId": "glm-5-turbo",
       "modelFamily": "glm"
     },
@@ -50590,45 +51873,87 @@
       "key": "zai-anthropic/glm-5.3",
       "providerId": "zai-anthropic",
       "upstreamId": "glm-5.3",
-      "displayName": "GLM 5.3",
+      "displayName": "GLM-5.3 (Anthropic dialect)",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 1M context length",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Coding Plan Anthropic wire: output_config.effort maps low/high/max and disabled thinking maps to low",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1.4,
@@ -50640,14 +51965,120 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zai-anthropic/glm-5.3-flash",
+      "providerId": "zai-anthropic",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM-5.3-FLASH (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 1M context length",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Coding Plan Anthropic wire: output_config.effort maps low/high/max and disabled thinking maps to low",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.15,
+          "outputPerMTokUsd": 0.5,
+          "cacheReadPerMTokUsd": 0.03
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — GLM-5.3-FLASH input $0.15, cached input $0.03, output $0.5 per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
       "modelFamily": "glm"
     },
     {
       "key": "zai-coding-anthropic/glm-5.3",
       "providerId": "zai-coding-anthropic",
       "upstreamId": "glm-5.3",
-      "displayName": "GLM-5.3 (GLM Coding Plan, Anthropic dialect)",
+      "displayName": "GLM-5.3 (Coding Plan, Anthropic dialect)",
       "aliases": [
         "glm-5.2",
         "glm-5.1"
@@ -50658,71 +52089,78 @@
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/tool/claude — GLM-5.3 declares a 1M-token context window and the current plan's Claude Code guide maps it to this Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 1M context length",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "maxOutputTokens": {
-        "value": 128000,
+        "value": 131072,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/tool/claude — GLM-5.3 declares a 128K-token maximum output and the current plan's Claude Code guide maps it to this Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 128K maximum output tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/tool/claude — GLM-5.3 declares text input and the current plan's Claude Code guide maps it to this Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/tool/claude — GLM-5.3 declares text output and the current plan's Claude Code guide maps it to this Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/tool/claude — the model guide declares Function Calling and the current plan's Claude Code guide configures it for an agentic tool-use client (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/tool/claude — the model guide declares Function Calling and the current plan's Claude Code guide configures it for an agentic tool-use client (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "structuredOutput": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — the model guide declares structured-output support; the current plan's Claude Code guide maps this model to its Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — GLM-5.3 declares always-enabled reasoning with low/high/max effort; the current plan's Claude Code guide maps this model to its Anthropic-compatible endpoint (retrieved 2026-09-19).",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Claude Code uses thinking.type and output_config.effort; off-like thinking values become low",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [
           "low",
           "high",
           "max"
         ],
-        "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "defaultEffort": "max"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50733,7 +52171,7 @@
       "key": "zai-coding-anthropic/glm-5.3-flash",
       "providerId": "zai-coding-anthropic",
       "upstreamId": "glm-5.3-flash",
-      "displayName": "GLM-5.3-Flash (GLM Coding Plan, Anthropic dialect)",
+      "displayName": "GLM-5.3-FLASH (Coding Plan, Anthropic dialect)",
       "aliases": [
         "glm-4.7"
       ],
@@ -50743,74 +52181,81 @@
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash and https://docs.z.ai/devpack/tool/claude — the current guide declares a 1M-token context window, full plan availability, and the plan's Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 1M context length",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "maxOutputTokens": {
-        "value": 128000,
+        "value": 131072,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash and https://docs.z.ai/devpack/tool/claude — the current guide declares a 128K-token maximum output, full plan availability, and the plan's Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 128K maximum output tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "inputModalities": {
         "value": [
           "text",
           "image",
           "video",
-          "file"
+          "pdf"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash and https://docs.z.ai/devpack/tool/claude — the current guide declares Video / Image / Text / File input, full plan availability, and the plan's Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash and https://docs.z.ai/devpack/tool/claude — the current guide declares text output, full plan availability, and the plan's Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash and https://docs.z.ai/devpack/tool/claude — the current guide declares Function Calling, full plan availability, and the plan's Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash and https://docs.z.ai/devpack/tool/claude — the current guide declares Function Calling, full plan availability, and the plan's Anthropic-compatible endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "structuredOutput": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — the current model guide declares structured-output support and full plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — it documents enabled Thinking, full Coding Plan availability, and parameters consistent with GLM-5.3, whose guide declares low/high/max effort (retrieved 2026-09-19).",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Claude Code uses thinking.type and output_config.effort; off-like thinking values become low",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [
           "low",
           "high",
           "max"
         ],
-        "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "defaultEffort": "max"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50821,7 +52266,7 @@
       "key": "zai-coding/glm-5.3",
       "providerId": "zai-coding",
       "upstreamId": "glm-5.3",
-      "displayName": "GLM-5.3 (GLM Coding Plan)",
+      "displayName": "GLM-5.3 (Coding Plan)",
       "aliases": [
         "glm-5.2",
         "glm-5.1"
@@ -50832,71 +52277,78 @@
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares a 1M-token context window and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 1M context length",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "maxOutputTokens": {
-        "value": 128000,
+        "value": 131072,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares a 128K-token maximum output and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 128K maximum output tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares text input and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares text output and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares Function Call support and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares Function Call support and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "structuredOutput": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares structured-output support and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 and https://docs.z.ai/devpack/overview — the model guide declares always-enabled reasoning with low/high/max effort and the current plan guide identifies GLM-5.3 as an effective plan model (retrieved 2026-09-19).",
+          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [
           "low",
           "high",
           "max"
         ],
-        "defaultEffort": "max",
-        "continuation": "plaintext"
+        "continuation": "plaintext",
+        "defaultEffort": "max"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50907,7 +52359,7 @@
       "key": "zai-coding/glm-5.3-flash",
       "providerId": "zai-coding",
       "upstreamId": "glm-5.3-flash",
-      "displayName": "GLM-5.3-Flash (GLM Coding Plan)",
+      "displayName": "GLM-5.3-FLASH (Coding Plan)",
       "aliases": [
         "glm-4.7"
       ],
@@ -50917,74 +52369,81 @@
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares a 1M-token context window and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 1M context length",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "maxOutputTokens": {
-        "value": 128000,
+        "value": 131072,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares a 128K-token maximum output and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 128K maximum output tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "inputModalities": {
         "value": [
           "text",
           "image",
           "video",
-          "file"
+          "pdf"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares Video / Image / Text / File input and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares text output and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares Function Calling support and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares Function Calling support and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "structuredOutput": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current model documentation declares structured-output support and full Coding Plan availability (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — it documents enabled Thinking, full Coding Plan availability, and parameters consistent with GLM-5.3, whose guide declares low/high/max effort (retrieved 2026-09-19).",
+          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [
           "low",
           "high",
           "max"
         ],
-        "defaultEffort": "max",
-        "continuation": "plaintext"
+        "continuation": "plaintext",
+        "defaultEffort": "max"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50992,22 +52451,29 @@
       "modelFamily": "glm"
     },
     {
-      "key": "zai/glm-4.7",
+      "key": "zai/glm-4.5",
       "providerId": "zai",
-      "upstreamId": "glm-4.7",
-      "displayName": "GLM 4.7 (OpenAI dialect)",
+      "upstreamId": "glm-4.5",
+      "displayName": "GLM-4.5",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "maxOutputTokens": {
+        "value": 98304,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — glm-4.5 maximum max_tokens 98,304",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7 at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.5",
         "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
@@ -51016,31 +52482,282 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7 at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7 at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.5 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
           "confidence": "declared",
-          "observedAt": "2026-09-14T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.2,
+          "cacheReadPerMTokUsd": 0.11
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — GLM-4.5 input $0.6, cached input $0.11, output $2.2 per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.5",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zai/glm-4.5-air",
+      "providerId": "zai",
+      "upstreamId": "glm-4.5-air",
+      "displayName": "GLM-4.5-AIR",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "maxOutputTokens": {
+        "value": 98304,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — glm-4.5-air maximum max_tokens 98,304",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.5-air",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.5-air has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.2,
+          "outputPerMTokUsd": 1.1,
+          "cacheReadPerMTokUsd": 0.03
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — GLM-4.5-AIR input $0.2, cached input $0.03, output $1.1 per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.5-air",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zai/glm-4.6",
+      "providerId": "zai",
+      "upstreamId": "glm-4.6",
+      "displayName": "GLM-4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.6",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.6 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 2.2,
+          "cacheReadPerMTokUsd": 0.11
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — GLM-4.6 input $0.6, cached input $0.11, output $2.2 per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.6",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zai/glm-4.7",
+      "providerId": "zai",
+      "upstreamId": "glm-4.7",
+      "displayName": "GLM-4.7",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.7",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.7 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — GLM-4.7 forced thinking; reasoning_effort available only for GLM-5.2+, so no effort levels documented",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [],
         "continuation": "plaintext",
@@ -51077,6 +52794,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-4.7",
       "modelFamily": "glm"
     },
@@ -51084,7 +52803,7 @@
       "key": "zai/glm-4.7-flash",
       "providerId": "zai",
       "upstreamId": "glm-4.7-flash",
-      "displayName": "GLM 4.7 Flash (OpenAI dialect)",
+      "displayName": "GLM-4.7-FLASH",
       "aliases": [],
       "endpoints": [
         "chat"
@@ -51093,10 +52812,10 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.7-flash",
         "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
@@ -51105,31 +52824,29 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
-          "confidence": "declared",
-          "observedAt": "2026-09-14T00:00:00Z"
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — GLM-4.7 forced thinking; reasoning_effort available only for GLM-5.2+, so no effort levels documented",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [],
         "continuation": "plaintext",
@@ -51155,25 +52872,16 @@
           "observedAt": "2026-09-14T00:00:00Z"
         }
       },
-      "pricing": {
-        "value": {
-          "inputPerMTokUsd": 0,
-          "outputPerMTokUsd": 0,
-          "cacheReadPerMTokUsd": 0
-        },
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/overview/pricing — current Z.AI USD price-per-1M-tokens table; the cached-input field is recorded as cache-read. Cache storage is Limited-time Free but is not represented by ModelPricing (retrieved 2026-09-19). GLM-4.7-Flash is listed Free for input, cached input, cache storage, and output, so this is an explicit zero list price rather than an unknown price.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-4.7-flash",
       "modelFamily": "glm"
     },
     {
-      "key": "zai/glm-5",
+      "key": "zai/glm-4.7-flashx",
       "providerId": "zai",
-      "upstreamId": "glm-5",
-      "displayName": "GLM 5 (OpenAI dialect)",
+      "upstreamId": "glm-4.7-flashx",
+      "displayName": "GLM-4.7-FLASHX",
       "aliases": [],
       "endpoints": [
         "chat"
@@ -51182,10 +52890,10 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5 at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.7-flashx",
         "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
@@ -51194,31 +52902,118 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5 at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5 at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.7-flashx has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — GLM-4.7 forced thinking; reasoning_effort available only for GLM-5.2+, so no effort levels documented",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.07,
+          "outputPerMTokUsd": 0.4,
+          "cacheReadPerMTokUsd": 0.01
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — GLM-4.7-FLASHX input $0.07, cached input $0.01, output $0.4 per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7-flashx",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zai/glm-5",
+      "providerId": "zai",
+      "upstreamId": "glm-5",
+      "displayName": "GLM-5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-5",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-5 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
           "confidence": "declared",
-          "observedAt": "2026-09-14T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [],
         "continuation": "plaintext",
@@ -51255,6 +53050,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-5",
       "modelFamily": "glm"
     },
@@ -51299,8 +53096,6 @@
         "confidence": "unknown",
         "observedAt": "2026-09-06T00:00:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "reasoning": {
         "supported": {
           "value": true,
@@ -51333,6 +53128,8 @@
           "observedAt": "2026-09-14T00:00:00Z"
         }
       },
+      "unsupportedParameters": [],
+      "status": "deprecated",
       "canonicalModelId": "glm-5-turbo",
       "modelFamily": "glm"
     },
@@ -51340,19 +53137,26 @@
       "key": "zai/glm-5.1",
       "providerId": "zai",
       "upstreamId": "glm-5.1",
-      "displayName": "GLM 5.1 (OpenAI dialect)",
+      "displayName": "GLM-5.1",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1 at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-5.1",
         "confidence": "inferred",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
@@ -51361,31 +53165,36 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1 at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1 at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-5.1 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
           "confidence": "declared",
-          "observedAt": "2026-09-14T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [],
         "continuation": "plaintext",
@@ -51422,6 +53231,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-5.1",
       "modelFamily": "glm"
     },
@@ -51429,55 +53240,83 @@
       "key": "zai/glm-5.2",
       "providerId": "zai",
       "upstreamId": "glm-5.2",
-      "displayName": "GLM 5.2 (OpenAI dialect)",
+      "displayName": "GLM-5.2",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — 1M-token context window",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares text input.",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — text chat input documented for glm-5.2",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares text output.",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — chat completion returns text content",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares Function Call support.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares Function Call support.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-5.2 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/capabilities/thinking — “The Deep Thinking feature currently supports the latest models in the GLM-5.3, GLM-5.3-FLASH, GLM-5.2, GLM-5.1, GLM-5, GLM-4.5, GLM-4.6, GLM-4.7 series”; https://docs.z.ai/api-reference/llm/chat-completion — `reasoning_content`: “Reasoning content, supports by GLM-4.5 series”",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 5.2 accepts max/xhigh/high/medium/low/minimal/none; none and minimal skip thinking; xhigh maps max, low/medium map high",
           "confidence": "declared",
-          "observedAt": "2026-09-14T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
-        "efforts": [],
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "continuation": "plaintext",
+        "defaultEffort": "max",
         "readableState": {
           "value": "full-exposed",
           "source": "official-doc",
@@ -51511,27 +53350,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares a 1M-token context window.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares a 128K-token maximum output.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — current Z.AI model documentation (retrieved 2026-09-19). It declares Structured Output support.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-5.2",
       "modelFamily": "glm"
     },
@@ -51539,52 +53359,78 @@
       "key": "zai/glm-5.3",
       "providerId": "zai",
       "upstreamId": "glm-5.3",
-      "displayName": "GLM 5.3 (OpenAI dialect)",
+      "displayName": "GLM-5.3",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 1M context length",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares text input.",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares text output.",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares Function Call support.",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares Function Call support.",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — GLM-5.3 always enables reasoning and declares low, high, and max reasoning_effort values with max as the default (retrieved 2026-09-19).",
+          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [
           "low",
@@ -51592,6 +53438,7 @@
           "max"
         ],
         "continuation": "plaintext",
+        "defaultEffort": "max",
         "readableState": {
           "value": "full-exposed",
           "source": "official-doc",
@@ -51612,8 +53459,7 @@
           "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — `clear_thinking`: “Missing, truncated, rewritten, or reordered blocks may degrade performance or prevent the feature from taking effect”; https://docs.z.ai/guides/capabilities/thinking-mode — interleaved thinking: “thinking blocks should be explicitly preserved and returned together with the tool results” (never stated as a hard error/4xx, unlike DeepSeek's documented 400)",
           "confidence": "declared",
           "observedAt": "2026-09-14T00:00:00Z"
-        },
-        "defaultEffort": "max"
+        }
       },
       "pricing": {
         "value": {
@@ -51626,27 +53472,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares a 1M-token context window.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares a 128K-token maximum output.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — current Z.AI model documentation (retrieved 2026-09-19). It declares Structured Output support.",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-5.3",
       "modelFamily": "glm"
     },
@@ -51654,7 +53481,7 @@
       "key": "zai/glm-5.3-flash",
       "providerId": "zai",
       "upstreamId": "glm-5.3-flash",
-      "displayName": "GLM-5.3-Flash (Z.AI API)",
+      "displayName": "GLM-5.3-FLASH",
       "aliases": [],
       "endpoints": [
         "chat"
@@ -51662,77 +53489,82 @@
       "contextWindow": {
         "value": 1000000,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares a 1M-token context window (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 1M context length",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "maxOutputTokens": {
-        "value": 128000,
+        "value": 131072,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares a 128K-token maximum output (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 128K maximum output tokens",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "inputModalities": {
         "value": [
           "text",
           "image",
           "video",
-          "file"
+          "pdf"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares Video / Image / Text / File input (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares text output (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares Function Calling support (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares Function Calling support (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "structuredOutput": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — current Z.AI model documentation declares structured-output support (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — it documents enabled Thinking and parameters consistent with GLM-5.3; the GLM-5.3 model guide declares low/high/max effort (retrieved 2026-09-19).",
+          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T09:04:00Z"
         },
         "efforts": [
           "low",
           "high",
           "max"
         ],
-        "defaultEffort": "max",
-        "continuation": "plaintext"
+        "continuation": "plaintext",
+        "defaultEffort": "max"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.15,
@@ -51744,7 +53576,113 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate",
       "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zai/glm-5.3-flashx",
+      "providerId": "zai",
+      "upstreamId": "glm-5.3-flashx",
+      "displayName": "GLM-5.3-FLASHX",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 1M context length",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — 128K maximum output tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.37,
+          "outputPerMTokUsd": 1.25,
+          "cacheReadPerMTokUsd": 0.075
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — GLM-5.3-FLASHX input $0.37, cached input $0.075, output $1.25 per million tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flashx",
       "modelFamily": "glm"
     },
     {

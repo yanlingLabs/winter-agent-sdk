@@ -464,8 +464,13 @@ describe("the COMMITTED catalog", () => {
       // `candidate` OR `experimental` — R6-16 puts the native-cloud families (Azure, Vertex,
       // Bedrock) in at `experimental`. What no row may be is `supported`: that requires the
       // behavioural corpus (WS-13 §13), and upstream presence promotes nothing.
-      expect([m.key, m.status]).toEqual([m.key, m.status === "experimental" ? "experimental" : "candidate"]);
-      expect(["candidate", "experimental"]).toContain(m.status);
+      //
+      // `deprecated` joined in the 2026-09-25 catalog refresh: a row whose model the VENDOR retired is
+      // shadowed at `deprecated` (the registry refuses it and listings drop it) rather than deleted, so a
+      // stored tag naming it still meets a typed refusal instead of an unknown key. It is a demotion,
+      // never a promotion; the overlay row's `$comment` says why (comments are stripped from the shipped document).
+      expect([m.key, m.status]).toEqual([m.key, m.status === "experimental" || m.status === "deprecated" ? m.status : "candidate"]);
+      expect(["candidate", "experimental", "deprecated"]).toContain(m.status);
       expect(m.classifierEligible).toBeUndefined();
       if (m.pricing === undefined) continue;
       expect([m.key, m.pricing.source]).toEqual([m.key, "official-doc"]);
