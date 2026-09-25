@@ -1098,6 +1098,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // re-capturing the parent's (possibly since-changed) one -- consistent with a fork being a
         // frozen snapshot of the parent at fork time, and disclosed rather than silently assumed.
         ...(req.fork === true && inherit.requestLayout !== undefined ? { exactRequestLayout: inherit.requestLayout } : {}),
+        // WS-23 (brief item 7): this engine is a SUBAGENT, so it fires SubagentStart/SubagentStop
+        // where a session fires SessionStart/Stop -- through ITS OWN hook registry (the parent's
+        // callbacks, mirrored as `config.hooks`, plus the parent's settings/plugin entries as
+        // `extraHookEntries`), so exactly the hooks the parent runs see its subagents start and
+        // stop, and a SubagentStop `block` keeps THIS child working. `agent_transcript_path` is the
+        // child's own transcript, `""` when there is no durable one to name.
+        subagentHooks: {
+          agentType: req.agentType ?? req.builtinAgentType ?? (req.fork === true ? "fork" : "general-purpose"),
+          agentTranscriptPath: childStore !== undefined && childDurableRoot !== undefined ? transcriptPath : "",
+        },
         // Spawn-surface parity (research §A1 `omitClaudeMd`): an Explore/Plan-style definition drops
         // the project instructions files and the git summary from this child's own context.
         ...(req.definition?.omitProjectContext === true ? { omitProjectContext: true } : {}),

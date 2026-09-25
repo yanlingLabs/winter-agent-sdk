@@ -157,6 +157,13 @@ export interface SpawnChildRequest {
    * field -- byte-identical to before it existed.
    */
   builtinAgentType?: string;
+  /**
+   * WS-23: the `subagent_type` this child was spawned as (whatever its source), for the
+   * `agent_type` field of its SubagentStart/SubagentStop hook input -- and the subject those events'
+   * matchers are tested against. Absent from a hand-built request; child-engine.ts then falls back
+   * to `builtinAgentType`, `"fork"` for a fork, else `"general-purpose"`.
+   */
+  agentType?: string;
   // Phase 5 Task 3 (R5-10): the child's own structured-output contract. Set by Lane W's `agent({schema})`
   // so a workflow-spawned agent rides the IDENTICAL StructuredOutput path the top-level session uses
   // -- registration, validation, the retry counter and the exhaustion result are all the engine's,
