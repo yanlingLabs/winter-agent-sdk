@@ -58,6 +58,17 @@
         }
       }
     },
+    "evidenceBlockBinding": {
+      "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
+      "properties": {
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["beta"],
+          "properties": { "beta": { "enum": ["thinking-binding-controls-2026-08-01"] } }
+        }
+      }
+    },
     "evidenceSummaryRequest": {
       "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
       "properties": {
@@ -196,7 +207,8 @@
             "continuationDomain": { "$ref": "#/$defs/evidenceStringArray" },
             "completionEvent": { "$ref": "#/$defs/evidenceString" },
             "toolLoopRequirement": { "$ref": "#/$defs/evidenceToolLoopRequirement" },
-            "effortRequest": { "$ref": "#/$defs/evidenceEffortRequest" }
+            "effortRequest": { "$ref": "#/$defs/evidenceEffortRequest" },
+            "blockBinding": { "$ref": "#/$defs/evidenceBlockBinding" }
           }
         },
         "unsupportedParameters": { "type": "array", "items": { "type": "string", "minLength": 1 } },

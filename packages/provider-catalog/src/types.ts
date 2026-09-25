@@ -106,6 +106,16 @@ export interface ReasoningCapabilities {
    * dialect). A closed vocabulary (`CATALOG_VOCABULARIES.effortRequestFields`).
    */
   effortRequest?: CapabilityEvidence<{ field: "output_config.effort" }>;
+  /**
+   * The vendor BINDS a replayed thinking block to the conversation prefix it was produced under
+   * (2026-09-25; Claude Opus 5.5 and Fable 5.1). A block replayed after the `system` prompt, the `tools`
+   * array or an earlier message changed is rejected with a 400 unless the request opts into the named
+   * beta and asks for the block to be dropped (`thinking.block_binding.prefix_mismatch_behavior:
+   * "drop_block"`). An engine whose tool list legitimately grows mid-session (MCP servers connecting,
+   * deferred tools loading) must send both on such a row. `beta` is the header value, a closed
+   * vocabulary (`CATALOG_VOCABULARIES.blockBindingBetas`).
+   */
+  blockBinding?: CapabilityEvidence<{ beta: "thinking-binding-controls-2026-08-01" }>;
 }
 
 /** List prices, USD per million tokens. R6-H: the ONLY price source Winter has — an unpriced model reports `0` / `costBasis: "unknown"`, never an invented number. */

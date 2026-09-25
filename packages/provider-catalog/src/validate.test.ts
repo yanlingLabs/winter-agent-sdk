@@ -221,6 +221,19 @@ describe("validateCatalog — evidence integrity", () => {
     expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ field: "output_config.effort", thinking: "adaptive" })) } as never)] }), "unknown key");
   });
 
+  test("accepts a documented `blockBinding` beta, and rejects an unknown one or an extra key", () => {
+    const reasoning = (blockBinding: unknown) => ({
+      supported: { value: true, source: "official-doc", confidence: "declared" },
+      efforts: ["low", "high"],
+      continuation: "opaque-provider-state",
+      blockBinding,
+    });
+    const evidence = (value: unknown) => ({ value, source: "official-doc", confidence: "declared", sourceRef: "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting", observedAt: "2026-09-25T00:00:00Z" });
+    expect(validateCatalog(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "thinking-binding-controls-2026-08-01" })) } as never)] })).ok).toBe(true);
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "some-other-beta" })) } as never)] }), "unknown block-binding beta");
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "thinking-binding-controls-2026-08-01", mode: "drop_block" })) } as never)] }), "unknown key");
+  });
+
   test("rejects a defaultEffort the model's own `efforts` does not contain", () => {
     expectRejected(
       baseCatalog({
@@ -531,6 +544,7 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["replayScopes", "$defs.evidenceReplayScope.properties.value"],
     ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
     ["effortRequestFields", "$defs.evidenceEffortRequest.properties.value.properties.field"],
+    ["blockBindingBetas", "$defs.evidenceBlockBinding.properties.value.properties.beta"],
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
     ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],

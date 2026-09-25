@@ -114,6 +114,7 @@ const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
 const TOOL_LOOP_REQUIREMENTS = ["hard-error", "silent-degradation", "not-required"] as const;
 const EFFORT_REQUEST_FIELDS = ["output_config.effort"] as const;
+const BLOCK_BINDING_BETAS = ["thinking-binding-controls-2026-08-01"] as const;
 
 /**
  * The closed vocabularies, exported as ONE object so the JSON Schema can be checked against the
@@ -155,6 +156,7 @@ export const CATALOG_VOCABULARIES = {
   replayScopes: REPLAY_SCOPES,
   toolLoopRequirements: TOOL_LOOP_REQUIREMENTS,
   effortRequestFields: EFFORT_REQUEST_FIELDS,
+  blockBindingBetas: BLOCK_BINDING_BETAS,
 } as const satisfies Record<string, readonly string[]>;
 
 // --- secrets floor (WS-13 §6/§13, R6-10: "descriptors never contain secrets; a catalog test greps
@@ -398,6 +400,11 @@ function checkReasoning(errs: Errors, v: unknown, path: string): void {
     if (!isRecord(val)) return errs.add(p, `expected {field}, got ${describe(val)}`);
     for (const key of Object.keys(val)) if (key !== "field") errs.add(`${p}.${key}`, "unknown key");
     if (typeof val["field"] !== "string" || !(EFFORT_REQUEST_FIELDS as readonly string[]).includes(val["field"])) errs.add(`${p}.field`, `unknown effort request field ${describe(val["field"])}`);
+  }, false);
+  checkEvidence(errs, v["blockBinding"], `${path}.blockBinding`, (val, p) => {
+    if (!isRecord(val)) return errs.add(p, `expected {beta}, got ${describe(val)}`);
+    for (const key of Object.keys(val)) if (key !== "beta") errs.add(`${p}.${key}`, "unknown key");
+    if (typeof val["beta"] !== "string" || !(BLOCK_BINDING_BETAS as readonly string[]).includes(val["beta"])) errs.add(`${p}.beta`, `unknown block-binding beta ${describe(val["beta"])}`);
   }, false);
 }
 

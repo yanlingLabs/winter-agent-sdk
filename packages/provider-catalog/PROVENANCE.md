@@ -82,7 +82,7 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `model.status` | local override | `candidate` by default; `experimental` where the allowlist's reviewed `initialModelStatus` says so (R6-16's native cloud, 4 of 53 extracted rows), overridable per row. Never `supported` — upstream presence promotes nothing |
 | `*.pricing` | official-doc derived | **overlay only**, from the vendors' pricing pages with the URL and observation instant |
 | `*.classifierEligible` | live-probe proven | **never set** by extraction or overlay (R6-14) |
-| `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` / `effortRequest` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
+| `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` / `effortRequest` / `blockBinding` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
 
 ### Two tiers of admission citation
 
