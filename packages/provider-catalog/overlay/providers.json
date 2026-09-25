@@ -2597,6 +2597,1026 @@
         "tier": "fetched-document"
       },
       "scope": "llm"
+    },
+    {
+      "id": "google-openai",
+      "displayName": "Google Gemini API (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Dialect sibling of `google` (native generateContent): the same Gemini API key and per-token billing, reached through Google's OpenAI-compatibility layer. A separate provider because a different wire dialect is a different provider in this catalog (user ruling 2026-09-25). The layer is documented as beta, so its parameter coverage is narrower than the native surface.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://generativelanguage.googleapis.com/v1beta/openai"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Google documents the OpenAI-compatibility layer as beta; parameter coverage (reasoning_effort mapping, unsupported fields) is narrower than the native generateContent surface."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://ai.google.dev/gemini-api/docs/openai — Google's Gemini API OpenAI-compatibility page, retrieved 2026-09-25: Chat Completions at `https://generativelanguage.googleapis.com/v1beta/openai/` with the ordinary Gemini API key as the bearer token; the page describes the layer as still in beta.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "moonshot-anthropic",
+      "displayName": "Moonshot AI (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `moonshot` on the international Kimi platform (per-token). Distinct from `kimi-coding`, which is the Kimi Code membership plan.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.moonshot.ai/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.kimi.ai/docs/api/overview — Moonshot's (Kimi platform) API overview, retrieved 2026-09-25: the international platform serves Anthropic Messages at `https://api.moonshot.ai/anthropic` beside OpenAI Chat Completions/Responses at `https://api.moonshot.ai/v1`, with the same platform API key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "moonshot-cn",
+      "displayName": "Moonshot AI China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "$comment": "China-region twin of `moonshot`: own host, own account system, CNY billing.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.moonshot.cn/v1",
+        "models": "https://api.moonshot.cn/v1/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.kimi.com/docs/api/overview — Moonshot's China platform API overview, retrieved 2026-09-25: OpenAI Chat Completions and Responses at `https://api.moonshot.cn/v1`, Anthropic Messages at `https://api.moonshot.cn/anthropic`; billed in CNY (https://platform.kimi.com/docs/pricing/chat).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "moonshot-cn-anthropic",
+      "displayName": "Moonshot AI China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `moonshot-cn`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.moonshot.cn/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.kimi.com/docs/api/overview — Moonshot's China platform API overview, retrieved 2026-09-25: Anthropic Messages at `https://api.moonshot.cn/anthropic` with the China platform API key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zhipu",
+      "displayName": "Zhipu BigModel API (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "China-region twin of `zai` (Z.AI is Zhipu's international brand): own host and account system, CNY per-token billing.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://open.bigmodel.cn/api/paas/v4"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8 — Zhipu's BigModel (China) chat-completion reference, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://open.bigmodel.cn/api/paas/v4` with a BigModel API key, per-token CNY billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zhipu-anthropic",
+      "displayName": "Zhipu BigModel API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `zhipu`. Shares its URL with `zhipu-coding-anthropic`: the credential, not the host, decides metered vs plan billing (the same shape as `zai-anthropic`/`zai-coding-anthropic`).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://open.bigmodel.cn/api/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`; the same root serves metered keys and GLM Coding Plan keys.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zhipu-coding",
+      "displayName": "Zhipu GLM Coding Plan China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "China-region twin of `zai-coding`: subscription plan, no per-token prices.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://open.bigmodel.cn/api/coding/paas/v4"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/overview — Zhipu's GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: the plan's OpenAI-compatible endpoint is `https://open.bigmodel.cn/api/coding/paas/v4`, used with the plan key; billing is the subscription's usage quota.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zhipu-coding-anthropic",
+      "displayName": "Zhipu GLM Coding Plan China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `zhipu-coding`; shares its URL with metered `zhipu-anthropic` (credential-distinguished).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://open.bigmodel.cn/api/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's GLM Coding Plan Claude Code guide, retrieved 2026-09-25: `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic` with the plan key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "minimax-token-plan-anthropic",
+      "displayName": "MiniMax Token Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `minimax-token-plan`. Shares its URL with metered `minimax-anthropic`: the `sk-cp-` plan key vs the `sk-api-` metered key decides billing.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.minimax.io/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.minimax.io/docs/token-plan/other-tools — MiniMax Token Plan tool guide, retrieved 2026-09-25: the plan's `sk-cp-` key works against the Anthropic-compatible root `https://api.minimax.io/anthropic` (recommended there for prompt caching) as well as the OpenAI root.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "alibaba-anthropic",
+      "displayName": "Alibaba Cloud Model Studio (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `alibaba` (Model Studio international, per-token).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://dashscope-intl.aliyuncs.com/apps/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: the Singapore (international) region serves Anthropic Messages at `https://dashscope-intl.aliyuncs.com/apps/anthropic` with the same Model Studio API key as the OpenAI-compatible mode.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "alibaba-cn-anthropic",
+      "displayName": "Alibaba Cloud Bailian China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `alibaba-cn` (Bailian China, per-token, CNY).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://dashscope.aliyuncs.com/apps/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Model Studio base-URL reference, retrieved 2026-09-25: the Beijing (China) region serves Anthropic Messages at `https://dashscope.aliyuncs.com/apps/anthropic`.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-token-plan-anthropic",
+      "displayName": "Qwen Token Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `qwen-cloud-token-plan` (international Token Plan).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/token-plan-overview and https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Token Plan documentation, retrieved 2026-09-25: the international Token Plan host `token-plan.ap-southeast-1.maas.aliyuncs.com` serves `/compatible-mode/v1` and `/apps/anthropic` for the plan key; billing is plan credits.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-token-plan-cn",
+      "displayName": "Qwen Token Plan China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "China-region twin of `qwen-cloud-token-plan`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/token-plan-overview and https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Token Plan documentation, retrieved 2026-09-25: the China Token Plan host `token-plan.cn-beijing.maas.aliyuncs.com` serves `/compatible-mode/v1` and `/apps/anthropic` for the plan key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-token-plan-cn-anthropic",
+      "displayName": "Qwen Token Plan China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `qwen-token-plan-cn`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/token-plan-overview and https://help.aliyun.com/en/model-studio/base-url — Alibaba Cloud Token Plan documentation, retrieved 2026-09-25: China Token Plan Anthropic root `https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic`.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-coding",
+      "displayName": "Alibaba Cloud Coding Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Alibaba Cloud Coding Plan: subscription with a request quota, separate host and `sk-sp-` key from metered Model Studio.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://coding-intl.dashscope.aliyuncs.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/coding-plan and https://help.aliyun.com/en/model-studio/coding-plan-faq — Alibaba Cloud Coding Plan documentation, retrieved 2026-09-25: the plan's `sk-sp-` key is used against `https://coding-intl.dashscope.aliyuncs.com/v1` (OpenAI) and `https://coding-intl.dashscope.aliyuncs.com/apps/anthropic` (Anthropic); billing is the plan's request quota.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-coding-anthropic",
+      "displayName": "Alibaba Cloud Coding Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `qwen-coding`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/coding-plan — Alibaba Cloud Coding Plan documentation, retrieved 2026-09-25: Anthropic Messages at `https://coding-intl.dashscope.aliyuncs.com/apps/anthropic` with the plan key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-coding-cn",
+      "displayName": "Alibaba Cloud Coding Plan China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Alibaba Cloud Coding Plan: subscription with a request quota, separate host and `sk-sp-` key from metered Model Studio.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://coding.dashscope.aliyuncs.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/coding-plan and https://help.aliyun.com/en/model-studio/coding-plan-faq — Alibaba Cloud Coding Plan documentation, retrieved 2026-09-25: the plan's `sk-sp-` key is used against `https://coding.dashscope.aliyuncs.com/v1` (OpenAI) and `https://coding.dashscope.aliyuncs.com/apps/anthropic` (Anthropic); billing is the plan's request quota.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qwen-coding-cn-anthropic",
+      "displayName": "Alibaba Cloud Coding Plan China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `qwen-coding-cn`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://help.aliyun.com/en/model-studio/coding-plan — Alibaba Cloud Coding Plan documentation, retrieved 2026-09-25: Anthropic Messages at `https://coding.dashscope.aliyuncs.com/apps/anthropic` with the plan key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi",
+      "displayName": "Xiaomi MiMo API (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Xiaomi's first-party MiMo API (pay-as-you-go).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.xiaomimimo.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call — Xiaomi MiMo open platform quick start, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://api.xiaomimimo.com/v1` and Anthropic Messages at `https://api.xiaomimimo.com/anthropic`, both with the platform's `sk-` key, per-token billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-anthropic",
+      "displayName": "Xiaomi MiMo API (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `xiaomi`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.xiaomimimo.com/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call — Xiaomi MiMo open platform quick start, retrieved 2026-09-25: Anthropic Messages at `https://api.xiaomimimo.com/anthropic` (x-api-key).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-token-plan",
+      "displayName": "Xiaomi MiMo Token Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Xiaomi MiMo Token Plan (subscription). The documented host carries a `-cn` suffix; no separate international plan host was found.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-cn.xiaomimimo.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call — Xiaomi MiMo open platform quick start, retrieved 2026-09-25: the Token Plan's `tp-` key is used against `https://token-plan-cn.xiaomimimo.com/v1` (OpenAI) and `/anthropic`; billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xiaomi-token-plan-anthropic",
+      "displayName": "Xiaomi MiMo Token Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `xiaomi-token-plan`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://token-plan-cn.xiaomimimo.com/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call — Xiaomi MiMo open platform quick start, retrieved 2026-09-25: Token Plan Anthropic root `https://token-plan-cn.xiaomimimo.com/anthropic`.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qianfan-anthropic",
+      "displayName": "Baidu Qianfan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `qianfan`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://qianfan.baidubce.com/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.baidu.com/doc/qianfan-docs/s/6mh3e6gjp — Baidu Qianfan Anthropic-compatibility documentation, retrieved 2026-09-25: every chat model is reachable through the Anthropic Messages specification at `https://qianfan.baidubce.com/anthropic` (x-api-key), per-token CNY billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qianfan-coding",
+      "displayName": "Baidu Qianfan Coding Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Baidu Qianfan Coding Plan (subscription). Its roster is largely third-party models resold by Baidu.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://qianfan.baidubce.com/v2/coding"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Baidu Qianfan Coding Plan documentation, retrieved 2026-09-25: the plan's dedicated key is used against `https://qianfan.baidubce.com/v2/coding` (OpenAI) and `https://qianfan.baidubce.com/anthropic/coding` (Anthropic); billing is the plan's request quota.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "qianfan-coding-anthropic",
+      "displayName": "Baidu Qianfan Coding Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `qianfan-coding`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://qianfan.baidubce.com/anthropic/coding"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Baidu Qianfan Coding Plan documentation, retrieved 2026-09-25: Anthropic root `https://qianfan.baidubce.com/anthropic/coding`.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-anthropic",
+      "displayName": "Tencent Hunyuan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `tencent`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.hunyuan.cloud.tencent.com/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1729/127293 — Tencent Hunyuan Anthropic-compatible interface documentation, retrieved 2026-09-25: Anthropic Messages at `https://api.hunyuan.cloud.tencent.com/anthropic` (x-api-key), per-token CNY billing.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "meta",
+      "displayName": "Meta Model API",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Meta's first-party hosted API since the Llama API public preview was retired on 2026-07-06 (see the `meta-llama` row). Serves the Muse family.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.meta.ai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://dev.meta.ai/docs/models — Meta's Model API documentation (Meta Superintelligence Labs), retrieved 2026-09-25: OpenAI-compatible API at `https://api.meta.ai/v1` with a Model API key, pay-as-you-go per-token billing; serves the Muse Spark models.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
     }
   ]
 }
