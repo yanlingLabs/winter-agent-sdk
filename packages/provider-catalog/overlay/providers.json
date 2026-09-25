@@ -4597,6 +4597,46 @@
         "citation": "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b — NVIDIA build.nvidia.com model page, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1` with an NVIDIA API key; Free Endpoint (rate-limited trial access, no per-token billing)."
       },
       "$comment": "2026-09-25 refresh: re-admitted on NVIDIA's fetched build.nvidia.com model pages (tier fetched-document). `free` stays correct: NVIDIA retired the credit system for build.nvidia.com in favour of per-model trial rate limits (staff reply 2025-09-10, https://forums.developer.nvidia.com/t/request-more-4-000-credits-option-on-build-nvidia-com/344567) and publishes no per-token price table. Several Nemotron pages mark their Free Endpoint DEPRECATED with no shutdown date."
+    },
+    {
+      "id": "cohere",
+      "displayName": "Cohere",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.cohere.ai/compatibility/v1",
+        "models": "https://api.cohere.ai/compatibility/v1/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/cohere/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://docs.cohere.com/v2/docs/compatibility-api — Cohere Compatibility API documentation, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://api.cohere.ai/compatibility/v1` with a Cohere API key; per-token billing per https://cohere.com/pricing."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Cohere's fetched Compatibility API doc (tier fetched-document), whose documented base is `https://api.cohere.ai/compatibility/v1` (the extracted row used the api.cohere.com spelling of the same Cohere API). Cohere's native v2 Chat API is a different dialect and is not modelled. Command A+, A Reasoning and A Vision are documented as free up to rate limits, so they carry no per-token price."
     }
   ]
 }

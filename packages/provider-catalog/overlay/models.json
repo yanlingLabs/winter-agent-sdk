@@ -12016,350 +12016,518 @@
       "key": "cohere/command-a-03-2025",
       "providerId": "cohere",
       "upstreamId": "command-a-03-2025",
-      "displayName": "Command A (Mar 2025)",
+      "displayName": "Command A",
       "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-a — model-specific price $2.5 input / $10 output per 1M tokens.",
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-03-2025 live model table context 256000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 8000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-03-2025 live model table maximum output 8000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-03-2025 live model table input modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-03-2025 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a — Command A Chat model returns generated text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-03-2025",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a — Command A page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-03-2025",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
-      "contextWindow": {
-        "value": 256000,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a — Command A page documents tool use",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
-      "maxOutputTokens": {
-        "value": 8000,
+      "structuredOutput": {
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a — Command A page lists Structured Outputs capability",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2.5,
+          "outputPerMTokUsd": 10
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a — Command A page Pricing: $2.5 input, $10 output per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
+      "status": "candidate"
     },
     {
       "key": "cohere/command-a-reasoning-08-2025",
       "providerId": "cohere",
       "upstreamId": "command-a-reasoning-08-2025",
-      "displayName": "Command A Reasoning (Aug 2025)",
+      "displayName": "Command A Reasoning",
       "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-a-reasoning — free for both trial and production keys until rate limits; production deployment requires Model Vault or sales contact; no numeric per-token price, so pricing omitted. https://docs.cohere.com/v2/docs/reasoning — thinking enabled by default, can be turned off with thinking={type:'disabled'} on native Chat; thinking.token_budget is a native cap. https://docs.cohere.com/v2/docs/compatibility-api — on THIS OpenAI-compat wire, reasoning_effort=none disables thinking and high enables it; low/medium rejected. No replay of thinking through compatibility documented; continuation conservatively none.",
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-reasoning-08-2025 live model table context 256000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 32000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-reasoning-08-2025 live model table maximum output 32000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-reasoning-08-2025 live model table input modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-reasoning-08-2025 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-reasoning — Command A Reasoning Chat model returns generated text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-reasoning-08-2025",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-reasoning — Command A Reasoning page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-reasoning-08-2025",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
-      "contextWindow": {
-        "value": 256000,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-reasoning — Command A Reasoning page documents tool use",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
-      "maxOutputTokens": {
-        "value": 32000,
+      "structuredOutput": {
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-reasoning — Command A Reasoning page lists Structured Outputs capability",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.cohere.com/v2/docs/command-a-reasoning — Command A Reasoning page describes hybrid thinking/reasoning and points to Reasoning guide",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:45:09Z"
+        },
+        "efforts": [
+          "none",
+          "high"
+        ],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
+      "status": "candidate"
     },
     {
       "key": "cohere/command-a-vision-07-2025",
       "providerId": "cohere",
       "upstreamId": "command-a-vision-07-2025",
-      "displayName": "Command A Vision (Jul 2025)",
+      "displayName": "Command A Vision",
       "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-a-vision — free for both trial and production keys until rate limits; production deployment requires Model Vault or sales contact; no numeric per-token price, so pricing omitted. Its generic badges include Tool Use, but explicit Limitations text says tool use is not supported; explicit limitation wins.",
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-vision-07-2025 live model table context 128000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 8000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-vision-07-2025 live model table maximum output 8000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
       "inputModalities": {
         "value": [
           "text",
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-vision-07-2025 live model table input modality Text, Images",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-vision-07-2025 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-vision — Command A Vision Chat model returns generated text, and its page says it does not generate images",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-vision-07-2025",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-vision — Limitations section: tool use is not supported with Command A Vision",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-a-vision-07-2025",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
-      "contextWindow": {
-        "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-vision — Limitations section: tool use is not supported with Command A Vision",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
-      "maxOutputTokens": {
-        "value": 8000,
+      "structuredOutput": {
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-vision — Command A Vision page lists Structured Outputs capability",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
+      "status": "candidate"
     },
     {
       "key": "cohere/command-r-08-2024",
       "providerId": "cohere",
       "upstreamId": "command-r-08-2024",
-      "displayName": "Command R (Aug 2024)",
+      "displayName": "Command R 08-2024",
       "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-r — model-specific price $0.15 input / $0.6 output per 1M tokens.",
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r-08-2024 live model table context 128000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r-08-2024 live model table maximum output 4000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r-08-2024 live model table input modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r-08-2024 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r — Command R 08-2024 Chat model returns generated text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r-08-2024",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r — Command R 08-2024 page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r-08-2024",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
-      "contextWindow": {
-        "value": 128000,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r — Command R 08-2024 page documents tool use",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
-      "maxOutputTokens": {
-        "value": 4000,
+      "structuredOutput": {
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r — Command R 08-2024 page lists Structured Outputs capability",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.15,
+          "outputPerMTokUsd": 0.6
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r — Command R 08-2024 page Pricing: $0.15 input, $0.6 output per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
+      "status": "candidate"
     },
     {
       "key": "cohere/command-r-plus-08-2024",
       "providerId": "cohere",
       "upstreamId": "command-r-plus-08-2024",
-      "displayName": "Command R Plus (Aug 2024)",
+      "displayName": "Command R+ 08-2024",
       "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-r-plus — model-specific price $2.5 input / $10 output per 1M tokens.",
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r-plus-08-2024 live model table context 128000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r-plus-08-2024 live model table maximum output 4000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r-plus-08-2024 live model table input modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r-plus-08-2024 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r-plus — Command R+ 08-2024 Chat model returns generated text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r-plus-08-2024",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r-plus — Command R+ 08-2024 page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r-plus-08-2024",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
-      "contextWindow": {
-        "value": 128000,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r-plus — Command R+ 08-2024 page documents tool use",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
-      "maxOutputTokens": {
-        "value": 4000,
+      "structuredOutput": {
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r-plus — Command R+ 08-2024 page lists Structured Outputs capability",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2.5,
+          "outputPerMTokUsd": 10
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r-plus — Command R+ 08-2024 page Pricing: $2.5 input, $10 output per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
+      "status": "candidate"
     },
     {
       "key": "cohere/command-r7b-12-2024",
       "providerId": "cohere",
       "upstreamId": "command-r7b-12-2024",
-      "displayName": "Command R7B (Dec 2024)",
+      "displayName": "Command R7B",
       "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-r7b — model-specific price $0.0375 input / $0.15 output per 1M tokens.",
       "endpoints": [
         "chat"
       ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r7b-12-2024 live model table context 128000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r7b-12-2024 live model table maximum output 4000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-r7b-12-2024 live model table input modality Text",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r7b-12-2024 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r7b — Command R7B Chat model returns generated text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r7b-12-2024",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r7b — Command R7B page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/cohere/index.ts#command-r7b-12-2024",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
-      "contextWindow": {
-        "value": 128000,
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r7b — Command R7B page documents tool use",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:45:09Z"
       },
-      "maxOutputTokens": {
-        "value": 4000,
+      "structuredOutput": {
+        "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.cohere.com/v2/docs/models — current Command model table: status, modality, context length, maximum output tokens, and Chat endpoint (retrieved 2026-09-19).",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r7b — Command R7B page lists Structured Outputs capability",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.0375,
+          "outputPerMTokUsd": 0.15
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-r7b — Command R7B page Pricing: $0.0375 input, $0.15 output per 1M tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
+      "status": "candidate"
     },
     {
       "key": "perplexity/sonar",
@@ -48953,6 +49121,98 @@
         "continuation": "plaintext"
       },
       "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "cohere/command-a-plus-05-2026",
+      "providerId": "cohere",
+      "upstreamId": "command-a-plus-05-2026",
+      "displayName": "Command A+",
+      "aliases": [],
+      "$comment": "https://docs.cohere.com/v2/docs/compatibility-api — Chat Completions through OpenAI SDK at https://api.cohere.ai/compatibility/v1; supported reasoning_effort only none/high, mapped to Cohere Chat thinking disabled/enabled, and unsupported Chat parameters are the listed set. Native-only connectors/documents/citation_options are not accepted through this adapter. https://docs.cohere.com/v2/docs/command-a-plus — free for both trial and production keys until rate limits; production deployment requires Model Vault or sales contact; no numeric per-token price, so pricing omitted. https://docs.cohere.com/v2/docs/reasoning — thinking enabled by default, can be turned off with thinking={type:'disabled'} on native Chat; thinking.token_budget is a native cap. https://docs.cohere.com/v2/docs/compatibility-api — on THIS OpenAI-compat wire, reasoning_effort=none disables thinking and high enables it; low/medium rejected. No replay of thinking through compatibility documented; continuation conservatively none.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-plus-05-2026 live model table context 128000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-plus-05-2026 live model table maximum output 64000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/models — command-a-plus-05-2026 live model table input modality Text, Images",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-plus — Command A+ Chat model returns generated text, and its page says it does not generate images",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-plus — Command A+ page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-plus — Command A+ page documents tool use",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.cohere.com/v2/docs/command-a-plus — Command A+ page lists Structured Outputs capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:45:09Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.cohere.com/v2/docs/command-a-plus — Command A+ page describes hybrid thinking/reasoning and points to Reasoning guide",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:45:09Z"
+        },
+        "efforts": [
+          "none",
+          "high"
+        ],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [
+        "store",
+        "metadata",
+        "logit_bias",
+        "top_logprobs",
+        "n",
+        "modalities",
+        "prediction",
+        "audio",
+        "service_tier",
+        "parallel_tool_calls"
+      ],
       "status": "candidate"
     }
   ]
