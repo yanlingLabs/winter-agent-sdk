@@ -3474,44 +3474,6 @@
       "scope": "llm"
     },
     {
-      "id": "tencent-anthropic",
-      "displayName": "Tencent Hunyuan (Anthropic dialect)",
-      "protocols": [
-        "anthropic-messages"
-      ],
-      "$comment": "Dialect sibling of `tencent`.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://api.hunyuan.cloud.tencent.com/anthropic"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.anthropic-messages",
-      "family": "anthropic",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
-        ]
-      },
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://cloud.tencent.com/document/product/1729/127293 — Tencent Hunyuan Anthropic-compatible interface documentation, retrieved 2026-09-25: Anthropic Messages at `https://api.hunyuan.cloud.tencent.com/anthropic` (x-api-key), per-token CNY billing.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
       "id": "meta",
       "displayName": "Meta Model API",
       "protocols": [
@@ -3977,6 +3939,350 @@
         "citation": "https://cloud.baidu.com/doc/qianfan-docs/s/7m95lyy43 — Baidu Qianfan's current served-model list (updated 2026-07-13), retrieved 2026-09-25: OpenAI-compatible base `https://qianfan.baidubce.com/v2`, Anthropic-compatible base `https://qianfan.baidubce.com/anthropic`; per-token CNY billing."
       },
       "$comment": "2026-09-25 refresh: re-admitted on Baidu's fetched model list (tier fetched-document). The duplicate `baidu` row points at the same endpoint and is left untouched pending a consolidation decision."
+    },
+    {
+      "id": "tencent-tokenhub",
+      "displayName": "Tencent TokenHub China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "$comment": "Tencent's current first-party Hunyuan (Hy) surface, China site — the successor of the old Hunyuan platform (`tencent`, shutting down 2026-09-30).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub.tencentmaas.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The China site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub-anthropic",
+      "displayName": "Tencent TokenHub China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `tencent-tokenhub`. Endpoint is the ROOT: the adapter appends `/v1/messages`, reproducing the documented `https://tokenhub.tencentmaas.com/v1/messages`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub.tencentmaas.com"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The China site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub-intl",
+      "displayName": "Tencent TokenHub International (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "$comment": "Tencent's current first-party Hunyuan (Hy) surface, International site — the successor of the old Hunyuan platform (`tencent`, shutting down 2026-09-30).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub-intl.tencentmaas.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub-intl.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The International site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub-intl-anthropic",
+      "displayName": "Tencent TokenHub International (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `tencent-tokenhub-intl`. Endpoint is the ROOT: the adapter appends `/v1/messages`, reproducing the documented `https://tokenhub-intl.tencentmaas.com/v1/messages`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub-intl.tencentmaas.com"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub-intl.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The International site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-coding",
+      "displayName": "Tencent Cloud Coding Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Tencent Cloud Coding Plan (subscription).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/coding/v3"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130092 — Tencent Cloud Coding Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/coding/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/coding/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-coding-anthropic",
+      "displayName": "Tencent Cloud Coding Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `tencent-coding`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/coding/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130092 — Tencent Cloud Coding Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/coding/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/coding/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-token-plan",
+      "displayName": "Tencent Cloud Token Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Tencent Cloud Token Plan (subscription).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/plan/v3"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130060 — Tencent Cloud Token Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/plan/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/plan/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-token-plan-anthropic",
+      "displayName": "Tencent Cloud Token Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "Dialect sibling of `tencent-token-plan`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/plan/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130060 — Tencent Cloud Token Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/plan/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/plan/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent",
+      "displayName": "Tencent Hunyuan (legacy platform)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.hunyuan.cloud.tencent.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/tencent/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Platform shutting down 2026-09-30 per https://cloud.tencent.com/document/product/1729/131925; use `tencent-tokenhub`.",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://hunyuan.tencent.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hunyuan.cloud.tencent.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "2026-09-25 refresh: Tencent announced (https://cloud.tencent.com/document/product/1729/131925) that the old Hunyuan platform at api.hunyuan.cloud.tencent.com shuts down on 2026-09-30 and that its main ids (hunyuan-turbos-latest, -t1-latest, -pro, -lite, -functioncall, the 2.0 dated ids) went offline on 2026-06-22. Successor: `tencent-tokenhub`."
     }
   ]
 }

@@ -5922,7 +5922,7 @@
     },
     {
       "id": "tencent",
-      "displayName": "Tencent Hunyuan",
+      "displayName": "Tencent Hunyuan (legacy platform)",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -5947,7 +5947,8 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "Platform shutting down 2026-09-30 per https://cloud.tencent.com/document/product/1729/131925; use `tencent-tokenhub`.",
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
         ]
       },
       "scope": "llm",
@@ -5959,8 +5960,45 @@
       }
     },
     {
-      "id": "tencent-anthropic",
-      "displayName": "Tencent Hunyuan (Anthropic dialect)",
+      "id": "tencent-coding",
+      "displayName": "Tencent Cloud Coding Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/coding/v3"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130092 — Tencent Cloud Coding Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/coding/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/coding/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-coding-anthropic",
+      "displayName": "Tencent Cloud Coding Plan (Anthropic dialect)",
       "protocols": [
         "anthropic-messages"
       ],
@@ -5968,7 +6006,157 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://api.hunyuan.cloud.tencent.com/anthropic"
+        "api": "https://api.lkeap.cloud.tencent.com/coding/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130092 — Tencent Cloud Coding Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/coding/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/coding/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-token-plan",
+      "displayName": "Tencent Cloud Token Plan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/plan/v3"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130060 — Tencent Cloud Token Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/plan/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/plan/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-token-plan-anthropic",
+      "displayName": "Tencent Cloud Token Plan (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lkeap.cloud.tencent.com/plan/anthropic"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130060 — Tencent Cloud Token Plan documentation, retrieved 2026-09-25: the plan key (`sk-sp-`) is used against `https://api.lkeap.cloud.tencent.com/plan/v3` (OpenAI) and `https://api.lkeap.cloud.tencent.com/plan/anthropic` (Anthropic); billing is the subscription plan.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub",
+      "displayName": "Tencent TokenHub China (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub.tencentmaas.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The China site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub-anthropic",
+      "displayName": "Tencent TokenHub China (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub.tencentmaas.com"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -5990,7 +6178,79 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://cloud.tencent.com/document/product/1729/127293 — Tencent Hunyuan Anthropic-compatible interface documentation, retrieved 2026-09-25: Anthropic Messages at `https://api.hunyuan.cloud.tencent.com/anthropic` (x-api-key), per-token CNY billing.",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The China site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub-intl",
+      "displayName": "Tencent TokenHub International (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub-intl.tencentmaas.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub-intl.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The International site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tencent-tokenhub-intl-anthropic",
+      "displayName": "Tencent TokenHub International (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://tokenhub-intl.tencentmaas.com"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://cloud.tencent.com/document/product/1823/130079 — Tencent Cloud TokenHub API documentation, retrieved 2026-09-25: one base `https://tokenhub-intl.tencentmaas.com/v1` serves OpenAI Chat Completions (`/chat/completions`), Responses (`/responses`) and Anthropic Messages (`/messages`) with the TokenHub API key; per-token billing. The International site issues its own keys (China `tokenhub.tencentmaas.com`, Singapore `tokenhub-intl.tencentmaas.com`).",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -49056,7 +49316,7 @@
         "observedAt": "2026-09-25T09:59:30Z"
       },
       "unsupportedParameters": [],
-      "status": "deprecated",
+      "status": "candidate",
       "canonicalModelId": "minimax-m2.5",
       "modelFamily": "minimax"
     },
@@ -49529,7 +49789,7 @@
         "observedAt": "2026-09-25T09:59:30Z"
       },
       "unsupportedParameters": [],
-      "status": "deprecated",
+      "status": "candidate",
       "canonicalModelId": "minimax-m2.5",
       "modelFamily": "minimax"
     },
@@ -58670,6 +58930,3218 @@
       "modelFamily": "claude"
     },
     {
+      "key": "tencent-coding-anthropic/glm-5",
+      "providerId": "tencent-coding-anthropic",
+      "upstreamId": "glm-5",
+      "displayName": "GLM 5 (Coding Plan)",
+      "aliases": [
+        "glm-5-0"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5: context window 200k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5: maximum input 200k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — Coding Plan says available models do not yet support multimodal.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-coding-anthropic/tc-code-latest",
+      "providerId": "tencent-coding-anthropic",
+      "upstreamId": "tc-code-latest",
+      "displayName": "Auto (Coding Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — Coding Plan says available models do not yet support multimodal.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "tc-code-latest",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-coding/glm-5",
+      "providerId": "tencent-coding",
+      "upstreamId": "glm-5",
+      "displayName": "GLM 5 (Coding Plan)",
+      "aliases": [
+        "glm-5-0"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5: context window 200k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5: maximum input 200k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — Coding Plan says available models do not yet support multimodal.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-coding/tc-code-latest",
+      "providerId": "tencent-coding",
+      "upstreamId": "tc-code-latest",
+      "displayName": "Auto (Coding Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — Coding Plan says available models do not yet support multimodal.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "tc-code-latest",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/deepseek-v4-flash-202605",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "deepseek-v4-flash-202605",
+      "displayName": "DeepSeek V4 Flash 0731 (Token Plan)",
+      "aliases": [
+        "deepseek/deepseek-v4-flash-0731",
+        "deepseek/deepseek-v4-flash"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash-202605",
+      "modelFamily": "deepseek"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/deepseek-v4-pro-202606",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "deepseek-v4-pro-202606",
+      "displayName": "DeepSeek V4 Pro 0813 (Token Plan)",
+      "aliases": [
+        "deepseek/deepseek-v4-pro-0813",
+        "deepseek/deepseek-v4-pro"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro-202606",
+      "modelFamily": "deepseek"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/glm-5",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "glm-5",
+      "displayName": "GLM 5 (Token Plan)",
+      "aliases": [
+        "glm-5-0"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/glm-5.1",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "glm-5.1",
+      "displayName": "GLM 5.1 (Token Plan)",
+      "aliases": [
+        "glm-5-1"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/glm-5.2",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "glm-5.2",
+      "displayName": "GLM 5.2 (Token Plan)",
+      "aliases": [
+        "glm-5-2"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/glm-5.3",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "glm-5.3",
+      "displayName": "GLM 5.3 (Token Plan)",
+      "aliases": [
+        "glm-5-3"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/glm-5.3-flash",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM 5.3 Flash (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/hy3",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "hy3",
+      "displayName": "Hy3 (Token Plan)",
+      "aliases": [
+        "hy3-preview",
+        "hy3-202608"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: context window 256k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 192000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum input 192k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy3",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/hy4-preview",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "hy4-preview",
+      "displayName": "Hy4 Preview (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: context window 1M tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 960000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum input 960k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum output 64k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy4-preview",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/kimi-k2.7-code",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "kimi-k2.7-code",
+      "displayName": "Kimi K2.7 Code (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/kimi-k3",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "kimi-k3",
+      "displayName": "Kimi K3 (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/minimax-m2.7",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "minimax-m2.7",
+      "displayName": "MiniMax M2.7 (Token Plan)",
+      "aliases": [
+        "minimax-m-2-7"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/minimax-m3",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "minimax-m3",
+      "displayName": "MiniMax M3 (Token Plan)",
+      "aliases": [
+        "minimax-m-3-0"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "tencent-token-plan-anthropic/tc-code-latest",
+      "providerId": "tencent-token-plan-anthropic",
+      "upstreamId": "tc-code-latest",
+      "displayName": "Auto (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "tc-code-latest",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-token-plan/deepseek-v4-flash-202605",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "deepseek-v4-flash-202605",
+      "displayName": "DeepSeek V4 Flash 0731 (Token Plan)",
+      "aliases": [
+        "deepseek/deepseek-v4-flash-0731",
+        "deepseek/deepseek-v4-flash"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-flash-202605 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-flash-202605",
+      "modelFamily": "deepseek"
+    },
+    {
+      "key": "tencent-token-plan/deepseek-v4-pro-202606",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "deepseek-v4-pro-202606",
+      "displayName": "DeepSeek V4 Pro 0813 (Token Plan)",
+      "aliases": [
+        "deepseek/deepseek-v4-pro-0813",
+        "deepseek/deepseek-v4-pro"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — deepseek-v4-pro-202606 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "deepseek-v4-pro-202606",
+      "modelFamily": "deepseek"
+    },
+    {
+      "key": "tencent-token-plan/glm-5",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "glm-5",
+      "displayName": "GLM 5 (Token Plan)",
+      "aliases": [
+        "glm-5-0"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan/glm-5.1",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "glm-5.1",
+      "displayName": "GLM 5.1 (Token Plan)",
+      "aliases": [
+        "glm-5-1"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.1 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan/glm-5.2",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "glm-5.2",
+      "displayName": "GLM 5.2 (Token Plan)",
+      "aliases": [
+        "glm-5-2"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.2 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan/glm-5.3",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "glm-5.3",
+      "displayName": "GLM 5.3 (Token Plan)",
+      "aliases": [
+        "glm-5-3"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan/glm-5.3-flash",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM 5.3 Flash (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — glm-5.3-flash capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "tencent-token-plan/hy3",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "hy3",
+      "displayName": "Hy3 (Token Plan)",
+      "aliases": [
+        "hy3-preview",
+        "hy3-202608"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: context window 256k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 192000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum input 192k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy3",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-token-plan/hy4-preview",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "hy4-preview",
+      "displayName": "Hy4 Preview (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: context window 1M tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 960000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum input 960k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum output 64k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy4-preview",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-token-plan/kimi-k2.7-code",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "kimi-k2.7-code",
+      "displayName": "Kimi K2.7 Code (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "tencent-token-plan/kimi-k3",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "kimi-k3",
+      "displayName": "Kimi K3 (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — kimi-k3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "kimi-k3",
+      "modelFamily": "kimi"
+    },
+    {
+      "key": "tencent-token-plan/minimax-m2.7",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "minimax-m2.7",
+      "displayName": "MiniMax M2.7 (Token Plan)",
+      "aliases": [
+        "minimax-m-2-7"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m2.7 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m2.7",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "tencent-token-plan/minimax-m3",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "minimax-m3",
+      "displayName": "MiniMax M3 (Token Plan)",
+      "aliases": [
+        "minimax-m-3-0"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — minimax-m3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
+    },
+    {
+      "key": "tencent-token-plan/tc-code-latest",
+      "providerId": "tencent-token-plan",
+      "upstreamId": "tc-code-latest",
+      "displayName": "Auto (Token Plan)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "tc-code-latest",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-anthropic/hunyuan-role-latest",
+      "providerId": "tencent-tokenhub-anthropic",
+      "upstreamId": "hunyuan-role-latest",
+      "displayName": "Hy Role Latest (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 32000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest: context window 32k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 28000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest: maximum input 28k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest: maximum output 4k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3576,
+          "outputPerMTokUsd": 1.4304
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hunyuan-role-latest: CNY 2.4 input, 9.6 output per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-role-latest",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-anthropic/hy-role",
+      "providerId": "tencent-tokenhub-anthropic",
+      "upstreamId": "hy-role",
+      "displayName": "Hy Role (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 32000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role: context window 32k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 28000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role: maximum input 28k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role: maximum output 4k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3576,
+          "outputPerMTokUsd": 1.4304
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy-role: CNY 2.4 input, 9.6 output per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy-role",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-anthropic/hy3",
+      "providerId": "tencent-tokenhub-anthropic",
+      "upstreamId": "hy3",
+      "displayName": "Hy3 (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: context window 256k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 192000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum input 192k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.149,
+          "outputPerMTokUsd": 0.596,
+          "cacheReadPerMTokUsd": 0.03725
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy3: CNY 1 input, 4 output, 0.25 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy3",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-anthropic/hy4-preview",
+      "providerId": "tencent-tokenhub-anthropic",
+      "upstreamId": "hy4-preview",
+      "displayName": "Hy4 Preview (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: context window 1M tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 960000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum input 960k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum output 64k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.894,
+          "outputPerMTokUsd": 2.682,
+          "cacheReadPerMTokUsd": 0.0447
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy4-preview: CNY 6 input, 18 output, 0.3 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy4-preview",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-intl-anthropic/hy3",
+      "providerId": "tencent-tokenhub-intl-anthropic",
+      "upstreamId": "hy3",
+      "displayName": "Hy3 (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: context window 256k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 192000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum input 192k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.149,
+          "outputPerMTokUsd": 0.596,
+          "cacheReadPerMTokUsd": 0.03725
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy3: CNY 1 input, 4 output, 0.25 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy3",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-intl-anthropic/hy4-preview",
+      "providerId": "tencent-tokenhub-intl-anthropic",
+      "upstreamId": "hy4-preview",
+      "displayName": "Hy4 Preview (Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: context window 1M tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 960000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum input 960k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum output 64k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.894,
+          "outputPerMTokUsd": 2.682,
+          "cacheReadPerMTokUsd": 0.0447
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy4-preview: CNY 6 input, 18 output, 0.3 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy4-preview",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-intl/hy3",
+      "providerId": "tencent-tokenhub-intl",
+      "upstreamId": "hy3",
+      "displayName": "Hy3",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: context window 256k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 192000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum input 192k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.149,
+          "outputPerMTokUsd": 0.596,
+          "cacheReadPerMTokUsd": 0.03725
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy3: CNY 1 input, 4 output, 0.25 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy3",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub-intl/hy4-preview",
+      "providerId": "tencent-tokenhub-intl",
+      "upstreamId": "hy4-preview",
+      "displayName": "Hy4 Preview",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: context window 1M tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 960000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum input 960k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum output 64k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.894,
+          "outputPerMTokUsd": 2.682,
+          "cacheReadPerMTokUsd": 0.0447
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy4-preview: CNY 6 input, 18 output, 0.3 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy4-preview",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub/hunyuan-role-latest",
+      "providerId": "tencent-tokenhub",
+      "upstreamId": "hunyuan-role-latest",
+      "displayName": "Hy Role Latest",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 32000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest: context window 32k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 28000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest: maximum input 28k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest: maximum output 4k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hunyuan-role-latest appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3576,
+          "outputPerMTokUsd": 1.4304
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hunyuan-role-latest: CNY 2.4 input, 9.6 output per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hunyuan-role-latest",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub/hy-role",
+      "providerId": "tencent-tokenhub",
+      "upstreamId": "hy-role",
+      "displayName": "Hy Role",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 32000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role: context window 32k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 28000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role: maximum input 28k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 4000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role: maximum output 4k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy-role appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated. ",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — No model-specific function calling is stated.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3576,
+          "outputPerMTokUsd": 1.4304
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy-role: CNY 2.4 input, 9.6 output per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy-role",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub/hy3",
+      "providerId": "tencent-tokenhub",
+      "upstreamId": "hy3",
+      "displayName": "Hy3",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 256000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: context window 256k tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 192000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum input 192k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3: maximum output 128k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy3 capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.149,
+          "outputPerMTokUsd": 0.596,
+          "cacheReadPerMTokUsd": 0.03725
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy3: CNY 1 input, 4 output, 0.25 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy3",
+      "modelFamily": "other"
+    },
+    {
+      "key": "tencent-tokenhub/hy4-preview",
+      "providerId": "tencent-tokenhub",
+      "upstreamId": "hy4-preview",
+      "displayName": "Hy4 Preview",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: context window 1M tokens; k/M expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxInputTokens": {
+        "value": 960000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum input 960k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "maxOutputTokens": {
+        "value": 64000,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview: maximum output 64k tokens; k expanded as decimal.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview appears as a language model with no image/video understanding flag.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table explicitly lists Function Calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists structured output.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists Cache caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 — hy4-preview capability table lists deep thinking (retained thinking).",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:06:30Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.894,
+          "outputPerMTokUsd": 2.682,
+          "cacheReadPerMTokUsd": 0.0447
+        },
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130055 — hy4-preview: CNY 6 input, 18 output, 0.3 cache hit per million tokens. Converted at 2026-09-25 1 CNY = $0.1490 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:06:30Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "hy4-preview",
+      "modelFamily": "other"
+    },
+    {
       "key": "tencent/hunyuan-functioncall",
       "providerId": "tencent",
       "upstreamId": "hunyuan-functioncall",
@@ -58757,7 +62229,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "canonicalModelId": "hunyuan-lite",
       "modelFamily": "other"
     },
@@ -58803,7 +62275,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "canonicalModelId": "hunyuan-pro",
       "modelFamily": "other"
     },
@@ -58856,7 +62328,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "canonicalModelId": "hunyuan-t1-latest",
       "modelFamily": "other"
     },
@@ -58909,7 +62381,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "canonicalModelId": "hunyuan-turbos-latest",
       "modelFamily": "other"
     },
