@@ -3421,7 +3421,8 @@
         "reasons": [
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
-          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`."
+          "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
+          "Baidu's Coding Plan page (https://cloud.baidu.com/doc/qianfan/s/imlg0beiu) states the plan is for interactive coding tools and NOT for scripts or backend/batch calls; its function-calling list (https://cloud.baidu.com/doc/qianfan-docs/s/xm95lyys5) names none of the plan's models, so every row here is tool-less (fail-closed) until Baidu documents it."
         ]
       },
       "pricingBasis": "subscription",
@@ -3460,7 +3461,8 @@
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
           "Subscription (plan) credential: usage is metered against plan quota, not per-token list prices, so models on this row carry no `pricing`.",
-          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe."
+          "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe.",
+          "Baidu's Coding Plan page (https://cloud.baidu.com/doc/qianfan/s/imlg0beiu) states the plan is for interactive coding tools and NOT for scripts or backend/batch calls; its function-calling list (https://cloud.baidu.com/doc/qianfan-docs/s/xm95lyys5) names none of the plan's models, so every row here is tool-less (fail-closed) until Baidu documents it."
         ]
       },
       "pricingBasis": "subscription",
@@ -3934,6 +3936,47 @@
         "tier": "fetched-document"
       },
       "scope": "llm"
+    },
+    {
+      "id": "qianfan",
+      "displayName": "Baidu Qianfan (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://qianfan.baidubce.com/v2",
+        "models": "https://qianfan.baidubce.com/v2/models"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/qianfan/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys."
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "tier": "fetched-document",
+        "citation": "https://cloud.baidu.com/doc/qianfan-docs/s/7m95lyy43 — Baidu Qianfan's current served-model list (updated 2026-07-13), retrieved 2026-09-25: OpenAI-compatible base `https://qianfan.baidubce.com/v2`, Anthropic-compatible base `https://qianfan.baidubce.com/anthropic`; per-token CNY billing."
+      },
+      "$comment": "2026-09-25 refresh: re-admitted on Baidu's fetched model list (tier fetched-document). The duplicate `baidu` row points at the same endpoint and is left untouched pending a consolidation decision."
     }
   ]
 }
