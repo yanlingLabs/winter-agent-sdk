@@ -1223,12 +1223,16 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       .map((m) => m.key)
       .sort();
 
-  test("the provider lists all three GPT-5.6 models alongside Astra, and nothing else", () => {
+  test("the provider lists the three GPT-5.6 models and the three GPT-6 models, and nothing else", () => {
+    // 2026-09-25 refresh: GPT-6 Sol and Luna joined Astra in Codex on 2026-09-22 (the server-delivered
+    // ~/.codex/models_cache.json lists all six), and the `gpt` family's sol/luna slots moved to them (user ruling).
     expect(codexKeys()).toEqual([
       "codex-oauth/gpt-5.6-luna",
       "codex-oauth/gpt-5.6-sol",
       "codex-oauth/gpt-5.6-terra",
       "codex-oauth/gpt-6-astra",
+      "codex-oauth/gpt-6-luna",
+      "codex-oauth/gpt-6-sol",
     ]);
   });
 
@@ -1330,7 +1334,10 @@ test("WS-20: GPT-5.6 retains provider/model-specific default efforts", () => {
     ["codex-oauth/gpt-5.6-luna", "medium"],
   ] as const) {
     const row = catalog.models.find((m) => m.key === key)!;
-    expect([key, row.reasoning!.efforts]).toEqual([key, ["low", "medium", "high", "xhigh", "max"]]);
+    // 2026-09-25 refresh: OpenAI's own GPT-5.6 model pages (developers.openai.com/api/docs/models/<id>) now list
+    // `none` as a reasoning effort on the metered API; the Codex subscription's server-delivered catalogue does not.
+    const efforts = key.startsWith("openai/") ? ["none", "low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high", "xhigh", "max"];
+    expect([key, row.reasoning!.efforts]).toEqual([key, efforts]);
     expect([key, row.reasoning!.defaultEffort]).toEqual([key, defaultEffort]);
   }
 });

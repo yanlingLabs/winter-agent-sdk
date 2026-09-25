@@ -1454,9 +1454,9 @@
       "key": "codex-oauth/gpt-5.6-sol",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-5.6-sol",
-      "displayName": "GPT-5.6 Sol (Codex)",
+      "displayName": "GPT-5.6-Sol (Codex)",
       "aliases": [],
-      "$comment": "Winter-owned (D11): no upstream extraction produced this row, and it is deliberately UNPRICED — a subscription backend has no per-token list price, so `costBasis` stays \"unknown\" and `maxBudgetUsd` is inert for it by design rather than by omission.",
+      "$comment": "Winter-owned (D11): no upstream extraction produced this row, and it is deliberately UNPRICED — a subscription backend has no per-token list price, so `costBasis` stays \"unknown\" and `maxBudgetUsd` is inert for it by design rather than by omission. — 2026-09-25 refresh: https://learn.chatgpt.com/docs/models — gpt-5.6-sol appears in the current Codex model list. Local cache fetched_at 2026-09-25T10:16:24.468875Z; availability is rollout- and plan-dependent. https://developers.openai.com/api/docs/guides/reasoning — Responses reasoning uses encrypted opaque items or response state, not readable chain-of-thought; do not share continuation domain with api.openai.com. Cache lists Ultra for some models, but Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. No per-token pricing on this subscription provider.",
       "endpoints": [
         "responses"
       ],
@@ -1484,7 +1484,7 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
@@ -1560,9 +1560,9 @@
       "key": "codex-oauth/gpt-5.6-terra",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-5.6-terra",
-      "displayName": "GPT-5.6 Terra (Codex)",
+      "displayName": "GPT-5.6-Terra (Codex)",
       "aliases": [],
-      "$comment": "Winter-owned (D11), authored 2026-09-11 (SDK 0.0.4, Winter 8b). WHY THE ROW EXISTS: the `gpt` family's `terra` SLOT names `canonicalModelId: \"gpt-5.6-terra\"` and `overlay/families.json`'s gpt row leads `vendorProviders` with `codex-oauth` (a configured subscription's marginal cost is zero, WS-13c §4 step 3-i), so on a Codex-only install that slot resolved to `codex-oauth/gpt-5.6-terra` — a key the catalog did not carry, which is a typed `unknown-model` refusal rather than a fallback. EVIDENCE THAT THE CODEX BACKEND SERVES IT: Norma's shipped Codex adapter declares `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna` as the ONLY user-selectable Codex models (packages/core/src/providers/codex-config.ts, `CODEX_MODELS`, each with `contextWindow: 272_000` and `supportsVision: true`; `CODEX_MODELS_VERIFIED = \"2026-07-31\"` records the date that static set was last checked against the live `/models` catalogue), and Norma's engine leg serves them today — the sibling `codex-oauth/gpt-5.6-sol` row already in this file cites exactly the same source. EVERY OTHER FIELD IS COPIED VERBATIM from that sibling: same backend, same adapter, same Responses dialect, same efforts. The ONE exception is `continuationDomain`, which names THIS key alone — §2.5's narrowness rule (two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads), so this row shares no domain with `openai/gpt-5.6-terra` despite the shared HTTP shape. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design; the metered per-token rates belong to the separate `openai/gpt-5.6-terra` row. `status: candidate` — only the live gate promotes.",
+      "$comment": "Winter-owned (D11), authored 2026-09-11 (SDK 0.0.4, Winter 8b). WHY THE ROW EXISTS: the `gpt` family's `terra` SLOT names `canonicalModelId: \"gpt-5.6-terra\"` and `overlay/families.json`'s gpt row leads `vendorProviders` with `codex-oauth` (a configured subscription's marginal cost is zero, WS-13c §4 step 3-i), so on a Codex-only install that slot resolved to `codex-oauth/gpt-5.6-terra` — a key the catalog did not carry, which is a typed `unknown-model` refusal rather than a fallback. EVIDENCE THAT THE CODEX BACKEND SERVES IT: Norma's shipped Codex adapter declares `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna` as the ONLY user-selectable Codex models (packages/core/src/providers/codex-config.ts, `CODEX_MODELS`, each with `contextWindow: 272_000` and `supportsVision: true`; `CODEX_MODELS_VERIFIED = \"2026-07-31\"` records the date that static set was last checked against the live `/models` catalogue), and Norma's engine leg serves them today — the sibling `codex-oauth/gpt-5.6-sol` row already in this file cites exactly the same source. EVERY OTHER FIELD IS COPIED VERBATIM from that sibling: same backend, same adapter, same Responses dialect, same efforts. The ONE exception is `continuationDomain`, which names THIS key alone — §2.5's narrowness rule (two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads), so this row shares no domain with `openai/gpt-5.6-terra` despite the shared HTTP shape. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design; the metered per-token rates belong to the separate `openai/gpt-5.6-terra` row. `status: candidate` — only the live gate promotes. — 2026-09-25 refresh: https://learn.chatgpt.com/docs/models — gpt-5.6-terra appears in the current Codex model list. Local cache fetched_at 2026-09-25T10:16:24.468875Z; availability is rollout- and plan-dependent. https://developers.openai.com/api/docs/guides/reasoning — Responses reasoning uses encrypted opaque items or response state, not readable chain-of-thought; do not share continuation domain with api.openai.com. Cache lists Ultra for some models, but Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. No per-token pricing on this subscription provider.",
       "endpoints": [
         "responses"
       ],
@@ -1590,7 +1590,7 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-11T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
@@ -1666,9 +1666,9 @@
       "key": "codex-oauth/gpt-5.6-luna",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-5.6-luna",
-      "displayName": "GPT-5.6 Luna (Codex)",
+      "displayName": "GPT-5.6-Luna (Codex)",
       "aliases": [],
-      "$comment": "Winter-owned (D11), authored 2026-09-11 (SDK 0.0.4, Winter 8b). WHY THE ROW EXISTS: the `gpt` family's `luna` SLOT names `canonicalModelId: \"gpt-5.6-luna\"` and `overlay/families.json`'s gpt row leads `vendorProviders` with `codex-oauth` (a configured subscription's marginal cost is zero, WS-13c §4 step 3-i), so on a Codex-only install that slot resolved to `codex-oauth/gpt-5.6-luna` — a key the catalog did not carry, which is a typed `unknown-model` refusal rather than a fallback. EVIDENCE THAT THE CODEX BACKEND SERVES IT: Norma's shipped Codex adapter declares `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna` as the ONLY user-selectable Codex models (packages/core/src/providers/codex-config.ts, `CODEX_MODELS`, each with `contextWindow: 272_000` and `supportsVision: true`; `CODEX_MODELS_VERIFIED = \"2026-07-31\"` records the date that static set was last checked against the live `/models` catalogue), and Norma's engine leg serves them today — the sibling `codex-oauth/gpt-5.6-sol` row already in this file cites exactly the same source. EVERY OTHER FIELD IS COPIED VERBATIM from that sibling: same backend, same adapter, same Responses dialect, same efforts. The ONE exception is `continuationDomain`, which names THIS key alone — §2.5's narrowness rule (two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads), so this row shares no domain with `openai/gpt-5.6-luna` despite the shared HTTP shape. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design; the metered per-token rates belong to the separate `openai/gpt-5.6-luna` row. `status: candidate` — only the live gate promotes.",
+      "$comment": "Winter-owned (D11), authored 2026-09-11 (SDK 0.0.4, Winter 8b). WHY THE ROW EXISTS: the `gpt` family's `luna` SLOT names `canonicalModelId: \"gpt-5.6-luna\"` and `overlay/families.json`'s gpt row leads `vendorProviders` with `codex-oauth` (a configured subscription's marginal cost is zero, WS-13c §4 step 3-i), so on a Codex-only install that slot resolved to `codex-oauth/gpt-5.6-luna` — a key the catalog did not carry, which is a typed `unknown-model` refusal rather than a fallback. EVIDENCE THAT THE CODEX BACKEND SERVES IT: Norma's shipped Codex adapter declares `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna` as the ONLY user-selectable Codex models (packages/core/src/providers/codex-config.ts, `CODEX_MODELS`, each with `contextWindow: 272_000` and `supportsVision: true`; `CODEX_MODELS_VERIFIED = \"2026-07-31\"` records the date that static set was last checked against the live `/models` catalogue), and Norma's engine leg serves them today — the sibling `codex-oauth/gpt-5.6-sol` row already in this file cites exactly the same source. EVERY OTHER FIELD IS COPIED VERBATIM from that sibling: same backend, same adapter, same Responses dialect, same efforts. The ONE exception is `continuationDomain`, which names THIS key alone — §2.5's narrowness rule (two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads), so this row shares no domain with `openai/gpt-5.6-luna` despite the shared HTTP shape. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design; the metered per-token rates belong to the separate `openai/gpt-5.6-luna` row. `status: candidate` — only the live gate promotes. — 2026-09-25 refresh: https://learn.chatgpt.com/docs/models — gpt-5.6-luna appears in the current Codex model list. Local cache fetched_at 2026-09-25T10:16:24.468875Z; availability is rollout- and plan-dependent. https://developers.openai.com/api/docs/guides/reasoning — Responses reasoning uses encrypted opaque items or response state, not readable chain-of-thought; do not share continuation domain with api.openai.com. Cache lists Ultra for some models, but Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. No per-token pricing on this subscription provider.",
       "endpoints": [
         "responses"
       ],
@@ -1696,7 +1696,7 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-11T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
@@ -3642,6 +3642,7 @@
       "upstreamId": "gpt-4.1",
       "displayName": "GPT-4.1",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-4.1 — non-reasoning model; no reasoning block. ",
       "endpoints": [
         "chat",
         "responses"
@@ -3649,9 +3650,16 @@
       "contextWindow": {
         "value": 1047576,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 context window 1047576 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 32768,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 max output 32768 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -3659,45 +3667,46 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "parallelTools": {
-        "value": true,
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "structuredOutput": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 supported features include structured_outputs.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — gpt-4.1 supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "pricing": {
         "value": {
@@ -3711,14 +3720,7 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "maxOutputTokens": {
-        "value": 32768,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "status": "candidate"
     },
     {
       "key": "openai/o4-mini",
@@ -3726,66 +3728,85 @@
       "upstreamId": "o4-mini",
       "displayName": "o4-mini",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/guides/latest-model — o4-mini reasoning effort values low, medium, high; older o-series low/medium/high range is given in OpenAI model guidance; default not asserted. Thinking off: no documented none effort. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/deprecations — o4-mini alias/snapshot scheduled to shut down 2026-10-23; recommended replacement gpt-5.6-terra. ",
       "endpoints": [
+        "chat",
         "responses"
       ],
       "contextWindow": {
         "value": 200000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini at v3.8.50 (5458026c) — `contextLength: 200000`",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini context window 200000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 100000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini max output 100000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
           "text",
           "image"
         ],
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini input modalities text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "structuredOutput": {
         "value": true,
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "Provider-reasoning-continuity report §5.1 — the Responses request carries `reasoning: { effort, summary }` and `include: [\"reasoning.encrypted_content\"]`",
+          "sourceRef": "https://developers.openai.com/api/docs/models/o4-mini — o4-mini model details list reasoning token support.",
           "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
           "low",
           "medium",
           "high"
         ],
-        "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
         "readableState": {
           "value": "summary",
@@ -5782,7 +5803,7 @@
       "upstreamId": "gpt-6-astra",
       "displayName": "GPT-6 Astra",
       "aliases": [],
-      "$comment": "Winter-authored 2026-09-06 (user ask: \"add gpt 6 astra to openai/codex oauth models as the strongest model\"). The pinned OmniRoute tree at v3.8.50 predates this model, so no upstream extraction produced the row; every field cites OpenAI's own model page or pricing page, retrieved 2026-09-06. \"Strongest\" has NO field in this schema — the ranking lives in the model-families layer (WS-13c, pending), not here. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $20 / cached $2 / cache write $25 / output $75 per 1M), plus batch/flex (half) and fast (double) tiers, none of which the single-tier `ModelPricing` can carry — the estimator therefore UNDER-counts long-context turns on this row.",
+      "$comment": "Winter-authored 2026-09-06 (user ask: \"add gpt 6 astra to openai/codex oauth models as the strongest model\"). The pinned OmniRoute tree at v3.8.50 predates this model, so no upstream extraction produced the row; every field cites OpenAI's own model page or pricing page, retrieved 2026-09-06. \"Strongest\" has NO field in this schema — the ranking lives in the model-families layer (WS-13c, pending), not here. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $20 / cached $2 / cache write $25 / output $75 per 1M), plus batch/flex (half) and fast (double) tiers, none of which the single-tier `ModelPricing` can carry — the estimator therefore UNDER-counts long-context turns on this row. — 2026-09-25 refresh: https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra reasoning effort values low, medium, high, xhigh, max; Thinking off: no documented none effort. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/guides/latest-model — Chat Completions cannot function-call with Astra; use Responses for tools. ",
       "endpoints": [
         "chat",
         "responses"
@@ -5790,16 +5811,23 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxOutputTokens": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra max output 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -5807,40 +5835,54 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — reasoning tokens with effort levels low, medium, high, xhigh and max (retrieved 2026-09-06)",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — gpt-6-astra model details list reasoning token support.",
           "confidence": "declared",
-          "observedAt": "2026-09-06T00:00:00Z"
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
           "low",
@@ -5849,8 +5891,8 @@
           "xhigh",
           "max"
         ],
-        "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
+        "defaultEffort": "low",
         "readableState": {
           "value": "summary",
           "source": "official-doc",
@@ -5902,22 +5944,15 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "status": "candidate"
     },
     {
       "key": "codex-oauth/gpt-6-astra",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-6-astra",
-      "displayName": "GPT-6 Astra (Codex)",
+      "displayName": "GPT-6-Astra (Codex)",
       "aliases": [],
-      "$comment": "Winter-owned (D11), authored 2026-09-06 (user ask: \"add gpt 6 astra to openai/codex oauth models as the strongest model\"). Evidence that the Codex backend serves it: OpenAI's Codex models page (https://developers.openai.com/codex/models (308 → https://learn.chatgpt.com/docs/models), retrieved 2026-09-06) lists `gpt-6-astra` first among the recommended models (\"Availability depends on the rollout, your sign-in method, and your client\"; Astra is named for Pro, Business and Enterprise accounts), and the operator's Codex picker showed it as the current model on 2026-09-06. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design. \"Strongest\" has no field in this schema — see the model-families layer (WS-13c, pending). The Codex page also lists an \"Ultra\" effort that runs subagents in the Codex client; it is a client mode, not a wire `reasoning.effort` value, so it is not in `efforts`.",
+      "$comment": "Winter-owned (D11), authored 2026-09-06 (user ask: \"add gpt 6 astra to openai/codex oauth models as the strongest model\"). Evidence that the Codex backend serves it: OpenAI's Codex models page (https://developers.openai.com/codex/models (308 → https://learn.chatgpt.com/docs/models), retrieved 2026-09-06) lists `gpt-6-astra` first among the recommended models (\"Availability depends on the rollout, your sign-in method, and your client\"; Astra is named for Pro, Business and Enterprise accounts), and the operator's Codex picker showed it as the current model on 2026-09-06. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design. \"Strongest\" has no field in this schema — see the model-families layer (WS-13c, pending). The Codex page also lists an \"Ultra\" effort that runs subagents in the Codex client; it is a client mode, not a wire `reasoning.effort` value, so it is not in `efforts`. — 2026-09-25 refresh: https://learn.chatgpt.com/docs/models — gpt-6-astra appears in the current Codex model list. Local cache fetched_at 2026-09-25T10:16:24.468875Z; availability is rollout- and plan-dependent. https://developers.openai.com/api/docs/guides/reasoning — Responses reasoning uses encrypted opaque items or response state, not readable chain-of-thought; do not share continuation domain with api.openai.com. Cache lists Ultra for some models, but Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. No per-token pricing on this subscription provider.",
       "endpoints": [
         "responses"
       ],
@@ -5945,7 +5980,7 @@
         "source": "winter-default",
         "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
@@ -6482,7 +6517,7 @@
       "upstreamId": "gpt-5.6-sol",
       "displayName": "GPT-5.6 Sol",
       "aliases": [],
-      "$comment": "Winter-authored 2026-09-07 (P6.6 fix wave, whole-branch Minor-4: this model is a `gpt` family SLOT and its row carried no pricing, so a session on it reported no cost at all and `priceUsage` returned `undefined`). EVERY NON-PRICING FIELD IS COPIED VERBATIM from the upstream-extracted row this overlay entry now shadows (`generated/catalog.json` immediately before this change, key `openai/gpt-5.6-sol`) -- the overlay WINS the merge WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key), so a partial row would DOWNGRADE the evidence rather than add to it; `pricing` is the only addition, and `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $8.00 / cached $0.80 / output $30.00 per 1M), plus batch/flex and fast tiers, none of which the single-tier `ModelPricing` can carry -- the estimator therefore UNDER-counts long-context turns on this row. NO cache-write rate is published for this model, so that key is omitted rather than invented.",
+      "$comment": "Winter-authored 2026-09-07 (P6.6 fix wave, whole-branch Minor-4: this model is a `gpt` family SLOT and its row carried no pricing, so a session on it reported no cost at all and `priceUsage` returned `undefined`). EVERY NON-PRICING FIELD IS COPIED VERBATIM from the upstream-extracted row this overlay entry now shadows (`generated/catalog.json` immediately before this change, key `openai/gpt-5.6-sol`) -- the overlay WINS the merge WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key), so a partial row would DOWNGRADE the evidence rather than add to it; `pricing` is the only addition, and `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $8.00 / cached $0.80 / output $30.00 per 1M), plus batch/flex and fast tiers, none of which the single-tier `ModelPricing` can carry -- the estimator therefore UNDER-counts long-context turns on this row. NO cache-write rate is published for this model, so that key is omitted rather than invented. — 2026-09-25 refresh: https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol reasoning effort values none, low, medium, high, xhigh, max; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
         "chat",
         "responses"
@@ -6490,23 +6525,23 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxInputTokens": {
         "value": 922000,
-        "source": "upstream-static",
-        "sourceRef": "https://openrouter.ai/openai/gpt-5.6-sol — the model page documents a 128,000-token completion limit",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxOutputTokens": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol max output 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -6514,71 +6549,80 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "live-probe",
-          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-sol, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
-          "observedAt": "2026-09-16T00:00:00Z",
-          "confidence": "declared"
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
+          "none",
           "low",
           "medium",
           "high",
           "xhigh",
           "max"
         ],
-        "defaultEffort": "medium",
-        "continuation": "opaque-provider-state"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium"
       },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 4,
           "outputPerMTokUsd": 20,
-          "cacheReadPerMTokUsd": 0.4
+          "cacheReadPerMTokUsd": 0.4,
+          "cacheWritePerMTokUsd": 5
         },
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-5.6-sol, standard tier, short context: input $4.00, cached input $0.40, output $20.00 per 1M tokens (retrieved 2026-09-06). Long context: $8.00 / $0.80 / $30.00. No cache-write rate is published for this model, so that key is absent.",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — gpt-5.6-sol standard short-context USD/MTok table: input $4, output $20, cached input $0.4; cache writes 1.25x input = $5. - Prompts with >272K input tokens are priced at 2x input and 1.5x output for the full request.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-5.6-terra",
@@ -6586,7 +6630,7 @@
       "upstreamId": "gpt-5.6-terra",
       "displayName": "GPT-5.6 Terra",
       "aliases": [],
-      "$comment": "Winter-authored 2026-09-07 (P6.6 fix wave, whole-branch Minor-4: this model is a `gpt` family SLOT and its row carried no pricing, so a session on it reported no cost at all and `priceUsage` returned `undefined`). EVERY NON-PRICING FIELD IS COPIED VERBATIM from the upstream-extracted row this overlay entry now shadows (`generated/catalog.json` immediately before this change, key `openai/gpt-5.6-terra`) -- the overlay WINS the merge WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key), so a partial row would DOWNGRADE the evidence rather than add to it; `pricing` is the only addition, and `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $4.00 / cached $0.40 / output $18.00 per 1M), plus batch/flex and fast tiers, none of which the single-tier `ModelPricing` can carry -- the estimator therefore UNDER-counts long-context turns on this row. NO cache-write rate is published for this model, so that key is omitted rather than invented.",
+      "$comment": "Winter-authored 2026-09-07 (P6.6 fix wave, whole-branch Minor-4: this model is a `gpt` family SLOT and its row carried no pricing, so a session on it reported no cost at all and `priceUsage` returned `undefined`). EVERY NON-PRICING FIELD IS COPIED VERBATIM from the upstream-extracted row this overlay entry now shadows (`generated/catalog.json` immediately before this change, key `openai/gpt-5.6-terra`) -- the overlay WINS the merge WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key), so a partial row would DOWNGRADE the evidence rather than add to it; `pricing` is the only addition, and `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $4.00 / cached $0.40 / output $18.00 per 1M), plus batch/flex and fast tiers, none of which the single-tier `ModelPricing` can carry -- the estimator therefore UNDER-counts long-context turns on this row. NO cache-write rate is published for this model, so that key is omitted rather than invented. — 2026-09-25 refresh: https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra reasoning effort values none, low, medium, high, xhigh, max; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
         "chat",
         "responses"
@@ -6594,23 +6638,23 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxInputTokens": {
         "value": 922000,
-        "source": "upstream-static",
-        "sourceRef": "https://openrouter.ai/openai/gpt-5.6-terra — the model page documents a 128,000-token completion limit",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxOutputTokens": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra max output 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -6618,71 +6662,80 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "live-probe",
-          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-terra, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
-          "observedAt": "2026-09-16T00:00:00Z",
-          "confidence": "declared"
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
+          "none",
           "low",
           "medium",
           "high",
           "xhigh",
           "max"
         ],
-        "defaultEffort": "medium",
-        "continuation": "opaque-provider-state"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium"
       },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2,
           "outputPerMTokUsd": 12,
-          "cacheReadPerMTokUsd": 0.2
+          "cacheReadPerMTokUsd": 0.2,
+          "cacheWritePerMTokUsd": 2.5
         },
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-5.6-terra, standard tier, short context: input $2.00, cached input $0.20, output $12.00 per 1M tokens (retrieved 2026-09-06). Long context: $4.00 / $0.40 / $18.00. No cache-write rate is published for this model, so that key is absent.",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — gpt-5.6-terra standard short-context USD/MTok table: input $2, output $12, cached input $0.2; cache writes 1.25x input = $2.5. - Prompts with >272K input tokens are priced at 2x input and 1.5x output for the full request.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-terra — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-5.6-luna",
@@ -6690,7 +6743,7 @@
       "upstreamId": "gpt-5.6-luna",
       "displayName": "GPT-5.6 Luna",
       "aliases": [],
-      "$comment": "Winter-authored 2026-09-07 (P6.6 fix wave, whole-branch Minor-4: this model is a `gpt` family SLOT and its row carried no pricing, so a session on it reported no cost at all and `priceUsage` returned `undefined`). EVERY NON-PRICING FIELD IS COPIED VERBATIM from the upstream-extracted row this overlay entry now shadows (`generated/catalog.json` immediately before this change, key `openai/gpt-5.6-luna`) -- the overlay WINS the merge WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key), so a partial row would DOWNGRADE the evidence rather than add to it; `pricing` is the only addition, and `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $0.40 / cached $0.04 / output $1.80 per 1M), plus batch/flex and fast tiers, none of which the single-tier `ModelPricing` can carry -- the estimator therefore UNDER-counts long-context turns on this row. NO cache-write rate is published for this model, so that key is omitted rather than invented.",
+      "$comment": "Winter-authored 2026-09-07 (P6.6 fix wave, whole-branch Minor-4: this model is a `gpt` family SLOT and its row carried no pricing, so a session on it reported no cost at all and `priceUsage` returned `undefined`). EVERY NON-PRICING FIELD IS COPIED VERBATIM from the upstream-extracted row this overlay entry now shadows (`generated/catalog.json` immediately before this change, key `openai/gpt-5.6-luna`) -- the overlay WINS the merge WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key), so a partial row would DOWNGRADE the evidence rather than add to it; `pricing` is the only addition, and `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $0.40 / cached $0.04 / output $1.80 per 1M), plus batch/flex and fast tiers, none of which the single-tier `ModelPricing` can carry -- the estimator therefore UNDER-counts long-context turns on this row. NO cache-write rate is published for this model, so that key is omitted rather than invented. — 2026-09-25 refresh: https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna reasoning effort values none, low, medium, high, xhigh, max; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
         "chat",
         "responses"
@@ -6698,23 +6751,23 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxInputTokens": {
         "value": 922000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxOutputTokens": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna max output 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -6722,71 +6775,80 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "live-probe",
-          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6-luna, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
-          "observedAt": "2026-09-16T00:00:00Z",
-          "confidence": "declared"
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
+          "none",
           "low",
           "medium",
           "high",
           "xhigh",
           "max"
         ],
-        "defaultEffort": "medium",
-        "continuation": "opaque-provider-state"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium"
       },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.2,
           "outputPerMTokUsd": 1.2,
-          "cacheReadPerMTokUsd": 0.02
+          "cacheReadPerMTokUsd": 0.02,
+          "cacheWritePerMTokUsd": 0.25
         },
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-5.6-luna, standard tier, short context: input $0.20, cached input $0.02, output $1.20 per 1M tokens (retrieved 2026-09-06). Long context: $0.40 / $0.04 / $1.80. No cache-write rate is published for this model, so that key is absent.",
-        "confidence": "declared",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — gpt-5.6-luna standard short-context USD/MTok table: input $0.2, output $1.2, cached input $0.02; cache writes 1.25x input = $0.25. - Prompts with >272K input tokens are priced at 2x input and 1.5x output for the full request.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-luna — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "status": "candidate"
     },
     {
       "key": "console/claude-fable-5",
@@ -7858,9 +7920,9 @@
       "key": "openai/gpt-5.6",
       "providerId": "openai",
       "upstreamId": "gpt-5.6",
-      "displayName": "GPT-5.6",
+      "displayName": "GPT-5.6 Sol",
       "aliases": [],
-      "$comment": "WS-20 (2026-09-16, Task L1.3): overlay-shadows the upstream-extracted `openai/gpt-5.6` row WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key) so `reasoning.efforts`/`defaultEffort` can be set -- every non-reasoning field is copied verbatim from the upstream row this entry shadows (`generated/upstream-layer.json`, key `openai/gpt-5.6`); `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them.",
+      "$comment": "WS-20 (2026-09-16, Task L1.3): overlay-shadows the upstream-extracted `openai/gpt-5.6` row WHOLE (scripts/provider-catalog.ts drops the upstream row with the same key) so `reasoning.efforts`/`defaultEffort` can be set -- every non-reasoning field is copied verbatim from the upstream row this entry shadows (`generated/upstream-layer.json`, key `openai/gpt-5.6`); `canonicalModelId`/`modelFamily` are deliberately absent so the build stamps them rather than this file overriding them. — 2026-09-25 refresh: https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 reasoning effort values none, low, medium, high, xhigh, max; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 is an alias routing to gpt-5.6-sol; retained as its own catalog key for existing callers. ",
       "endpoints": [
         "chat",
         "responses"
@@ -7868,23 +7930,23 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxInputTokens": {
         "value": 922000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "maxOutputTokens": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 max output 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -7892,71 +7954,80 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
-          "source": "live-probe",
-          "sourceRef": "WS-20 live probe 2026-09-16: api.openai.com /v1/responses accepted reasoning.effort in {none,low,medium,high,xhigh,max} on gpt-5.6, each echoed back in reasoning.effort; `none` is Winter's unset and is not a catalog tier",
-          "observedAt": "2026-09-16T00:00:00Z",
-          "confidence": "declared"
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
+          "none",
           "low",
           "medium",
           "high",
           "xhigh",
           "max"
         ],
-        "defaultEffort": "medium",
-        "continuation": "opaque-provider-state"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium"
       },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 4,
           "outputPerMTokUsd": 20,
-          "cacheReadPerMTokUsd": 0.4
+          "cacheReadPerMTokUsd": 0.4,
+          "cacheWritePerMTokUsd": 5
         },
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6 — gpt-5.6 standard short-context USD/MTok table: input $4, output $20, cached input $0.4; cache writes 1.25x input = $5. - Prompts with >272K input tokens are priced at 2x input and 1.5x output for the full request.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.6-sol — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-4.1-mini",
@@ -7964,6 +8035,7 @@
       "upstreamId": "gpt-4.1-mini",
       "displayName": "GPT-4.1 Mini",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — non-reasoning model; no reasoning block. ",
       "endpoints": [
         "chat",
         "responses"
@@ -7971,9 +8043,16 @@
       "contextWindow": {
         "value": 1047576,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini context window 1047576 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 32768,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini max output 32768 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -7981,35 +8060,40 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — gpt-4.1-mini supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.4,
@@ -8021,27 +8105,16 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "maxOutputTokens": {
-        "value": 32768,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-4.1-nano",
       "providerId": "openai",
       "upstreamId": "gpt-4.1-nano",
-      "displayName": "GPT-4.1 Nano",
+      "displayName": "GPT-4.1 nano",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — non-reasoning model; no reasoning block. https://developers.openai.com/api/docs/deprecations — gpt-4.1-nano alias/snapshot scheduled to shut down 2026-10-23; recommended replacement gpt-5.6-luna. ",
       "endpoints": [
         "chat",
         "responses"
@@ -8049,9 +8122,16 @@
       "contextWindow": {
         "value": 1047576,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano context window 1047576 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 32768,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano max output 32768 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8059,35 +8139,47 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — gpt-4.1-nano supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.1,
@@ -8099,20 +8191,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "maxOutputTokens": {
-        "value": 32768,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4.1-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-4o",
@@ -8120,6 +8200,7 @@
       "upstreamId": "gpt-4o",
       "displayName": "GPT-4o",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-4o — non-reasoning model; no reasoning block. ",
       "endpoints": [
         "chat",
         "responses"
@@ -8127,9 +8208,16 @@
       "contextWindow": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o context window 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 16384,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o max output 16384 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8137,35 +8225,40 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2.5,
@@ -8177,27 +8270,16 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "maxOutputTokens": {
-        "value": 16384,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-4o-2024-11-20",
       "providerId": "openai",
       "upstreamId": "gpt-4o-2024-11-20",
-      "displayName": "GPT-4o (Nov 2024)",
+      "displayName": "GPT-4o (2024-11-20 snapshot)",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-4o — non-reasoning model; no reasoning block. https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 remains listed in the GPT-4o snapshots; no dedicated model page; family fields/pricing inferred from GPT-4o page. ",
       "endpoints": [
         "chat",
         "responses"
@@ -8205,9 +8287,16 @@
       "contextWindow": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 context window 128000 tokens (family snapshot page lists this wire ID).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 16384,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 max output 16384 tokens.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8215,35 +8304,40 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 input modalities text, image.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 supported features include function_calling.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 function_calling listed under supported features.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — gpt-4o-2024-11-20 supported features include structured_outputs.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2.5,
@@ -8255,20 +8349,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "maxOutputTokens": {
-        "value": 16384,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-4o-mini",
@@ -8276,6 +8358,7 @@
       "upstreamId": "gpt-4o-mini",
       "displayName": "GPT-4o Mini",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-4o-mini — non-reasoning model; no reasoning block. ",
       "endpoints": [
         "chat",
         "responses"
@@ -8283,9 +8366,16 @@
       "contextWindow": {
         "value": 128000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini context window 128000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 16384,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini max output 16384 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8293,35 +8383,40 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — gpt-4o-mini supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.15,
@@ -8333,20 +8428,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "maxOutputTokens": {
-        "value": 16384,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-4o-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-5.4",
@@ -8354,6 +8437,7 @@
       "upstreamId": "gpt-5.4",
       "displayName": "GPT-5.4",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 reasoning effort values none, low, medium, high, xhigh; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
         "chat",
         "responses"
@@ -8361,9 +8445,16 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8371,35 +8462,65 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — gpt-5.4 model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "none",
+        "defaultEffort": "none"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2.5,
@@ -8411,13 +8532,95 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.4-mini",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.4-mini",
+      "displayName": "GPT-5.4 Mini",
+      "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini reasoning effort values none, low, medium, high, xhigh; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
+      "endpoints": [
+        "chat",
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 400000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini context window 400000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxInputTokens": {
+        "value": 272000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini separate maximum input 272000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini input modalities text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — gpt-5.4-mini model details list reasoning token support.",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
           "none",
@@ -8426,76 +8629,9 @@
           "high",
           "xhigh"
         ],
-        "defaultEffort": "none",
-        "continuation": "none"
+        "continuation": "none",
+        "defaultEffort": "none"
       },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
-    },
-    {
-      "key": "openai/gpt-5.4-mini",
-      "providerId": "openai",
-      "upstreamId": "gpt-5.4-mini",
-      "displayName": "GPT-5.4 Mini",
-      "aliases": [],
-      "endpoints": [
-        "chat",
-        "responses"
-      ],
-      "contextWindow": {
-        "value": 400000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "inputModalities": {
-        "value": [
-          "text",
-          "image"
-        ],
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.75,
@@ -8507,13 +8643,95 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.4-nano",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.4-nano",
+      "displayName": "GPT-5.4 nano",
+      "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano reasoning effort values none, low, medium, high, xhigh; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
+      "endpoints": [
+        "chat",
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 400000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano context window 400000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxInputTokens": {
+        "value": 272000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano separate maximum input 272000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano input modalities text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — gpt-5.4-nano model details list reasoning token support.",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
           "none",
@@ -8522,76 +8740,9 @@
           "high",
           "xhigh"
         ],
-        "defaultEffort": "none",
-        "continuation": "none"
+        "continuation": "none",
+        "defaultEffort": "none"
       },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-mini — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
-    },
-    {
-      "key": "openai/gpt-5.4-nano",
-      "providerId": "openai",
-      "upstreamId": "gpt-5.4-nano",
-      "displayName": "GPT-5.4 Nano",
-      "aliases": [],
-      "endpoints": [
-        "chat",
-        "responses"
-      ],
-      "contextWindow": {
-        "value": 400000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "inputModalities": {
-        "value": [
-          "text",
-          "image"
-        ],
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 0.2,
@@ -8603,38 +8754,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
-          "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
-        },
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "defaultEffort": "none",
-        "continuation": "none"
-      },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-nano — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-5.4-pro",
@@ -8642,16 +8763,23 @@
       "upstreamId": "gpt-5.4-pro",
       "displayName": "GPT-5.4 Pro",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro reasoning effort values medium, high, xhigh; Thinking off: no documented none effort. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
-        "chat",
         "responses"
       ],
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8659,35 +8787,49 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — gpt-5.4-pro model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "none",
+        "defaultEffort": "medium"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 30,
@@ -8698,36 +8840,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro",
-          "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
-        },
-        "efforts": [
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "defaultEffort": "medium",
-        "continuation": "none"
-      },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.4-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-5.5",
@@ -8735,6 +8849,7 @@
       "upstreamId": "gpt-5.5",
       "displayName": "GPT-5.5",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 reasoning effort values none, low, medium, high, xhigh; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
         "chat",
         "responses"
@@ -8742,9 +8857,16 @@
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8752,35 +8874,65 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — gpt-5.5 model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "none",
+        "defaultEffort": "medium"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 5,
@@ -8792,38 +8944,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5",
-          "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
-        },
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "defaultEffort": "medium",
-        "continuation": "none"
-      },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5 — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/gpt-5.5-pro",
@@ -8831,16 +8953,23 @@
       "upstreamId": "gpt-5.5-pro",
       "displayName": "GPT-5.5 Pro",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro reasoning effort values medium, high, xhigh; Thinking off: no documented none effort. Responses reasoning state is opaque; raw chain is not exposed. ",
       "endpoints": [
-        "chat",
         "responses"
       ],
       "contextWindow": {
         "value": 1050000,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro context window 1050000 tokens.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
@@ -8848,35 +8977,56 @@
           "image"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro input modalities text, image.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro output modalities text.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro supported features include function_calling.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro function_calling listed under supported features.",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — gpt-5.5-pro model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "none",
+        "defaultEffort": "high"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 30,
@@ -8887,87 +9037,96 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
-          "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
-        },
-        "efforts": [
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "defaultEffort": "high",
-        "continuation": "none"
-      },
-      "maxOutputTokens": {
-        "value": 128000,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      },
-      "structuredOutput": {
-        "value": true,
-        "source": "official-doc",
-        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-5.5-pro — context window, max output, text/image input, text output, Chat Completions and Responses availability, function calling, and structured outputs (retrieved 2026-09-19)",
-        "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openai/o3",
       "providerId": "openai",
       "upstreamId": "o3",
-      "displayName": "O3",
+      "displayName": "o3",
       "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/guides/latest-model — o3 reasoning effort values low, medium, high; older o-series low/medium/high range is given in OpenAI model guidance; default not asserted. Thinking off: no documented none effort. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/deprecations — o3-2025-04-16 fixed snapshot retires 2026-12-11 in favor of gpt-5.6-sol; the page does not explicitly list the floating o3 alias in that retirement notice. ",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 200000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 context window 200000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 100000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 max output 100000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 input modalities text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
-      "unsupportedParameters": [],
-      "status": "candidate",
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/o3 — o3 model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "continuation": "none"
+      },
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2,
@@ -8979,13 +9138,80 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/o3-mini",
+      "providerId": "openai",
+      "upstreamId": "o3-mini",
+      "displayName": "o3-mini",
+      "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/guides/latest-model — o3-mini reasoning effort values low, medium, high; older o-series low/medium/high range is given in OpenAI model guidance; default not asserted. Thinking off: no documented none effort. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/deprecations — o3-mini alias/snapshot scheduled to shut down 2026-10-23; recommended replacement gpt-5.6-sol. ",
+      "endpoints": [
+        "chat",
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini context window 200000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 100000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini max output 100000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini input modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/guides/latest-model",
+          "sourceRef": "https://developers.openai.com/api/docs/models/o3-mini — o3-mini model details list reasoning token support.",
           "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
+          "observedAt": "2026-09-25T10:21:48Z"
         },
         "efforts": [
           "low",
@@ -8993,58 +9219,7 @@
           "high"
         ],
         "continuation": "none"
-      }
-    },
-    {
-      "key": "openai/o3-mini",
-      "providerId": "openai",
-      "upstreamId": "o3-mini",
-      "displayName": "O3 Mini",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 200000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
       },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1.1,
@@ -9056,21 +9231,8 @@
         "confidence": "declared",
         "observedAt": "2026-09-19T00:00:00Z"
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://developers.openai.com/api/docs/guides/latest-model",
-          "confidence": "declared",
-          "observedAt": "2026-09-19T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high"
-        ],
-        "continuation": "none"
-      }
+      "unsupportedParameters": [],
+      "status": "candidate"
     },
     {
       "key": "openrouter/openai/gpt-5.4",
@@ -45300,6 +45462,522 @@
         ],
         "continuation": "plaintext",
         "defaultEffort": "max"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "codex-oauth/gpt-6-sol",
+      "providerId": "codex-oauth",
+      "upstreamId": "gpt-6-sol",
+      "displayName": "GPT-6-Sol (Codex)",
+      "aliases": [],
+      "$comment": "https://learn.chatgpt.com/docs/models — gpt-6-sol appears in the current Codex model list. Local cache fetched_at 2026-09-25T10:16:24.468875Z; availability is rollout- and plan-dependent. https://developers.openai.com/api/docs/guides/reasoning — Responses reasoning uses encrypted opaque items or response state, not readable chain-of-thought; do not share continuation domain with api.openai.com. Cache lists Ultra for some models, but Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. No per-token pricing on this subscription provider.",
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 272000,
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-sol context_window=272000; max_context_window=872000 is a separate upper ceiling, not the default.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-sol input_modalities=text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-sol tool_mode=code_mode_only; Codex tool calls are native but code-mode scoped.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-sol tool_mode=code_mode_only; native tool use inferred from Codex execution surface.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "live-discovery",
+          "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-sol supported_reasoning_levels=low, medium, high, xhigh, max.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:18:08Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "codex-oauth/gpt-6-sol"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model. §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "codex-oauth/gpt-6-luna",
+      "providerId": "codex-oauth",
+      "upstreamId": "gpt-6-luna",
+      "displayName": "GPT-6-Luna (Codex)",
+      "aliases": [],
+      "$comment": "https://learn.chatgpt.com/docs/models — gpt-6-luna appears in the current Codex model list. Local cache fetched_at 2026-09-25T10:16:24.468875Z; availability is rollout- and plan-dependent. https://developers.openai.com/api/docs/guides/reasoning — Responses reasoning uses encrypted opaque items or response state, not readable chain-of-thought; do not share continuation domain with api.openai.com. Cache lists Ultra for some models, but Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. No per-token pricing on this subscription provider.",
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 272000,
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-luna context_window=272000; max_context_window=872000 is a separate upper ceiling, not the default.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-luna input_modalities=text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-luna tool_mode=code_mode_only; Codex tool calls are native but code-mode scoped.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-luna tool_mode=code_mode_only; native tool use inferred from Codex execution surface.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:18:08Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "live-discovery",
+          "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-luna supported_reasoning_levels=low, medium, high, xhigh, max.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:18:08Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "codex-oauth/gpt-6-luna"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model. §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-6-sol",
+      "providerId": "openai",
+      "upstreamId": "gpt-6-sol",
+      "displayName": "GPT-6 Sol",
+      "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol reasoning effort values none, low, medium, high, xhigh, max; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/guides/latest-model — Chat Completions tool calling only at reasoning_effort:none; use Responses for other efforts. ",
+      "endpoints": [
+        "chat",
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol context window 1050000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol input modalities text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "openai/gpt-6-sol"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2,
+          "outputPerMTokUsd": 10,
+          "cacheReadPerMTokUsd": 0.2,
+          "cacheWritePerMTokUsd": 2.5
+        },
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-sol — gpt-6-sol standard short-context USD/MTok table: input $2, output $10, cached input $0.2, cache writes $2.5. - Prompts with more than 272K input tokens are priced at 2x input and cache rates and 1.5x output for the full request.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-6-luna",
+      "providerId": "openai",
+      "upstreamId": "gpt-6-luna",
+      "displayName": "GPT-6 Luna",
+      "aliases": [],
+      "$comment": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna reasoning effort values none, low, medium, high, xhigh, max; Thinking off: yes, reasoning.effort/Chat reasoning_effort none. Responses reasoning state is opaque; raw chain is not exposed. https://developers.openai.com/api/docs/guides/latest-model — Chat Completions tool calling only at reasoning_effort:none; use Responses for other efforts. ",
+      "endpoints": [
+        "chat",
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna context window 1050000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna separate maximum input 922000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna max output 128000 tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna input modalities text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna output modalities text.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna supported features include function_calling.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna function_calling listed under supported features.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna model details list reasoning token support.",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T10:21:48Z"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "openai/gpt-6-luna"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1,
+          "outputPerMTokUsd": 0.5,
+          "cacheReadPerMTokUsd": 0.01,
+          "cacheWritePerMTokUsd": 0.125
+        },
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-luna — gpt-6-luna standard short-context USD/MTok table: input $0.1, output $0.5, cached input $0.01, cache writes $0.125. - Prompts with more than 272K input tokens are priced at 2x input and cache rates and 1.5x output for the full request.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:21:48Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
