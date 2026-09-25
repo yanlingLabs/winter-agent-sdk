@@ -10,9 +10,13 @@
 //      the lane's own constraint ("unsupported effort/thinking is rejected BEFORE the request with a
 //      typed error") mean an unverified effort, an unsupported thinking arm, a tool set a model
 //      cannot call natively, an image a model cannot see, or a thinking budget that does not fit
-//      inside `max_tokens` all fail with a typed `capability` error and ZERO requests on the wire.
-//      A fixture asserts `fake.requests` is empty for each -- which is the only assertion that can
-//      tell "rejected before" from "rejected after".
+//      inside `max_tokens` all fail with a typed `capability` error and ZERO requests on the wire --
+//      or, where the row's OWN evidence says how claude itself resolves the mismatch (`enabled`/
+//      `disabled` on a row that rejects that exact arm, 2026-09-25), the request is REWRITTEN instead
+//      of refused (`buildThinking`); `adaptive` on a row that rejects it still refuses, since no
+//      rewrite for that arm is evidenced anywhere.
+//      A fixture asserts `fake.requests` is empty for each refusal -- which is the only assertion that
+//      can tell "rejected before" from "rejected after".
 //
 //   2. **The adapter reads its model's descriptor from the CATALOG, not from `ProviderContext`.**
 //      `ProviderAdapter.mapEffort(effort, model)` takes a descriptor, but `streamTurn(req, ctx)` has
@@ -91,12 +95,20 @@ export const ANTHROPIC_DEFAULT_MAX_TOKENS = 4096;
  * The effort -> thinking-budget ladder.
  *
  * WINTER-AUTHORED AND DISCLOSED. The pin states no unit, no range and no mapping for effort
- * (derived-shapes-p6.md item (c): "the answer is a documented absence", OQ-P6-2), and the Messages
- * endpoint declares no `effort` field at all -- the only reasoning dial it exposes is the `thinking`
- * budget, and the pin's own `maxThinkingTokens` deprecation note is explicit that the two are the
- * same knob. So effort maps onto a budget, and the ladder doubles per tier from a 4k floor. It is a
- * gap-fill rather than a divergence, and `mapEffort` refuses any tier the MODEL'S OWN
- * `reasoning.efforts` does not list, so the ladder can never invent a capability.
+ * (derived-shapes-p6.md item (c): "the answer is a documented absence", OQ-P6-2), and at the time this
+ * ladder was written the Messages endpoint declared no `effort` field at all -- the only reasoning
+ * dial it exposed was the `thinking` budget, and the pin's own `maxThinkingTokens` deprecation note is
+ * explicit that the two are the same knob. So effort mapped onto a budget, and the ladder doubles per
+ * tier from a 4k floor. It is a gap-fill rather than a divergence, and `mapEffort` refuses any tier
+ * the MODEL'S OWN `reasoning.efforts` does not list, so the ladder can never invent a capability.
+ *
+ * THIS IS NO LONGER THE ONLY DIAL (2026-09-25): Anthropic's `output_config.effort` is now GA
+ * (https://platform.claude.com/docs/en/build-with-claude/effort). A row that documents it
+ * (`reasoning.effortRequest`) sends the tier there instead and this ladder is NOT consulted at all --
+ * see `mapAnthropicEffort`. The ladder survives as the fallback for a row with no such evidence, and
+ * as the COMPOSING partner on a row that documents `output_config.effort` but also rejects adaptive
+ * thinking (Opus 4.5's `enabled`-only shape), where the vendor's effort page has the tier and the
+ * budget riding together.
  */
 const EFFORT_BUDGET_TOKENS: Readonly<Record<string, number>> = {
   low: 4_096,
@@ -321,7 +333,19 @@ export function findDescriptor(catalog: WinterCatalog, providerId: string, model
   return catalog.models.find((m) => m.providerId === providerId && (m.upstreamId === model || m.key === model || m.aliases.includes(model)));
 }
 
-export type EffortMapping = { ok: true; value: { type: "enabled"; budget_tokens: number } } | { ok: false; reason: string };
+/**
+ * `value` is the THINKING arm this effort resolves to -- `"adaptive"` for a row that takes effort on
+ * its own wire field (2026-09-25, `output_config.effort`, GA, no beta header:
+ * https://platform.claude.com/docs/en/build-with-claude/effort) and does not also reject adaptive
+ * thinking, `"enabled"` with a budget otherwise (the pre-existing ladder). `outputConfigEffort` rides
+ * ALONGSIDE it -- present only when the row's own `reasoning.effortRequest` evidence says this model
+ * takes `output_config.effort` at all, so a row with none keeps the exact old shape (no such key).
+ * `value` alone therefore no longer says everything a caller sends on the wire for such a row; the two
+ * fields together do, which is what "agrees with what streamTurn sends" means for `mapEffort` below.
+ */
+export type EffortMapping =
+  | { ok: true; value: { type: "enabled"; budget_tokens: number } | { type: "adaptive" }; outputConfigEffort?: string }
+  | { ok: false; reason: string };
 
 /**
  * Effort -> the model's VERIFIED vocabulary, or a refusal (WS-13 §8.2).
@@ -330,6 +354,16 @@ export type EffortMapping = { ok: true; value: { type: "enabled"; budget_tokens:
  * model's own `reasoning.efforts` list. The pin admits a numeric effort on exactly one surface
  * (`AgentDefinition.effort`, `sdk.d.ts:87`) and states no unit, range or mapping for it -- so this
  * is gap-filling, disclosed, and it can only ever select a tier the model already declares.
+ *
+ * WHERE THE TIER LANDS ON THE WIRE is a second, independent question from validating it, and the
+ * row's own `reasoning.effortRequest` evidence answers it (2026-09-25 catalog field): Claude 4.7 and
+ * later reject a manual `thinking.budget_tokens` outright
+ * (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations),
+ * so a row that documents `output_config.effort` sends the tier THERE and `thinking: {type:"adaptive"}`
+ * -- no budget lookup, and therefore no risk of refusing a tier this ladder has no budget for. The one
+ * exception is a row that ALSO rejects adaptive thinking (Opus 4.5's `enabled`-only shape): effort then
+ * COMPOSES with the budget ladder, exactly as the vendor's effort page documents for that model, so the
+ * ladder still runs and `outputConfigEffort` rides beside its result.
  */
 export function mapAnthropicEffort(effort: TurnRequest["effort"], descriptor: WinterModelDescriptor | undefined): EffortMapping {
   if (effort === undefined) return { ok: false, reason: "no effort was requested" };
@@ -352,32 +386,71 @@ export function mapAnthropicEffort(effort: TurnRequest["effort"], descriptor: Wi
     }
     tier = effort;
   }
+
+  const effortRequest = descriptor.reasoning?.effortRequest?.value;
+  const rejectsAdaptive = descriptor.unsupportedParameters.includes("thinking.type.adaptive");
+  if (effortRequest !== undefined && !rejectsAdaptive) {
+    // `output_config.effort` takes the tier directly; the model steers its own adaptive thinking, so
+    // no budget is looked up (or invented) at all -- this row is NOT a dependent of
+    // `EFFORT_BUDGET_TOKENS`, per that constant's own updated doc comment.
+    return { ok: true, value: { type: "adaptive" }, outputConfigEffort: tier };
+  }
+
   const budget = EFFORT_BUDGET_TOKENS[tier];
   if (budget === undefined) {
     return { ok: false, reason: `model "${descriptor.key}" declares effort tier "${tier}", which this adapter has no verified thinking budget for` };
   }
-  return { ok: true, value: { type: "enabled", budget_tokens: budget } };
+  // `effortRequest !== undefined` here means `rejectsAdaptive` is true (Opus 4.5's `enabled`-only
+  // shape, per the vendor's effort page): effort COMPOSES with the budget ladder rather than
+  // replacing it, so `outputConfigEffort` rides beside the enabled/budget value instead of alone.
+  return { ok: true, value: { type: "enabled", budget_tokens: budget }, ...(effortRequest !== undefined ? { outputConfigEffort: tier } : {}) };
 }
 
 type WireThinking = { type: "disabled" } | { type: "enabled"; budget_tokens?: number; display?: string } | { type: "adaptive"; display?: string };
 
+/** What `buildThinking` decided, plus the SIBLING `output_config.effort` value (independent of which thinking arm won -- see `mapAnthropicEffort`'s own doc comment). */
+type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEffort?: string } | { ok: false; reason: string };
+
 /**
- * The `thinking` envelope, from `TurnRequest.thinking` and `TurnRequest.effort`.
+ * The `thinking` envelope (and, on a row that documents one, the sibling `output_config.effort`
+ * value), from `TurnRequest.thinking` and `TurnRequest.effort`.
  *
- * FORWARDED VERBATIM by arm. Capture (F) observed the pinned runtime re-resolving `enabled` to
- * `adaptive` for `claude-sonnet-5`, and R6-E permits an adapter to do the same "for models whose
- * evidence says adaptive-only" -- but the catalog carries no such evidence field, so re-resolving
- * here would be an invented capability claim. Recorded as a disclosed difference from the pinned
- * runtime's own behaviour rather than imitated without evidence.
+ * FORWARDED VERBATIM BY ARM, UNLESS THE ROW'S OWN `unsupportedParameters` NAMES THE ARM A DOCUMENTED
+ * 400 (2026-09-25). Capture (F) observed the pinned runtime re-resolving `enabled` to `adaptive` for
+ * `claude-sonnet-5`, and this used to be a disclosed difference because the catalog carried no
+ * evidence for which models needed it -- re-resolving would have been an invented capability claim.
+ * The catalog now carries exactly that evidence (`thinking.type.enabled` / `.disabled` / `.adaptive`
+ * in `unsupportedParameters`, sourced from
+ * https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting's per-model
+ * rejected-configuration table), so the three arms below are no longer a guess:
+ *
+ *   - `enabled` on a row that rejects it -> `{type:"adaptive"}`, budget dropped (claude's own mapping,
+ *     now evidenced rather than merely observed once).
+ *   - `disabled` on a row that rejects it -> the field is OMITTED. These models cannot be turned off,
+ *     and the vendor page's advice for an always-on model is to omit `thinking` rather than send a
+ *     value it will reject.
+ *   - `adaptive` on a row that rejects it -> a typed refusal before the request. No row observed so far
+ *     rejects `adaptive` while also being an "adaptive only" model (that would be self-contradictory),
+ *     so this arm exists for the Sonnet-4.5/Opus-4.5-shaped `enabled`-only rows, which is exactly what
+ *     the corpus's typed-refusal fixture proves.
+ *
+ * A model with NO such evidence (an unlisted row, or a sibling provider that has not been captured)
+ * still gets the arm forwarded verbatim -- the disclosed-gap-fill default is unchanged for it.
  *
  * `display` comes from the DESCRIPTOR'S OWN `summaryRequest` evidence (`field: "thinking.display"`),
  * never from a hard-coded string, and only when the caller asked for a summary.
  */
-function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): { ok: true; value: WireThinking | undefined } | { ok: false; reason: string } {
+function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ThinkingBuild {
   const reasoning = descriptor?.reasoning;
   const supported = reasoning?.supported.value === true;
+  const unsupported = new Set(descriptor?.unsupportedParameters ?? []);
 
   let base: WireThinking | undefined;
+  // Tracks whether `req.thinking` decided the FIELD (including deciding to omit it) -- as opposed to
+  // `base` simply being `undefined` because no thinking was requested at all. The two must not be
+  // conflated: an explicit `disabled` on an always-on row omits the field on purpose, and that
+  // decision must survive the effort fallback below rather than being silently overwritten by it.
+  let thinkingFieldDecided = false;
   if (req.thinking !== undefined) {
     if (req.thinking.type !== "disabled" && !supported) {
       return {
@@ -388,29 +461,52 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
             : `model "${descriptor.key}" does not declare reasoning support, so a thinking config cannot be honoured`,
       };
     }
-    const requestedBudget = req.thinking.type === "enabled" ? req.thinking.budgetTokens : undefined;
-    if (req.thinking.type === "enabled" && requestedBudget === undefined) {
-      // The pin types `budgetTokens` OPTIONAL while its own JSDoc renders the arm as requiring one --
-      // "a well-typed value with undefined semantics in the pin" (derived-shapes item (c)). This
-      // endpoint requires `budget_tokens` on an enabled thinking config, so forwarding the arm
-      // budget-less is a request we KNOW will fail upstream. That is exactly what the
-      // reject-before-the-request rule exists for, and the `budget >= max_tokens` check below cannot
-      // catch it (an absent budget skips it).
-      return { ok: false, reason: THINKING_ENABLED_NEEDS_BUDGET };
+    thinkingFieldDecided = true;
+    if (req.thinking.type === "enabled" && unsupported.has("thinking.type.enabled")) {
+      base = { type: "adaptive" };
+    } else if (req.thinking.type === "disabled" && unsupported.has("thinking.type.disabled")) {
+      base = undefined;
+    } else if (req.thinking.type === "adaptive" && unsupported.has("thinking.type.adaptive")) {
+      return {
+        ok: false,
+        reason: `model "${descriptor?.key ?? req.model}" lists "thinking.type.adaptive" in its unsupportedParameters, so an explicit adaptive thinking request is refused before the request rather than sent and rejected upstream`,
+      };
+    } else {
+      const requestedBudget = req.thinking.type === "enabled" ? req.thinking.budgetTokens : undefined;
+      if (req.thinking.type === "enabled" && requestedBudget === undefined) {
+        // The pin types `budgetTokens` OPTIONAL while its own JSDoc renders the arm as requiring one --
+        // "a well-typed value with undefined semantics in the pin" (derived-shapes item (c)). This
+        // endpoint requires `budget_tokens` on an enabled thinking config, so forwarding the arm
+        // budget-less is a request we KNOW will fail upstream. That is exactly what the
+        // reject-before-the-request rule exists for, and the `budget >= max_tokens` check below cannot
+        // catch it (an absent budget skips it).
+        return { ok: false, reason: THINKING_ENABLED_NEEDS_BUDGET };
+      }
+      base = requestedBudget !== undefined ? { type: "enabled", budget_tokens: requestedBudget } : { type: req.thinking.type };
     }
-    base = requestedBudget !== undefined ? { type: "enabled", budget_tokens: requestedBudget } : { type: req.thinking.type };
   }
 
+  let outputConfigEffort: string | undefined;
   if (req.effort !== undefined) {
     const mapped = mapAnthropicEffort(req.effort, descriptor);
     if (!mapped.ok) return { ok: false, reason: mapped.reason };
-    if (!supported) return { ok: false, reason: `model "${descriptor?.key ?? req.model}" does not declare reasoning support, so an effort level cannot be mapped onto its thinking budget` };
+    // "cannot be honoured", not "mapped onto its thinking budget": on an `effortRequest` row there is
+    // no budget at all for this to be about, so the message must not claim there is one.
+    if (!supported) return { ok: false, reason: `model "${descriptor?.key ?? req.model}" does not declare reasoning support, so an effort level cannot be honoured` };
+    // `output_config.effort` rides whenever the row documents it and an effort was requested,
+    // regardless of which arm wins the THINKING field below -- an explicit `thinking` still overrides
+    // the field itself (next comment), but that is a different question from whether effort reaches
+    // the wire at all.
+    outputConfigEffort = mapped.outputConfigEffort;
     // An explicit `thinking` wins: the pin says the same about `thinking` vs `maxThinkingTokens`
-    // ("`thinking`, when set, takes precedence"), and effort is the coarser dial of the two.
-    base = base ?? mapped.value;
+    // ("`thinking`, when set, takes precedence"), and effort is the coarser dial of the two. This must
+    // be gated on `thinkingFieldDecided`, not merely `base === undefined` -- an explicit `disabled` on
+    // an always-on row (above) leaves `base` undefined ON PURPOSE, and falling through here would
+    // silently replace that omission with the effort's own thinking value.
+    if (!thinkingFieldDecided) base = mapped.value;
   }
 
-  if (base === undefined) return { ok: true, value: undefined };
+  if (base === undefined) return { ok: true, value: undefined, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
 
   if (req.requestSummary === true && base.type !== "disabled") {
     const summaryRequest = reasoning?.summaryRequest?.value;
@@ -418,7 +514,7 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
       base = { ...base, display: "summarized" };
     }
   }
-  return { ok: true, value: base };
+  return { ok: true, value: base, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
 }
 
 /** The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the network. */
@@ -429,7 +525,29 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
  * body and then delete `max_tokens`/`stream` — which meant the check ran on a field that was about to
  * be thrown away.
  */
-function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
+/**
+ * `TurnRequest.toolChoice` -> the wire `tool_choice`, downgrading a FORCED choice to `auto` on a row
+ * that documents rejecting it.
+ *
+ * On Opus 5.5 and Fable 5.1, a forced `tool_choice` (`{type:"any"}` or `{type:"tool",name}`) is a
+ * documented 400 -- https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting
+ * lists both tokens as rejected, and the vendor's own advice there is to use `auto` instead. `auto`
+ * and `none` are unaffected (never rejected), so only the two forcing shapes are downgraded, and only
+ * on a row that actually lists the matching token -- a model with no such evidence still gets the
+ * caller's choice forwarded verbatim, same as every other unlisted capability in this file.
+ */
+function resolveToolChoice(toolChoice: NonNullable<TurnRequest["toolChoice"]>, unsupported: ReadonlySet<string>): Record<string, unknown> {
+  if (toolChoice.type === "any" && unsupported.has("tool_choice.any")) return { type: "auto" };
+  if (toolChoice.type === "tool" && unsupported.has("tool_choice.tool")) return { type: "auto" };
+  return toolChoice.type === "tool" ? { type: "tool", name: toolChoice.name } : { type: toolChoice.type };
+}
+
+// EXPORTED (relative-import only, same convention as `promptCachingLayout`): the REQUEST BODY is what
+// a fixture-catalog test asserts against for the effort/thinking/tool_choice envelope, without needing
+// a fetch fake -- `messages.test.ts` reads the return value directly rather than a loopback server's
+// `fake.requests`, which is `provider-conformance`'s job for the actual wire proof (this file's own
+// header comment).
+export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
   // Tools: WS-13 §8.1's three states. `emulated` is disabled for agent modes and `none` fails
   // negotiation -- neither is a reason to drop the tools and continue as plain chat.
   if (req.tools !== undefined && req.tools.length > 0 && descriptor !== undefined) {
@@ -462,7 +580,16 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     if (parameter === "tools" && req.tools !== undefined && req.tools.length > 0) {
       throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" lists "tools" in its unsupportedParameters`);
     }
+    // The granular `thinking.type.*` / `tool_choice.*` tokens (2026-09-25) are read by
+    // `buildThinking`/`resolveToolChoice` below via their own `Set`, not this loop -- this loop's
+    // vocabulary is exactly `"thinking"`/`"tools"`, so every granular token is INERT here by
+    // construction, same as any other token this file does not handle.
   }
+  // For `resolveToolChoice` below. `buildThinking` builds its OWN identical `Set` internally rather
+  // than taking this one as a parameter -- a deliberate choice to keep its signature `(req,
+  // descriptor)` unchanged from before this token vocabulary existed; a row's `unsupportedParameters`
+  // is small, so the duplicate construction is not worth widening that signature for.
+  const unsupported = new Set(descriptor?.unsupportedParameters ?? []);
 
   const thinking = buildThinking(req, descriptor);
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
@@ -484,7 +611,10 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
   const maxTokens = declaredMax ?? (budget !== undefined ? budget + fallbackMax : fallbackMax);
   if (purpose === "count") {
     // A count carries the PROMPT and nothing else: no `stream`, no `max_tokens`, and therefore no
-    // ceiling for a thinking budget to overrun.
+    // ceiling for a thinking budget to overrun. `output_config.effort` is deliberately left OFF this
+    // body too: effort steers generation, not tokenization, and whether `count_tokens` even accepts
+    // the field is unverified -- sending it would be an unevidenced capability claim on an endpoint
+    // this adapter has no fixture proving it against.
     return {
       model: req.model,
       messages: toWireMessages(req.messages),
@@ -511,8 +641,14 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     ...(req.tools !== undefined && req.tools.length > 0
       ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) }
       : {}),
-    ...(req.toolChoice !== undefined ? { tool_choice: req.toolChoice.type === "tool" ? { type: "tool", name: req.toolChoice.name } : { type: req.toolChoice.type } } : {}),
+    ...(req.toolChoice !== undefined ? { tool_choice: resolveToolChoice(req.toolChoice, unsupported) } : {}),
     ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
+    // `output_config` is Anthropic's own top-level effort field (GA, no beta header:
+    // https://platform.claude.com/docs/en/build-with-claude/effort). Nothing else in this file sends
+    // `output_config` today (checked: no other site names it), so this is a plain assignment rather
+    // than a merge -- a future second producer of `output_config` must merge into this key, not
+    // overwrite it, exactly as a later reader of this comment is being told now.
+    ...(thinking.outputConfigEffort !== undefined ? { output_config: { effort: thinking.outputConfigEffort } } : {}),
   };
 }
 
@@ -1099,8 +1235,17 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     },
 
     mapEffort(effort: TurnRequest["effort"], model: WinterModelDescriptor) {
+      // DELEGATES to the same function `streamTurn` uses (via `buildThinking`), so the two can never
+      // disagree (this file's header comment, decision 2). `value`'s SHAPE is widened rather than a
+      // sibling key added, because `ProviderAdapter.mapEffort`'s own return type is `{ok:true;
+      // value:unknown}` -- a literal here with an extra top-level property the interface does not
+      // declare is an excess-property error, while `value` itself is `unknown` and accepts anything.
+      // On a row with no `outputConfigEffort` (no `reasoning.effortRequest` evidence) `value` is
+      // untouched, so this stays byte-identical to the pre-2026-09-25 seam for every such model.
       const mapped = mapAnthropicEffort(effort, model);
-      return mapped.ok ? { ok: true, value: mapped.value } : { ok: false, reason: mapped.reason };
+      if (!mapped.ok) return { ok: false, reason: mapped.reason };
+      const value = mapped.outputConfigEffort !== undefined ? { ...mapped.value, outputConfigEffort: mapped.outputConfigEffort } : mapped.value;
+      return { ok: true, value };
     },
 
     capabilities(model: WinterModelDescriptor) {
