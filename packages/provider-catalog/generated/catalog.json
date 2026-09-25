@@ -7046,6 +7046,7 @@
       "id": "xai",
       "displayName": "xAI (Grok)",
       "protocols": [
+        "openai-responses",
         "openai-chat-completions"
       ],
       "authKinds": [
@@ -7056,7 +7057,7 @@
       },
       "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.openai-responses",
       "family": "openai",
       "upstream": {
         "project": "winter",
@@ -72972,7 +72973,8 @@
         "grok-4.20-non-reasoning-gv2"
       ],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -73067,7 +73069,8 @@
         "grok-4.20-reasoning-gv2"
       ],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -73132,7 +73135,7 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -73151,6 +73154,111 @@
       "modelFamily": "grok"
     },
     {
+      "key": "xai/grok-4.20-multi-agent-0309",
+      "providerId": "xai",
+      "upstreamId": "grok-4.20-multi-agent-0309",
+      "displayName": "Grok 4.20 Multi-Agent Beta",
+      "aliases": [
+        "grok-4.20-multi-agent",
+        "grok-4.20-multi-agent-latest",
+        "grok-4.20-multi-agent-beta-latest",
+        "grok-4.20-multi-agent-experimental-beta-0304",
+        "grok-4.20-multi-agent-experimental-beta-latest",
+        "grok-4.20-multi-agent-beta-0309"
+      ],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page context window 1,000,000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Modalities: Text, Image input",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Modalities: Text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — multi-agent limitations: client-side/custom function calling unsupported; built-in server tools only",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — client-side/custom function tools unsupported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Structured outputs capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page lists Cached tokens input rate; prompt caching available",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — reasoning.effort low/medium selects 4 agents, high/xhigh selects 16; previous_response_id supports multi-turn",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:40:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "opaque-provider-state"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.25,
+          "outputPerMTokUsd": 2.5,
+          "cacheReadPerMTokUsd": 0.2
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/pricing — grok-4.20-multi-agent-0309 Standard global short-context rate (<200k prompt tokens): $1.25 input, $0.20 cached input, $2.50 output per 1M; >=200k the entire request is charged $2.50/$0.40/$5.00. US-regional 1.1x applies only to models currently on that endpoint, listed as grok-4.7 and grok-4.6; not this model (re-read 2026-09-25, WS-23).",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T17:09:48Z"
+      },
+      "unsupportedParameters": [
+        "max_output_tokens",
+        "tools"
+      ],
+      "status": "candidate",
+      "canonicalModelId": "grok-4.20-multi-agent-0309",
+      "modelFamily": "grok"
+    },
+    {
       "key": "xai/grok-4.3",
       "providerId": "xai",
       "upstreamId": "grok-4.3",
@@ -73159,7 +73267,8 @@
         "grok-4.3-latest"
       ],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -73230,7 +73339,7 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "low"
       },
       "pricing": {
@@ -73259,7 +73368,8 @@
         "grok-build-latest"
       ],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -73328,7 +73438,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "high"
       },
       "pricing": {
@@ -73358,7 +73468,8 @@
       "displayName": "Grok 4.6",
       "aliases": [],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -73428,7 +73539,7 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "high"
       },
       "pricing": {
@@ -73458,7 +73569,8 @@
       "displayName": "Grok 4.7",
       "aliases": [],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -73528,8 +73640,29 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
-        "defaultEffort": "high"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/reasoning — \"For `grok-4.7`, we expose summarizations of the model's internal reasoning\" (Summarized Reasoning Content); https://docs.x.ai/developers/rest-api-reference/inference/responses — the example reasoning output item carries `summary: [{ type: \"summary_text\", … }]`",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T17:09:48Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "detailed",
+              "auto",
+              "concise"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/rest-api-reference/inference/responses — `reasoning.summary`: \"Possible values are `auto`, `concise` and `detailed`. Only included for compatibility. The model shall always return `detailed`.\" `detailed` is listed FIRST because the adapter sends the first value, and it is the one the model returns regardless",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T17:09:48Z"
+        }
       },
       "pricing": {
         "value": {
@@ -73562,7 +73695,8 @@
         "grok-code-fast-1-0825"
       ],
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 256000,
@@ -73627,7 +73761,7 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {

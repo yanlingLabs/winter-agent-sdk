@@ -5041,9 +5041,10 @@
         "grok-4.20-beta-0309-non-reasoning",
         "grok-4.20-non-reasoning-gv2"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20-non-reasoning. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Its templated detail page displays a generic Reasoning capability, conflicting with the explicit non-reasoning model name; reasoning block omitted pending probe. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20-non-reasoning. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Its templated detail page displays a generic Reasoning capability, conflicting with the explicit non-reasoning model name; reasoning block omitted pending probe. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -5135,9 +5136,10 @@
         "grok-4.20-experimental-beta-latest",
         "grok-4.20-reasoning-gv2"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Model page does not document an effort vocabulary for this exact model, so efforts is empty. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. Continuation (WS-23): `opaque-provider-state` — on Responses the reasoning item carries `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent and is replayed unchanged in the next `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"). Effort (WS-23 fix of the \"supported, no efforts, continuation none\" incoherence): the model page says \"Reasoning: Yes\", but https://docs.x.ai/developers/model-capabilities/text/reasoning names `reasoning_effort` only for `grok-4.7`, `grok-4.6`, `grok-4.5` (and the multi-agent model's agent count), so this model reasons with NO documented effort knob and `efforts` stays empty — an effort or `thinking` request is refused before the request rather than guessed. What was incoherent was `continuation: \"none\"`, now `opaque-provider-state` per the note above. LIVE-GATE ITEM: Winter's adapter asks for `include` only when a turn requests reasoning, which a knob-less row never does, so this row's encrypted item is captured only if xAI returns it unasked (documented for `grok-4.7` alone).",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -5202,7 +5204,7 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -5219,6 +5221,110 @@
       "status": "candidate"
     },
     {
+      "key": "xai/grok-4.20-multi-agent-0309",
+      "providerId": "xai",
+      "upstreamId": "grok-4.20-multi-agent-0309",
+      "displayName": "Grok 4.20 Multi-Agent Beta",
+      "aliases": [
+        "grok-4.20-multi-agent",
+        "grok-4.20-multi-agent-latest",
+        "grok-4.20-multi-agent-beta-latest",
+        "grok-4.20-multi-agent-experimental-beta-0304",
+        "grok-4.20-multi-agent-experimental-beta-latest",
+        "grok-4.20-multi-agent-beta-0309"
+      ],
+      "$comment": "WS-23 (2026-09-25), authored from the catalog-owning session's refresh row with its `notes` folded in here. Model page: https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — \"Model name: `grok-4.20-multi-agent-0309`\" with `grok-4.20-multi-agent` as its first alias, which is the spelling the multi-agent guide tells callers to use (https://docs.x.ai/developers/model-capabilities/text/multi-agent). The dated model name is the wire id and the undated spelling resolves through `aliases`. RESPONSES-ONLY: \"The multi-agent model does **not** work with the OpenAI Chat Completions API\" (guide, Limitations), so `endpoints` is `[\"responses\"]` and the row is legal only because the `xai` provider now routes through `winter.openai-responses` (catalog-integrity I2). TOOLS: \"Client-side tools (function calling) and custom tools are not currently supported by the multi-agent model variant\" — the model page's generic \"Function calling: Yes\" is overridden by that specific limitation, so `toolCalling` is `none` and `tools` is in `unsupportedParameters`, which the Responses adapter checks BEFORE sending (a typed `capability` refusal, never a vendor 400). OUTPUT LIMIT: \"The `max_tokens` parameter is not currently supported by the multi-agent model variant\"; on Responses that field is `max_output_tokens`, the name the adapter checks. EFFORT: `reasoning.effort` selects the AGENT COUNT (\"low\"/\"medium\" = 4 agents, \"high\"/\"xhigh\" = 16), not reasoning depth; no default is documented, so none is recorded. CONTINUATION: the guide's multi-turn path is `previous_response_id`, which Winter never uses (stateless, `store: false`); sub-agent state \"is encrypted and included in the response only when `use_encrypted_content` is set\" (the xAI SDK's name for `include: [\"reasoning.encrypted_content\"]`), so the row records `opaque-provider-state` and the probe confirms the encrypted item round-trips. Beta: \"The API interface and behavior may change\". xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models).",
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page context window 1,000,000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Modalities: Text, Image input",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Modalities: Text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — multi-agent limitations: client-side/custom function calling unsupported; built-in server tools only",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — client-side/custom function tools unsupported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Structured outputs capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page lists Cached tokens input rate; prompt caching available",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — reasoning.effort low/medium selects 4 agents, high/xhigh selects 16; previous_response_id supports multi-turn",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:40:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "opaque-provider-state"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.25,
+          "outputPerMTokUsd": 2.5,
+          "cacheReadPerMTokUsd": 0.2
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/pricing — grok-4.20-multi-agent-0309 Standard global short-context rate (<200k prompt tokens): $1.25 input, $0.20 cached input, $2.50 output per 1M; >=200k the entire request is charged $2.50/$0.40/$5.00. US-regional 1.1x applies only to models currently on that endpoint, listed as grok-4.7 and grok-4.6; not this model (re-read 2026-09-25, WS-23).",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T17:09:48Z"
+      },
+      "unsupportedParameters": [
+        "max_output_tokens",
+        "tools"
+      ],
+      "status": "candidate"
+    },
+    {
       "key": "xai/grok-4.3",
       "providerId": "xai",
       "upstreamId": "grok-4.3",
@@ -5226,9 +5332,10 @@
       "aliases": [
         "grok-4.3-latest"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.3. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Detail page lists none/low/medium/high/xhigh, default low. Its prose only names none/low/medium/high; xhigh appears in the detailed effort list. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.3. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Detail page lists none/low/medium/high/xhigh, default low. Its prose only names none/low/medium/high; xhigh appears in the detailed effort list. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6 Continuation (WS-23): `opaque-provider-state` — on Responses the reasoning item carries `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent and is replayed unchanged in the next `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\").",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -5299,7 +5406,7 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "low"
       },
       "pricing": {
@@ -5326,9 +5433,10 @@
         "grok-code-fast",
         "grok-code-fast-1-0825"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-build-0.1. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. xAI's May 15 retirement page says grok-code-fast-1 redirects to grok-4.3, whereas this model page lists it as a grok-build-0.1 alias; live resolution of that alias needs checking (https://docs.x.ai/developers/migration/may-15-retirement). Model page does not document an effort vocabulary for this exact model, so efforts is empty. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-build-0.1. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. xAI's May 15 retirement page says grok-code-fast-1 redirects to grok-4.3, whereas this model page lists it as a grok-build-0.1 alias; live resolution of that alias needs checking (https://docs.x.ai/developers/migration/may-15-retirement). — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6 Continuation (WS-23): `opaque-provider-state` — on Responses the reasoning item carries `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent and is replayed unchanged in the next `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"). Effort (WS-23 fix of the \"supported, no efforts, continuation none\" incoherence): the model page says \"Reasoning: Yes\", but https://docs.x.ai/developers/model-capabilities/text/reasoning names `reasoning_effort` only for `grok-4.7`, `grok-4.6`, `grok-4.5` (and the multi-agent model's agent count), so this model reasons with NO documented effort knob and `efforts` stays empty — an effort or `thinking` request is refused before the request rather than guessed. What was incoherent was `continuation: \"none\"`, now `opaque-provider-state` per the note above. LIVE-GATE ITEM: Winter's adapter asks for `include` only when a turn requests reasoning, which a knob-less row never does, so this row's encrypted item is captured only if xAI returns it unasked (documented for `grok-4.7` alone).",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 256000,
@@ -5393,7 +5501,7 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -6951,9 +7059,10 @@
       "upstreamId": "grok-4.6",
       "displayName": "Grok 4.6",
       "aliases": [],
-      "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `reasoning.supported` mirrors `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools`/`inputModalities` are ALSO inherited from that sibling row, each at `confidence: \"inferred\"` rather than the sibling's `\"declared\"` — fix r1 (I-2, I-3) found that the sibling's own citations for these three fields do not check out against a direct re-read of `https://docs.x.ai/docs/models` (no tool-calling statement anywhere on it) and `derived-shapes-p6b-xai.md` §6 (no modality data at all, and its own text hints at image input via \"web search / image description\"). Values are carried forward rather than dropped (general-API grounds for tool-calling; the sibling's admission for modalities), with the gap disclosed in each field's own `sourceRef`; the same two downgrades were applied to the `xai-oauth/grok-4.6` and `xai-oauth/grok-4.5` sibling rows in the same fix round, since the overlay is this lane's to correct during the phase. `contextWindow` and `pricing` (now including the published `cacheReadPerMTokUsd`, fix r1 I-1) are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.6. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `reasoning.supported` mirrors `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools`/`inputModalities` are ALSO inherited from that sibling row, each at `confidence: \"inferred\"` rather than the sibling's `\"declared\"` — fix r1 (I-2, I-3) found that the sibling's own citations for these three fields do not check out against a direct re-read of `https://docs.x.ai/docs/models` (no tool-calling statement anywhere on it) and `derived-shapes-p6b-xai.md` §6 (no modality data at all, and its own text hints at image input via \"web search / image description\"). Values are carried forward rather than dropped (general-API grounds for tool-calling; the sibling's admission for modalities), with the gap disclosed in each field's own `sourceRef`; the same two downgrades were applied to the `xai-oauth/grok-4.6` and `xai-oauth/grok-4.5` sibling rows in the same fix round, since the overlay is this lane's to correct during the phase. `contextWindow` and `pricing` (now including the published `cacheReadPerMTokUsd`, fix r1 I-1) are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.6. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Continuation (WS-23): on Responses the reasoning item comes back with `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent, and is passed back unchanged in the next request's `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"), so `continuation` is `opaque-provider-state`; Chat Completions \"has no field for the ciphertext\" (same page). The penalty/stop names stay recorded but are moot on Responses, which Winter never sends them on. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -7023,7 +7132,7 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "high"
       },
       "pricing": {
@@ -20760,9 +20869,10 @@
       "upstreamId": "grok-4.7",
       "displayName": "Grok 4.7",
       "aliases": [],
-      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.7. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.7. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Continuation (WS-23): on Responses the reasoning item comes back with `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent, and is passed back unchanged in the next request's `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"), so `continuation` is `opaque-provider-state`; Chat Completions \"has no field for the ciphertext\" (same page). The penalty/stop names stay recorded but are moot on Responses, which Winter never sends them on. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. Readable state (WS-23): `summary`, grok-4.7 only — xAI documents summarizations for this model and no other. `grok-4.7` also returns `encrypted_content` on every Responses response \"whether or not `include` lists it\" (reasoning page, \"Always returned for grok-4.7\"). LIVE-GATE ITEM: which SSE event carries the summary text (xAI's own OpenAI-SDK example reads both `response.reasoning_text.delta` and `response.reasoning_summary_text.delta`; Winter's mapper surfaces only the second).",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -20832,8 +20942,29 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
-        "defaultEffort": "high"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/reasoning — \"For `grok-4.7`, we expose summarizations of the model's internal reasoning\" (Summarized Reasoning Content); https://docs.x.ai/developers/rest-api-reference/inference/responses — the example reasoning output item carries `summary: [{ type: \"summary_text\", … }]`",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T17:09:48Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "detailed",
+              "auto",
+              "concise"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/rest-api-reference/inference/responses — `reasoning.summary`: \"Possible values are `auto`, `concise` and `detailed`. Only included for compatibility. The model shall always return `detailed`.\" `detailed` is listed FIRST because the adapter sends the first value, and it is the one the model returns regardless",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T17:09:48Z"
+        }
       },
       "pricing": {
         "value": {
@@ -20862,9 +20993,10 @@
         "grok-4.5-latest",
         "grok-build-latest"
       ],
-      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.5. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. Conflict: https://docs.x.ai/developers/models/grok-4.5 lists xhigh on its detail page, but https://docs.x.ai/developers/model-capabilities/text/reasoning says xhigh on 4.5 is treated as high; efforts omit xhigh because it is not a distinct behavior. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.5. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Continuation (WS-23): on Responses the reasoning item comes back with `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent, and is passed back unchanged in the next request's `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"), so `continuation` is `opaque-provider-state`; Chat Completions \"has no field for the ciphertext\" (same page). The penalty/stop names stay recorded but are moot on Responses, which Winter never sends them on. Conflict: https://docs.x.ai/developers/models/grok-4.5 lists xhigh on its detail page, but https://docs.x.ai/developers/model-capabilities/text/reasoning says xhigh on 4.5 is treated as high; efforts omit xhigh because it is not a distinct behavior. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -20933,7 +21065,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "high"
       },
       "pricing": {

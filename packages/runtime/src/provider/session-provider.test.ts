@@ -17,7 +17,7 @@ import type { ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, Winte
 import { familyIdOf, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, createMemoryCredentialStore, type CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
-import { ANTHROPIC_DEFAULT_BASE_URL } from "@yanlinglabs/winter-provider-runtime";
+import { ANTHROPIC_DEFAULT_BASE_URL, OPENAI_API_BASE_URL } from "@yanlinglabs/winter-provider-runtime";
 import { startFake, sseResponse, jsonResponse, type FakeServer } from "@yanlinglabs/winter-provider-conformance";
 import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
@@ -326,12 +326,14 @@ describe("T10 wiring: R6-11 / R6-L — privileged headers ride a GENERATED endpo
 describe("T10 wiring: `connectionForProvider` never demotes a reviewed endpoint (Lane A's second-half obligation)", () => {
   const real = loadCatalog();
 
-  test("a single-provider adapter (openai, google, bedrock) gets NO baseUrl — copying the catalog's endpoint in would make it a user endpoint and silently drop every privileged header", () => {
+  test("a single-provider adapter (google, bedrock) gets NO baseUrl — copying the catalog's endpoint in would make it a user endpoint and silently drop every privileged header", () => {
     // `anthropic` WAS in this list and is not any more, and the reason is a fact about the catalog
     // rather than about this rule: P6.5's widening (WS-13b §2, R6b-5) put five providers on
     // `winter.anthropic-messages`, so it is no longer a single-provider adapter and falls under the
     // case below. The rule itself is unchanged. The cost of that move is pinned by the next test.
-    for (const providerId of ["openai", "google", "bedrock"]) {
+    // `openai` left the list the same way in WS-23, when `xai` joined it on `winter.openai-responses`;
+    // what that move costs is pinned by its own test below.
+    for (const providerId of ["google", "bedrock"]) {
       const provider = real.providers.find((p) => p.id === providerId);
       expect(provider).toBeDefined();
       expect([providerId, real.providers.filter((p) => p.adapterId === provider!.adapterId).length]).toEqual([providerId, 1]);
@@ -373,8 +375,24 @@ describe("T10 wiring: `connectionForProvider` never demotes a reviewed endpoint 
     expect(connection?.endpointOrigin).toBe("reviewed");
   });
 
+  test("`openai` became a MULTI-provider row in WS-23 (`xai` joined it on the Responses adapter), and the copy costs it nothing", () => {
+    // The tripwire this file's header promised ("if a future catalog row put a second provider on
+    // `winter.openai-responses`, that fixture fails loudly") fired, and the answer is the one the
+    // `anthropic` test above already gives: since P7a the copy is stamped `"reviewed"`, so the endpoint
+    // policy still evaluates it as GENERATED and the privileged set still rides it. The copied URL is
+    // byte-identical to the adapter's own compiled default, so the request goes to the same place; only
+    // its provenance moved. And `xai` gets ITS OWN host, never OpenAI's.
+    const openai = real.providers.find((p) => p.id === "openai")!;
+    expect(real.providers.filter((p) => p.adapterId === openai.adapterId).map((p) => p.id).sort()).toEqual(["openai", "xai"]);
+    const openaiConnection = connectionForProvider(baseConfig({ model: "x" }), real, openai);
+    expect([openaiConnection?.baseUrl, openaiConnection?.endpointOrigin]).toEqual([OPENAI_API_BASE_URL, "reviewed"]);
+    const xai = real.providers.find((p) => p.id === "xai")!;
+    const xaiConnection = connectionForProvider(baseConfig({ model: "x" }), real, xai);
+    expect([xaiConnection?.baseUrl, xaiConnection?.endpointOrigin]).toEqual(["https://api.x.ai/v1", "reviewed"]);
+  });
+
   test("a MULTI-provider adapter's rows DO get the catalog endpoint — there is no single vendor default to fall back to", () => {
-    for (const providerId of ["deepseek", "openrouter", "ollama-local", "anthropic", "zai-anthropic"]) {
+    for (const providerId of ["deepseek", "openrouter", "ollama-local", "anthropic", "zai-anthropic", "openai", "xai"]) {
       const provider = real.providers.find((p) => p.id === providerId);
       expect(provider).toBeDefined();
       const connection = connectionForProvider(baseConfig({ model: "x" }), real, provider!);

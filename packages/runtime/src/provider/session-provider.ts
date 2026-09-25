@@ -437,9 +437,11 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
  *     `applyPrivilegedHeaders` still has something to gate.
  *
  * "Serves more than one provider" is deliberately computed from the catalog rather than hard-coded,
- * and the fixture asserts BOTH directions (`openai`/`anthropic` get no baseUrl; `deepseek` and a
- * local runner do). If a future catalog row put a second provider on `winter.openai-responses`, that
- * fixture fails loudly rather than the endpoint being demoted silently.
+ * and the fixture asserts BOTH directions (`google`/`bedrock` get no baseUrl; `deepseek` and a
+ * local runner do). `anthropic` (P6.5) and `openai` (WS-23, when `xai` joined it on
+ * `winter.openai-responses`) each crossed from the first group to the second, and the fixture failed
+ * loudly both times; since P7a the copy is stamped `"reviewed"`, so crossing no longer demotes the
+ * endpoint (it pins that too).
  *
  * P7a (WS-13b §10, closing the M-1 partial): every profile this function returns with a `baseUrl`
  * now says WHERE that URL came from. The copy is `"reviewed"`; anything the operator supplied is
