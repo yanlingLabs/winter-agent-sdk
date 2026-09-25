@@ -7,8 +7,9 @@
 // vocabulary, the capability read, and the endpoint-policy refusals that happen before a URL exists.
 import { describe, expect, test } from "bun:test";
 import { createAnthropicMessagesAdapter, mapAnthropicEffort, toWireMessages } from "./index.ts";
-import { promptCachingLayout } from "./messages.ts";
-import type { CredentialMaterial, CredentialRef, ProviderContext } from "../../types.ts";
+import { buildRequestBody, promptCachingLayout } from "./messages.ts";
+import { ProviderRequestError } from "../../http.ts";
+import type { CredentialMaterial, CredentialRef, ProviderContext, TurnRequest } from "../../types.ts";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
@@ -137,6 +138,169 @@ describe("mapEffort", () => {
     const model = descriptor({ reasoning: { supported: evidence(true), efforts: ["medium"], continuation: "none" } });
     expect(adapter.mapEffort("medium", model)).toEqual(mapAnthropicEffort("medium", model) as { ok: true; value: unknown });
     expect(adapter.mapEffort("max", model)).toMatchObject({ ok: false });
+  });
+});
+
+// 2026-09-25: `reasoning.effortRequest` -- WHERE a row takes effort on the wire, and per-row
+// `thinking.type.*`/`tool_choice.*` rejection tokens sourced from
+// https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting. These assert the
+// REQUEST BODY `buildRequestBody` returns, never `fake.requests` (this file's own header comment) --
+// that half is `provider-conformance`'s job, and these fixtures exist here so a row shape can be
+// asserted with no fetch and no fake server at all.
+describe("effort via output_config.effort, per-row thinking rules, and forced tool_choice (2026-09-25)", () => {
+  const req = (over: Partial<TurnRequest> = {}): TurnRequest => ({ model: "m", messages: [{ role: "user", content: "hi" }], ...over });
+
+  // Opus 5.5 / Fable 5.1's real catalog shape: adaptive-only, always on, "enabled" AND "disabled" are
+  // both a documented 400, and a FORCED tool_choice is too (the vendor's own advice there is `auto`).
+  const opus55Shaped = descriptor({
+    key: "anthropic/opus-5-5-shaped",
+    upstreamId: "opus-5-5-shaped",
+    unsupportedParameters: ["thinking.type.enabled", "thinking.type.disabled", "tool_choice.any", "tool_choice.tool"],
+    reasoning: { supported: evidence(true), efforts: ["low", "medium", "high", "xhigh", "max"], continuation: "opaque-provider-state", effortRequest: evidence({ field: "output_config.effort" as const }) },
+  });
+
+  // Opus 4.5's real catalog shape: `enabled`-only, `adaptive` is the documented 400, and effort
+  // COMPOSES with the budget ladder rather than replacing it (the vendor's effort page, per row).
+  const opus45Shaped = descriptor({
+    key: "anthropic/opus-4-5-shaped",
+    upstreamId: "opus-4-5-shaped",
+    unsupportedParameters: ["thinking.type.adaptive"],
+    reasoning: { supported: evidence(true), efforts: ["low", "medium", "high"], continuation: "opaque-provider-state", effortRequest: evidence({ field: "output_config.effort" as const }) },
+  });
+
+  // Opus 4.6 / Sonnet 4.6's real catalog shape: `effortRequest` present, but NEITHER thinking arm is
+  // rejected (`unsupportedParameters` carries neither token) -- adaptive is simply the model's default.
+  const opus46Shaped = descriptor({
+    key: "anthropic/opus-4-6-shaped",
+    upstreamId: "opus-4-6-shaped",
+    unsupportedParameters: [],
+    reasoning: { supported: evidence(true), efforts: ["low", "medium", "high", "max"], continuation: "opaque-provider-state", effortRequest: evidence({ field: "output_config.effort" as const }) },
+  });
+
+  // Haiku 4.5 / Sonnet 4.5's real catalog shape: reasoning IS declared (an effort vocabulary exists),
+  // but the row carries NO `effortRequest` at all -- this is the pre-2026-09-25 shape, unaffected by
+  // any of this work.
+  const noEffortRequestShaped = descriptor({
+    key: "anthropic/no-effort-request-shaped",
+    upstreamId: "no-effort-request-shaped",
+    unsupportedParameters: ["thinking.type.adaptive"],
+    reasoning: { supported: evidence(true), efforts: ["low", "medium", "high", "xhigh"], continuation: "opaque-provider-state" },
+  });
+
+  describe("an Opus 5.5-shaped row", () => {
+    test("effort -> output_config.effort, and thinking becomes adaptive (no budget invented)", () => {
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, effort: "high" }), opus55Shaped, {});
+      expect(body["thinking"]).toEqual({ type: "adaptive" });
+      expect(body["output_config"]).toEqual({ effort: "high" });
+    });
+
+    test("explicit `thinking: {type:\"enabled\"}` becomes adaptive -- budget dropped, no effort invented", () => {
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "enabled", budgetTokens: 16_384 } }), opus55Shaped, {});
+      expect(body["thinking"]).toEqual({ type: "adaptive" });
+      expect(body).not.toHaveProperty("output_config");
+    });
+
+    test("explicit `thinking: {type:\"disabled\"}` OMITS the field entirely -- this model is always on", () => {
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "disabled" } }), opus55Shaped, {});
+      expect(body).not.toHaveProperty("thinking");
+    });
+
+    test("explicit thinking wins the FIELD, but output_config.effort still rides when both are requested together", () => {
+      // Required behaviour #2's last bullet: an explicit `thinking` overrides the thinking FIELD (as
+      // today), but `output_config.effort` is a SEPARATE question and is still sent whenever the row
+      // documents `effortRequest` and an effort was requested -- regardless of which arm won the field.
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "enabled", budgetTokens: 4096 }, effort: "high" }), opus55Shaped, {});
+      expect(body["thinking"]).toEqual({ type: "adaptive" }); // the explicit arm, converted (as above) -- NOT re-derived from effort
+      expect(body["output_config"]).toEqual({ effort: "high" }); // effort still reaches output_config
+    });
+
+    test("an explicit `disabled` that OMITS the field also survives an effort request -- the omission is not overwritten", () => {
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, thinking: { type: "disabled" }, effort: "high" }), opus55Shaped, {});
+      expect(body).not.toHaveProperty("thinking");
+      expect(body["output_config"]).toEqual({ effort: "high" });
+    });
+
+    test("a forced tool_choice downgrades to auto (both `any` and `tool`)", () => {
+      const tools = [{ name: "t", description: "d", inputSchema: {} }];
+      const any = buildRequestBody(req({ model: opus55Shaped.upstreamId, tools, toolChoice: { type: "any" } }), opus55Shaped, {});
+      expect(any["tool_choice"]).toEqual({ type: "auto" });
+      const named = buildRequestBody(req({ model: opus55Shaped.upstreamId, tools, toolChoice: { type: "tool", name: "t" } }), opus55Shaped, {});
+      expect(named["tool_choice"]).toEqual({ type: "auto" });
+      // `auto` itself is never rejected, and is forwarded unchanged.
+      const already = buildRequestBody(req({ model: opus55Shaped.upstreamId, tools, toolChoice: { type: "auto" } }), opus55Shaped, {});
+      expect(already["tool_choice"]).toEqual({ type: "auto" });
+    });
+  });
+
+  describe("an Opus 4.5-shaped row", () => {
+    test("effort -> budget ladder AND output_config.effort (composes, per the vendor's effort page)", () => {
+      const body = buildRequestBody(req({ model: opus45Shaped.upstreamId, effort: "high" }), opus45Shaped, {});
+      expect(body["thinking"]).toEqual({ type: "enabled", budget_tokens: 16_384 });
+      expect(body["output_config"]).toEqual({ effort: "high" });
+    });
+
+    test("explicit adaptive is refused BEFORE the request -- a typed capability error, zero requests", () => {
+      let caught: unknown;
+      try {
+        buildRequestBody(req({ model: opus45Shaped.upstreamId, thinking: { type: "adaptive" } }), opus45Shaped, {});
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ProviderRequestError);
+      expect((caught as ProviderRequestError).code).toBe("capability");
+      expect((caught as Error).message).toContain("thinking.type.adaptive");
+    });
+  });
+
+  test("a Haiku-shaped row (no effortRequest): today's budget ladder, byte-identical", () => {
+    const body = buildRequestBody(req({ model: noEffortRequestShaped.upstreamId, effort: "high" }), noEffortRequestShaped, {});
+    expect(body["thinking"]).toEqual({ type: "enabled", budget_tokens: 16_384 });
+    expect(body).not.toHaveProperty("output_config");
+  });
+
+  test("an Opus 4.6-shaped row (effortRequest, no rejection tokens): adaptive + output_config", () => {
+    const body = buildRequestBody(req({ model: opus46Shaped.upstreamId, effort: "max" }), opus46Shaped, {});
+    expect(body["thinking"]).toEqual({ type: "adaptive" });
+    expect(body["output_config"]).toEqual({ effort: "max" });
+  });
+
+  test("unknown unsupportedParameters tokens are inert", () => {
+    // A future token this file has never seen, sitting beside the CURATED tokens the old loop already
+    // ignores for `thinking`/`tool_choice` purposes (`temperature`) -- neither should change the
+    // Opus-4.6-shaped row's behaviour from the test above.
+    const withUnknownTokens: WinterModelDescriptor = { ...opus46Shaped, unsupportedParameters: ["a-token-nobody-handles-yet", "temperature", "top_p", "top_k"] };
+    const body = buildRequestBody(req({ model: withUnknownTokens.upstreamId, effort: "max" }), withUnknownTokens, {});
+    expect(body["thinking"]).toEqual({ type: "adaptive" });
+    expect(body["output_config"]).toEqual({ effort: "max" });
+    // Neither an explicit `enabled` thinking request nor a forced tool_choice is touched by the
+    // unknown tokens -- only the exact `thinking.type.*`/`tool_choice.*` spellings this row does NOT
+    // carry are left alone.
+    const explicit = buildRequestBody(req({ model: withUnknownTokens.upstreamId, thinking: { type: "enabled", budgetTokens: 4096 } }), withUnknownTokens, {});
+    expect(explicit["thinking"]).toEqual({ type: "enabled", budget_tokens: 4096 });
+    const forced = buildRequestBody(req({ model: withUnknownTokens.upstreamId, tools: [{ name: "t", description: "d", inputSchema: {} }], toolChoice: { type: "any" } }), withUnknownTokens, {});
+    expect(forced["tool_choice"]).toEqual({ type: "any" });
+  });
+
+  describe("the public `mapEffort` agrees with what buildRequestBody (streamTurn's own body builder) sends", () => {
+    const adapter = createAnthropicMessagesAdapter({ catalog: { schemaVersion: 2, families: [], catalogVersion: "t", upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" }, providers: [], models: [] } });
+
+    test("an adaptive-only, effortRequest row (Opus 5.5-shaped)", () => {
+      const mapped = adapter.mapEffort("high", opus55Shaped);
+      expect(mapped).toEqual({ ok: true, value: { type: "adaptive", outputConfigEffort: "high" } });
+      const body = buildRequestBody(req({ model: opus55Shaped.upstreamId, effort: "high" }), opus55Shaped, {});
+      const mappedValue = mapped as { ok: true; value: { type: "adaptive"; outputConfigEffort: string } };
+      expect(body["thinking"]).toEqual({ type: mappedValue.value.type });
+      expect(body["output_config"]).toEqual({ effort: mappedValue.value.outputConfigEffort });
+    });
+
+    test("a composing, effortRequest row (Opus 4.5-shaped)", () => {
+      const mapped = adapter.mapEffort("high", opus45Shaped);
+      expect(mapped).toEqual({ ok: true, value: { type: "enabled", budget_tokens: 16_384, outputConfigEffort: "high" } });
+      const body = buildRequestBody(req({ model: opus45Shaped.upstreamId, effort: "high" }), opus45Shaped, {});
+      const mappedValue = mapped as { ok: true; value: { type: "enabled"; budget_tokens: number; outputConfigEffort: string } };
+      expect(body["thinking"]).toEqual({ type: mappedValue.value.type, budget_tokens: mappedValue.value.budget_tokens });
+      expect(body["output_config"]).toEqual({ effort: mappedValue.value.outputConfigEffort });
+    });
   });
 });
 
