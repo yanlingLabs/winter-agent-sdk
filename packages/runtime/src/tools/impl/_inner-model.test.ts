@@ -1,5 +1,5 @@
-// The web tools' shared inner-model helper. Every claim in its header is a test here: the forced
-// first call, the N-call bound, the transcript order, abort, no stated-model fallback -- and the two
+// The web tools' shared inner-model helper. Every claim in its header is a test here: the unforced
+// rounds (WS-23), the N-call bound, the transcript order, abort, no stated-model fallback -- and the two
 // things the advisor's inner call never did: the signal reaches the provider, and the usage reaches
 // the turn's accounting (proved against the REAL engine at the bottom of this file).
 import { afterEach, describe, expect, test } from "bun:test";
@@ -76,7 +76,7 @@ describe("runInnerModel -- the single-shot shape (WebFetch's digest)", () => {
 });
 
 describe("runInnerModel -- the bounded tool loop (WebSearch's inner pass)", () => {
-  test("ROUND 1 CARRIES THE FORCED toolChoice; later rounds are `auto`; the transcript is in stream order", async () => {
+  test("WS-23: NO round is forced -- every round is `auto` (a forced choice is a 400 on Opus 5.5 / Fable 5.1); the transcript is in stream order", async () => {
     const provider = recordingProvider([
       { kind: "tool_use", text: "Let me look that up.", calls: [call("c1", "bun 1.4 release notes")], usage: USAGE },
       { kind: "tool_use", calls: [call("c2", "bun 1.4.2 changelog")], usage: USAGE },
@@ -99,8 +99,9 @@ describe("runInnerModel -- the bounded tool loop (WebSearch's inner pass)", () =
     );
     if (!result.ok) throw new Error(result.message);
 
-    // The forced first call is the whole point: the model cannot answer from memory on round 1.
-    expect(provider.requests.map((r) => r.toolChoice)).toEqual([{ type: "tool", name: "web_search" }, { type: "auto" }, { type: "auto" }]);
+    // Round 1 used to be FORCED so the model could not answer from memory. A caller that needs the
+    // tool to run at least once now runs it itself first (WebSearch's seed search); the loop forces nothing.
+    expect(provider.requests.map((r) => r.toolChoice)).toEqual([{ type: "auto" }, { type: "auto" }, { type: "auto" }]);
     for (const r of provider.requests) expect(r.tools).toEqual([SEARCH_TOOL]);
 
     expect(seen).toEqual([

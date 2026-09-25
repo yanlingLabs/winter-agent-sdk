@@ -76,9 +76,14 @@ export interface InnerModelRequest {
   /** The single user message. */
   prompt: string;
   /**
-   * PRESENT -> the BOUNDED TOOL LOOP. Round 1 is sent with `toolChoice: { type: "tool", name }`
-   * FORCED, so the model cannot answer from memory without consulting the tool even once; every
-   * later round is `auto`. ABSENT -> one generation with no tools.
+   * PRESENT -> the BOUNDED TOOL LOOP, every round `toolChoice: auto`. ABSENT -> one generation with no
+   * tools.
+   *
+   * WS-23: ROUND 1 IS NO LONGER FORCED. It used to be sent with `toolChoice: {type: "tool", name}` so
+   * the model could not answer from memory; Opus 5.5 and Fable 5.1 reject a forced choice (a documented
+   * 400, downgraded to `auto` by the Anthropic adapter), so on those models the "guarantee" silently
+   * became a suggestion. A caller that needs the tool to run at least once runs it itself before the
+   * pass and hands the model the result (WebSearch's seed search does exactly that).
    */
   tool?: InnerToolSpec;
   /** Required with `tool`. */
@@ -316,7 +321,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
   const tool = request.tool;
   const maxToolCalls = Math.max(1, Math.floor(request.maxToolCalls ?? 1));
 
-  const generate = async (forced: boolean): Promise<ProviderTurn | typeof ABORTED | { failure: InnerModelFailure }> => {
+  const generate = async (): Promise<ProviderTurn | typeof ABORTED | { failure: InnerModelFailure }> => {
     if (isAborted()) return ABORTED;
     // THE SESSION'S BUDGET, checked before EVERY inner generation. The main loop checks
     // `maxBudgetUsd` only before its own requests, so without this an inner pass is the one place a
@@ -333,7 +338,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
     const input: ProviderRequest = {
       messages: [...messages],
       ...(request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),
-      ...(tool !== undefined ? { tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }], toolChoice: forced ? { type: "tool" as const, name: tool.name } : { type: "auto" as const } } : {}),
+      ...(tool !== undefined ? { tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }], toolChoice: { type: "auto" as const } } : {}),
       ...(requestModel !== undefined ? { model: requestModel } : {}),
       thinking: { type: "disabled" },
       ...(signal !== undefined ? { signal } : {}),
@@ -369,7 +374,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
   try {
     // --- the single-shot shape ----------------------------------------------------------------------
     if (tool === undefined) {
-      const turn = await generate(false);
+      const turn = await generate();
       if (turn === ABORTED) return abortedFailure();
       if ("failure" in turn) return turn.failure;
       const text = turn.kind === "text" ? turn.text : (turn.text ?? "");
@@ -387,7 +392,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
     // mis-named call; past it the pass stops exactly as it does on a too-eager closing generation.
     const maxGenerations = maxToolCalls + 2;
     for (let round = 1; ; round++) {
-      const turn = await generate(round === 1);
+      const turn = await generate();
       if (turn === ABORTED) return abortedFailure();
       if ("failure" in turn) return turn.failure;
 

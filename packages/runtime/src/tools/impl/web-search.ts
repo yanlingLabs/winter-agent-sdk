@@ -5,6 +5,16 @@
 // model only ever sees what `_web-search-assembler.ts` assembles from it (titles + urls, never a
 // highlight, never raw page text).
 //
+// WS-23: THE FIRST SEARCH IS THE RUNTIME'S, NOT THE MODEL'S. The inner pass used to FORCE its first
+// round's `tool_choice` so the model could not answer from memory. Opus 5.5 and Fable 5.1 reject a
+// forced `tool_choice` (a documented 400), the Anthropic adapter downgrades it to `auto` on those
+// rows, the model then answered without calling the tool, and WebSearch returned "Web search was not
+// performed" on the two newest Claude models. Parity no longer binds, so the fix is at the root: the
+// executor runs the search for the tool's own input deterministically, BEFORE any model call, and the
+// inner model starts from those results -- no forcing anywhere, on any model. The model may still call
+// the inner tool for follow-up queries (auto), within the same per-call cap, which the seed search
+// counts against. The output shape the outer model reads is unchanged.
+//
 // DEVIATIONS FROM CLAUDE, ALL DISCLOSED (see this lane's own report for the fuller writeup):
 //   - the lean/full description CHOICE is not session-dynamic (descriptors/web-search.ts's header);
 //   - the inner tool's NAME/DESCRIPTION/SCHEMA are Winter-authored (a PROMPT, never an interface
@@ -112,6 +122,27 @@ function compactHitsForInnerModel(hits: readonly { title: string; url: string; h
   return hits.map((h) => `- ${h.title}\n  ${h.url}${h.highlight.length > 0 ? `\n  ${h.highlight}` : ""}`).join("\n");
 }
 
+/**
+ * The inner pass's user prompt: the outer query, and the results of the search the runtime already ran
+ * for it. Winter-authored (a PROMPT, never an interface string). The hits sit in the USER turn rather
+ * than a synthetic assistant `tool_use` + `tool_result` pair: a replayed assistant tool call carries no
+ * thinking block, which a thinking-enabled model rejects as a malformed tool loop.
+ */
+function seededPrompt(query: string, hits: string): string {
+  return [
+    `Perform a web search for the query: ${query}`,
+    "",
+    `A search for exactly that query has already been run. Its results:`,
+    "",
+    hits,
+    "",
+    `Answer the query from these results. If they are not enough, call ${INNER_SEARCH_TOOL_NAME} with a different query before answering.`,
+  ].join("\n");
+}
+
+/** The step id the runtime's own seed search is recorded under. Never a model-minted id, so it can never collide with one. */
+const SEED_SEARCH_STEP_ID = "winter-seed-search";
+
 // --- failure text ----------------------------------------------------------------------------------
 
 // A SESSION-BUDGET stop (`maxBudgetUsd`, checked between every inner generation, independent of this
@@ -201,7 +232,19 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     const breakerOpen = anonymousBreakerOpen(backendState, now());
     const maxToolCalls = breakerOpen && hasKeyConfigured ? runtime.web.search.maxSearchesPerCall : runtime.web.search.anonymousMaxSearchesPerCall;
 
+    // A session already past its spending limit runs NOTHING -- not the seed search, not the inner
+    // pass. The same plain, non-error wording the inner pass's own budget stop produces.
+    let overBudget = false;
+    try {
+      overBudget = runtime.budgetExceeded?.() === true;
+    } catch {
+      overBudget = false;
+    }
+    if (overBudget) return { output: innerFailureText({ ok: false, code: "aborted", message: "", detail: INNER_MODEL_BUDGET_EXCEEDED_DETAIL, steps: [], toolCalls: 0 }) };
+
     const outcomes = new Map<string, ExaSearchResult>();
+    /** The seed search's step, recorded ahead of the inner pass's own (stream order). */
+    const seedSteps: InnerModelStep[] = [];
 
     let pass;
     try {
@@ -226,11 +269,10 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
         return { output: "Error: web search is no longer available: this session's search backend was closed when the session ended.", isError: true };
       }
 
-      const handler: InnerToolHandler = async (rawToolInput, info) => {
-        const toolQuery = typeof rawToolInput === "object" && rawToolInput !== null && typeof (rawToolInput as Record<string, unknown>)["query"] === "string" ? ((rawToolInput as Record<string, unknown>)["query"] as string) : query;
-        const result = await client.search(
+      const search = (searchQuery: string, signal: AbortSignal | undefined): Promise<ExaSearchResult> =>
+        client.search(
           {
-            query: toolQuery,
+            query: searchQuery,
             // The EXECUTOR supplies `objective`, always the OUTER query -- never the inner model's
             // own per-call query -- so every inner search stays on-task (briefed explicitly; the
             // inner model is never given a way to set this itself).
@@ -239,32 +281,46 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
             ...(allowed_domains !== undefined ? { includeDomains: allowed_domains } : {}),
             ...(blocked_domains !== undefined ? { excludeDomains: blocked_domains } : {}),
           },
-          info.signal !== undefined ? { signal: info.signal } : {},
+          signal !== undefined ? { signal } : {},
         );
-        outcomes.set(info.toolUseId, result);
-        if (!result.ok) return { output: `Error: the search failed (${result.code}): ${result.message}`, isError: true };
-        return { output: compactHitsForInnerModel(result.hits) };
-      };
 
-      pass = await runInnerModel(ctx, {
-        system: "You are an assistant for performing a web search tool use",
-        prompt: `Perform a web search for the query: ${query}`,
-        tool: { name: INNER_SEARCH_TOOL_NAME, description: INNER_SEARCH_TOOL_DESCRIPTION, inputSchema: INNER_SEARCH_TOOL_SCHEMA },
-        maxToolCalls,
-        handler,
-      });
+      // --- the SEED search: the tool's own input, run by the runtime, before any model call ------------
+      const seed = await search(query, ctx.signal);
+      outcomes.set(SEED_SEARCH_STEP_ID, seed);
+      seedSteps.push({ kind: "tool_call", toolUseId: SEED_SEARCH_STEP_ID, input: { query }, output: seed.ok ? compactHitsForInnerModel(seed.hits) : seed.message, isError: !seed.ok, executed: true });
+      if (ctx.signal?.aborted === true) return { output: "Web search was interrupted.", isError: true };
+      // A FAILED seed has nothing for a model to read: the pass is skipped and the failure is reported
+      // exactly as a failed inner search always was (the `search_error` item plus its guidance, below).
+      if (seed.ok) {
+        const handler: InnerToolHandler = async (rawToolInput, info) => {
+          const toolQuery = typeof rawToolInput === "object" && rawToolInput !== null && typeof (rawToolInput as Record<string, unknown>)["query"] === "string" ? ((rawToolInput as Record<string, unknown>)["query"] as string) : query;
+          const result = await search(toolQuery, info.signal);
+          outcomes.set(info.toolUseId, result);
+          if (!result.ok) return { output: `Error: the search failed (${result.code}): ${result.message}`, isError: true };
+          return { output: compactHitsForInnerModel(result.hits) };
+        };
+        // The seed is call 1 of this call's cap; the model's own follow-ups get the rest. A cap the
+        // seed already spent leaves a single, tool-less generation: read the results and answer.
+        const followUps = maxToolCalls - 1;
+        const prompt = seededPrompt(query, compactHitsForInnerModel(seed.hits));
+        const system = "You are an assistant for performing a web search tool use";
+        pass =
+          followUps >= 1
+            ? await runInnerModel(ctx, { system, prompt, tool: { name: INNER_SEARCH_TOOL_NAME, description: INNER_SEARCH_TOOL_DESCRIPTION, inputSchema: INNER_SEARCH_TOOL_SCHEMA }, maxToolCalls: followUps, handler })
+            : await runInnerModel(ctx, { system, prompt });
+      }
     } catch (err) {
       // `runInnerModel` is documented never to throw for an expected failure; a genuine bug here
       // still must not end the whole turn -- the NAME only, never the message (it is unvetted).
       return { output: `Error: web search failed unexpectedly (${err instanceof Error ? err.name : "unknown error"}).`, isError: true };
     }
 
-    // --- claude-shaped events, built from the inner pass's own ordered steps ------------------------
+    // --- claude-shaped events, built from the seed search and the inner pass's own ordered steps -----
     const events: WebSearchStreamEvent[] = [];
     let successfulSearches = 0;
     let attemptedSearches = 0;
     let lastFailureMessage: string | undefined;
-    for (const step of pass.steps as readonly InnerModelStep[]) {
+    for (const step of [...seedSteps, ...((pass?.steps ?? []) as readonly InnerModelStep[])]) {
       if (step.kind === "text") {
         events.push({ type: "text", text: step.text });
         continue;
@@ -301,19 +357,16 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     // `events` would be all-text with zero attempted searches, and without this ordering the
     // provider-error detail would be discarded in favour of a message that implies nothing went
     // wrong at all).
-    if (!pass.ok) {
-      const budgetStop = isBudgetStop(pass);
-      if (attemptedSearches === 0) return { output: innerFailureText(pass), ...(budgetStop ? {} : { isError: true }) };
+    //
+    // WS-23: the seed search always runs first, so `attemptedSearches` is never zero here and the old
+    // "Web search was not performed" arm (a model that never called the tool) is unreachable by
+    // construction -- it is gone rather than kept as dead text.
+    if (pass !== undefined && !pass.ok) {
       // `\n\n` because the stream walk ACCUMULATES adjacent text with no separator of its own (claude's
       // own rule, for claude's own deltas): a pass whose last commentary was "done" rendered
       // "doneWeb search stopped: ..." (whole-branch review, NIT). The walk trims each flushed buffer,
       // so the prefix costs nothing when there is no preceding text.
       events.push({ type: "text", text: `\n\n${innerFailureText(pass)}` });
-    } else if (attemptedSearches === 0 && events.every((e) => e.type === "text")) {
-      // The forced round-1 tool call never actually called the tool at all (an adapter that ignores
-      // a forced `toolChoice`) -- there is no search to report, and the model's own commentary must
-      // not be dressed up as a search summary that never happened.
-      return { output: "Web search was not performed: the search pass produced no search calls." };
     }
 
     // Every ATTEMPTED search failed: the terse per-item `Web search error: <code>` strings are
