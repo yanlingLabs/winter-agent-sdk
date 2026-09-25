@@ -10001,11 +10001,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.137931,
-          "outputPerMTokUsd": 0.551724
+          "inputPerMTokUsd": 0.149,
+          "outputPerMTokUsd": 0.596
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-next, ≤32K; 32K–128K: ¥1.5/¥6; 128K–256K: ¥2.5/¥10 input tier: ¥1 input/¥4 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-next, ≤32K; 32K–128K: ¥1.5/¥6; 128K–256K: ¥2.5/¥10 input tier: ¥1 input/¥4 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10109,11 +10109,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.551724,
-          "outputPerMTokUsd": 2.206897
+          "inputPerMTokUsd": 0.596,
+          "outputPerMTokUsd": 2.384
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-plus, ≤32K; 32K–128K: ¥6/¥24; 128K–256K: ¥10/¥40; 256K–1M: ¥20/¥200 input tier: ¥4 input/¥16 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-plus, ≤32K; 32K–128K: ¥6/¥24; 128K–256K: ¥10/¥40; 256K–1M: ¥20/¥200 input tier: ¥4 input/¥16 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10219,11 +10219,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.110345,
-          "outputPerMTokUsd": 0.882759
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.9536
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-122b-a10b, ≤128K; >128K–256K: ¥2/¥16 input tier: ¥0.8 input/¥6.4 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-122b-a10b, ≤128K; >128K–256K: ¥2/¥16 input tier: ¥0.8 input/¥6.4 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10329,11 +10329,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.165517,
-          "outputPerMTokUsd": 0.993103
+          "inputPerMTokUsd": 0.1788,
+          "outputPerMTokUsd": 1.0728
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-397b-a17b, ≤128K; >128K–256K: ¥3/¥18 input tier: ¥1.2 input/¥7.2 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-397b-a17b, ≤128K; >128K–256K: ¥3/¥18 input tier: ¥1.2 input/¥7.2 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10425,11 +10425,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.110345,
-          "outputPerMTokUsd": 0.662069
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.7152
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-plus, ≤128K; 128K–256K: ¥2/¥12; 256K–1M: ¥4/¥24 input tier: ¥0.8 input/¥4.8 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.5-plus, ≤128K; 128K–256K: ¥2/¥12; 256K–1M: ¥4/¥24 input tier: ¥0.8 input/¥4.8 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10535,11 +10535,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.413793,
-          "outputPerMTokUsd": 2.482759
+          "inputPerMTokUsd": 0.447,
+          "outputPerMTokUsd": 2.682
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-27b, ≤256K input tier: ¥3 input/¥18 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-27b, ≤256K input tier: ¥3 input/¥18 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10638,11 +10638,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.165517,
-          "outputPerMTokUsd": 0.993103
+          "inputPerMTokUsd": 0.1788,
+          "outputPerMTokUsd": 1.0728
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-flash, ≤256K; 256K–1M: ¥4.8/¥28.8 input tier: ¥1.2 input/¥7.2 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-flash, ≤256K; 256K–1M: ¥4.8/¥28.8 input tier: ¥1.2 input/¥7.2 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10734,11 +10734,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.275862,
-          "outputPerMTokUsd": 1.655172
+          "inputPerMTokUsd": 0.298,
+          "outputPerMTokUsd": 1.788
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-plus, ≤256K; >256K–1M: ¥8/¥48 input tier: ¥2 input/¥12 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-plus, ≤256K; >256K–1M: ¥8/¥48 input tier: ¥2 input/¥12 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10828,11 +10828,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 1.655172,
-          "outputPerMTokUsd": 4.965517
+          "inputPerMTokUsd": 1.788,
+          "outputPerMTokUsd": 5.364
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.7-max, 0–1M input tier: ¥12 input/¥36 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.7-max, 0–1M input tier: ¥12 input/¥36 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -10931,11 +10931,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.275862,
-          "outputPerMTokUsd": 1.103448
+          "inputPerMTokUsd": 0.298,
+          "outputPerMTokUsd": 1.192
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.7-plus, ≤256K; >256K–1M: ¥6/¥24; base list price before temporary 20% promotion input tier: ¥2 input/¥8 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.7-plus, ≤256K; >256K–1M: ¥6/¥24; base list price before temporary 20% promotion input tier: ¥2 input/¥8 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -11027,11 +11027,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.110345,
-          "outputPerMTokUsd": 0.372414
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.4023
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-flash, 0–1M input tier: ¥0.8 input/¥2.7 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-flash, 0–1M input tier: ¥0.8 input/¥2.7 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -11123,11 +11123,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 1.655172,
-          "outputPerMTokUsd": 4.965517
+          "inputPerMTokUsd": 1.788,
+          "outputPerMTokUsd": 5.364
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-max, 0–1M input tier: ¥12 input/¥36 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-max, 0–1M input tier: ¥12 input/¥36 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -11455,11 +11455,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.137931,
-          "outputPerMTokUsd": 0.551724
+          "inputPerMTokUsd": 0.149,
+          "outputPerMTokUsd": 0.596
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-next, ≤32K; 32K–128K: ¥1.5/¥6; 128K–256K: ¥2.5/¥10 input tier: ¥1 input/¥4 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-next, ≤32K; 32K–128K: ¥1.5/¥6; 128K–256K: ¥2.5/¥10 input tier: ¥1 input/¥4 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -11557,11 +11557,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.551724,
-          "outputPerMTokUsd": 2.206897
+          "inputPerMTokUsd": 0.596,
+          "outputPerMTokUsd": 2.384
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-plus, ≤32K; 32K–128K: ¥6/¥24; 128K–256K: ¥10/¥40; 256K–1M: ¥20/¥200 input tier: ¥4 input/¥16 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3-coder-plus, ≤32K; 32K–128K: ¥6/¥24; 128K–256K: ¥10/¥40; 256K–1M: ¥20/¥200 input tier: ¥4 input/¥16 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -12160,11 +12160,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.165517,
-          "outputPerMTokUsd": 0.993103
+          "inputPerMTokUsd": 0.1788,
+          "outputPerMTokUsd": 1.0728
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-flash, ≤256K; 256K–1M: ¥4.8/¥28.8 input tier: ¥1.2 input/¥7.2 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.6-flash, ≤256K; 256K–1M: ¥4.8/¥28.8 input tier: ¥1.2 input/¥7.2 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
@@ -12531,11 +12531,11 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.110345,
-          "outputPerMTokUsd": 0.372414
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.4023
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-flash, 0–1M input tier: ¥0.8 input/¥2.7 output per million; USD estimate divides CNY by one fixed ¥7.25/USD rate (not an Alibaba FX quote).",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing — Beijing CNY list, qwen3.8-flash, 0–1M input tier: ¥0.8 input/¥2.7 output per million; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data) — the one rate every CNY-derived price in this catalog uses; not an Alibaba FX quote.",
         "confidence": "inferred",
         "observedAt": "2026-09-25T12:31:56.381Z"
       },
