@@ -7721,7 +7721,7 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8 — Zhipu's BigModel (China) chat-completion reference, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://open.bigmodel.cn/api/paas/v4` with a BigModel API key, per-token CNY billing.",
+        "citation": "https://docs.bigmodel.cn/cn/guide/start/model-overview and https://docs.bigmodel.cn/cn/guide/start/pricing — Zhipu BigModel (China) model overview and pricing, retrieved 2026-09-25: OpenAI-compatible Chat at `https://open.bigmodel.cn/api/paas/v4` with a BigModel API key; CNY per-token billing.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -7753,13 +7753,13 @@
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
           "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe.",
-          "Metered-key acceptance on this Anthropic root is undocumented: the pages read describe it only for the GLM Coding Plan. Needs a live metered-key probe."
+          "Per the glm-5.3 model page, accounts that have ever subscribed to the GLM Coding Plan are temporarily limited to OpenAI Chat for metered calls, so this root may refuse such accounts."
         ]
       },
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`.",
+        "citation": "https://docs.bigmodel.cn/cn/guide/develop/claude/introduction — Zhipu BigModel's Claude-API compatibility guide, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic` with an ordinary (metered) BigModel API key.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -7796,7 +7796,7 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/overview — Zhipu's GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: the plan's OpenAI-compatible endpoint is `https://open.bigmodel.cn/api/coding/paas/v4`, used with the plan key; billing is the subscription's usage quota.",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/latest-model — Zhipu GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: OpenAI-compatible `https://open.bigmodel.cn/api/coding/paas/v4` and Anthropic `https://open.bigmodel.cn/api/anthropic` with the plan key; the plan serves glm-5.3 and glm-5.3-flash (older ids reroute); billing is the subscription quota.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -7834,7 +7834,7 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's GLM Coding Plan Claude Code guide, retrieved 2026-09-25: `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic` with the plan key.",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/latest-model — Zhipu GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: OpenAI-compatible `https://open.bigmodel.cn/api/coding/paas/v4` and Anthropic `https://open.bigmodel.cn/api/anthropic` with the plan key; the plan serves glm-5.3 and glm-5.3-flash (older ids reroute); billing is the subscription quota.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -36780,7 +36780,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -36870,7 +36870,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -36960,7 +36960,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -37050,7 +37050,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -37140,7 +37140,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -37230,7 +37230,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7 standard CNY/MTok input 2.1, output 8.4, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -37320,7 +37320,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -37411,7 +37411,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M3 standard CNY/MTok input 2.1, output 8.4, cache read 0.42; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -37979,7 +37979,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38071,7 +38071,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38163,7 +38163,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.1-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38255,7 +38255,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5 standard CNY/MTok input 2.1, output 8.4, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38347,7 +38347,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.5-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.21, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38439,7 +38439,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7 standard CNY/MTok input 2.1, output 8.4, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38531,7 +38531,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M2.7-highspeed standard CNY/MTok input 4.2, output 16.8, cache read 0.42, cache write 2.625; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -38624,7 +38624,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.minimax.cn/docs/guides/pricing-paygo — MiniMax-M3 standard CNY/MTok input 2.1, output 8.4, cache read 0.42; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). M3 >512k input doubles the base prices and priority service is 1.5x.",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "function_call"
@@ -40369,7 +40369,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.kimi.com/ — kimi-k3 CN homepage price per MTok: CNY 20 input, 100 output, 2 cache hit, 20 cache write; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -40453,7 +40453,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.kimi.com/ — kimi-k2.6 CN homepage price per MTok: CNY 6.5 input, 27 output, 1.1 cache hit; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "reasoning_effort"
@@ -40539,7 +40539,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.kimi.com/ — kimi-k2.7-code CN homepage price per MTok: CNY 6.5 input, 27 output, 1.3 cache hit; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "reasoning_effort"
@@ -40720,7 +40720,7 @@
         "source": "official-doc",
         "sourceRef": "https://platform.kimi.com/ — kimi-k3 CN homepage price per MTok: CNY 20 input, 100 output, 2 cache hit, 20 cache write; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
         "confidence": "inferred",
-        "observedAt": "2026-09-25T10:13:37Z"
+        "observedAt": "2026-09-25T10:16:25Z"
       },
       "unsupportedParameters": [
         "thinking"
@@ -74625,6 +74625,1661 @@
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "glm-4.6v-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu-anthropic/glm-5.3",
+      "providerId": "zhipu-anthropic",
+      "upstreamId": "glm-5.3",
+      "displayName": "GLM-5.3 (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Coding Plan Anthropic wire: output_config.effort maps low/high/max and disabled thinking maps to low",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.192,
+          "outputPerMTokUsd": 4.172,
+          "cacheReadPerMTokUsd": 0.298
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.3 CN base tier CNY/MTok: input 8, output 28, cache hit 2; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu-anthropic/glm-5.3-flash",
+      "providerId": "zhipu-anthropic",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM-5.3-FLASH (CN Anthropic dialect)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Coding Plan Anthropic wire: output_config.effort maps low/high/max and disabled thinking maps to low",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.4172,
+          "cacheReadPerMTokUsd": 0.03427
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.3-flash CN base tier CNY/MTok: input 0.8, output 2.8, cache hit 0.23; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu-coding-anthropic/glm-5.3",
+      "providerId": "zhipu-coding-anthropic",
+      "upstreamId": "glm-5.3",
+      "displayName": "GLM-5.3 (CN Coding Plan)",
+      "aliases": [
+        "glm-5.2",
+        "glm-5.1"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Claude Code uses thinking.type and output_config.effort; off-like thinking values become low",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu-coding-anthropic/glm-5.3-flash",
+      "providerId": "zhipu-coding-anthropic",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM-5.3-FLASH (CN Coding Plan)",
+      "aliases": [
+        "glm-4.7",
+        "glm-5-turbo"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/devpack/latest-model — Claude Code uses thinking.type and output_config.effort; off-like thinking values become low",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu-coding/glm-5.3",
+      "providerId": "zhipu-coding",
+      "upstreamId": "glm-5.3",
+      "displayName": "GLM-5.3 (CN Coding Plan)",
+      "aliases": [
+        "glm-5.2",
+        "glm-5.1"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu-coding/glm-5.3-flash",
+      "providerId": "zhipu-coding",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM-5.3-FLASH (CN Coding Plan)",
+      "aliases": [
+        "glm-4.7",
+        "glm-5-turbo"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-4.5-air",
+      "providerId": "zhipu",
+      "upstreamId": "glm-4.5-air",
+      "displayName": "GLM-4.5-AIR (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.5-air table context 128K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 96000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.5-air table maximum output 96K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.5-air",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.5-air has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.298,
+          "cacheReadPerMTokUsd": 0.02384
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-4.5-air CN base tier CNY/MTok: input 0.8, output 2, cache hit 0.16; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.5-air",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-4.6",
+      "providerId": "zhipu",
+      "upstreamId": "glm-4.6",
+      "displayName": "GLM-4.6 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.6 table context 200K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.6 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.6",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.6 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.6",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-4.7",
+      "providerId": "zhipu",
+      "upstreamId": "glm-4.7",
+      "displayName": "GLM-4.7 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.7 table context 200K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.7 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.7",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.7 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — GLM-4.7 forced thinking; reasoning_effort available only for GLM-5.2+, so no effort levels documented",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.298,
+          "outputPerMTokUsd": 1.192,
+          "cacheReadPerMTokUsd": 0.0596
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-4.7 CN base tier CNY/MTok: input 2, output 8, cache hit 0.4; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-4.7-flash",
+      "providerId": "zhipu",
+      "upstreamId": "glm-4.7-flash",
+      "displayName": "GLM-4.7-FLASH (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.7-flash table context 200K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.7-flash table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.7-flash",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — GLM-4.7 forced thinking; reasoning_effort available only for GLM-5.2+, so no effort levels documented",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-4.7-flashx",
+      "providerId": "zhipu",
+      "upstreamId": "glm-4.7-flashx",
+      "displayName": "GLM-4.7-FLASHX (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.7-flashx table context 200K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-4.7-flashx table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-4.7-flashx",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-4.7-flashx has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — GLM-4.7 forced thinking; reasoning_effort available only for GLM-5.2+, so no effort levels documented",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.0745,
+          "outputPerMTokUsd": 0.447,
+          "cacheReadPerMTokUsd": 0.0149
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-4.7-flashx CN base tier CNY/MTok: input 0.5, output 3, cache hit 0.1; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-4.7-flashx",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5",
+      "displayName": "GLM-5 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5 table context 200K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-5",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-5 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.596,
+          "outputPerMTokUsd": 2.682,
+          "cacheReadPerMTokUsd": 0.149
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5 CN base tier CNY/MTok: input 4, output 18, cache hit 1; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5-turbo",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5-turbo",
+      "displayName": "GLM 5 Turbo (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — GLM-5-Turbo table context 200K tokens; decimal K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — GLM-5-Turbo table max output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — GLM-5-Turbo is in the CN text-model table.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — GLM-5-Turbo is in the CN text-model table.",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — No model-specific tool-calling statement checked for GLM-5-Turbo.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — No model-specific native-tools statement checked for GLM-5-Turbo.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.745,
+          "outputPerMTokUsd": 3.278,
+          "cacheReadPerMTokUsd": 0.1788
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — GLM-5-Turbo CN [0,32K) input tier CNY 5/22/1.2 per MTok input/output/cache read; >=32K is 7/26/1.8. USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data).",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5-turbo",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5.1",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5.1",
+      "displayName": "GLM-5.1 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.1 table context 200K tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.1 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — text chat input documented for glm-5.1",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/api-reference/llm/chat-completion — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-5.1 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — thinking.type=disabled switches chain-of-thought off; reasoning_effort is only for GLM-5.2+, so no graded level",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [],
+        "continuation": "plaintext"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.894,
+          "outputPerMTokUsd": 3.576,
+          "cacheReadPerMTokUsd": 0.1937
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.1 CN base tier CNY/MTok: input 6, output 24, cache hit 1.3; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.1",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5.2",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5.2",
+      "displayName": "GLM-5.2 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.2 table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.2 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — text chat input documented for glm-5.2",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — chat completion returns text content",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — chat completion `tools` supports function calls; applied to listed text model",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.2 — chat completion tools accept function definitions",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/overview/pricing — glm-5.2 has Cached Input price",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/overview/concept-param — 5.2 accepts max/xhigh/high/medium/low/minimal/none; none and minimal skip thinking; xhigh maps max, low/medium map high",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.192,
+          "outputPerMTokUsd": 4.172,
+          "cacheReadPerMTokUsd": 0.298
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.2 CN base tier CNY/MTok: input 8, output 28, cache hit 2; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5.3",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5.3",
+      "displayName": "GLM-5.3 (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3 table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — text chat input documented for glm-5.3",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — chat completion returns text content",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/llm/glm-5.3 — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.192,
+          "outputPerMTokUsd": 4.172,
+          "cacheReadPerMTokUsd": 0.298
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.3 CN base tier CNY/MTok: input 8, output 28, cache hit 2; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5.3-flash",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5.3-flash",
+      "displayName": "GLM-5.3-FLASH (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flash table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1192,
+          "outputPerMTokUsd": 0.4172,
+          "cacheReadPerMTokUsd": 0.03427
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.3-flash CN base tier CNY/MTok: input 0.8, output 2.8, cache hit 0.23; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flash",
+      "modelFamily": "glm"
+    },
+    {
+      "key": "zhipu/glm-5.3-flashx",
+      "providerId": "zhipu",
+      "upstreamId": "glm-5.3-flashx",
+      "displayName": "GLM-5.3-FLASHX (CN)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flashx table context 1M tokens; decimal K/M interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "maxOutputTokens": {
+        "value": 131072,
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/model-overview — glm-5.3-flashx table maximum output 128K tokens; binary K interpretation.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Flash/FlashX Input Modality Video/Image/Text/File; page explicitly cites PDF documents; PDF is normalized from File",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Output Modality Text",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Function Calling listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Structured Output (JSON) listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — Context Caching listed under Capability Support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T09:04:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.z.ai/guides/vlm/glm-5.3-flash — forced thinking, reasoning_effort low/high/max (default max), cannot disable",
+          "confidence": "inferred",
+          "observedAt": "2026-09-25T09:04:00Z"
+        },
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "defaultEffort": "max"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.298,
+          "outputPerMTokUsd": 1.043,
+          "cacheReadPerMTokUsd": 0.08493
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.bigmodel.cn/cn/guide/start/pricing — glm-5.3-flashx CN base tier CNY/MTok: input 2, output 7, cache hit 0.57; USD conversion at CNY/USD 0.149 (https://www.investing.com/currencies/cny-usd-historical-data). GLM-5.1/5-Turbo/5, GLM-4.7/4.5-Air have higher long-input tiers; see page.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T10:16:25Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "glm-5.3-flashx",
       "modelFamily": "glm"
     }
   ],

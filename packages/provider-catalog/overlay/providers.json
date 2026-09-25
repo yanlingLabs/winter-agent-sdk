@@ -2782,7 +2782,7 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8 — Zhipu's BigModel (China) chat-completion reference, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://open.bigmodel.cn/api/paas/v4` with a BigModel API key, per-token CNY billing.",
+        "citation": "https://docs.bigmodel.cn/cn/guide/start/model-overview and https://docs.bigmodel.cn/cn/guide/start/pricing — Zhipu BigModel (China) model overview and pricing, retrieved 2026-09-25: OpenAI-compatible Chat at `https://open.bigmodel.cn/api/paas/v4` with a BigModel API key; CNY per-token billing.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -2793,7 +2793,7 @@
       "protocols": [
         "anthropic-messages"
       ],
-      "$comment": "Dialect sibling of `zhipu`, mirroring `zai-anthropic`. Shares its URL with `zhipu-coding-anthropic`. The documentation found places this root under the GLM Coding Plan; acceptance of METERED (pay-as-you-go) keys here is not stated anywhere read, exactly as for `zai-anthropic`.",
+      "$comment": "Dialect sibling of `zhipu`, sharing its URL with `zhipu-coding-anthropic` (credential-distinguished). Unlike the international `zai-anthropic`, the China docs explicitly document METERED keys on this root. Caution from the glm-5.3 model page: an account that has subscribed to the Coding Plan (even an expired one) is temporarily limited to OpenAI Chat for metered model calls.",
       "authKinds": [
         "api-key"
       ],
@@ -2815,13 +2815,13 @@
           "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
           "China-region platform: keys are issued by and bound to the China account system and are not interchangeable with the international platform's keys.",
           "The vendor's OpenAI-dialect reasoning replay contract must not be assumed for Anthropic Messages without a dialect-specific document or probe.",
-          "Metered-key acceptance on this Anthropic root is undocumented: the pages read describe it only for the GLM Coding Plan. Needs a live metered-key probe."
+          "Per the glm-5.3 model page, accounts that have ever subscribed to the GLM Coding Plan are temporarily limited to OpenAI Chat for metered calls, so this root may refuse such accounts."
         ]
       },
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's BigModel documentation, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic`.",
+        "citation": "https://docs.bigmodel.cn/cn/guide/develop/claude/introduction — Zhipu BigModel's Claude-API compatibility guide, retrieved 2026-09-25: Anthropic Messages at `https://open.bigmodel.cn/api/anthropic` with an ordinary (metered) BigModel API key.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -2859,7 +2859,7 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/overview — Zhipu's GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: the plan's OpenAI-compatible endpoint is `https://open.bigmodel.cn/api/coding/paas/v4`, used with the plan key; billing is the subscription's usage quota.",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/latest-model — Zhipu GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: OpenAI-compatible `https://open.bigmodel.cn/api/coding/paas/v4` and Anthropic `https://open.bigmodel.cn/api/anthropic` with the plan key; the plan serves glm-5.3 and glm-5.3-flash (older ids reroute); billing is the subscription quota.",
         "tier": "fetched-document"
       },
       "scope": "llm"
@@ -2898,7 +2898,7 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.bigmodel.cn/cn/coding-plan/tool/claude — Zhipu's GLM Coding Plan Claude Code guide, retrieved 2026-09-25: `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic` with the plan key.",
+        "citation": "https://docs.bigmodel.cn/cn/coding-plan/latest-model — Zhipu GLM Coding Plan (编程套餐) documentation, retrieved 2026-09-25: OpenAI-compatible `https://open.bigmodel.cn/api/coding/paas/v4` and Anthropic `https://open.bigmodel.cn/api/anthropic` with the plan key; the plan serves glm-5.3 and glm-5.3-flash (older ids reroute); billing is the subscription quota.",
         "tier": "fetched-document"
       },
       "scope": "llm"
