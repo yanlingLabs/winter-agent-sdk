@@ -4,6 +4,52 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.23
+
+The 2026-09-25 first-party provider/model catalog refresh: 213 providers (was 171), 998 models (was
+691), 22 model families (was 17). Every refreshed row carries per-field evidence (vendor URL, what the
+page says, the retrieval instant); per-model values were mapped from the vendors' own docs and reviewed
+row by row.
+
+### Providers
+
+- **New first-party surfaces, one provider per (vendor × billing surface × wire dialect × region):**
+  Google Gemini API OpenAI-compatibility (`google-openai`); Moonshot Anthropic dialect and Moonshot
+  China (both dialects); Kimi Code overseas pair (`kimi-coding-intl`, `-openai`); Zhipu BigModel China
+  (metered + GLM Coding Plan, both dialects); MiniMax Token Plan Anthropic dialect and MiniMax China
+  (Anthropic + Token Plan pair); Alibaba Model Studio Anthropic dialect (intl + China), Token Plan
+  Anthropic dialect, Alibaba Coding Plan (intl + China, both dialects); Xiaomi MiMo (PAYG both dialects,
+  Token Plan in its Singapore/China/Europe clusters, both dialects); Baidu Qianfan Anthropic dialect and
+  Coding Plan pair; Tencent TokenHub (China + Singapore, both dialects), Tencent Coding Plan and Token
+  Plan pairs; the Meta Model API (`meta`, `meta-anthropic`).
+- **Corrected rows:** `qwen-cloud-token-plan` is `subscription`, not `token`; `minimax-cn` moves to the
+  documented `api.minimax.cn` host; `cohere` uses the documented `api.cohere.ai/compatibility/v1`;
+  `kimi-coding`/`kimi-coding-openai` are relabelled as the China plan (their host, `api.kimi.com`, is
+  documented as China); `meta-llama` is `blocked` (the Llama API was retired 2026-07-06); the legacy
+  Tencent Hunyuan platform (`tencent`, shutting down 2026-09-30) is relabelled with TokenHub as its
+  successor. Upstream rows re-read against fetched documents keep the `pinned-upstream` tier (R-FW-3:
+  leaving it takes a live-gate pass too); the fetched evidence is recorded as the first key.
+
+### Models
+
+- Added across GPT (GPT-6 Sol/Luna on `openai` and `codex-oauth`), Claude (Opus 5.5), Gemini (3.5/3.6
+  Flash, Gemma 4 on the Gemini API), Grok (4.7, 4.5), GLM, MiniMax, Qwen (3.8 Flash, coder models),
+  MiMo, ERNIE, Hunyuan (Hy4 preview, Hy3), Mistral (pinned ids, Ministral 3), Muse Spark, Nemotron,
+  Command A+ and Amazon Nova.
+- `deprecated` (vendor-retired; listings and slots drop the row, the registry still resolves the key):
+  `zai/glm-5-turbo`, `zai-anthropic/glm-5-turbo`, `mistral/devstral-latest`, and the Hunyuan ids retired
+  2026-06-22 (`tencent/hunyuan-turbos-latest`, `-t1-latest`, `-pro`, `-lite`). A retirement announced for
+  a FUTURE date keeps the row `candidate` with the date in its evidence.
+- Effort vocabularies now state exactly what each adapter sends: literal `reasoning_effort` values on
+  OpenAI-dialect rows, the `low`..`max` thinking-budget ladder on Anthropic-dialect and native Google rows.
+
+### Families and slots
+
+- New families: `muse`, `mimo`, `command`, `hunyuan`, `nova`, each with a curated slot lineup.
+- User ruling: the `gpt` family's `sol`/`luna` slots move to `gpt-6-sol`/`gpt-6-luna`; the `claude`
+  family's `opus` slot (and the pinned `opus` alias) move to Opus 5.5. The retired `devstral` slot is
+  removed from `mistral`.
+
 ## 0.0.22
 
 0.0.21 was tagged but never published either: its release job's `publish` job failed in the
